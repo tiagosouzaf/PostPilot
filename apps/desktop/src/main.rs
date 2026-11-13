@@ -11,8 +11,8 @@
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
-//!   `<config>/PGStudio/layout.json`. O layout não é lido nem salvo no modo
-//!   screenshot.
+//!   `<config>/PGStudio/layout.json`. Sem ela, o modo screenshot e o de
+//!   medição usam sempre o layout padrão.
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PGStudio/keymap.txt`.
 
@@ -31,7 +31,9 @@ fn main() -> eframe::Result {
     let screenshot: Option<PathBuf> = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
     let bench = std::env::var_os("PGSTUDIO_BENCH").is_some();
     // O screenshot e a medição usam sempre o layout padrão.
-    let layout = if screenshot.is_some() || bench {
+    // Um PGSTUDIO_LAYOUT explícito vale mesmo nesses modos.
+    let explicit_layout = std::env::var_os("PGSTUDIO_LAYOUT").is_some();
+    let layout = if (screenshot.is_some() || bench) && !explicit_layout {
         None
     } else {
         layout_path().map(LayoutStore::open)

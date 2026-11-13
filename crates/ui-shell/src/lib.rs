@@ -272,6 +272,9 @@ impl ShellApp {
     }
 
     fn expand_step(&mut self) {
+        // A árvore também é atualizada quando o painel está escondido
+        // (desafixado ou fechado), não só quando é desenhada.
+        self.explorer.poll();
         if self.explorer.is_loading() {
             return;
         }
@@ -355,6 +358,31 @@ impl ShellApp {
         self.workspace.group_rect(&panel)
     }
 
+    /// Desafixa um painel (alfinete), como "Auto Hide" no menu da aba.
+    pub fn auto_hide_panel(&mut self, panel: Panel) -> bool {
+        self.workspace.auto_hide(&panel)
+    }
+
+    /// Fixa de novo um painel desafixado.
+    pub fn dock_panel(&mut self, panel: Panel) {
+        self.workspace.dock(&panel);
+    }
+
+    /// Se o painel está desafixado, numa faixa da borda.
+    pub fn is_panel_hidden(&self, panel: Panel) -> bool {
+        self.workspace.is_hidden(&panel)
+    }
+
+    /// Painel desafixado aberto por cima dos documentos.
+    pub fn flyout_panel(&self) -> Option<Panel> {
+        self.workspace.flyout().copied()
+    }
+
+    /// Retângulo do botão do painel na faixa de auto-hide.
+    pub fn strip_button_rect(&self, panel: Panel) -> Option<egui::Rect> {
+        self.workspace.strip_button_rect(&panel)
+    }
+
     /// Fecha um painel, como o botão de fechar da aba.
     pub fn close_panel(&mut self, panel: Panel) {
         self.workspace.close(&panel);
@@ -388,6 +416,8 @@ impl ShellApp {
                 | Save
                 | SaveAs
                 | SaveAll
+                | AutoHide
+                | AutoHideAll
         )
     }
 
@@ -428,6 +458,20 @@ impl ShellApp {
                     self.workspace.open(Panel::Query(id));
                 }
             }
+            CommandId::AutoHide => {
+                let target = match self.workspace.flyout() {
+                    Some(p) => Some(*p),
+                    None => self.workspace.focused().copied(),
+                };
+                match target {
+                    Some(p) if self.workspace.is_hidden(&p) => self.workspace.dock(&p),
+                    Some(p) if !matches!(p, Panel::Query(_)) => {
+                        self.workspace.auto_hide(&p);
+                    }
+                    _ => self.status = "Select a tool window to auto hide.".to_string(),
+                }
+            }
+            CommandId::AutoHideAll => self.workspace.auto_hide_all(),
             CommandId::NewQuery => {
                 let id = self.documents.new_query();
                 self.activate_document(id);

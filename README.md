@@ -37,6 +37,10 @@ ao abrir. Se o arquivo estiver estragado, o PGStudio abre com o layout padrão e
 avisa na status bar. Window > Reset Window Layout volta ao padrão a qualquer
 momento.
 
+Como no SSMS, um painel pode ser desafixado (auto-hide): "Auto Hide" no menu de
+contexto da aba ou no menu Window o esconde numa faixa na borda; clicar na
+faixa mostra o painel por cima dos documentos, e o alfinete o fixa de novo.
+
 ## Atalhos de teclado
 
 Os atalhos seguem o SSMS (F5 ou Ctrl+E executa, Ctrl+K, Ctrl+C comenta etc.). Para
