@@ -7,10 +7,12 @@
 
 pub mod connect;
 pub mod documents;
+pub mod execution;
 pub mod keys;
 pub mod layout;
 pub mod menus;
 pub mod panels;
+pub mod results;
 pub mod theme;
 
 use std::path::PathBuf;
@@ -70,6 +72,9 @@ pub struct ShellApp {
     /// Servidor conectado no Object Explorer.
     connection: Option<Connected>,
     recent: RecentConnections,
+    /// Executar a janela ativa assim que conectar (demonstração e
+    /// screenshots).
+    run_on_connect: bool,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -124,6 +129,7 @@ impl Default for ShellApp {
             connect_dialog: None,
             connection: None,
             recent: RecentConnections::default(),
+            run_on_connect: false,
         }
     }
 }
@@ -558,6 +564,8 @@ impl ShellApp {
                 | UncommentSelection
                 | QuickFind
                 | GoTo
+                | Execute
+                | CancelQuery
         )
     }
 
@@ -657,6 +665,8 @@ impl ShellApp {
                 Some(id) => self.editor_command(ctx, id, cmd),
                 None => self.status = "No query window is open.".to_string(),
             },
+            CommandId::Execute => self.execute_query(ctx),
+            CommandId::CancelQuery => self.cancel_query(),
             CommandId::ConnectObjectExplorer => {
                 self.workspace.open(Panel::ObjectExplorer);
                 self.open_connect_dialog();
@@ -678,6 +688,123 @@ impl ShellApp {
             " (not available yet)".to_string()
         };
         self.output.push(format!("> {}{note}", cmd.label()));
+    }
+
+    /// F5: roda a seleção (ou o documento inteiro) na conexão da janela de
+    /// consulta ativa.
+    fn execute_query(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.active_doc else {
+            self.status = "No query window is open.".to_string();
+            return;
+        };
+        let queries = match &self.connection {
+            Some(c) => (c.queries.clone(), c.settings.database.clone()),
+            None if self.connector.is_none() && self.explorer.is_connected() => (
+                Arc::new(pgstudio_core::query::Offline(
+                    "The demo server cannot run queries. Connect to a PostgreSQL server.",
+                )) as Arc<dyn pgstudio_core::query::QueryService>,
+                "postgres".to_string(),
+            ),
+            None => {
+                self.status = "Connect to a server to run queries.".to_string();
+                self.open_connect_dialog();
+                return;
+            }
+        };
+        let Some(doc) = self.documents.get_mut(id) else {
+            return;
+        };
+        if doc.execution.as_ref().is_some_and(|e| e.is_running()) {
+            self.status = "A query is already executing in this window.".to_string();
+            return;
+        }
+        let editor = panels::editor_id(id);
+        let (sql, offset) = match pgstudio_sql_editor::selection(ctx, editor) {
+            Some((a, b)) if a != b => {
+                let (a, b) = (a.min(b), a.max(b));
+                (doc.text.chars().skip(a).take(b - a).collect(), a)
+            }
+            _ => (doc.text.clone(), 0),
+        };
+        let session = doc
+            .session
+            .get_or_insert_with(|| documents::Session(queries.0.open(&queries.1)))
+            .0
+            .clone();
+        doc.execution = Some(execution::Execution::start(session, sql, offset, ctx));
+        self.status = execution::Outcome::Running.label().to_string();
+        self.workspace.open(Panel::Query(id));
+    }
+
+    /// Alt+Break: cancela a execução da janela ativa.
+    fn cancel_query(&mut self) {
+        let running = self
+            .active_doc
+            .and_then(|id| self.documents.get(id))
+            .and_then(|d| d.execution.as_ref())
+            .filter(|e| e.is_running());
+        match running {
+            Some(e) => {
+                e.cancel();
+                self.status = "Canceling query...".to_string();
+            }
+            None => self.status = "No query is executing.".to_string(),
+        }
+    }
+
+    /// Executa a janela de consulta ativa assim que houver conexão, como um
+    /// F5 (para demonstrações e screenshots).
+    pub fn with_run_on_connect(mut self) -> Self {
+        self.run_on_connect = true;
+        self
+    }
+
+    /// Se alguma janela de consulta está executando.
+    pub fn is_executing(&self) -> bool {
+        self.documents.ids().into_iter().any(|id| {
+            self.documents
+                .get(id)
+                .and_then(|d| d.execution.as_ref())
+                .is_some_and(|e| e.is_running())
+        })
+    }
+
+    /// Recebe os eventos das execuções em andamento.
+    fn execution_step(&mut self, ctx: &egui::Context) {
+        if self.run_on_connect && self.connection.is_some() && self.active_doc.is_some() {
+            self.run_on_connect = false;
+            self.execute_query(ctx);
+        }
+        let active = self.active_doc;
+        for id in self.documents.ids() {
+            let Some(doc) = self.documents.get_mut(id) else {
+                continue;
+            };
+            let name = doc.name().to_string();
+            let Some(exec) = &mut doc.execution else {
+                continue;
+            };
+            let finished = exec.poll();
+            if exec.is_running() {
+                // Atualiza o relógio da faixa de status.
+                ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            }
+            if let Some(pos) = exec.take_error_position() {
+                pgstudio_sql_editor::set_selection(ctx, panels::editor_id(id), (pos, pos));
+                doc.editor.focus_editor();
+            }
+            if finished {
+                let outcome = exec.outcome();
+                self.output.push(format!(
+                    "{name}: {} ({})",
+                    outcome.label(),
+                    execution::format_elapsed(exec.elapsed(), true)
+                ));
+                if active == Some(id) {
+                    self.status = outcome.label().to_string();
+                }
+            }
+        }
     }
 
     /// Comandos do editor de SQL no documento `id`.
@@ -827,6 +954,7 @@ impl ShellApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.connect_step();
+        self.execution_step(&ctx);
         let mut commands = if self.confirm.is_some() || self.connect_dialog.is_some() {
             Vec::new()
         } else {
@@ -866,6 +994,7 @@ impl ShellApp {
                     .inner_margin(egui::Margin::symmetric(8, 3)),
             )
             .show(ui, |ui| self.status_bar(ui));
+        let server = self.connection_label();
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -880,6 +1009,7 @@ impl ShellApp {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
                     },
+                    server,
                 };
                 self.workspace.show(ui, &mut viewer);
                 commands.extend(viewer.commands);
@@ -1050,6 +1180,7 @@ impl ShellApp {
     }
 
     fn screenshot_step(&mut self, ctx: &egui::Context) {
+        let executing = self.is_executing() || self.run_on_connect;
         let Some(shot) = &mut self.screenshot else {
             return;
         };
@@ -1060,7 +1191,7 @@ impl ShellApp {
             .as_ref()
             .is_some_and(ConnectDialog::is_connecting);
         let expanding = !self.pending_expand.is_empty() && self.explorer.is_connected();
-        let busy = self.explorer.is_loading() || expanding || connecting;
+        let busy = self.explorer.is_loading() || expanding || connecting || executing;
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
