@@ -34,7 +34,25 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 
 ### Marco 1.8 (fim da Fase 1)
 
-PENDENTE_CI
+Medido no CI do [PR #8](https://github.com/tiagosouzaf/PostPilot/pull/8)
+(runners do GitHub, sem GPU), 5 execuções, 30 s em repouso.
+
+| Sistema | Até o 1º frame (mediana) | Até o 1º frame (pior) | RAM em repouso (mediana) | RAM em repouso (pior) |
+| --- | --- | --- | --- | --- |
+| Windows (`windows-latest`, WARP) | 396 ms ✅ | 709 ms ✅ | 54.4 MB ✅ | 56.1 MB ✅ |
+| Linux (`ubuntu-latest`, Xvfb + lavapipe) | 108 ms ✅ | 1372 ms ❌ | 116.0 MB ❌ | 124.1 MB ❌ |
+
+- **Windows atinge as duas metas**, mesmo sem GPU. A primeira execução
+  (709 ms) é a mais lenta, como esperado de uma partida a frio.
+- **Linux, inicialização:** só a primeira execução passa de 1 s (1372 ms); as
+  outras ficam em 105 a 109 ms. A diferença é a primeira carga do driver
+  Vulkan por software e do disco do runner. Ainda conta como fora da meta até
+  ser medido num Linux com GPU.
+- **Linux, RAM:** 116 MB em repouso, acima da meta. O driver Vulkan por
+  software (lavapipe) fica com boa parte disso: no mesmo ambiente, o protótipo
+  egui da Fase 0 ficou entre 141 e 152 MB, e no Windows o mesmo app usa
+  54 MB. Precisa ser medido num Linux com GPU antes de decidir se há trabalho
+  a fazer (por exemplo, testar o renderizador `glow`).
 
 ## Como ler
 
