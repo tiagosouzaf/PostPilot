@@ -1,6 +1,6 @@
 # ADR 0002: auto-hide de painéis (pin/unpin)
 
-- **Status:** proposta (aguardando o Tiago)
+- **Status:** aceita (Tiago, 2026-11-13); implementada
 - **Data:** 2026-11-13
 
 ## Contexto
@@ -28,8 +28,26 @@ libera o espaço da coluna nem mostra o painel por cima dos documentos.
 3. **Não ter auto-hide.** Fechar o painel e reabrir pelo menu View (já
    funciona) cobre o uso básico, com menos fidelidade ao SSMS.
 
-## Decisão proposta
+## Decisão
 
-Opção 1, depois do marco 1.8, para não atrasar a Fase 1. O `Workspace` já
-isola o `egui_dock`, então o auto-hide entra sem mudar a casca. Até lá, o
-botão de fechar e o menu View fazem o papel do alfinete.
+Opção 1, feita depois do marco 1.8, antes da Fase 2.
+
+## Como ficou
+
+- `Workspace` guarda os painéis desafixados fora do `DockState`. Cada um vai
+  para a faixa da sua área de origem (esquerda, direita ou baixo); documentos
+  não são desafixados.
+- A faixa mostra um botão por painel, com o texto na vertical nas laterais.
+  Clicar abre o painel por cima dos documentos, encostado na faixa (300 px, ou
+  80% do espaço se for menor). Clicar de novo, apertar Esc ou clicar nos
+  documentos e nos painéis encaixados esconde o painel. Menus e toolbar não
+  escondem, para o Window > Auto Hide funcionar com o painel aberto.
+- Desafixar: "Auto Hide" no menu de contexto da aba, Window > Auto Hide (no
+  painel com foco) ou Window > Auto Hide All. Fixar de novo: o alfinete no
+  cabeçalho do painel aberto ou Window > Auto Hide com ele aberto. View > o
+  painel desafixado abre o painel por cima.
+- O `layout.json` guarda a lista `hidden`; arquivos sem ela continuam válidos
+  (versão 1).
+
+Fica de fora, por enquanto: abrir ao passar o mouse sobre a faixa (o SSMS faz
+isso), animação de deslizar e redimensionar o painel aberto.

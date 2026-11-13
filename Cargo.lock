@@ -2371,6 +2371,7 @@ name = "pgstudio-docking"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "egui-phosphor",
  "egui_dock",
  "serde",
  "serde_json",

@@ -98,6 +98,7 @@ commands! {
     NewHorizontalTabGroup => "Window.NewHorizontalTabGroup", "New Horizontal Tab Group";
     NewVerticalTabGroup => "Window.NewVerticalTabGroup", "New Vertical Tab Group";
     ToggleResultsPane => "Window.ToggleResultsPane", "Show Results Pane";
+    AutoHide => "Window.AutoHide", "Auto Hide";
     AutoHideAll => "Window.AutoHideAll", "Auto Hide All";
     ResetWindowLayout => "Window.ResetLayout", "Reset Window Layout";
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";

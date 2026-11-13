@@ -617,3 +617,145 @@ fn reset_after_restore_brings_back_the_default() {
     harness.run();
     assert!(harness.state().is_panel_open(Panel::Output));
 }
+
+// Auto-hide de painéis (ADR 0002).
+
+use eframe::egui::accesskit::Role;
+
+fn strip_button<'a>(
+    harness: &'a Harness<'static, ShellApp>,
+    title: &'a str,
+) -> egui_kittest::Node<'a> {
+    harness.get_by_role_and_label(Role::Button, title)
+}
+
+fn auto_hide_all(harness: &mut Harness<'static, ShellApp>) {
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Auto Hide All").click();
+    harness.run();
+}
+
+#[test]
+fn auto_hide_all_moves_tool_windows_to_the_edges() {
+    let mut harness = harness();
+    auto_hide_all(&mut harness);
+    for panel in [Panel::ObjectExplorer, Panel::Properties, Panel::Output] {
+        assert!(harness.state().is_panel_hidden(panel), "{panel:?}");
+        assert!(
+            harness.state().strip_button_rect(panel).is_some(),
+            "{panel:?}"
+        );
+    }
+    let left = harness
+        .state()
+        .strip_button_rect(Panel::ObjectExplorer)
+        .unwrap();
+    let right = harness
+        .state()
+        .strip_button_rect(Panel::Properties)
+        .unwrap();
+    let bottom = harness.state().strip_button_rect(Panel::Output).unwrap();
+    assert!(left.center().x < 40.0);
+    assert!(right.center().x > 1240.0);
+    assert!(bottom.center().y > left.center().y && bottom.height() < 30.0);
+}
+
+#[test]
+fn clicking_the_strip_shows_the_panel_over_the_documents() {
+    let mut harness = harness();
+    auto_hide_all(&mut harness);
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    strip_button(&harness, "Object Explorer").click();
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), Some(Panel::ObjectExplorer));
+    harness.get_by_label("Not connected. Use File > Connect Object Explorer.");
+    let flyout = harness.state().panel_rect(Panel::ObjectExplorer).unwrap();
+    // Clicar no documento, fora do painel, esconde o painel de novo.
+    let outside = flyout.right_center() + eframe::egui::vec2(200.0, 0.0);
+    harness.hover_at(outside);
+    harness.run();
+    harness.drag_at(outside);
+    harness.drop_at(outside);
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), None);
+    assert!(harness.state().is_panel_hidden(Panel::ObjectExplorer));
+}
+
+#[test]
+fn escape_and_second_click_hide_the_panel() {
+    let mut harness = harness();
+    auto_hide_all(&mut harness);
+    strip_button(&harness, "Output").click();
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), Some(Panel::Output));
+    press(&mut harness, Modifiers::NONE, Key::Escape);
+    assert_eq!(harness.state().flyout_panel(), None);
+    strip_button(&harness, "Output").click();
+    harness.run();
+    strip_button(&harness, "Output").click();
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), None);
+}
+
+#[test]
+fn pin_button_docks_the_panel_again() {
+    let mut harness = harness();
+    auto_hide_all(&mut harness);
+    strip_button(&harness, "Properties").click();
+    harness.run();
+    harness
+        .get_by_label(egui_phosphor::regular::PUSH_PIN_SLASH)
+        .click();
+    harness.run();
+    assert!(!harness.state().is_panel_hidden(Panel::Properties));
+    assert!(harness.state().is_panel_open(Panel::Properties));
+    assert_eq!(harness.state().flyout_panel(), None);
+    let props = harness.state().panel_rect(Panel::Properties).unwrap();
+    assert!(props.right() > 1200.0, "voltou para a direita: {props:?}");
+}
+
+#[test]
+fn window_auto_hide_toggles_the_open_panel() {
+    let mut harness = harness();
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Auto Hide").click();
+    harness.run();
+    // Sem painel com foco, só avisa.
+    assert_eq!(
+        harness.state().status(),
+        "Select a tool window to auto hide."
+    );
+
+    assert!(harness.state_mut().auto_hide_panel(Panel::Output));
+    harness.run();
+    // View > Output com o painel desafixado mostra o painel por cima.
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Output Ctrl+Alt+O").click();
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), Some(Panel::Output));
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Auto Hide").click();
+    harness.run();
+    assert!(!harness.state().is_panel_hidden(Panel::Output));
+}
+
+#[test]
+fn hidden_panels_survive_a_restart() {
+    let path = temp_file("layout-autohide.json");
+    let mut harness = restarted(&path);
+    harness.state_mut().auto_hide_panel(Panel::ObjectExplorer);
+    harness.run();
+    harness.state_mut().save_layout();
+    let harness = restarted(&path);
+    assert!(harness.state().is_panel_hidden(Panel::ObjectExplorer));
+    assert!(
+        harness
+            .state()
+            .strip_button_rect(Panel::ObjectExplorer)
+            .is_some()
+    );
+}

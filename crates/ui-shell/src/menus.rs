@@ -139,6 +139,7 @@ pub const MENUS: &[Menu] = &[
             I(NewVerticalTabGroup),
             SEP,
             I(ToggleResultsPane),
+            I(AutoHide),
             I(AutoHideAll),
             I(ResetWindowLayout),
             SEP,

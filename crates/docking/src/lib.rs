@@ -2,7 +2,11 @@
 //!
 //! Invólucro fino sobre o `egui_dock`: o resto do PGStudio só conhece
 //! [`Workspace`], [`Pane`] e [`PaneViewer`]. Isso permite trocar ou estender o
-//! docking (por exemplo, para ter auto-hide) sem mexer na casca.
+//! docking sem mexer na casca.
+//!
+//! O auto-hide do SSMS (alfinete) é feito aqui, por fora do egui_dock: um
+//! painel desafixado sai do docking e vira um botão numa faixa na borda; ao
+//! clicar, ele aparece por cima dos documentos e some ao perder o foco.
 
 use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -47,6 +51,20 @@ pub trait PaneViewer<P> {
     }
 }
 
+/// Largura (ou altura, embaixo) da faixa de auto-hide.
+pub const STRIP: f32 = 24.0;
+/// Tamanho padrão do painel aberto da faixa (largura nas laterais, altura
+/// embaixo).
+const FLYOUT_SIZE: f32 = 300.0;
+
+/// Pedidos feitos de dentro do desenho, aplicados depois dele.
+enum Request<P> {
+    AutoHide(P),
+    Dock(P),
+    Close(P),
+    Toggle(P),
+}
+
 /// Retrato do layout que pode ser salvo e restaurado.
 ///
 /// É um formato próprio, independente do formato interno do egui_dock, para
@@ -59,6 +77,9 @@ pub struct Layout<P> {
     /// Painéis que estavam flutuando; voltam encaixados na área de origem.
     #[serde(default = "Vec::new")]
     pub floating: Vec<P>,
+    /// Painéis desafixados (auto-hide), na ordem das faixas.
+    #[serde(default = "Vec::new")]
+    pub hidden: Vec<P>,
 }
 
 /// Um nó do layout salvo.
@@ -211,6 +232,12 @@ const BOTTOM: f32 = 0.72;
 /// Os painéis abertos e como estão encaixados.
 pub struct Workspace<P: Pane> {
     state: DockState<P>,
+    /// Painéis desafixados, cada um na faixa da sua área.
+    hidden: Vec<P>,
+    /// Painel desafixado que está aberto por cima dos documentos.
+    flyout: Option<P>,
+    flyout_rect: Option<egui::Rect>,
+    strip_buttons: Vec<(P, egui::Rect)>,
 }
 
 impl<P: Pane> Workspace<P> {
@@ -229,7 +256,17 @@ impl<P: Pane> Workspace<P> {
         if !bottom.is_empty() {
             tree.split_below(center, BOTTOM, bottom);
         }
-        Workspace { state }
+        Workspace::with_state(state)
+    }
+
+    fn with_state(state: DockState<P>) -> Self {
+        Workspace {
+            state,
+            hidden: Vec::new(),
+            flyout: None,
+            flyout_rect: None,
+            strip_buttons: Vec::new(),
+        }
     }
 
     /// Retrato do layout atual, só com os painéis aceitos por `keep`
@@ -245,7 +282,12 @@ impl<P: Pane> Workspace<P> {
             .flat_map(|(_, surface)| surface.iter_all_tabs().map(|(_, t)| t.clone()))
             .filter(|t| keep(t) && !seen.contains(t))
             .collect();
-        Layout { root, floating }
+        let hidden = self.hidden.iter().filter(|t| keep(t)).cloned().collect();
+        Layout {
+            root,
+            floating,
+            hidden,
+        }
     }
 
     /// Recria o docking a partir de um retrato. Abas repetidas, grupos vazios
@@ -263,19 +305,105 @@ impl<P: Pane> Workspace<P> {
             }
             None => DockState::new(Vec::new()),
         };
-        let mut workspace = Workspace { state };
+        let mut workspace = Workspace::with_state(state);
         for pane in layout.floating {
             if !seen.contains(&pane) {
                 seen.push(pane.clone());
                 workspace.open(pane);
             }
         }
+        for pane in layout.hidden {
+            if !seen.contains(&pane) && pane.area() != Area::Document {
+                seen.push(pane.clone());
+                workspace.hidden.push(pane);
+            }
+        }
         workspace
     }
 
-    /// Se o painel está aberto, encaixado ou flutuando.
+    /// Se o painel está aberto: encaixado, flutuando ou desafixado.
     pub fn is_open(&self, pane: &P) -> bool {
-        self.state.find_tab(pane).is_some()
+        self.state.find_tab(pane).is_some() || self.is_hidden(pane)
+    }
+
+    /// Se o painel está desafixado (numa faixa de auto-hide).
+    pub fn is_hidden(&self, pane: &P) -> bool {
+        self.hidden.contains(pane)
+    }
+
+    /// Painéis desafixados, na ordem em que foram escondidos.
+    pub fn hidden(&self) -> &[P] {
+        &self.hidden
+    }
+
+    /// Painel desafixado que está aberto por cima dos documentos.
+    pub fn flyout(&self) -> Option<&P> {
+        self.flyout.as_ref()
+    }
+
+    /// Retângulo do painel aberto da faixa no último frame.
+    pub fn flyout_rect(&self) -> Option<egui::Rect> {
+        self.flyout_rect.filter(|_| self.flyout.is_some())
+    }
+
+    /// Retângulo do botão do painel na faixa no último frame.
+    pub fn strip_button_rect(&self, pane: &P) -> Option<egui::Rect> {
+        self.strip_buttons
+            .iter()
+            .find(|(p, _)| p == pane)
+            .map(|(_, r)| *r)
+    }
+
+    /// Desafixa o painel: sai do docking e vai para a faixa da sua área.
+    /// Documentos não podem ser desafixados. Devolve se escondeu.
+    pub fn auto_hide(&mut self, pane: &P) -> bool {
+        if pane.area() == Area::Document || self.is_hidden(pane) {
+            return false;
+        }
+        let Some(path) = self.state.find_tab(pane) else {
+            return false;
+        };
+        if let Some(pane) = self.state.remove_tab(path) {
+            self.hidden.push(pane);
+        }
+        true
+    }
+
+    /// Desafixa todos os painéis que não são documentos (Window > Auto Hide All).
+    pub fn auto_hide_all(&mut self) {
+        let tools: Vec<P> = self
+            .state
+            .iter_all_tabs()
+            .map(|(_, p)| p.clone())
+            .filter(|p| p.area() != Area::Document)
+            .collect();
+        for pane in tools {
+            self.auto_hide(&pane);
+        }
+        self.flyout = None;
+    }
+
+    /// Fixa de novo um painel desafixado, na área de origem.
+    pub fn dock(&mut self, pane: &P) {
+        if let Some(i) = self.hidden.iter().position(|p| p == pane) {
+            let pane = self.hidden.remove(i);
+            if self.flyout.as_ref() == Some(&pane) {
+                self.flyout = None;
+            }
+            self.open(pane);
+        }
+    }
+
+    /// Mostra um painel desafixado por cima dos documentos.
+    pub fn show_flyout(&mut self, pane: &P) {
+        if self.is_hidden(pane) {
+            self.flyout = Some(pane.clone());
+        }
+    }
+
+    /// Esconde o painel desafixado que estiver aberto.
+    pub fn hide_flyout(&mut self) {
+        self.flyout = None;
     }
 
     /// Se os dois painéis estão abertos como abas do mesmo grupo.
@@ -286,20 +414,31 @@ impl<P: Pane> Workspace<P> {
         }
     }
 
-    /// Retângulo do grupo de abas do painel no último frame desenhado.
+    /// Retângulo do grupo de abas do painel no último frame desenhado (ou do
+    /// painel aberto da faixa, se estiver desafixado e aberto).
     pub fn group_rect(&self, pane: &P) -> Option<egui::Rect> {
+        if self.flyout.as_ref() == Some(pane) {
+            return self.flyout_rect();
+        }
         let path = self.state.find_tab(pane)?.node_path();
         self.state.leaf(path).ok().map(|leaf| leaf.rect())
     }
 
-    /// Todos os painéis abertos.
+    /// Todos os painéis abertos, inclusive os desafixados.
     pub fn panes(&self) -> impl Iterator<Item = &P> {
-        self.state.iter_all_tabs().map(|(_, p)| p)
+        self.state
+            .iter_all_tabs()
+            .map(|(_, p)| p)
+            .chain(self.hidden.iter())
     }
 
     /// Mostra o painel: se já está aberto, traz para a frente; se não, abre
     /// junto de outro painel da mesma área ou recria a área na borda.
     pub fn open(&mut self, pane: P) {
+        if self.is_hidden(&pane) {
+            self.flyout = Some(pane);
+            return;
+        }
         if let Some(path) = self.state.find_tab(&pane) {
             let _ = self.state.set_active_tab(path);
             self.state.set_focused_node_and_surface(path.node_path());
@@ -374,7 +513,7 @@ impl<P: Pane> Workspace<P> {
         let right = find(&self.state, Area::Right);
         let tree = self.state.main_surface_mut();
         if let Some(node) = bottom {
-            tree.split_above(node, 1.0 - BOTTOM, vec![pane]);
+            tree.split_above(node, BOTTOM, vec![pane]);
         } else if let Some(node) = left {
             tree.split_right(node, LEFT / RIGHT, vec![pane]);
         } else if let Some(node) = right {
@@ -394,32 +533,253 @@ impl<P: Pane> Workspace<P> {
         if let Some(path) = self.state.find_tab(pane) {
             self.state.remove_tab(path);
         }
+        self.hidden.retain(|p| p != pane);
+        if self.flyout.as_ref() == Some(pane) {
+            self.flyout = None;
+        }
     }
 
     /// Desenha o docking ocupando todo o `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui, viewer: &mut impl PaneViewer<P>) {
+        let mut requests = Vec::new();
+        self.strip_buttons.clear();
+        self.strips(ui, viewer, &mut requests);
+
+        let dock_rect = ui.available_rect_before_wrap();
         let style = Style::from_egui(ui.style().as_ref());
+        let mut adapter = Adapter {
+            viewer: &mut *viewer,
+            requests: &mut requests,
+        };
         DockArea::new(&mut self.state)
             .id(egui::Id::new("pgstudio_dock"))
             .style(style)
             .show_leaf_collapse_buttons(false)
             .show_leaf_close_all_buttons(false)
-            .show_inside(ui, &mut Adapter(viewer, std::marker::PhantomData));
+            .show_inside(ui, &mut adapter);
+
+        self.flyout_ui(ui, dock_rect, viewer, &mut requests);
+
+        for request in requests {
+            match request {
+                Request::AutoHide(p) => {
+                    self.auto_hide(&p);
+                }
+                Request::Dock(p) => self.dock(&p),
+                Request::Close(p) => self.close(&p),
+                Request::Toggle(p) => {
+                    self.flyout = if self.flyout.as_ref() == Some(&p) {
+                        None
+                    } else {
+                        Some(p)
+                    };
+                }
+            }
+        }
+    }
+
+    /// Faixas de auto-hide nas bordas, com um botão por painel desafixado.
+    fn strips(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewer: &mut impl PaneViewer<P>,
+        requests: &mut Vec<Request<P>>,
+    ) {
+        let on = |area: Area| -> Vec<P> {
+            self.hidden
+                .iter()
+                .filter(|p| p.area() == area)
+                .cloned()
+                .collect()
+        };
+        let (left, right, bottom) = (on(Area::Left), on(Area::Right), on(Area::Bottom));
+        let open = self.flyout.clone();
+        let mut buttons = Vec::new();
+        let mut strip = |ui: &mut egui::Ui, panes: &[P], vertical: bool| {
+            for pane in panes {
+                let title = viewer.title(pane);
+                let selected = open.as_ref() == Some(pane);
+                let response = strip_button(ui, &title, vertical, selected);
+                if response.clicked() {
+                    requests.push(Request::Toggle(pane.clone()));
+                }
+                buttons.push((pane.clone(), response.rect));
+            }
+        };
+        let frame = egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(egui::Margin::same(2));
+        if !bottom.is_empty() {
+            egui::Panel::bottom("pgstudio_autohide_bottom")
+                .exact_size(STRIP)
+                .resizable(false)
+                .frame(frame)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| strip(ui, &bottom, false));
+                });
+        }
+        if !left.is_empty() {
+            egui::Panel::left("pgstudio_autohide_left")
+                .exact_size(STRIP)
+                .resizable(false)
+                .frame(frame)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| strip(ui, &left, true));
+                });
+        }
+        if !right.is_empty() {
+            egui::Panel::right("pgstudio_autohide_right")
+                .exact_size(STRIP)
+                .resizable(false)
+                .frame(frame)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| strip(ui, &right, true));
+                });
+        }
+        self.strip_buttons = buttons;
+    }
+
+    /// Painel desafixado aberto por cima dos documentos, encostado na faixa.
+    fn flyout_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        dock: egui::Rect,
+        viewer: &mut impl PaneViewer<P>,
+        requests: &mut Vec<Request<P>>,
+    ) {
+        let Some(mut pane) = self.flyout.clone() else {
+            self.flyout_rect = None;
+            return;
+        };
+        let ctx = ui.ctx().clone();
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.flyout = None;
+            return;
+        }
+        let side = |extent: f32| FLYOUT_SIZE.min(extent * 0.8);
+        let rect = match pane.area() {
+            Area::Right => egui::Rect::from_min_max(
+                egui::pos2(dock.right() - side(dock.width()), dock.top()),
+                dock.max,
+            ),
+            Area::Bottom => egui::Rect::from_min_max(
+                egui::pos2(dock.left(), dock.bottom() - side(dock.height())),
+                dock.max,
+            ),
+            _ => egui::Rect::from_min_size(dock.min, egui::vec2(side(dock.width()), dock.height())),
+        };
+        self.flyout_rect = Some(rect);
+        let title = viewer.title(&pane);
+        egui::Area::new(egui::Id::new("pgstudio_autohide_flyout"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.min)
+            .show(&ctx, |ui| {
+                let frame = egui::Frame::window(ui.style())
+                    .corner_radius(0)
+                    .inner_margin(egui::Margin::same(4));
+                let inner = rect.size() - frame.total_margin().sum();
+                frame.show(ui, |ui| {
+                    ui.set_min_size(inner);
+                    ui.set_max_size(inner);
+                    ui.horizontal(|ui| {
+                        ui.strong(&title);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if viewer.closeable(&pane)
+                                && ui.small_button("✕").on_hover_text("Close").clicked()
+                                && viewer.on_close(&pane)
+                            {
+                                requests.push(Request::Close(pane.clone()));
+                            }
+                            if ui
+                                .small_button(egui_phosphor::regular::PUSH_PIN_SLASH)
+                                .on_hover_text("Auto Hide (click to dock)")
+                                .clicked()
+                            {
+                                requests.push(Request::Dock(pane.clone()));
+                            }
+                        });
+                    });
+                    ui.separator();
+                    viewer.ui(ui, &mut pane);
+                });
+            });
+        // Clicar nos documentos ou nos outros painéis esconde o painel, como
+        // no SSMS. Menus, toolbar e janelas por cima (como um menu aberto
+        // sobre os documentos) não contam, para Window > Auto Hide funcionar.
+        let press = ctx.input(|i| {
+            i.pointer
+                .any_pressed()
+                .then(|| i.pointer.interact_pos())
+                .flatten()
+        });
+        let outside = press.is_some_and(|p| {
+            let over_popup = ctx
+                .layer_id_at(p)
+                .is_some_and(|layer| layer.order != egui::Order::Background);
+            dock.contains(p) && !rect.contains(p) && !over_popup
+        });
+        if outside {
+            self.flyout = None;
+        }
     }
 }
 
+/// Botão de uma faixa de auto-hide; nas laterais, com o texto na vertical.
+fn strip_button(ui: &mut egui::Ui, text: &str, vertical: bool, selected: bool) -> egui::Response {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let pad = egui::vec2(8.0, 3.0);
+    let text_size = galley.size();
+    let size = if vertical {
+        egui::vec2(text_size.y + 2.0 * pad.y, text_size.x + 2.0 * pad.x)
+    } else {
+        text_size + 2.0 * pad
+    };
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, text)
+    });
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact_selectable(&response, selected);
+        ui.painter().rect_filled(rect, 2.0, visuals.weak_bg_fill);
+        let shape = if vertical {
+            egui::epaint::TextShape::new(
+                egui::pos2(rect.right() - pad.y, rect.top() + pad.x),
+                galley,
+                visuals.text_color(),
+            )
+            .with_angle(std::f32::consts::FRAC_PI_2)
+        } else {
+            egui::epaint::TextShape::new(rect.min + pad, galley, visuals.text_color())
+        };
+        ui.painter().add(shape);
+    }
+    response
+}
+
 /// Liga o [`PaneViewer`] ao `TabViewer` do egui_dock.
-struct Adapter<'a, P, V>(&'a mut V, std::marker::PhantomData<P>);
+struct Adapter<'a, P, V> {
+    viewer: &'a mut V,
+    requests: &'a mut Vec<Request<P>>,
+}
 
 impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
     type Tab = P;
 
     fn title(&mut self, tab: &mut P) -> egui::WidgetText {
-        self.0.title(tab).into()
+        self.viewer.title(tab).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut P) {
-        self.0.ui(ui, tab);
+        self.viewer.ui(ui, tab);
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut P, _path: NodePath) {
+        if tab.area() != Area::Document && ui.button("Auto Hide").clicked() {
+            self.requests.push(Request::AutoHide(tab.clone()));
+            ui.close();
+        }
     }
 
     fn id(&mut self, tab: &mut P) -> egui::Id {
@@ -427,11 +787,11 @@ impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
     }
 
     fn closeable(&mut self, tab: &mut P) -> bool {
-        self.0.closeable(tab)
+        self.viewer.closeable(tab)
     }
 
     fn on_close(&mut self, tab: &mut P) -> OnCloseResponse {
-        if self.0.on_close(tab) {
+        if self.viewer.on_close(tab) {
             OnCloseResponse::Close
         } else {
             OnCloseResponse::Ignore
@@ -608,10 +968,12 @@ mod tests {
             Layout {
                 root: None,
                 floating: vec![P::Props, P::Props],
+                hidden: vec![P::Props, P::Doc(3), P::Explorer],
             },
             Layout {
                 root: Some(tabs(vec![], 3)),
                 floating: vec![],
+                hidden: vec![],
             },
             Layout {
                 root: Some(split(
@@ -620,6 +982,7 @@ mod tests {
                     tabs(vec![P::Explorer], 0),
                 )),
                 floating: vec![P::Explorer],
+                hidden: vec![],
             },
             Layout {
                 root: Some(split(
@@ -628,6 +991,7 @@ mod tests {
                     tabs(vec![P::Output, P::Doc(1)], 1),
                 )),
                 floating: vec![],
+                hidden: vec![],
             },
         ];
         for layout in cases {
@@ -649,7 +1013,90 @@ mod tests {
         let mut ws = Workspace::from_layout(Layout {
             root: Some(deep),
             floating: vec![],
+            hidden: vec![],
         });
         render(&mut ws);
+    }
+
+    #[test]
+    fn auto_hide_moves_tool_windows_to_the_strip_and_back() {
+        let mut ws = ssms();
+        assert!(ws.auto_hide(&P::Explorer));
+        assert!(ws.is_hidden(&P::Explorer));
+        assert!(ws.is_open(&P::Explorer));
+        assert_eq!(ws.panes().filter(|p| **p == P::Explorer).count(), 1);
+        // Documentos não são desafixados.
+        assert!(!ws.auto_hide(&P::Doc(1)));
+        // Abrir um painel desafixado mostra o painel por cima.
+        ws.open(P::Explorer);
+        assert_eq!(ws.flyout(), Some(&P::Explorer));
+        ws.dock(&P::Explorer);
+        assert!(!ws.is_hidden(&P::Explorer));
+        assert_eq!(ws.flyout(), None);
+        assert!(ws.state.find_tab(&P::Explorer).is_some());
+    }
+
+    #[test]
+    fn auto_hide_all_keeps_documents_docked() {
+        let mut ws = ssms();
+        ws.auto_hide_all();
+        assert_eq!(ws.hidden().len(), 3);
+        assert!(ws.state.find_tab(&P::Doc(1)).is_some());
+        ws.close(&P::Props);
+        assert!(!ws.is_open(&P::Props));
+        assert_eq!(ws.hidden().len(), 2);
+    }
+
+    #[test]
+    fn hidden_panes_are_saved_in_the_layout() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Output);
+        let layout = ws.layout(|_| true);
+        assert_eq!(layout.hidden, vec![P::Output]);
+        let json = serde_json::to_string(&layout).unwrap();
+        let restored = Workspace::from_layout(serde_json::from_str(&json).unwrap());
+        assert!(restored.is_hidden(&P::Output));
+        // Arquivos da versão anterior, sem "hidden", continuam valendo.
+        let old: Layout<P> = serde_json::from_str(r#"{"root":null}"#).unwrap();
+        assert!(old.hidden.is_empty());
+    }
+
+    #[test]
+    fn strips_and_flyout_sit_on_their_edges() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Explorer);
+        ws.auto_hide(&P::Output);
+        for (pane, check) in [
+            (
+                P::Explorer,
+                (|r: egui::Rect| r.left() <= STRIP + 1.0) as fn(egui::Rect) -> bool,
+            ),
+            (P::Output, |r: egui::Rect| r.bottom() >= 800.0 - STRIP - 1.0),
+        ] {
+            ws.show_flyout(&pane);
+            render(&mut ws);
+            let button = ws.strip_button_rect(&pane).expect("botão na faixa");
+            assert!(check(button), "{pane:?} {button:?}");
+            let flyout = ws.flyout_rect().expect("painel aberto");
+            assert!(
+                flyout.width() > 100.0 && flyout.height() > 100.0,
+                "{flyout:?}"
+            );
+        }
+        // O painel de baixo encosta na faixa de baixo e cobre a largura.
+        let flyout = ws.flyout_rect().unwrap();
+        assert!(flyout.width() > 1000.0);
+    }
+
+    #[test]
+    fn reopened_document_area_is_taller_than_the_bottom_strip() {
+        let mut ws = ssms();
+        ws.close(&P::Doc(1));
+        ws.open(P::Doc(2));
+        render(&mut ws);
+        let doc = ws.group_rect(&P::Doc(2)).unwrap();
+        let output = ws.group_rect(&P::Output).unwrap();
+        assert!(doc.height() > 2.0 * output.height(), "{doc:?} {output:?}");
+        assert!(doc.bottom() <= output.top() + 1.0);
     }
 }
