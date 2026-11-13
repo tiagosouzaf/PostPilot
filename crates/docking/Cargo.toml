@@ -1,0 +1,15 @@
+[package]
+name = "pgstudio-docking"
+description = "Docking de painéis do PGStudio: invólucro fino sobre o egui_dock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui_dock.workspace = true
+
+[lints]
+workspace = true

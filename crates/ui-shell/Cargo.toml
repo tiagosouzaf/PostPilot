@@ -12,6 +12,7 @@ pgstudio-core.workspace = true
 eframe.workspace = true
 image.workspace = true
 egui-phosphor.workspace = true
+pgstudio-docking.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
