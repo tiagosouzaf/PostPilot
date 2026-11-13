@@ -16,6 +16,7 @@ crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
 crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 crates/docking/   painéis encaixáveis (invólucro do egui_dock)
 crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
+xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
 ```
 
 Novas crates (`pg-connection`, …) entram na fase do roteiro que as usa.
@@ -71,6 +72,10 @@ cargo fmt --all
 
 O CI roda formatação, clippy e testes em Linux e Windows, e o `cargo-deny` para
 licenças e vulnerabilidades.
+
+`cargo xtask bench` mede o tempo até o primeiro frame e a RAM em repouso contra
+as metas (inicialização < 1 s, RAM < 100 MB). Os números ficam em
+[`docs/benchmarks.md`](docs/benchmarks.md).
 
 ## Roteiro
 

@@ -82,6 +82,36 @@ jobs:
           name: janela-${{ matrix.os }}
           path: pgstudio-*.png
 
+  bench:
+    name: Medição (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 mesa-vulkan-drivers libgl1-mesa-dri
+      - run: cargo build --release --locked -p pgstudio-desktop
+      # Só informa: as metas ainda não reprovam o CI (veja docs/benchmarks.md).
+      - name: cargo xtask bench
+        shell: bash
+        run: |
+          run="cargo xtask bench --no-build --runs 5 --idle 30 --markdown"
+          if [ "$RUNNER_OS" = Linux ]; then run="xvfb-run -a -s '-screen 0 1400x900x24' $run"; fi
+          eval "$run" | tee bench.md
+          { echo "### Medição em ${{ matrix.os }}"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench.md
+
   deny:
     name: Licenças e vulnerabilidades
     runs-on: ubuntu-latest

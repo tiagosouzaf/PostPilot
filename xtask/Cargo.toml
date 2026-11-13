@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+description = "Tarefas de desenvolvimento do PGStudio (cargo xtask)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

@@ -29,6 +29,9 @@ use std::sync::Arc;
 
 const READY: &str = "Ready";
 
+/// Linha que o modo de medição escreve quando o primeiro frame foi exibido.
+pub const BENCH_FIRST_FRAME: &str = "pgstudio-bench: first-frame";
+
 /// O aplicativo: estado da casca e desenho de cada frame.
 pub struct ShellApp {
     theme: Theme,
@@ -55,6 +58,8 @@ pub struct ShellApp {
     layout_store: Option<LayoutStore>,
     /// Última geometria conhecida da janela (fora de maximizado).
     window: Option<WindowGeometry>,
+    /// Modo de medição: frames desenhados até agora.
+    bench_frames: Option<u32>,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -104,6 +109,7 @@ impl Default for ShellApp {
             allow_close: false,
             layout_store: None,
             window: None,
+            bench_frames: None,
         }
     }
 }
@@ -284,6 +290,28 @@ impl ShellApp {
             requested: false,
         });
         self
+    }
+
+    /// Modo de medição (`cargo xtask bench`): avisa na saída padrão, com a
+    /// linha [`BENCH_FIRST_FRAME`], assim que o primeiro frame foi exibido.
+    /// Depois o app fica parado, para a memória em repouso ser medida.
+    pub fn with_bench(mut self) -> Self {
+        self.bench_frames = Some(0);
+        self
+    }
+
+    fn bench_step(&mut self) {
+        let Some(frames) = &mut self.bench_frames else {
+            return;
+        };
+        *frames += 1;
+        // O frame N é exibido antes de o N+1 começar.
+        if *frames == 2 {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            let _ = writeln!(out, "{BENCH_FIRST_FRAME}");
+            let _ = out.flush();
+        }
     }
 
     /// Tema em uso.
@@ -809,6 +837,7 @@ impl ShellApp {
 
 impl eframe::App for ShellApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.bench_step();
         self.expand_step();
         self.show(ui);
         let ctx = ui.ctx().clone();
