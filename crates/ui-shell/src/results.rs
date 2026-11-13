@@ -2,14 +2,16 @@
 //! e Messages e a faixa de status embaixo (situação, servidor, banco, tempo
 //! e linhas).
 //!
-//! A tabela aqui é simples (linhas virtualizadas, larguras fixas pelo
-//! conteúdo). A grade completa, com buffer paginado, seleção e cópia, é o
-//! marco 2.5.
+//! Os resultados aparecem na grade do `pgstudio-result-grid` ou, com
+//! "Results to Text" (Ctrl+T), como texto de largura fixa.
 
-use eframe::egui::{self, Color32, FontId, RichText};
+use eframe::egui::{self, Color32, RichText};
 use egui_phosphor::regular as icons;
 
-use crate::execution::{Execution, MessageKind, Outcome, ResultSet, Tab, format_elapsed};
+use crate::execution::{
+    Execution, MessageKind, Outcome, ResultSet, ResultsMode, Tab, format_elapsed,
+};
+use pgstudio_result_grid::{grid, text};
 
 /// O que o usuário pediu no painel.
 #[derive(Default)]
@@ -47,7 +49,10 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
     });
     ui.separator();
     match tab {
-        Tab::Results => results(ui, doc, &exec.results),
+        Tab::Results => match exec.mode {
+            ResultsMode::Grid => grids(ui, doc, &mut exec.results),
+            ResultsMode::Text => text_results(ui, doc, &mut exec.results),
+        },
         Tab::Messages => messages(ui, doc, exec, &mut action),
     }
     action
@@ -106,178 +111,79 @@ fn messages(ui: &mut egui::Ui, doc: u32, exec: &Execution, action: &mut Action) 
         });
 }
 
-fn results(ui: &mut egui::Ui, doc: u32, sets: &[ResultSet]) {
+/// Id da grade do resultado `index` do documento `doc`.
+pub fn grid_id(doc: u32, index: usize) -> egui::Id {
+    egui::Id::new(("result_grid", doc, index))
+}
+
+/// Uma grade por resultado, dividindo a altura entre elas.
+fn grids(ui: &mut egui::Ui, doc: u32, sets: &mut [ResultSet]) {
     let gap = ui.spacing().item_spacing.y;
-    // Cada tabela ganha uma fatia da altura; a moldura ocupa uns pixels a
-    // mais que a área pedida.
-    let frame = 4.0;
     let n = sets.len() as f32;
-    let each = ((ui.available_height() - (gap + frame) * n) / n).max(80.0);
+    let each = ((ui.available_height() - gap * (n - 1.0)) / n).max(90.0);
     egui::ScrollArea::vertical()
         .id_salt(("results", doc))
         .auto_shrink(false)
         .show(ui, |ui| {
-            for (i, set) in sets.iter().enumerate() {
-                ui.allocate_ui(egui::vec2(ui.available_width(), each), |ui| {
-                    table(ui, egui::Id::new(("result", doc, i)), set);
+            for (i, set) in sets.iter_mut().enumerate() {
+                let size = egui::vec2(ui.available_width(), each);
+                ui.allocate_ui(size, |ui| {
+                    ui.set_min_size(size);
+                    let (store, state) = set.parts();
+                    let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
+                    grid::show(ui, grid_id(doc, i), &mut store, state);
                 });
             }
         });
 }
 
-const MAX_COLUMN_CHARS: usize = 40;
+/// Linhas do modo texto de um resultado: cabeçalho, traços, linhas, uma
+/// em branco, "(n rows affected)" e outra em branco.
+fn text_lines(set: &ResultSet) -> u64 {
+    set.len() + 5
+}
 
-/// Tabela de um resultado: número da linha, cabeçalho e células, desenhando
-/// só as linhas visíveis.
-fn table(ui: &mut egui::Ui, id: egui::Id, set: &ResultSet) {
-    let font = FontId::monospace(12.0);
-    let char_w = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
-    let row_h = ui.fonts_mut(|f| f.row_height(&font)) + 4.0;
-    let pad = 8.0;
-    let number_w = char_w * set.rows.len().max(1).to_string().len().max(2) as f32 + pad * 2.0;
-    let widths: Vec<f32> = set
-        .columns
-        .iter()
-        .enumerate()
-        .map(|(c, name)| {
-            let longest = set
-                .rows
-                .iter()
-                .take(200)
-                .map(|r| {
-                    r.get(c)
-                        .and_then(|v| v.as_deref())
-                        .map_or(4, |v| v.chars().count())
-                })
-                .chain([name.chars().count()])
-                .max()
-                .unwrap_or(4)
-                .min(MAX_COLUMN_CHARS);
-            char_w * longest.max(4) as f32 + pad * 2.0
-        })
-        .collect();
-    let total_w = number_w + widths.iter().sum::<f32>();
-    let visuals = ui.visuals().clone();
-    let grid = visuals.widgets.noninteractive.bg_stroke.color;
-    let header_bg = visuals.faint_bg_color;
-    let null_bg = Color32::from_rgba_unmultiplied(255, 255, 0xC0, 90);
-
-    egui::Frame::new()
-        .stroke(visuals.widgets.noninteractive.bg_stroke)
-        .show(ui, |ui| {
-            egui::ScrollArea::horizontal()
-                .id_salt(id.with("h"))
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    // Cabeçalho.
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(total_w, row_h), egui::Sense::hover());
-                    let painter = ui.painter_at(rect);
-                    painter.rect_filled(rect, 0.0, header_bg);
-                    let mut x = rect.left() + number_w;
-                    for (name, w) in set.columns.iter().zip(&widths) {
-                        let cell = egui::Rect::from_min_size(
-                            egui::pos2(x, rect.top()),
-                            egui::vec2(*w, row_h),
-                        );
-                        cell_text(
-                            &painter,
-                            cell,
-                            name,
-                            &font,
-                            visuals.strong_text_color(),
-                            pad,
-                        );
-                        painter.vline(x, rect.y_range(), egui::Stroke::new(1.0, grid));
-                        x += w;
+/// "Results to Text": cada resultado como texto de largura fixa, como no
+/// SSMS. Só as linhas visíveis são montadas.
+fn text_results(ui: &mut egui::Ui, doc: u32, sets: &mut [ResultSet]) {
+    for set in sets.iter_mut() {
+        if set.text_widths.is_none() {
+            let widths = text::widths(&mut set.store());
+            set.text_widths = Some(widths);
+        }
+    }
+    let total: u64 = sets.iter().map(text_lines).sum();
+    let font = egui::FontId::monospace(12.0);
+    let row_h = ui.fonts_mut(|f| f.row_height(&font));
+    let color = ui.visuals().text_color();
+    egui::ScrollArea::both()
+        .id_salt(("results_text", doc))
+        .auto_shrink(false)
+        .show_rows(ui, row_h, total as usize, |ui, range| {
+            for line in range {
+                let mut k = line as u64;
+                let mut text = String::new();
+                for set in sets.iter_mut() {
+                    let n = text_lines(set);
+                    if k >= n {
+                        k -= n;
+                        continue;
                     }
-                    egui::ScrollArea::vertical()
-                        .id_salt(id.with("v"))
-                        .auto_shrink([false, false])
-                        .show_rows(ui, row_h, set.rows.len(), |ui, range| {
-                            for r in range {
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(total_w, row_h),
-                                    egui::Sense::hover(),
-                                );
-                                let painter = ui.painter_at(rect);
-                                let num = egui::Rect::from_min_size(
-                                    rect.min,
-                                    egui::vec2(number_w, row_h),
-                                );
-                                painter.rect_filled(num, 0.0, header_bg);
-                                cell_text(
-                                    &painter,
-                                    num,
-                                    &(r + 1).to_string(),
-                                    &font,
-                                    visuals.weak_text_color(),
-                                    pad,
-                                );
-                                let mut x = rect.left() + number_w;
-                                for (c, w) in widths.iter().enumerate() {
-                                    let cell = egui::Rect::from_min_size(
-                                        egui::pos2(x, rect.top()),
-                                        egui::vec2(*w, row_h),
-                                    );
-                                    match set.rows[r].get(c).and_then(|v| v.as_deref()) {
-                                        Some(v) => cell_text(
-                                            &painter,
-                                            cell,
-                                            v,
-                                            &font,
-                                            visuals.text_color(),
-                                            pad,
-                                        ),
-                                        None => {
-                                            painter.rect_filled(cell.shrink(1.0), 0.0, null_bg);
-                                            cell_text(
-                                                &painter,
-                                                cell,
-                                                "NULL",
-                                                &font,
-                                                visuals.weak_text_color(),
-                                                pad,
-                                            );
-                                        }
-                                    }
-                                    painter.vline(x, rect.y_range(), egui::Stroke::new(1.0, grid));
-                                    x += w;
-                                }
-                                painter.hline(
-                                    rect.x_range(),
-                                    rect.bottom() - 0.5,
-                                    egui::Stroke::new(1.0, grid),
-                                );
-                            }
-                        });
-                });
-        });
-}
-
-/// Texto de uma célula, cortado na largura (com `…`) e sem quebras.
-fn cell_text(
-    painter: &egui::Painter,
-    cell: egui::Rect,
-    text: &str,
-    font: &FontId,
-    color: Color32,
-    pad: f32,
-) {
-    let one_line: String = text
-        .chars()
-        .map(|c| {
-            if c == '\n' || c == '\r' || c == '\t' {
-                ' '
-            } else {
-                c
+                    let widths = set.text_widths.clone().unwrap_or_default();
+                    let rows = set.len();
+                    text = match k {
+                        0 => text::header_line(&set.store(), &widths),
+                        1 => text::rule_line(&widths),
+                        k if k < rows + 2 => text::row_line(&mut set.store(), k - 2, &widths),
+                        k if k == rows + 3 => crate::execution::rows_affected(rows),
+                        _ => String::new(),
+                    };
+                    break;
+                }
+                ui.add(
+                    egui::Label::new(egui::RichText::new(text).font(font.clone()).color(color))
+                        .extend(),
+                );
             }
-        })
-        .take(MAX_COLUMN_CHARS * 4)
-        .collect();
-    let mut job = egui::text::LayoutJob::simple_singleline(one_line, font.clone(), color);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(cell.width() - pad * 2.0);
-    let galley = painter.layout_job(job);
-    let pos = egui::pos2(cell.left() + pad, cell.center().y - galley.size().y / 2.0);
-    painter.with_clip_rect(cell).galley(pos, galley, color);
+        });
 }

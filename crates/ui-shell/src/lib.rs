@@ -566,6 +566,8 @@ impl ShellApp {
                 | GoTo
                 | Execute
                 | CancelQuery
+                | ResultsToText
+                | ResultsToGrid
         )
     }
 
@@ -667,6 +669,17 @@ impl ShellApp {
             },
             CommandId::Execute => self.execute_query(ctx),
             CommandId::CancelQuery => self.cancel_query(),
+            CommandId::ResultsToText | CommandId::ResultsToGrid => {
+                let mode = if cmd == CommandId::ResultsToText {
+                    execution::ResultsMode::Text
+                } else {
+                    execution::ResultsMode::Grid
+                };
+                match self.active_doc.and_then(|id| self.documents.get_mut(id)) {
+                    Some(doc) => doc.results_mode = mode,
+                    None => self.status = "No query window is open.".to_string(),
+                }
+            }
             CommandId::ConnectObjectExplorer => {
                 self.workspace.open(Panel::ObjectExplorer);
                 self.open_connect_dialog();
@@ -731,7 +744,9 @@ impl ShellApp {
             .get_or_insert_with(|| documents::Session(queries.0.open(&queries.1)))
             .0
             .clone();
-        doc.execution = Some(execution::Execution::start(session, sql, offset, ctx));
+        let mut exec = execution::Execution::start(session, sql, offset, ctx);
+        exec.mode = doc.results_mode;
+        doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
     }
@@ -1091,9 +1106,17 @@ impl ShellApp {
         for entry in entries {
             match *entry {
                 Entry::Item(cmd) => {
+                    let mode = self
+                        .active_doc
+                        .and_then(|id| self.documents.get(id))
+                        .map(|d| d.results_mode);
                     let selected = matches!(
                         (cmd, self.theme),
                         (CommandId::ThemeLight, Theme::Light) | (CommandId::ThemeDark, Theme::Dark)
+                    ) || matches!(
+                        (cmd, mode),
+                        (CommandId::ResultsToText, Some(execution::ResultsMode::Text))
+                            | (CommandId::ResultsToGrid, Some(execution::ResultsMode::Grid))
                     );
                     let mut button = egui::Button::new(cmd.label()).selected(selected);
                     if let Some(s) = self.keymap.shortcut_for(cmd) {

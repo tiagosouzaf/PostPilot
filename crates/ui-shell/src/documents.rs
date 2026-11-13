@@ -20,6 +20,8 @@ pub struct Document {
     pub session: Option<Session>,
     /// Última execução: resultados e mensagens.
     pub execution: Option<crate::execution::Execution>,
+    /// Grade ou texto nas próximas execuções (Ctrl+D, Ctrl+T).
+    pub results_mode: crate::execution::ResultsMode,
 }
 
 /// A conexão de uma janela de consulta.
@@ -95,6 +97,7 @@ impl Documents {
             cursor: None,
             session: None,
             execution: None,
+            results_mode: Default::default(),
         })
     }
 
@@ -119,6 +122,7 @@ impl Documents {
             cursor: None,
             session: None,
             execution: None,
+            results_mode: Default::default(),
         }))
     }
 

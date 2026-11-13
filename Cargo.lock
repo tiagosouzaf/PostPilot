@@ -2638,6 +2638,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-result-grid"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_kittest",
+]
+
+[[package]]
 name = "pgstudio-sql-editor"
 version = "0.1.0"
 dependencies = [
@@ -2656,6 +2664,7 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-docking",
  "pgstudio-object-explorer",
+ "pgstudio-result-grid",
  "pgstudio-sql-editor",
  "serde",
  "serde_json",

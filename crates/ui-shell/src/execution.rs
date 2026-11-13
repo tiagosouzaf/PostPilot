@@ -2,24 +2,84 @@
 //! sessão (em outra thread) e guarda resultados e mensagens para as abas
 //! Results e Messages, como no SSMS.
 
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
+use pgstudio_result_grid::{GridState, ResultStore};
 
-/// Linhas guardadas por resultado. A grade com buffer paginado (marco 2.5)
-/// tira este limite; até lá, o resto só é contado.
-pub const MAX_ROWS: usize = 100_000;
+/// Linhas recebidas entre um pedido de frame e outro, para a contagem na
+/// tela andar sem pedir um frame por linha.
+const REPAINT_EVERY_ROWS: u64 = 5000;
 
-/// Um resultado (um `SELECT`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Como mostrar os resultados: grade (Ctrl+D) ou texto (Ctrl+T).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResultsMode {
+    #[default]
+    Grid,
+    Text,
+}
+
+/// Um resultado (um `SELECT`): as linhas no buffer paginado e o estado da
+/// grade.
+///
+/// As linhas vão direto da thread do banco para o buffer, sem passar por um
+/// canal: assim a memória fica limitada pelo orçamento do buffer mesmo
+/// quando o servidor manda linhas mais rápido do que a tela desenha.
 pub struct ResultSet {
-    pub columns: Vec<String>,
-    /// Até [`MAX_ROWS`] linhas, como texto; `None` é NULL.
-    pub rows: Vec<Vec<Option<String>>>,
-    /// Linhas recebidas, inclusive as que passaram do limite.
-    pub total: u64,
+    store: Arc<Mutex<ResultStore>>,
+    pub grid: GridState,
+    /// Larguras do modo texto, calculadas na primeira vez que ele aparece.
+    pub text_widths: Option<Vec<usize>>,
+    /// Posição da rolagem do modo texto, em linhas.
+    pub text_top: f64,
+}
+
+impl ResultSet {
+    fn new(store: Arc<Mutex<ResultStore>>) -> Self {
+        ResultSet {
+            store,
+            grid: GridState::default(),
+            text_widths: None,
+            text_top: 0.0,
+        }
+    }
+
+    /// O buffer, travado enquanto o guarda existir.
+    pub fn store(&self) -> MutexGuard<'_, ResultStore> {
+        self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// O buffer e o estado da grade, para desenhar.
+    pub fn parts(&mut self) -> (&Mutex<ResultStore>, &mut GridState) {
+        (&self.store, &mut self.grid)
+    }
+
+    pub fn columns(&self) -> Vec<String> {
+        self.store().columns().to_vec()
+    }
+
+    /// Linhas recebidas até agora.
+    pub fn len(&self) -> u64 {
+        self.store().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.store().is_empty()
+    }
+
+    /// Uma linha, como texto.
+    pub fn row(&self, row: u64) -> Vec<Option<String>> {
+        self.store().row(row)
+    }
+}
+
+/// O que a thread do banco manda para a interface.
+enum Incoming {
+    Event(QueryEvent),
+    /// Começou um resultado; as linhas vão direto para este buffer.
+    Result(Arc<Mutex<ResultStore>>),
 }
 
 /// Uma linha da aba Messages.
@@ -69,7 +129,7 @@ pub enum Tab {
 
 /// Uma execução, do F5 até o fim.
 pub struct Execution {
-    events: mpsc::Receiver<QueryEvent>,
+    events: mpsc::Receiver<Incoming>,
     session: Arc<dyn QuerySession>,
     /// O SQL enviado e onde ele começa no documento (em caracteres), para
     /// traduzir a posição dos erros.
@@ -86,6 +146,8 @@ pub struct Execution {
     pending_error: Option<usize>,
     pub tab: Tab,
     pub database: String,
+    /// Grade ou texto, escolhido antes de executar.
+    pub mode: ResultsMode,
 }
 
 impl std::fmt::Debug for Execution {
@@ -109,11 +171,37 @@ impl Execution {
     ) -> Self {
         let (tx, events) = mpsc::channel();
         let ctx = ctx.clone();
+        let mut current: Option<Arc<Mutex<ResultStore>>> = None;
+        let mut since_repaint = 0;
         session.execute(
             sql.clone(),
-            Box::new(move |e| {
-                let _ = tx.send(e);
-                ctx.request_repaint();
+            Box::new(move |e| match e {
+                QueryEvent::Row(row) => {
+                    if let Some(store) = &current {
+                        store.lock().unwrap_or_else(|e| e.into_inner()).push(&row);
+                        since_repaint += 1;
+                        if since_repaint == REPAINT_EVERY_ROWS {
+                            since_repaint = 0;
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+                QueryEvent::Columns(columns) => {
+                    let store = Arc::new(Mutex::new(ResultStore::new(columns)));
+                    current = Some(store.clone());
+                    let _ = tx.send(Incoming::Result(store));
+                    ctx.request_repaint();
+                }
+                other => {
+                    if matches!(
+                        other,
+                        QueryEvent::CommandComplete { .. } | QueryEvent::Error(_)
+                    ) {
+                        current = None;
+                    }
+                    let _ = tx.send(Incoming::Event(other));
+                    ctx.request_repaint();
+                }
             }),
         );
         Execution {
@@ -130,6 +218,7 @@ impl Execution {
             outcome: Outcome::Running,
             pending_error: None,
             tab: Tab::Results,
+            mode: ResultsMode::Grid,
         }
     }
 
@@ -155,7 +244,7 @@ impl Execution {
 
     /// Linhas recebidas em todos os resultados.
     pub fn total_rows(&self) -> u64 {
-        self.results.iter().map(|r| r.total).sum()
+        self.results.iter().map(ResultSet::len).sum()
     }
 
     /// Posição (no documento) do erro a mostrar no editor, uma vez só.
@@ -167,42 +256,36 @@ impl Execution {
     /// termina.
     pub fn poll(&mut self) -> bool {
         let mut finished = false;
-        while let Ok(event) = self.events.try_recv() {
-            finished |= self.apply(event);
+        while let Ok(incoming) = self.events.try_recv() {
+            match incoming {
+                Incoming::Result(store) => {
+                    self.results.push(ResultSet::new(store));
+                    self.open_result = true;
+                }
+                Incoming::Event(event) => finished |= self.apply(event),
+            }
         }
         finished
     }
 
     fn apply(&mut self, event: QueryEvent) -> bool {
         match event {
-            QueryEvent::Columns(columns) => {
-                self.results.push(ResultSet {
-                    columns,
-                    ..Default::default()
-                });
-                self.open_result = true;
-            }
-            QueryEvent::Row(row) => {
-                if let Some(set) = self.results.last_mut().filter(|_| self.open_result) {
-                    set.total += 1;
-                    if set.rows.len() < MAX_ROWS {
-                        set.rows.push(row);
-                    }
-                }
-            }
+            // Colunas e linhas vão direto para o buffer (ver `start`).
+            QueryEvent::Columns(_) | QueryEvent::Row(_) => {}
             QueryEvent::CommandComplete { rows } => {
                 let had_result = std::mem::take(&mut self.open_result);
                 if had_result || rows > 0 {
                     self.info(rows_affected(rows));
                 }
-                let truncated = had_result
-                    && self
-                        .results
-                        .last()
-                        .is_some_and(|s| s.total > s.rows.len() as u64);
-                if truncated {
+                // Disco cheio ou sem pasta temporária: tudo fica em memória.
+                let spill_error = self
+                    .results
+                    .last()
+                    .filter(|_| had_result)
+                    .and_then(|s| s.store().spill_error().map(str::to_string));
+                if let Some(e) = spill_error {
                     self.info(format!(
-                        "Only the first {MAX_ROWS} rows are shown in Results."
+                        "Warning: the results could not be paged to disk ({e}); they are kept in memory."
                     ));
                 }
             }
@@ -286,7 +369,8 @@ fn describe(m: &ServerMessage) -> String {
     text
 }
 
-fn rows_affected(rows: u64) -> String {
+/// `(n rows affected)`, como no SSMS.
+pub fn rows_affected(rows: u64) -> String {
     if rows == 1 {
         "(1 row affected)".into()
     } else {

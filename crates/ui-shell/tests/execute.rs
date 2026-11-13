@@ -60,6 +60,21 @@ impl QuerySession for FakeSession {
                     ..Default::default()
                 }));
             }
+            if let Some(n) = sql
+                .strip_prefix("rows ")
+                .and_then(|n| n.trim().parse::<u64>().ok())
+            {
+                sink(QueryEvent::Columns(vec!["n".into(), "label".into()]));
+                for i in 0..n {
+                    sink(QueryEvent::Row(vec![
+                        Some(i.to_string()),
+                        Some(format!("row {i}")),
+                    ]));
+                }
+                sink(QueryEvent::CommandComplete { rows: n });
+                sink(QueryEvent::Finished { canceled: false });
+                return;
+            }
             if let Some(b) = sql.find("bad") {
                 sink(QueryEvent::Error(ServerMessage {
                     severity: "ERROR".into(),
@@ -192,8 +207,8 @@ fn f5_runs_the_whole_query_and_shows_results() {
     assert_eq!(exec.outcome(), Outcome::Succeeded);
     assert_eq!(exec.database, "loja");
     assert_eq!(exec.results.len(), 1);
-    assert_eq!(exec.results[0].columns, ["sql", "nothing"]);
-    assert_eq!(exec.results[0].rows[0][1], None);
+    assert_eq!(exec.results[0].columns(), ["sql", "nothing"]);
+    assert_eq!(exec.results[0].len(), 1);
     assert_eq!(exec.tab, Tab::Results);
     assert_eq!(harness.state().status(), "Query executed successfully.");
     harness.get(by().label_contains("Results"));
@@ -362,4 +377,62 @@ fn executing_without_a_connection_opens_the_connect_dialog() {
             .is_none()
     );
     assert!(log.lock().unwrap().is_empty());
+}
+
+#[test]
+fn ctrl_t_shows_the_next_results_as_text_and_ctrl_d_goes_back() {
+    let (mut harness, _) = harness_with(true);
+    let id = query_with(&mut harness, "select 1");
+    harness.key_press_modifiers(Modifiers::CTRL, Key::T);
+    harness.run();
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    let exec = execution(&harness, id);
+    assert_eq!(exec.mode, pgstudio_ui_shell::execution::ResultsMode::Text);
+    harness.get_by_label("sql      nothing");
+    harness.get_by_label("-------- -------");
+    harness.get_by_label("select 1 NULL");
+    harness.get_by_label("(1 row affected)");
+
+    harness.key_press_modifiers(Modifiers::CTRL, Key::D);
+    harness.run();
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    assert_eq!(
+        execution(&harness, id).mode,
+        pgstudio_ui_shell::execution::ResultsMode::Grid
+    );
+}
+
+#[test]
+fn a_large_result_arrives_over_several_frames_without_blocking() {
+    let (mut harness, _) = harness_with(true);
+    let id = query_with(&mut harness, "rows 300000");
+    harness.key_press(Key::F5);
+    let start = Instant::now();
+    let mut frames = 0;
+    let mut worst = Duration::ZERO;
+    loop {
+        let t = Instant::now();
+        harness.step();
+        worst = worst.max(t.elapsed());
+        frames += 1;
+        let exec = execution(&harness, id);
+        if !exec.is_running() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(60), "never finished");
+    }
+    let exec = execution(&harness, id);
+    assert_eq!(exec.results[0].len(), 300_000);
+    assert_eq!(exec.total_rows(), 300_000);
+    eprintln!("300 mil linhas em {frames} frames, pior frame {worst:?}");
+    assert!(worst < Duration::from_millis(500), "{worst:?}");
+    assert!(frames > 1, "rows should be spread over frames");
+    let doc = harness.state_mut().documents_mut().get_mut(id).unwrap();
+    let set = &mut doc.execution.as_mut().unwrap().results[0];
+    assert_eq!(
+        set.row(299_999),
+        vec![Some("299999".into()), Some("row 299999".into())]
+    );
 }
