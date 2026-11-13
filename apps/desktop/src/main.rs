@@ -5,6 +5,8 @@
 //! Variáveis de ambiente opcionais:
 //! - `PGSTUDIO_SCREENSHOT=arquivo.png`: salva um PNG da janela depois dos
 //!   primeiros frames e fecha. Usado pelo CI.
+//! - `PGSTUDIO_BENCH=1`: modo de medição usado por `cargo xtask bench`; avisa
+//!   quando o primeiro frame aparece e ignora o layout salvo.
 //! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
@@ -27,10 +29,12 @@ use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 
 fn main() -> eframe::Result {
     let screenshot: Option<PathBuf> = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
-    // O screenshot do CI usa sempre o layout padrão.
-    let layout = match screenshot {
-        Some(_) => None,
-        None => layout_path().map(LayoutStore::open),
+    let bench = std::env::var_os("PGSTUDIO_BENCH").is_some();
+    // O screenshot e a medição usam sempre o layout padrão.
+    let layout = if screenshot.is_some() || bench {
+        None
+    } else {
+        layout_path().map(LayoutStore::open)
     };
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(pgstudio_core::window_title())
@@ -73,6 +77,9 @@ fn main() -> eframe::Result {
             }
             for file in &files {
                 app.open_file(file);
+            }
+            if bench {
+                app = app.with_bench();
             }
             if let Some(path) = screenshot {
                 app = app.with_screenshot(path);

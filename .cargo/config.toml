@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask bench`: tarefas de desenvolvimento escritas em Rust (xtask/).
+xtask = "run --quiet --package xtask --"

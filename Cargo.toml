@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["apps/desktop", "crates/core", "crates/ui-shell", "crates/docking", "crates/object-explorer"]
+members = [
+    "apps/desktop",
+    "crates/core",
+    "crates/ui-shell",
+    "crates/docking",
+    "crates/object-explorer",
+    "xtask",
+]
 exclude = ["spikes"]
 
 [workspace.package]
