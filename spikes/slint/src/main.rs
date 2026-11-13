@@ -259,7 +259,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     _ => {}
                 })
-                .expect("rendering notifier");
+                .unwrap_or_else(|e| {
+                    // o renderizador por software não oferece o notifier
+                    println!("rendering_notifier=indisponivel ({e:?})");
+                    std::process::exit(0);
+                });
         }
         // expande servidor -> bancos -> schemas -> Tables, como no spike egui
         let weak = app.as_weak();

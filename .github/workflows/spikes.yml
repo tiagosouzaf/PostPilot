@@ -60,11 +60,18 @@ jobs:
         run: |
           $env:SPIKE_BENCH = "1"
           $env:SPIKE_IDLE_SECS = "15"
-          foreach ($i in 1..3) {
-            $p = Start-Process -FilePath ".\target\release\spike-${{ matrix.toolkit }}.exe" `
-              -RedirectStandardOutput "run$i.txt" -RedirectStandardError "err$i.txt" -PassThru -NoNewWindow
-            if (-not $p.WaitForExit(150000)) { $p.Kill(); "run $i excedeu o tempo" | Tee-Object -Append bench.txt }
-            (Get-Content "run$i.txt" | Select-String '=') -join ' ' | Tee-Object -Append bench.txt
+          # Slint: o padrão (femtovg) usa OpenGL, que o runner não tem; testa também o software.
+          $backends = if ("${{ matrix.toolkit }}" -eq "slint") { @("", "winit-software") } else { @("") }
+          foreach ($b in $backends) {
+            $env:SLINT_BACKEND = $b
+            "backend=$(if ($b) { $b } else { 'padrao' })" | Tee-Object -Append bench.txt
+            foreach ($i in 1..3) {
+              $p = Start-Process -FilePath ".\target\release\spike-${{ matrix.toolkit }}.exe" `
+                -RedirectStandardOutput "run$i.txt" -RedirectStandardError "err$i.txt" -PassThru -NoNewWindow
+              if (-not $p.WaitForExit(150000)) { $p.Kill(); "run $i excedeu o tempo" | Tee-Object -Append bench.txt }
+              "exit=$($p.ExitCode) " + ((Get-Content "run$i.txt" | Select-String '=') -join ' ') | Tee-Object -Append bench.txt
+              Get-Content "err$i.txt" -TotalCount 5 | Tee-Object -Append bench.txt
+            }
           }
       - name: Resumo
         if: always()
