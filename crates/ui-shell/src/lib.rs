@@ -19,6 +19,9 @@ use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
 use menus::{Entry, MENUS, TOOLBAR, Tool};
 use panels::Panel;
 use pgstudio_docking::Workspace;
+use pgstudio_object_explorer::ObjectExplorer;
+use pgstudio_object_explorer::fake::FakeProvider;
+use std::sync::Arc;
 
 const READY: &str = "Ready";
 
@@ -32,7 +35,10 @@ pub struct ShellApp {
     last_command: Option<CommandId>,
     workspace: Workspace<Panel>,
     output: Vec<String>,
+    explorer: ObjectExplorer,
     screenshot: Option<Screenshot>,
+    /// Nós a expandir assim que carregarem (demonstração e screenshots).
+    pending_expand: std::collections::VecDeque<pgstudio_core::metadata::NodeId>,
 }
 
 struct Screenshot {
@@ -52,7 +58,9 @@ impl Default for ShellApp {
             last_command: None,
             workspace: panels::default_layout(),
             output: Vec::new(),
+            explorer: ObjectExplorer::default(),
             screenshot: None,
+            pending_expand: Default::default(),
         }
     }
 }
@@ -61,9 +69,26 @@ impl ShellApp {
     /// Cria o aplicativo, instala a fonte de ícones e aplica o tema padrão.
     pub fn new(ctx: &egui::Context) -> Self {
         install_fonts(ctx);
-        let app = Self::default();
+        let mut app = Self::default();
         theme::apply(ctx, app.theme);
+        app.connect_demo();
         app
+    }
+
+    /// Conecta o Object Explorer ao servidor de demonstração (provedor falso),
+    /// até a Fase 2 trazer conexões reais.
+    pub fn connect_demo(&mut self) {
+        self.explorer.connect(Arc::new(FakeProvider::default()));
+    }
+
+    /// Object Explorer, para testes e para a casca.
+    pub fn explorer(&self) -> &ObjectExplorer {
+        &self.explorer
+    }
+
+    /// Object Explorer, mutável.
+    pub fn explorer_mut(&mut self) -> &mut ObjectExplorer {
+        &mut self.explorer
     }
 
     /// Usa outro keymap (ex.: o padrão com o arquivo do usuário aplicado).
@@ -76,6 +101,26 @@ impl ShellApp {
     pub fn with_status(mut self, status: impl Into<String>) -> Self {
         self.status = status.into();
         self
+    }
+
+    /// Expande estes nós do Object Explorer, um por vez, à medida que
+    /// carregam. Usado para screenshots e demonstrações.
+    pub fn with_expanded(mut self, paths: impl IntoIterator<Item = String>) -> Self {
+        self.pending_expand = paths
+            .into_iter()
+            .map(pgstudio_core::metadata::NodeId)
+            .collect();
+        self
+    }
+
+    fn expand_step(&mut self) {
+        if self.explorer.is_loading() {
+            return;
+        }
+        if let Some(id) = self.pending_expand.pop_front() {
+            self.explorer.select(&id);
+            self.explorer.expand(&id);
+        }
     }
 
     /// Salva um PNG da janela em `path` assim que ela estiver desenhada e fecha
@@ -154,6 +199,8 @@ impl ShellApp {
                 | PropertiesWindow
                 | Output
                 | ResetWindowLayout
+                | ConnectObjectExplorer
+                | DisconnectObjectExplorer
         )
     }
 
@@ -174,6 +221,13 @@ impl ShellApp {
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => self.workspace = panels::default_layout(),
+            CommandId::ConnectObjectExplorer => {
+                self.workspace.open(Panel::ObjectExplorer);
+                if !self.explorer.is_connected() {
+                    self.connect_demo();
+                }
+            }
+            CommandId::DisconnectObjectExplorer => self.explorer.disconnect(),
             _ => {
                 self.status = format!("\"{}\" is not available yet.", cmd.label());
             }
@@ -213,8 +267,11 @@ impl ShellApp {
             .show(ui, |ui| {
                 let mut viewer = panels::Viewer {
                     output: &self.output,
+                    explorer: &mut self.explorer,
+                    commands: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
+                commands.extend(viewer.commands);
             });
 
         if self.about_open {
@@ -347,9 +404,10 @@ impl ShellApp {
         let Some(shot) = &mut self.screenshot else {
             return;
         };
-        // Espera alguns frames para o layout assentar antes de capturar.
+        // Espera o layout assentar e a árvore carregar antes de capturar.
         shot.frames += 1;
-        if !shot.requested && shot.frames >= 5 {
+        let busy = self.explorer.is_loading() || !self.pending_expand.is_empty();
+        if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
@@ -377,8 +435,12 @@ impl ShellApp {
 
 impl eframe::App for ShellApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.expand_step();
         self.show(ui);
         let ctx = ui.ctx().clone();
+        if !self.pending_expand.is_empty() {
+            ctx.request_repaint();
+        }
         self.screenshot_step(&ctx);
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "pgstudio-object-explorer"
+description = "Object Explorer do PGStudio: árvore de objetos carregada sob demanda."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+eframe.workspace = true
+egui-phosphor.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true

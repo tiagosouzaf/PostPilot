@@ -4,7 +4,9 @@
 //! 1.5 e as janelas de consulta no 1.6.
 
 use eframe::egui;
+use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
+use pgstudio_object_explorer::{Event, ObjectExplorer};
 
 /// Um painel encaixável.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,10 +47,14 @@ pub fn default_layout() -> Workspace<Panel> {
     )
 }
 
-/// Dados que os painéis mostram.
+/// Dados que os painéis mostram e comandos que eles pedem.
 pub struct Viewer<'a> {
     /// Linhas do painel Output.
     pub output: &'a [String],
+    /// Árvore do Object Explorer.
+    pub explorer: &'a mut ObjectExplorer,
+    /// Comandos pedidos pelos painéis neste frame.
+    pub commands: Vec<CommandId>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -60,17 +66,55 @@ impl PaneViewer<Panel> for Viewer<'_> {
         match pane {
             Panel::ObjectExplorer => {
                 ui.horizontal(|ui| {
-                    ui.add_enabled_ui(false, |ui| {
-                        let _ =
-                            ui.button(format!("Connect {}", egui_phosphor::regular::CARET_DOWN));
-                    });
+                    let connected = self.explorer.is_connected();
+                    let connect = egui::Button::new(format!(
+                        "{} Connect",
+                        egui_phosphor::regular::PLUGS_CONNECTED
+                    ));
+                    if ui
+                        .add_enabled(!connected, connect)
+                        .on_hover_text("Connect Object Explorer")
+                        .clicked()
+                    {
+                        self.commands.push(CommandId::ConnectObjectExplorer);
+                    }
+                    let disconnect = egui::Button::new(egui_phosphor::regular::PLUGS);
+                    if ui
+                        .add_enabled(connected, disconnect)
+                        .on_hover_text("Disconnect")
+                        .clicked()
+                    {
+                        self.commands.push(CommandId::DisconnectObjectExplorer);
+                    }
                 });
                 ui.separator();
-                ui.weak("Not connected.");
+                for event in self.explorer.show(ui) {
+                    match event {
+                        Event::NewQuery(_) => self.commands.push(CommandId::NewQuery),
+                    }
+                }
             }
-            Panel::Properties => {
-                ui.weak("No object selected.");
-            }
+            Panel::Properties => match self.explorer.selected() {
+                Some(node) => {
+                    egui::Grid::new("properties")
+                        .num_columns(2)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.strong("Name");
+                            ui.label(&node.name);
+                            ui.end_row();
+                            ui.strong("Type");
+                            ui.label(node.kind.label());
+                            ui.end_row();
+                            ui.strong("Path");
+                            ui.label(node.id.to_string());
+                            ui.end_row();
+                        });
+                }
+                None => {
+                    ui.weak("No object selected.");
+                }
+            },
             Panel::Output => {
                 ui.horizontal(|ui| {
                     ui.label("Show output from:");

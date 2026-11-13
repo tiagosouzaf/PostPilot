@@ -4,6 +4,8 @@
 //! - `PGSTUDIO_SCREENSHOT=arquivo.png`: salva um PNG da janela depois dos
 //!   primeiros frames e fecha. Usado pelo CI.
 //! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
+//! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
+//!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PGStudio/keymap.txt`.
 
@@ -37,6 +39,9 @@ fn main() -> eframe::Result {
                 app = app.with_status(status);
             }
             app.set_theme(&cc.egui_ctx, theme);
+            if let Ok(paths) = std::env::var("PGSTUDIO_EXPAND") {
+                app = app.with_expanded(paths.split(';').map(str::to_string));
+            }
             if let Some(path) = screenshot {
                 app = app.with_screenshot(path);
             }

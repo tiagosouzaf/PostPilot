@@ -143,7 +143,7 @@ fn default_layout_has_tool_windows() {
     // conferimos o conteúdo de cada painel.
     assert!(
         harness
-            .query_all_by_value("Not connected.")
+            .query_all_by_value("Not connected. Use File > Connect Object Explorer.")
             .next()
             .is_some()
     );
@@ -245,4 +245,86 @@ fn output_logs_executed_commands() {
         harness.state().output().last().map(String::as_str),
         Some("> Execute (not available yet)")
     );
+}
+
+use pgstudio_core::metadata::NodeId;
+use pgstudio_object_explorer::fake::{FakeProvider, SERVER_NAME};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Shell conectado a um provedor falso sem atraso, com a árvore expandida
+/// nos caminhos pedidos.
+fn connected(paths: &[&str]) -> Harness<'static, ShellApp> {
+    let mut harness = harness();
+    let oe = harness.state_mut().explorer_mut();
+    oe.connect(Arc::new(FakeProvider::new(Duration::ZERO)));
+    assert!(oe.wait_idle(Duration::from_secs(5)));
+    for p in paths {
+        oe.expand(&NodeId((*p).into()));
+        assert!(oe.wait_idle(Duration::from_secs(5)), "{p}");
+    }
+    harness.run();
+    harness
+}
+
+#[test]
+fn file_menu_connects_and_disconnects_object_explorer() {
+    let mut harness = harness();
+    assert!(!harness.state().explorer().is_connected());
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Connect Object Explorer…").click();
+    harness.run();
+    assert!(harness.state().explorer().is_connected());
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Disconnect Object Explorer").click();
+    harness.run();
+    assert!(!harness.state().explorer().is_connected());
+}
+
+#[test]
+fn clicking_a_node_shows_it_in_properties() {
+    let mut harness = connected(&[]);
+    harness.get(by().label_contains(SERVER_NAME)).click();
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .explorer()
+            .selected()
+            .map(|n| n.name.as_str()),
+        Some(SERVER_NAME)
+    );
+    assert!(harness.query_all_by_value("Server").next().is_some());
+}
+
+#[test]
+fn expand_arrow_loads_children() {
+    let mut harness = connected(&[]);
+    // Só o servidor está na árvore, então só há uma seta.
+    harness
+        .get_by_label(egui_phosphor::regular::CARET_RIGHT)
+        .click();
+    harness.run();
+    let oe = harness.state_mut().explorer_mut();
+    assert!(oe.wait_idle(Duration::from_secs(5)));
+    harness.run();
+    harness.get(by().label_contains("Databases"));
+}
+
+#[test]
+fn ten_thousand_tables_render_only_visible_rows() {
+    let harness = connected(&[
+        "srv",
+        "srv/Databases",
+        "srv/Databases/stress",
+        "srv/Databases/stress/Schemas",
+        "srv/Databases/stress/Schemas/public",
+        "srv/Databases/stress/Schemas/public/Tables",
+    ]);
+    let drawn = harness
+        .query_all(by().label_contains("public.table_"))
+        .count();
+    assert!(drawn > 0 && drawn < 200, "{drawn} linhas desenhadas");
 }
