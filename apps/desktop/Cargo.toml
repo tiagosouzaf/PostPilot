@@ -1,0 +1,18 @@
+[package]
+name = "pgstudio-desktop"
+description = "Aplicativo desktop do PGStudio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pgstudio"
+path = "src/main.rs"
+
+[dependencies]
+pgstudio-core.workspace = true
+
+[lints]
+workspace = true
