@@ -291,8 +291,8 @@ pub fn show(
     // Ajuste de largura pelas bordas do cabeçalho.
     let mut resizing = false;
     let mut x = cells_x - state.left;
-    for c in 0..ncols {
-        x += state.widths[c];
+    for (c, width) in state.widths.iter_mut().enumerate() {
+        x += *width;
         if x < cells_x || x > header.right() {
             continue;
         }
@@ -303,7 +303,7 @@ pub fn show(
             ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
         }
         if r.dragged() {
-            state.widths[c] = (state.widths[c] + r.drag_delta().x).max(24.0);
+            *width = (*width + r.drag_delta().x).max(24.0);
             resizing = true;
         }
     }
@@ -561,8 +561,7 @@ fn paint(
     );
     let mut x = cells_x - state.left;
     let selected_cols = state.selection.map(|s| s.cols(ncols));
-    for c in 0..ncols {
-        let w = state.widths[c];
+    for (c, &w) in state.widths.iter().enumerate() {
         let cell = Rect::from_min_size(egui::pos2(x, header.top()), vec2(w, header.height()));
         if selected_cols.as_ref().is_some_and(|r| r.contains(&c)) {
             cells.rect_filled(cell, 0.0, sel_bg);
@@ -591,8 +590,7 @@ fn paint(
         }
         cell_text(&numbers, num, &(r + 1).to_string(), &m.font, weak);
         let mut x = cells_x - state.left;
-        for c in 0..ncols {
-            let w = state.widths[c];
+        for (c, &w) in state.widths.iter().enumerate() {
             if x + w >= cells_x && x <= header.right() {
                 let cell = Rect::from_min_size(egui::pos2(x, y), vec2(w, m.row_h));
                 let here = Cell { row: r, col: c };
