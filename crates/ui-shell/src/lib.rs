@@ -554,6 +554,10 @@ impl ShellApp {
                 | SaveAll
                 | AutoHide
                 | AutoHideAll
+                | CommentSelection
+                | UncommentSelection
+                | QuickFind
+                | GoTo
         )
     }
 
@@ -646,6 +650,13 @@ impl ShellApp {
                 None => self.status = "No query window is open.".to_string(),
             },
             CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
+            CommandId::CommentSelection
+            | CommandId::UncommentSelection
+            | CommandId::QuickFind
+            | CommandId::GoTo => match self.active_doc {
+                Some(id) => self.editor_command(ctx, id, cmd),
+                None => self.status = "No query window is open.".to_string(),
+            },
             CommandId::ConnectObjectExplorer => {
                 self.workspace.open(Panel::ObjectExplorer);
                 self.open_connect_dialog();
@@ -667,6 +678,32 @@ impl ShellApp {
             " (not available yet)".to_string()
         };
         self.output.push(format!("> {}{note}", cmd.label()));
+    }
+
+    /// Comandos do editor de SQL no documento `id`.
+    fn editor_command(&mut self, ctx: &egui::Context, id: u32, cmd: CommandId) {
+        let Some(doc) = self.documents.get_mut(id) else {
+            return;
+        };
+        let editor = panels::editor_id(id);
+        match cmd {
+            CommandId::CommentSelection | CommandId::UncommentSelection => {
+                pgstudio_sql_editor::comment_selection(
+                    ctx,
+                    editor,
+                    &mut doc.text,
+                    cmd == CommandId::UncommentSelection,
+                );
+                doc.editor.focus_editor();
+            }
+            CommandId::QuickFind => {
+                let selected = pgstudio_sql_editor::selected_text(ctx, editor, &doc.text);
+                doc.editor.open_find(selected);
+            }
+            CommandId::GoTo => doc.editor.open_goto(),
+            _ => {}
+        }
+        self.workspace.open(Panel::Query(id));
     }
 
     /// Salva o documento; `ask` pede o arquivo mesmo se já tiver um.
@@ -839,6 +876,10 @@ impl ShellApp {
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
                     close_requests: Vec::new(),
+                    editor_colors: match self.theme {
+                        Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
+                        Theme::Dark => pgstudio_sql_editor::Colors::DARK,
+                    },
                 };
                 self.workspace.show(ui, &mut viewer);
                 commands.extend(viewer.commands);
@@ -990,12 +1031,20 @@ impl ShellApp {
     fn status_bar(&self, ui: &mut egui::Ui) {
         let color = theme::palette(self.theme).on_accent;
         let connection = self.connection_label();
+        let cursor = self
+            .active_doc
+            .and_then(|id| self.documents.get(id))
+            .and_then(|d| d.cursor);
         ui.horizontal(|ui| {
             ui.label(RichText::new(&self.status).color(color));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
                 ui.label(RichText::new(connection).color(color));
+                if let Some((line, col)) = cursor {
+                    ui.separator();
+                    ui.label(RichText::new(format!("Ln {line}   Col {col}")).color(color));
+                }
             });
         });
     }

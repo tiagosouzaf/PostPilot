@@ -1,0 +1,17 @@
+[package]
+name = "pgstudio-sql-editor"
+description = "Editor de SQL do PGStudio: realce, números de linha, comentar, buscar e ir para linha."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true

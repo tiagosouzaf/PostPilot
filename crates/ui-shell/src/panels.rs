@@ -66,6 +66,8 @@ pub struct Viewer<'a> {
     pub commands: Vec<CommandId>,
     /// Documentos com alterações cujo fechamento foi pedido pela aba.
     pub close_requests: Vec<u32>,
+    /// Cores do editor de SQL (seguem o tema).
+    pub editor_colors: pgstudio_sql_editor::Colors,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -147,18 +149,19 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let Some(doc) = self.documents.get_mut(*id) else {
                     return;
                 };
-                egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                    let editor = egui::TextEdit::multiline(&mut doc.text)
-                        .id(editor_id(*id))
-                        .code_editor()
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .min_size(ui.available_size());
-                    let response = ui.add(editor);
-                    if self.focus_editor == Some(*id) {
-                        response.request_focus();
-                    }
-                });
+                if self.focus_editor == Some(*id) {
+                    doc.editor.focus_editor();
+                }
+                let out = pgstudio_sql_editor::SqlEditor::new(
+                    &mut doc.text,
+                    &mut doc.editor,
+                    editor_id(*id),
+                )
+                .colors(self.editor_colors)
+                .show(ui);
+                if out.cursor.is_some() {
+                    doc.cursor = out.cursor;
+                }
             }
             Panel::Output => {
                 ui.horizontal(|ui| {

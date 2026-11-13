@@ -2637,6 +2637,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-sql-editor"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_kittest",
+]
+
+[[package]]
 name = "pgstudio-ui-shell"
 version = "0.1.0"
 dependencies = [
@@ -2647,6 +2655,7 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-docking",
  "pgstudio-object-explorer",
+ "pgstudio-sql-editor",
  "serde",
  "serde_json",
 ]
