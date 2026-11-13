@@ -1,0 +1,16 @@
+[package]
+name = "pgstudio-pg-metadata"
+description = "Introspecção do catálogo do PostgreSQL para o Object Explorer do PGStudio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+pgstudio-pg-client.workspace = true
+tokio-postgres.workspace = true
+
+[lints]
+workspace = true

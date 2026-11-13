@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 pgstudio-core.workspace = true
 pgstudio-ui-shell.workspace = true
-pgstudio-pg-client.workspace = true
+pgstudio-pg-metadata.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 

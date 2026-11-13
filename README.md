@@ -6,7 +6,7 @@ nem WebView.
 
 > Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
 > atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
-> arquivos `.sql`, e conecta a um PostgreSQL mostrando os bancos no Object
+> arquivos `.sql`, e conecta a um PostgreSQL mostrando o catálogo no Object
 > Explorer. Ainda não executa consultas.
 
 ## Estrutura
@@ -18,10 +18,11 @@ crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 crates/docking/   painéis encaixáveis (invólucro do egui_dock)
 crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
 crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
+crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
 ```
 
-Novas crates (`pg-metadata`, `sql-editor`, …) entram na fase do roteiro que as usa.
+Novas crates (`sql-editor`, …) entram na fase do roteiro que as usa.
 
 ## Uso
 
@@ -32,7 +33,11 @@ pgstudio [arquivo.sql ...]
 Ao abrir, o PGStudio mostra o "Connect to Server", como o SSMS: Server name
 (`host` ou `host,porta`), Login, Password, Database e Encryption (Disable,
 Prefer, Require ou Verify full, os modos `sslmode` do libpq). Depois de conectar,
-o servidor e os bancos aparecem no Object Explorer; File > Connect Object
+o Object Explorer mostra o servidor como no SSMS: Databases > banco > Schemas >
+schema > Tables, Views, Functions e Sequences, com Columns, Constraints e
+Indexes embaixo de cada tabela, e Security > Roles. Schemas do sistema
+(`pg_*`, `information_schema`) ficam de fora. F5 com o Object Explorer em foco,
+ou Refresh no menu de contexto, relê o nó selecionado. File > Connect Object
 Explorer abre o diálogo de novo. As conexões usadas ficam em
 `connections.json`, na pasta de configuração, sem a senha; a seta ao lado do
 Server name lista as recentes.
@@ -88,7 +93,7 @@ cargo fmt --all
 O CI roda formatação, clippy e testes em Linux e Windows, e o `cargo-deny` para
 licenças e vulnerabilidades.
 
-Os testes de `pg-client` que precisam de servidor usam `PGSTUDIO_TEST_HOST`,
+Os testes de `pg-client` e `pg-metadata` que precisam de servidor usam `PGSTUDIO_TEST_HOST`,
 `PGSTUDIO_TEST_PORT`, `PGSTUDIO_TEST_USER` e `PGSTUDIO_TEST_PASSWORD`; sem
 `PGSTUDIO_TEST_HOST` eles só avisam. No CI eles rodam contra o PostgreSQL 13 e 17
 em container, com TLS ligado.

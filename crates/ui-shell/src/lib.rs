@@ -561,7 +561,18 @@ impl ShellApp {
     pub fn execute(&mut self, ctx: &egui::Context, cmd: CommandId) {
         self.last_command = Some(cmd);
         self.status = READY.to_string();
+        let mut available = Self::is_available(cmd);
         match cmd {
+            // F5 no Object Explorer atualiza o nó selecionado, como no SSMS.
+            CommandId::Execute
+                if matches!(self.workspace.focused(), Some(Panel::ObjectExplorer)) =>
+            {
+                available = true;
+                match self.explorer.selected().map(|n| n.id.clone()) {
+                    Some(id) => self.explorer.refresh(&id),
+                    None => self.status = "Select a node to refresh.".to_string(),
+                }
+            }
             CommandId::Exit => {
                 let dirty = self.documents.dirty();
                 if dirty.is_empty() {
@@ -650,7 +661,7 @@ impl ShellApp {
                 self.status = format!("\"{}\" is not available yet.", cmd.label());
             }
         }
-        let note = if Self::is_available(cmd) {
+        let note = if available {
             String::new()
         } else {
             " (not available yet)".to_string()

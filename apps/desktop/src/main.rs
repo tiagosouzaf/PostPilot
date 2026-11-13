@@ -33,7 +33,7 @@ use std::sync::Arc;
 use pgstudio_core::Theme;
 use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE};
 use pgstudio_core::keymap::Keymap;
-use pgstudio_pg_client::{DbRuntime, PgConnector};
+use pgstudio_pg_metadata::{PgConnector, Runtime as DbRuntime};
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::documents::FileDialogs;

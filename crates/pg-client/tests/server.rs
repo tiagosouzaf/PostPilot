@@ -7,9 +7,8 @@
 
 use std::time::{Duration, Instant};
 
-use pgstudio_core::connection::{ConnectError, ConnectionSettings, Connector, SslMode};
-use pgstudio_core::metadata::{NodeId, NodeKind};
-use pgstudio_pg_client::{DbRuntime, PgConnector, Session};
+use pgstudio_core::connection::{ConnectError, ConnectionSettings, SslMode};
+use pgstudio_pg_client::{DbRuntime, Session};
 use tokio_postgres::SimpleQueryMessage;
 use tokio_postgres::error::SqlState;
 
@@ -151,42 +150,6 @@ fn require_and_verify_full_follow_the_server_tls() {
         let err = connect(&rt, &verify, &srv.password).err().unwrap();
         assert!(matches!(err, ConnectError::Tls(_)), "{err:?}");
     }
-}
-
-#[test]
-fn object_explorer_lists_the_databases() {
-    let Some(srv) = server() else { return };
-    let rt = runtime();
-    let name = format!("pgstudio_test_{}", std::process::id());
-    let admin = connect(&rt, &srv.settings, &srv.password).unwrap();
-    rt.block_on(admin.simple_query(&format!("DROP DATABASE IF EXISTS {name}")))
-        .unwrap();
-    rt.block_on(admin.simple_query(&format!("CREATE DATABASE {name}")))
-        .unwrap();
-
-    let connected = PgConnector::new(rt.clone())
-        .connect(&srv.settings, &srv.password)
-        .unwrap();
-    let meta = connected.metadata.clone();
-    let roots = meta.roots().unwrap();
-    assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0].kind, NodeKind::Server);
-    assert!(roots[0].name.contains("PostgreSQL"), "{}", roots[0].name);
-    let folders = meta.children(&roots[0].id).unwrap();
-    assert_eq!(folders[0].name, "Databases");
-    let dbs = meta.children(&folders[0].id).unwrap();
-    let names: Vec<_> = dbs.iter().map(|n| n.name.as_str()).collect();
-    assert!(names.contains(&"postgres"), "{names:?}");
-    assert!(names.contains(&name.as_str()), "{names:?}");
-    assert!(!names.contains(&"template0"), "{names:?}");
-    assert!(dbs.iter().all(|n| n.kind == NodeKind::Database));
-    assert!(meta.children(&NodeId("nope".into())).unwrap().is_empty());
-
-    drop(meta);
-    drop(connected);
-    rt.block_on(admin.simple_query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
-        .or_else(|_| rt.block_on(admin.simple_query(&format!("DROP DATABASE IF EXISTS {name}"))))
-        .unwrap();
 }
 
 #[test]

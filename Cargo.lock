@@ -2589,7 +2589,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "pgstudio-core",
- "pgstudio-pg-client",
+ "pgstudio-pg-metadata",
  "pgstudio-ui-shell",
  "rfd",
 ]
@@ -2625,6 +2625,15 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+]
+
+[[package]]
+name = "pgstudio-pg-metadata"
+version = "0.1.0"
+dependencies = [
+ "pgstudio-core",
+ "pgstudio-pg-client",
+ "tokio-postgres",
 ]
 
 [[package]]
