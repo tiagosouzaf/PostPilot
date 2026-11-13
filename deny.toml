@@ -5,6 +5,16 @@ all-features = true
 
 [advisories]
 version = 2
+# Crates sem manutenção só barram o CI quando são dependência direta nossa; as
+# transitivas (fontes e acessibilidade do egui) aparecem no relatório.
+unmaintained = "workspace"
+ignore = [
+    # quick-xml 0.38 chega via accesskit -> atspi -> zbus_xml, que só lê as
+    # descrições de interface D-Bus embutidas nas próprias crates, nunca
+    # entrada externa. Remover quando o egui atualizar o accesskit.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml só lê XML embutido do atspi" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml só lê XML embutido do atspi" },
+]
 
 [licenses]
 version = 2

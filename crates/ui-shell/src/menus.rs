@@ -1,31 +1,15 @@
-//! Barra de menus no estilo do SSMS, descrita como dados.
+//! Barra de menus e toolbar no estilo do SSMS, descritas como dados.
 //!
-//! Todos os textos dos menus ficam aqui, num só lugar, para facilitar a
-//! tradução depois. Itens sem [`Action`] aparecem desabilitados: eles ganham
-//! comportamento no marco 1.3, quando entra o registro de comandos.
+//! Cada item aponta para um [`CommandId`]; o texto vem do registro de
+//! comandos e o atalho exibido vem do keymap em uso.
 
-use pgstudio_core::Theme;
-
-/// O que um item de menu faz quando é clicado.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    /// Fecha o aplicativo.
-    Exit,
-    /// Troca o tema da interface.
-    SetTheme(Theme),
-    /// Abre a janela "About".
-    About,
-}
+use pgstudio_core::CommandId::{self, *};
 
 /// Uma entrada de menu.
 #[derive(Clone, Copy, Debug)]
 pub enum Entry {
-    /// Item clicável. Sem ação, aparece desabilitado.
-    Item {
-        label: &'static str,
-        shortcut: Option<&'static str>,
-        action: Option<Action>,
-    },
+    /// Item que dispara um comando.
+    Item(CommandId),
     /// Submenu com outras entradas.
     Submenu {
         label: &'static str,
@@ -42,94 +26,66 @@ pub struct Menu {
     pub entries: &'static [Entry],
 }
 
-const fn todo(label: &'static str, shortcut: Option<&'static str>) -> Entry {
-    Entry::Item {
-        label,
-        shortcut,
-        action: None,
-    }
-}
-
-const fn item(label: &'static str, shortcut: Option<&'static str>, action: Action) -> Entry {
-    Entry::Item {
-        label,
-        shortcut,
-        action: Some(action),
-    }
-}
+use Entry::{Item as I, Separator as SEP};
 
 const fn sub(label: &'static str, entries: &'static [Entry]) -> Entry {
     Entry::Submenu { label, entries }
 }
-
-const SEP: Entry = Entry::Separator;
 
 /// Os menus da barra principal, na ordem do SSMS.
 pub const MENUS: &[Menu] = &[
     Menu {
         title: "File",
         entries: &[
-            todo("Connect Object Explorer…", None),
-            todo("Disconnect Object Explorer", None),
+            I(ConnectObjectExplorer),
+            I(DisconnectObjectExplorer),
             SEP,
-            sub(
-                "New",
-                &[
-                    todo("Query with Current Connection", Some("Ctrl+N")),
-                    todo("Database Engine Query", None),
-                ],
-            ),
-            sub("Open", &[todo("File…", Some("Ctrl+O"))]),
+            sub("New", &[I(NewQuery), I(NewDatabaseEngineQuery)]),
+            sub("Open", &[I(OpenFile)]),
             SEP,
-            todo("Close", None),
+            I(CloseDocument),
             SEP,
-            todo("Save", Some("Ctrl+S")),
-            todo("Save As…", None),
-            todo("Save All", Some("Ctrl+Shift+S")),
+            I(Save),
+            I(SaveAs),
+            I(SaveAll),
             SEP,
-            item("Exit", Some("Alt+F4"), Action::Exit),
+            I(Exit),
         ],
     },
     Menu {
         title: "Edit",
         entries: &[
-            todo("Undo", Some("Ctrl+Z")),
-            todo("Redo", Some("Ctrl+Y")),
+            I(Undo),
+            I(Redo),
             SEP,
-            todo("Cut", Some("Ctrl+X")),
-            todo("Copy", Some("Ctrl+C")),
-            todo("Paste", Some("Ctrl+V")),
-            todo("Delete", Some("Del")),
-            todo("Select All", Some("Ctrl+A")),
+            I(Cut),
+            I(Copy),
+            I(Paste),
+            I(Delete),
+            I(SelectAll),
             SEP,
-            sub(
-                "Find and Replace",
-                &[
-                    todo("Quick Find", Some("Ctrl+F")),
-                    todo("Quick Replace", Some("Ctrl+H")),
-                ],
-            ),
-            todo("Go To…", Some("Ctrl+G")),
+            sub("Find and Replace", &[I(QuickFind), I(QuickReplace)]),
+            I(GoTo),
             SEP,
             sub(
                 "IntelliSense",
                 &[
-                    todo("List Members", Some("Ctrl+J")),
-                    todo("Parameter Info", Some("Ctrl+Shift+Space")),
-                    todo("Quick Info", Some("Ctrl+K, Ctrl+I")),
-                    todo("Complete Word", Some("Alt+Right")),
+                    I(ListMembers),
+                    I(ParameterInfo),
+                    I(QuickInfo),
+                    I(CompleteWord),
                     SEP,
-                    todo("Refresh Local Cache", Some("Ctrl+Shift+R")),
+                    I(RefreshLocalCache),
                 ],
             ),
             sub(
                 "Advanced",
                 &[
-                    todo("Comment Selection", Some("Ctrl+K, Ctrl+C")),
-                    todo("Uncomment Selection", Some("Ctrl+K, Ctrl+U")),
+                    I(CommentSelection),
+                    I(UncommentSelection),
                     SEP,
-                    todo("Make Uppercase", Some("Ctrl+Shift+U")),
-                    todo("Make Lowercase", Some("Ctrl+Shift+L")),
+                    I(MakeUppercase),
+                    I(MakeLowercase),
                 ],
             ),
         ],
@@ -137,22 +93,16 @@ pub const MENUS: &[Menu] = &[
     Menu {
         title: "View",
         entries: &[
-            todo("Object Explorer", Some("F8")),
-            todo("Object Explorer Details", Some("F7")),
-            todo("Registered Servers", Some("Ctrl+Alt+G")),
-            todo("Template Explorer", Some("Ctrl+Alt+T")),
-            todo("Properties Window", Some("F4")),
-            todo("Output", Some("Ctrl+Alt+O")),
+            I(ObjectExplorer),
+            I(ObjectExplorerDetails),
+            I(RegisteredServers),
+            I(TemplateExplorer),
+            I(PropertiesWindow),
+            I(Output),
             SEP,
-            sub(
-                "Color Theme",
-                &[
-                    item("Light", None, Action::SetTheme(Theme::Light)),
-                    item("Dark", None, Action::SetTheme(Theme::Dark)),
-                ],
-            ),
+            sub("Color Theme", &[I(ThemeLight), I(ThemeDark)]),
             SEP,
-            todo("Full Screen", Some("Shift+Alt+Enter")),
+            I(FullScreen),
         ],
     },
     Menu {
@@ -160,68 +110,97 @@ pub const MENUS: &[Menu] = &[
         entries: &[
             sub(
                 "Connection",
-                &[
-                    todo("Connect…", None),
-                    todo("Disconnect", None),
-                    todo("Change Connection…", None),
-                ],
+                &[I(Connect), I(Disconnect), I(ChangeConnection)],
             ),
             SEP,
-            todo("Execute", Some("F5")),
-            todo("Parse", Some("Ctrl+F5")),
-            todo("Cancel Executing Query", Some("Alt+Break")),
+            I(Execute),
+            I(Parse),
+            I(CancelQuery),
             SEP,
-            todo("Display Estimated Execution Plan", Some("Ctrl+L")),
-            todo("Include Actual Execution Plan", Some("Ctrl+M")),
+            I(EstimatedPlan),
+            I(ActualPlan),
             SEP,
             sub(
                 "Results To",
-                &[
-                    todo("Results to Text", Some("Ctrl+T")),
-                    todo("Results to Grid", Some("Ctrl+D")),
-                    todo("Results to File", Some("Ctrl+Shift+F")),
-                ],
+                &[I(ResultsToText), I(ResultsToGrid), I(ResultsToFile)],
             ),
             SEP,
-            todo("Query Options…", None),
+            I(QueryOptions),
         ],
     },
     Menu {
         title: "Tools",
-        entries: &[todo("Options…", None)],
+        entries: &[I(Options)],
     },
     Menu {
         title: "Window",
         entries: &[
-            todo("New Horizontal Tab Group", None),
-            todo("New Vertical Tab Group", None),
+            I(NewHorizontalTabGroup),
+            I(NewVerticalTabGroup),
             SEP,
-            todo("Auto Hide All", None),
-            todo("Reset Window Layout", None),
+            I(ToggleResultsPane),
+            I(AutoHideAll),
+            I(ResetWindowLayout),
             SEP,
-            todo("Close All Documents", None),
+            I(CloseAllDocuments),
         ],
     },
     Menu {
         title: "Help",
-        entries: &[
-            todo("View Help", Some("F1")),
-            SEP,
-            item("About PGStudio", None, Action::About),
-        ],
+        entries: &[I(ViewHelp), SEP, I(About)],
     },
 ];
+
+/// Um botão da toolbar padrão.
+#[derive(Clone, Copy, Debug)]
+pub enum Tool {
+    Button {
+        icon: &'static str,
+        text: &'static str,
+        command: CommandId,
+    },
+    /// Seletor de banco de dados.
+    Database,
+    Separator,
+}
+
+/// Toolbar padrão do SSMS.
+pub const TOOLBAR: &[Tool] = {
+    use egui_phosphor::regular as icon;
+    const fn b(icon: &'static str, text: &'static str, command: CommandId) -> Tool {
+        Tool::Button {
+            icon,
+            text,
+            command,
+        }
+    }
+    &[
+        b(icon::FILE_PLUS, "New Query", NewQuery),
+        Tool::Separator,
+        b(icon::FOLDER_OPEN, "", OpenFile),
+        b(icon::FLOPPY_DISK, "", Save),
+        b(icon::FLOPPY_DISK_BACK, "", SaveAll),
+        Tool::Separator,
+        Tool::Database,
+        b(icon::PLAY, "Execute", Execute),
+        b(icon::STOP, "", CancelQuery),
+        b(icon::CHECK, "", Parse),
+        Tool::Separator,
+        b(icon::FLOW_ARROW, "", EstimatedPlan),
+        b(icon::TREE_STRUCTURE, "", ActualPlan),
+    ]
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn items(entries: &'static [Entry]) -> Vec<(&'static str, Option<Action>)> {
+    fn commands(entries: &'static [Entry]) -> Vec<CommandId> {
         let mut out = Vec::new();
         for entry in entries {
             match *entry {
-                Entry::Item { label, action, .. } => out.push((label, action)),
-                Entry::Submenu { entries, .. } => out.extend(items(entries)),
+                Entry::Item(cmd) => out.push(cmd),
+                Entry::Submenu { entries, .. } => out.extend(commands(entries)),
                 Entry::Separator => {}
             }
         }
@@ -240,18 +219,22 @@ mod tests {
     #[test]
     fn every_menu_lists_items() {
         for menu in MENUS {
-            assert!(!items(menu.entries).is_empty(), "{} está vazio", menu.title);
+            assert!(
+                !commands(menu.entries).is_empty(),
+                "{} está vazio",
+                menu.title
+            );
         }
     }
 
     #[test]
-    fn every_theme_has_a_menu_item() {
-        let all: Vec<_> = MENUS.iter().flat_map(|m| items(m.entries)).collect();
-        for theme in Theme::ALL {
-            assert!(
-                all.contains(&(theme.label(), Some(Action::SetTheme(theme)))),
-                "falta o tema {theme:?}"
-            );
+    fn every_command_with_a_menu_appears_once() {
+        let all: Vec<_> = MENUS.iter().flat_map(|m| commands(m.entries)).collect();
+        for &cmd in CommandId::ALL {
+            let n = all.iter().filter(|&&c| c == cmd).count();
+            // Object Information (Alt+F1) só existe como atalho, como no SSMS.
+            let expected = usize::from(cmd != ObjectInfo);
+            assert_eq!(n, expected, "{cmd:?}");
         }
     }
 }

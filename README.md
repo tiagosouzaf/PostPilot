@@ -4,18 +4,41 @@ Aplicativo desktop para administrar PostgreSQL, inspirado no Microsoft SQL Serve
 Management Studio (SSMS). Escrito 100% em Rust, para Windows e Linux, sem Electron
 nem WebView.
 
-> Em desenvolvimento inicial. Ainda não há interface gráfica: o marco atual é a
-> fundação do repositório (workspace, CI e licenças).
+> Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar e os
+> atalhos do SSMS, mas ainda não conecta a um banco.
 
 ## Estrutura
 
 ```txt
-apps/desktop/   binário `pgstudio`
-crates/core/    tipos de domínio, sem GUI e sem I/O
+apps/desktop/     binário `pgstudio`
+crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
+crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 ```
 
-Novas crates (`ui-shell`, `docking`, `object-explorer`, `pg-connection`, …) entram
-na fase do roteiro que as usa.
+Novas crates (`docking`, `object-explorer`, `pg-connection`, …) entram na fase do
+roteiro que as usa.
+
+## Atalhos de teclado
+
+Os atalhos seguem o SSMS (F5 ou Ctrl+E executa, Ctrl+K, Ctrl+C comenta etc.). Para
+mudar, crie o arquivo `keymap.txt` na pasta de configuração:
+
+- Linux: `~/.config/PGStudio/keymap.txt`
+- Windows: `%APPDATA%\PGStudio\keymap.txt`
+
+Uma linha por atalho, com o nome do comando à esquerda:
+
+```txt
+# A primeira linha de um comando substitui os atalhos padrão dele.
+Query.Execute = Ctrl+Enter
+# Linhas seguintes do mesmo comando acrescentam atalhos.
+Query.Execute = F5
+# Sem atalho, o comando fica sem atalho.
+File.Save =
+```
+
+Os nomes dos comandos estão em `crates/core/src/command.rs`. Linhas com erro são
+ignoradas e avisadas na status bar.
 
 ## Desenvolvimento
 

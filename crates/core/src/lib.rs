@@ -3,6 +3,11 @@
 //! Esta crate não depende de toolkit de GUI nem faz I/O. A camada de UI e o
 //! backend se comunicam através dos tipos definidos aqui.
 
+pub mod command;
+pub mod keymap;
+
+pub use command::CommandId;
+
 /// Nome do produto exibido na interface.
 pub const APP_NAME: &str = "PGStudio";
 
