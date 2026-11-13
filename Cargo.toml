@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/desktop", "crates/core"]
+members = ["apps/desktop", "crates/core", "crates/ui-shell"]
 exclude = ["spikes"]
 
 [workspace.package]
@@ -12,6 +12,11 @@ repository = "https://github.com/tiagosouzaf/postpilot"
 
 [workspace.dependencies]
 pgstudio-core = { path = "crates/core" }
+pgstudio-ui-shell = { path = "crates/ui-shell" }
+# egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
+eframe = "0.36"
+egui_kittest = "0.36"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

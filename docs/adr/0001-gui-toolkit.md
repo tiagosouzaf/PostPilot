@@ -1,6 +1,6 @@
 # ADR 0001: toolkit de GUI
 
-- **Status:** proposta (aguardando a revisão do Tiago)
+- **Status:** aceita (Tiago, 2026-11-13)
 - **Data:** 2026-11-13
 
 ## Contexto
@@ -94,7 +94,7 @@ WARP, o rasterizador por software da Microsoft). Workflow
 - No Linux sem GPU (Xvfb + lavapipe) desenhou um frame e não apresentou mais
   nenhum, então não foi possível medir. No Windows foi o mais rápido e leve.
 
-## Decisão proposta
+## Decisão
 
 Usar **egui + eframe + egui_dock**, com renderizador **wgpu** como padrão e
 glow como alternativa. É o único dos três que entrega docking pronto e onde o
@@ -112,7 +112,8 @@ maior que a diferença de desempenho, que numa máquina com GPU deve ser pequena
   (fork ou implementação própria) se o atraso de versão incomodar.
 - A crate `sql-editor` terá buffer próprio (ex.: `ropey`) e realce incremental
   (ex.: `tree-sitter`), usando o `TextEdit` só como ponto de partida.
-- Tema próprio e fonte de ícones entram já no marco 1.2.
+- Tema próprio entra no marco 1.2; a fonte de ícones entra junto com os
+  comandos (marco 1.3), que é quando a toolbar ganha ação.
 - Medir o egui numa máquina Windows com GPU (ou pedir a alguém) no marco 1.1;
   se ficar lento em VMs/RDP, expor a escolha de backend (glow, D3D11) nas
   configurações.
