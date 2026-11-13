@@ -1,0 +1,17 @@
+[package]
+name = "pgstudio-result-grid"
+description = "Grade de resultados do PGStudio: buffer paginado, grade virtualizada e resultados em texto."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true

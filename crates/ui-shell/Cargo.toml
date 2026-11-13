@@ -15,6 +15,7 @@ egui-phosphor.workspace = true
 pgstudio-docking.workspace = true
 pgstudio-object-explorer.workspace = true
 pgstudio-sql-editor.workspace = true
+pgstudio-result-grid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

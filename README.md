@@ -7,8 +7,8 @@ nem WebView.
 > Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
 > atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
 > arquivos `.sql` com realce de SQL, conecta a um PostgreSQL mostrando o
-> catálogo no Object Explorer e executa consultas (F5). A grade de resultados
-> completa e o IntelliSense ainda não estão prontos.
+> catálogo no Object Explorer e executa consultas (F5) com resultados numa
+> grade que aguenta milhões de linhas. O IntelliSense ainda não está pronto.
 
 ## Estrutura
 
@@ -21,10 +21,11 @@ crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
 crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
 crates/sql-editor/ editor de SQL: realce, números de linha, busca, Go To Line
+crates/result-grid/ buffer paginado, grade de resultados e resultados em texto
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
 ```
 
-Novas crates (`result-grid`, …) entram na fase do roteiro que as usa.
+Novas crates entram na fase do roteiro que as usa.
 
 ## Uso
 
@@ -69,7 +70,19 @@ faixa embaixo mostra a situação, o servidor, o banco, o tempo e as linhas.
 "Cancel Executing Query" (botão ■ da toolbar ou menu Query) cancela pelo
 `pg_cancel_backend` do protocolo. O atalho Alt+Break do SSMS está no keymap, mas
 o egui ainda não entrega a tecla Pause/Break, então por enquanto ele não chega.
-Resultados guardam até 100 mil linhas; a grade completa vem no marco 2.5.
+
+A grade de resultados mostra só as linhas visíveis e rola com milhões de
+linhas. As linhas ficam num buffer paginado: até 64 MB por resultado em
+memória, e o resto em páginas num arquivo temporário (apagado ao fechar). Clicar
+seleciona uma célula; Shift+clique ou arrastar estende; o número da linha
+seleciona a linha, o cabeçalho seleciona a coluna e o canto seleciona tudo
+(Ctrl+A também). As setas, PageUp/PageDown e Ctrl+Home/End movem o cursor.
+Ctrl+C copia a seleção separada por tab e Ctrl+Shift+C copia com o cabeçalho
+(também no menu de contexto). Arrastar a borda do cabeçalho muda a largura da
+coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
+("Results to Grid") escolhem como as próximas execuções da janela mostram os
+resultados; no modo texto, as larguras das colunas saem das primeiras mil
+linhas, até 256 caracteres, como no SSMS.
 
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
