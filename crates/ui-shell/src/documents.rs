@@ -1,7 +1,5 @@
-//! Janelas de consulta abertas: texto, arquivo e se há alterações.
-//!
-//! O editor ainda é provisório (um `TextEdit` do egui); o editor de SQL de
-//! verdade vem na Fase 3.
+//! Janelas de consulta abertas: texto, arquivo e se há alterações. O editor
+//! de cada uma é o `pgstudio-sql-editor`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,6 +12,10 @@ pub struct Document {
     /// Texto no editor.
     pub text: String,
     saved: String,
+    /// Busca e "Go To Line" do editor.
+    pub editor: pgstudio_sql_editor::EditorState,
+    /// Linha e coluna do cursor (a partir de 1), para a status bar.
+    pub cursor: Option<(usize, usize)>,
 }
 
 impl Document {
@@ -75,6 +77,8 @@ impl Documents {
             path: None,
             text: String::new(),
             saved: String::new(),
+            editor: Default::default(),
+            cursor: None,
         })
     }
 
@@ -95,6 +99,8 @@ impl Documents {
             path: Some(path.to_path_buf()),
             saved: text.clone(),
             text,
+            editor: Default::default(),
+            cursor: None,
         }))
     }
 

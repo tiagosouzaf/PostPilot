@@ -19,10 +19,11 @@ crates/docking/   painéis encaixáveis (invólucro do egui_dock)
 crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
 crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
+crates/sql-editor/ editor de SQL: realce, números de linha, busca, Go To Line
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
 ```
 
-Novas crates (`sql-editor`, …) entram na fase do roteiro que as usa.
+Novas crates (`result-grid`, …) entram na fase do roteiro que as usa.
 
 ## Uso
 
@@ -45,6 +46,15 @@ Server name lista as recentes.
 Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
 fechar a aba ou o aplicativo pergunta antes de descartar.
+
+O editor colore o SQL do PostgreSQL como o SSMS (palavras-chave, strings,
+`$$` de funções, comentários, números, `$1`) e mostra os números de linha.
+Ctrl+K, Ctrl+C comenta as linhas selecionadas com `--` e Ctrl+K, Ctrl+U tira o
+comentário (também em Edit > Advanced). Ctrl+F abre a barra de busca, já com a
+palavra selecionada, e Ctrl+G vai para uma linha. A status bar mostra a linha e
+a coluna do cursor. Arquivos de milhares de linhas funcionam, mas digitar fica
+mais lento a partir de ~5 mil linhas (cerca de 95 ms por tecla), porque o
+layout ainda é refeito para o texto inteiro.
 
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
