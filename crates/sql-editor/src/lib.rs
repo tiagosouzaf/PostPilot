@@ -1,32 +1,33 @@
 //! Editor de SQL do PGStudio.
 //!
-//! O editor usa o `TextEdit` do egui para digitação, seleção, desfazer e
-//! IME, e acrescenta o que um editor de SQL precisa:
+//! O editor é um widget próprio (módulo `widget`) que monta e desenha só as
+//! linhas visíveis, então digitar num script de milhares de linhas não
+//! refaz o layout do texto inteiro. Ele tem:
 //!
-//! - realce de sintaxe do PostgreSQL ([`lexer`], [`highlight`]), calculado
-//!   só quando o texto muda;
+//! - realce de sintaxe do PostgreSQL ([`lexer`], [`highlight`]), com os
+//!   tokens refeitos só quando o texto muda;
+//! - desfazer e refazer ([`buffer::History`]);
 //! - números de linha;
 //! - comentar e descomentar linhas ([`comment_selection`]);
 //! - barra de busca (Ctrl+F) e "Go To Line" (Ctrl+G).
 //!
-//! O texto continua sendo uma `String` do documento. Um buffer próprio
-//! (`ropey`) só vale a pena se arquivos grandes ficarem lentos; o teste de
-//! 5 mil linhas mede isso.
+//! O texto continua sendo uma `String` do documento.
 
+pub mod buffer;
 pub mod edit;
 pub mod highlight;
 pub mod lexer;
+mod widget;
 
-use eframe::egui::{
-    self, Color32, FontId, Id, Key, TextEdit, Ui,
-    text::{CCursor, CCursorRange},
-};
+use eframe::egui::{self, FontId, Id, Key, TextEdit, Ui};
 
 pub use highlight::Colors;
 
-/// Estado do editor que não é o texto: barra de busca e "Go To Line".
+/// Estado do editor que não é o texto: índice de linhas, tokens,
+/// histórico, barra de busca e "Go To Line".
 #[derive(Clone, Debug, Default)]
 pub struct EditorState {
+    buffer: widget::Buffer,
     find: Option<Find>,
     goto: Option<GoTo>,
     /// Pedir foco para o editor no próximo frame.
@@ -104,20 +105,16 @@ impl EditorState {
 
 /// Seleção atual do editor `id`, em caracteres: (âncora, cursor).
 pub fn selection(ctx: &egui::Context, id: Id) -> Option<(usize, usize)> {
-    let state = egui::text_edit::TextEditState::load(ctx, id)?;
-    let range = state.cursor.char_range()?;
-    Some((range.secondary.index.into(), range.primary.index.into()))
+    let view = ctx.data(|d| d.get_temp::<widget::View>(id))?;
+    Some((view.anchor, view.cursor))
 }
 
 /// Muda a seleção do editor `id`.
 pub fn set_selection(ctx: &egui::Context, id: Id, (anchor, cursor): (usize, usize)) {
-    let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
-    state.cursor.set_char_range(Some(CCursorRange {
-        secondary: CCursor::new(anchor),
-        primary: CCursor::new(cursor),
-        h_pos: None,
-    }));
-    state.store(ctx, id);
+    let mut view = widget::load(ctx, id);
+    view.anchor = anchor;
+    view.cursor = cursor;
+    widget::store(ctx, id, view);
 }
 
 /// Texto selecionado no editor `id`.
@@ -151,7 +148,7 @@ pub struct SqlEditor<'a> {
 
 /// O que aconteceu no editor neste frame.
 pub struct EditorResponse {
-    /// Resposta do `TextEdit`.
+    /// Resposta do editor (foco, cliques).
     pub response: egui::Response,
     /// Linha e coluna do cursor (a partir de 1), para a status bar.
     pub cursor: Option<(usize, usize)>,
@@ -191,102 +188,10 @@ impl<'a> SqlEditor<'a> {
         find_bar(ui, id, text, state);
         goto_bar(ui, id, text, state);
 
-        let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, _wrap: f32| {
-            let job = ui.ctx().memory_mut(|m| {
-                m.caches
-                    .cache::<highlight::HighlightCache>()
-                    .get((buf.as_str(), colors, font.size.to_bits()))
-                    .clone()
-            });
-            ui.fonts_mut(|f| f.layout_job(job))
-        };
-
-        let gutter_digits = edit::line_count(text).to_string().len().max(3);
-        let char_w = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
-        let gutter_w = char_w * gutter_digits as f32 + 12.0;
-        let mut cursor = None;
-
-        // O foco precisa chegar antes do `TextEdit`: sem foco ele reduz a
-        // seleção ao cursor, e a busca perderia o trecho achado.
-        if let Some(range) = select {
-            set_selection(ui.ctx(), id, range);
-        }
-        if focus {
-            ui.memory_mut(|m| m.request_focus(id));
-        }
-        // Ctrl+K e Ctrl+U são acordes do SSMS (comentar e descomentar); o
-        // `TextEdit` os trataria como apagar até o fim ou o começo da linha.
-        ui.input_mut(|i| {
-            i.events.retain(|e| {
-                !matches!(e, egui::Event::Key { key: Key::K | Key::U, modifiers, .. }
-                    if (modifiers.ctrl || modifiers.command) && !modifiers.alt)
-            });
-        });
-
-        let output = egui::ScrollArea::both()
-            .id_salt(id.with("scroll"))
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    let (gutter, _) = ui.allocate_exact_size(
-                        egui::vec2(gutter_w, ui.available_height()),
-                        egui::Sense::hover(),
-                    );
-                    let output = TextEdit::multiline(text)
-                        .id(id)
-                        .font(font.clone())
-                        .code_editor()
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY)
-                        .min_size(ui.available_size())
-                        .layouter(&mut layouter)
-                        .show(ui);
-                    paint_line_numbers(ui, gutter, &output, &font, colors.operator);
-                    output
-                })
-                .inner
-            })
-            .inner;
-
-        if let Some(range) = output.cursor_range {
-            let idx: usize = range.primary.index.into();
-            let line = edit::line_of(text, idx);
-            let col = idx - edit::line_start(text, line);
-            cursor = Some((line + 1, col + 1));
-        }
+        let out = widget::show(ui, id, text, &mut state.buffer, colors, font, select, focus);
         EditorResponse {
-            response: output.response.response,
-            cursor,
-        }
-    }
-}
-
-fn paint_line_numbers(
-    ui: &Ui,
-    gutter: egui::Rect,
-    output: &egui::text_edit::TextEditOutput,
-    font: &FontId,
-    color: Color32,
-) {
-    let painter = ui.painter_at(gutter.expand2(egui::vec2(0.0, 10_000.0)));
-    let clip = ui.clip_rect();
-    let mut line = 1;
-    let mut row_starts_line = true;
-    for row in &output.galley.rows {
-        let rect = row.rect().translate(output.galley_pos.to_vec2());
-        if row_starts_line && rect.bottom() >= clip.top() && rect.top() <= clip.bottom() {
-            painter.text(
-                egui::pos2(gutter.right() - 8.0, rect.top()),
-                egui::Align2::RIGHT_TOP,
-                line.to_string(),
-                font.clone(),
-                color,
-            );
-        }
-        row_starts_line = row.ends_with_newline;
-        if row.ends_with_newline {
-            line += 1;
+            response: out.response,
+            cursor: Some(out.cursor),
         }
     }
 }

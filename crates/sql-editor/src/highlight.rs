@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, Color32, FontId, TextFormat, text::LayoutJob};
 
-use crate::lexer::{TokenKind, tokenize};
+use crate::lexer::{Token, TokenKind, tokenize};
 
 /// Cores de um tema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -85,6 +85,60 @@ pub fn layout_job(text: &str, colors: &Colors, font: FontId) -> LayoutJob {
     job
 }
 
+/// Texto colorido de uma linha só. `start` é o byte onde a linha começa no
+/// texto inteiro, e `tokens` são os tokens do texto inteiro (em ordem): uma
+/// string ou um comentário que começa numa linha anterior continua com a
+/// cor certa.
+pub fn line_job(
+    line: &str,
+    start: usize,
+    tokens: &[Token],
+    colors: &Colors,
+    font: &FontId,
+) -> LayoutJob {
+    let end = start + line.len();
+    let mut job = LayoutJob {
+        text: line.to_string(),
+        ..Default::default()
+    };
+    let first = tokens.partition_point(|t| t.range.end <= start);
+    let mut current: Option<(Color32, usize, usize)> = None;
+    let mut covered = 0;
+    for token in tokens[first..].iter().take_while(|t| t.range.start < end) {
+        let a = token.range.start.max(start) - start;
+        let b = token.range.end.min(end) - start;
+        if a > covered {
+            // Buraco (não deveria acontecer): cor do texto.
+            flush(&mut job, &mut current, font);
+            push(&mut job, covered..a, colors.text, font);
+        }
+        let color = if token.kind == TokenKind::Whitespace {
+            current.map_or(colors.text, |(c, _, _)| c)
+        } else {
+            colors.of(token.kind)
+        };
+        match &mut current {
+            Some((c, _, e)) if *c == color => *e = b,
+            _ => {
+                flush(&mut job, &mut current, font);
+                current = Some((color, a, b));
+            }
+        }
+        covered = b;
+    }
+    flush(&mut job, &mut current, font);
+    if covered < line.len() {
+        push(&mut job, covered..line.len(), colors.text, font);
+    }
+    job
+}
+
+fn flush(job: &mut LayoutJob, current: &mut Option<(Color32, usize, usize)>, font: &FontId) {
+    if let Some((c, a, b)) = current.take() {
+        push(job, a..b, c, font);
+    }
+}
+
 fn push(job: &mut LayoutJob, range: std::ops::Range<usize>, color: Color32, font: &FontId) {
     job.sections.push(egui::text::LayoutSection {
         leading_space: 0.0,
@@ -93,23 +147,40 @@ fn push(job: &mut LayoutJob, range: std::ops::Range<usize>, color: Color32, font
     });
 }
 
-#[derive(Default)]
-pub(crate) struct Highlighter;
-
-/// A chave do cache leva o tamanho da fonte em bits (`f32::to_bits`), porque
-/// precisa ser `Copy`; a fonte é sempre a monoespaçada.
-impl egui::cache::ComputerMut<(&str, Colors, u32), LayoutJob> for Highlighter {
-    fn compute(&mut self, (text, colors, size): (&str, Colors, u32)) -> LayoutJob {
-        layout_job(text, &colors, FontId::monospace(f32::from_bits(size)))
-    }
-}
-
-/// Cache do texto colorido: só recalcula quando o texto muda.
-pub(crate) type HighlightCache = egui::cache::FrameCache<LayoutJob, Highlighter>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_inside_a_block_comment_keeps_the_comment_color() {
+        let text = "select 1 /* começa\nainda comentário */ from t";
+        let tokens = tokenize(text);
+        let second = text.find('\n').unwrap() + 1;
+        let line = &text[second..];
+        let job = line_job(
+            line,
+            second,
+            &tokens,
+            &Colors::LIGHT,
+            &FontId::monospace(12.0),
+        );
+        assert_eq!(job.sections[0].format.color, Colors::LIGHT.comment);
+        let mut pos = 0;
+        for s in &job.sections {
+            assert_eq!(usize::from(s.byte_range.start), pos);
+            pos = s.byte_range.end.into();
+        }
+        assert_eq!(pos, line.len());
+        let from = line.find("from").unwrap();
+        let at = job
+            .sections
+            .iter()
+            .find(|s| {
+                (usize::from(s.byte_range.start)..usize::from(s.byte_range.end)).contains(&from)
+            })
+            .unwrap();
+        assert_eq!(at.format.color, Colors::LIGHT.keyword);
+    }
 
     #[test]
     fn sections_cover_the_text_and_merge_neighbours() {

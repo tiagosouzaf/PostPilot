@@ -364,8 +364,13 @@ pub fn is_keyword(word: &str) -> bool {
     if word.len() > 24 || !word.is_ascii() {
         return false;
     }
-    let lower = word.to_ascii_lowercase();
-    KEYWORDS.binary_search(&lower.as_str()).is_ok()
+    // Sem alocar: a palavra cabe em 24 bytes.
+    let mut buf = [0u8; 24];
+    let lower = &mut buf[..word.len()];
+    lower.copy_from_slice(word.as_bytes());
+    lower.make_ascii_lowercase();
+    let lower = std::str::from_utf8(lower).expect("ascii");
+    KEYWORDS.binary_search(&lower).is_ok()
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -392,6 +397,60 @@ pub fn tokenize(text: &str) -> Vec<Token> {
         });
     }
     tokens
+}
+
+/// Refaz `tokens` depois de trocar `removed` bytes em `at` por `inserted`
+/// bytes; `text` já é o texto novo. Só relê do começo da linha da edição
+/// até um ponto depois dela em que os tokens voltam a coincidir.
+///
+/// Funciona porque o lexer não guarda estado entre tokens: os tokens a partir
+/// de uma fronteira dependem só do texto dali em diante, que não mudou depois
+/// da edição. Antes da edição, um token só olha até dois caracteres depois do
+/// fim (ou até o fim da linha, numa tag `$tag$` sem fechamento), então reler
+/// a partir da linha anterior basta.
+pub fn retokenize(text: &str, tokens: &mut Vec<Token>, at: usize, removed: usize, inserted: usize) {
+    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let back = line_start.saturating_sub(8);
+    let first = tokens.partition_point(|t| t.range.end <= back);
+    let restart = match tokens.get(first) {
+        Some(t) => t.range.start,
+        None => tokens.last().map_or(0, |t| t.range.end),
+    };
+    let edit_end = at + inserted;
+    let old_edit_end = at + removed;
+    let shift = |p: usize| p + removed - inserted; // posição nova -> antiga
+    let mut fresh = Vec::new();
+    let mut lexer = Lexer { text, pos: restart };
+    let mut k = first;
+    let mut synced = false;
+    while lexer.pos < text.len() {
+        if lexer.pos >= edit_end {
+            let old = shift(lexer.pos);
+            while k < tokens.len() && tokens[k].range.start < old {
+                k += 1;
+            }
+            if k < tokens.len() && tokens[k].range.start == old && old >= old_edit_end {
+                synced = true;
+                break;
+            }
+        }
+        let start = lexer.pos;
+        let kind = lexer.next_kind();
+        fresh.push(Token {
+            kind,
+            range: start..lexer.pos,
+        });
+    }
+    if !synced {
+        k = tokens.len();
+    }
+    let n = fresh.len();
+    tokens.splice(first..k, fresh);
+    if inserted != removed {
+        for t in &mut tokens[first + n..] {
+            t.range = t.range.start + inserted - removed..t.range.end + inserted - removed;
+        }
+    }
 }
 
 struct Lexer<'a> {
@@ -719,6 +778,41 @@ mod tests {
                 pos = t.range.end;
             }
             assert_eq!(pos, text.len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn retokenize_matches_a_full_tokenize_after_random_edits() {
+        let pieces = [
+            "select", " ", "\n", "'", "\"", "$$", "$a$", "$1", "/*", "*/", "--", "-", "+", "1",
+            ".", "e", "5", "x", "ção", "(", ")", ";", "E'", "\\", "0x", "_", "$", "a",
+        ];
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut text =
+            std::string::String::from("select 1 from t;\n/* x */ select 'a' -- c\n$$ b $$");
+        let mut tokens = tokenize(&text);
+        for _ in 0..5000 {
+            let bounds: Vec<usize> = (0..=text.len())
+                .filter(|&i| text.is_char_boundary(i))
+                .collect();
+            let a = bounds[next(bounds.len())];
+            let b = bounds
+                [(bounds.iter().position(|&x| x == a).unwrap() + next(4)).min(bounds.len() - 1)];
+            let insert: std::string::String =
+                (0..next(3)).map(|_| pieces[next(pieces.len())]).collect();
+            text.replace_range(a..b, &insert);
+            retokenize(&text, &mut tokens, a, b - a, insert.len());
+            assert_eq!(tokens, tokenize(&text), "{text:?}");
+            if text.len() > 400 {
+                text.truncate(text.char_indices().nth(100).map_or(text.len(), |(i, _)| i));
+                tokens = tokenize(&text);
+            }
         }
     }
 }

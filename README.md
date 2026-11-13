@@ -54,9 +54,10 @@ O editor colore o SQL do PostgreSQL como o SSMS (palavras-chave, strings,
 Ctrl+K, Ctrl+C comenta as linhas selecionadas com `--` e Ctrl+K, Ctrl+U tira o
 comentário (também em Edit > Advanced). Ctrl+F abre a barra de busca, já com a
 palavra selecionada, e Ctrl+G vai para uma linha. A status bar mostra a linha e
-a coluna do cursor. Arquivos de milhares de linhas funcionam, mas digitar fica
-mais lento a partir de ~5 mil linhas (cerca de 95 ms por tecla), porque o
-layout ainda é refeito para o texto inteiro.
+a coluna do cursor. Ctrl+Z e Ctrl+Y desfazem e refazem (uma palavra por vez),
+Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
+(Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
+trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira
