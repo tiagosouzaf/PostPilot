@@ -56,15 +56,20 @@ jobs:
       - name: Benchmark (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           $env:SPIKE_BENCH = "1"
           $env:SPIKE_IDLE_SECS = "15"
           # Slint: o padrão (femtovg) usa OpenGL, que o runner não tem; testa também o software.
-          $backends = if ("${{ matrix.toolkit }}" -eq "slint") { @("", "winit-software") } else { @("") }
-          foreach ($b in $backends) {
-            $env:SLINT_BACKEND = $b
-            "backend=$(if ($b) { $b } else { 'padrao' })" | Tee-Object -Append bench.txt
+          # egui: testa com e sem vsync, para separar renderização da espera pela apresentação.
+          $configs = switch ("${{ matrix.toolkit }}") {
+            "slint" { @(@{ SLINT_BACKEND = "" }, @{ SLINT_BACKEND = "winit-software" }) }
+            "egui"  { @(@{ SPIKE_VSYNC = "1" }, @{ SPIKE_VSYNC = "0" }) }
+            default { @(@{}) }
+          }
+          foreach ($cfg in $configs) {
+            foreach ($k in $cfg.Keys) { Set-Item -Path "env:$k" -Value $cfg[$k] }
+            "config=" + (($cfg.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ',') | Tee-Object -Append bench.txt
             foreach ($i in 1..3) {
               $p = Start-Process -FilePath ".\target\release\spike-${{ matrix.toolkit }}.exe" `
                 -RedirectStandardOutput "run$i.txt" -RedirectStandardError "err$i.txt" -PassThru -NoNewWindow

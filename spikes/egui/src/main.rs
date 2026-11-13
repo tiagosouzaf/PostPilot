@@ -30,7 +30,7 @@ const KEYWORDS: &[&str] = &[
 
 fn main() -> eframe::Result {
     let started = Instant::now();
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Spike egui — PGStudio")
             .with_inner_size([1280.0, 800.0]),
@@ -40,6 +40,10 @@ fn main() -> eframe::Result {
         },
         ..Default::default()
     };
+    if std::env::var("SPIKE_VSYNC").as_deref() == Ok("0") {
+        // sem vsync: separa o custo de renderizar da espera pela apresentação
+        options.wgpu_options.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
+    }
     eframe::run_native(
         "spike-egui",
         options,
