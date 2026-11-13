@@ -203,18 +203,27 @@ fn typing_in_a_five_thousand_line_script_stays_responsive() {
     let line = "SELECT o.id, o.total FROM loja.orders o WHERE o.total > 100; -- fim\n";
     let id = query_with(&mut harness, &line.repeat(5000));
     select(&mut harness, id, (0, 0));
-    let start = std::time::Instant::now();
-    harness.event(Event::Text("x".into()));
     harness.run();
-    let elapsed = start.elapsed();
+    // Cada tecla é um frame: o tempo dele é o que a pessoa sente.
+    let mut worst = std::time::Duration::ZERO;
+    let mut total = std::time::Duration::ZERO;
+    for _ in 0..20 {
+        harness.event(Event::Text("x".into()));
+        let start = std::time::Instant::now();
+        harness.step();
+        let elapsed = start.elapsed();
+        worst = worst.max(elapsed);
+        total += elapsed;
+    }
+    harness.run();
     eprintln!(
-        "tecla num script de 5000 linhas: {elapsed:?} ({} frames)",
-        harness.run()
+        "tecla num script de 5000 linhas: média {:?}, pior {worst:?}",
+        total / 20
     );
-    assert!(text_of(&harness, id).starts_with("xSELECT"));
-    // Limite folgado para build de teste. Em release a tecla leva ~95 ms com
-    // 5 mil linhas (~18 ms com mil): o `TextEdit` refaz o layout do texto
-    // inteiro a cada mudança. Um editor com layout só das linhas visíveis
-    // resolve; até lá, este teste acompanha o número.
-    assert!(elapsed < std::time::Duration::from_secs(3), "{elapsed:?}");
+    assert!(text_of(&harness, id).starts_with(&"x".repeat(20)));
+    // O editor monta só as linhas visíveis; o custo que cresce com o
+    // arquivo é refazer os tokens e o índice de linhas. Em release a tecla
+    // fica bem abaixo de um frame (16 ms); o limite é folgado para o build
+    // de teste.
+    assert!(worst < std::time::Duration::from_millis(500), "{worst:?}");
 }

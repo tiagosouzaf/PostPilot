@@ -1,6 +1,6 @@
 [package]
 name = "pgstudio-sql-editor"
-description = "Editor de SQL do PGStudio: realce, números de linha, comentar, buscar e ir para linha."
+description = "Editor de SQL do PGStudio: layout só das linhas visíveis, realce incremental, desfazer, comentar, buscar e ir para linha."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
