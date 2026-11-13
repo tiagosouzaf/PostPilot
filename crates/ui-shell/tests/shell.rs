@@ -130,3 +130,119 @@ fn menus_show_shortcuts_from_the_keymap() {
     press(&mut harness, Modifiers::CTRL, Key::Enter);
     assert_eq!(harness.state().last_command(), Some(CommandId::Execute));
 }
+
+use pgstudio_ui_shell::panels::Panel;
+
+#[test]
+fn default_layout_has_tool_windows() {
+    let harness = harness();
+    for panel in [Panel::ObjectExplorer, Panel::Properties, Panel::Output] {
+        assert!(harness.state().is_panel_open(panel), "{panel:?}");
+    }
+    // As abas do egui_dock não aparecem na árvore de acessibilidade, então
+    // conferimos o conteúdo de cada painel.
+    assert!(
+        harness
+            .query_all_by_value("Not connected.")
+            .next()
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_all_by_value("No object selected.")
+            .next()
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_all_by_value("Show output from:")
+            .next()
+            .is_some()
+    );
+}
+
+#[test]
+fn closed_panels_come_back_from_the_view_menu() {
+    let mut harness = harness();
+    for (panel, item) in [
+        (Panel::ObjectExplorer, "Object Explorer F8"),
+        (Panel::Properties, "Properties Window F4"),
+        (Panel::Output, "Output Ctrl+Alt+O"),
+    ] {
+        harness.state_mut().close_panel(panel);
+        harness.run();
+        assert!(!harness.state().is_panel_open(panel));
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label(item).click();
+        harness.run();
+        assert!(harness.state().is_panel_open(panel), "{panel:?}");
+    }
+}
+
+#[test]
+fn shortcut_reopens_object_explorer() {
+    let mut harness = harness();
+    harness.state_mut().close_panel(Panel::ObjectExplorer);
+    press(&mut harness, Modifiers::NONE, Key::F8);
+    assert!(harness.state().is_panel_open(Panel::ObjectExplorer));
+}
+
+#[test]
+fn reset_window_layout_restores_every_panel() {
+    let mut harness = harness();
+    for panel in [Panel::ObjectExplorer, Panel::Properties, Panel::Output] {
+        harness.state_mut().close_panel(panel);
+    }
+    harness.run();
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Reset Window Layout").click();
+    harness.run();
+    for panel in [Panel::ObjectExplorer, Panel::Properties, Panel::Output] {
+        assert!(harness.state().is_panel_open(panel), "{panel:?}");
+    }
+}
+
+#[test]
+fn dragging_a_tab_onto_another_group_moves_it() {
+    let mut harness = harness();
+    assert!(
+        !harness
+            .state()
+            .panels_grouped(Panel::Properties, Panel::Output)
+    );
+    // A aba ativa fica no canto esquerdo da barra de abas do grupo.
+    let tab = |panel| {
+        let rect = harness.state().panel_rect(panel).unwrap();
+        rect.left_top() + eframe::egui::vec2(30.0, 12.0)
+    };
+    let from = tab(Panel::Properties);
+    // Solta na barra de abas do Output, à direita da aba existente.
+    let to = tab(Panel::Output) + eframe::egui::vec2(150.0, 0.0);
+    harness.drag_at(from);
+    harness.run_steps(2);
+    // Move aos poucos, como o mouse de verdade, até a barra de abas do Output.
+    for i in 1..=10 {
+        let t = i as f32 / 10.0;
+        harness.hover_at(from + (to - from) * t);
+        harness.run_steps(2);
+    }
+    harness.drop_at(to);
+    harness.run_steps(3);
+    assert!(
+        harness
+            .state()
+            .panels_grouped(Panel::Properties, Panel::Output)
+    );
+}
+
+#[test]
+fn output_logs_executed_commands() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::NONE, Key::F5);
+    assert_eq!(
+        harness.state().output().last().map(String::as_str),
+        Some("> Execute (not available yet)")
+    );
+}

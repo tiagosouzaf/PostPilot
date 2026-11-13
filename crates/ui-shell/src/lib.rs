@@ -7,6 +7,7 @@
 
 pub mod keys;
 pub mod menus;
+pub mod panels;
 pub mod theme;
 
 use std::path::PathBuf;
@@ -16,6 +17,8 @@ use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
 use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
 
 use menus::{Entry, MENUS, TOOLBAR, Tool};
+use panels::Panel;
+use pgstudio_docking::Workspace;
 
 const READY: &str = "Ready";
 
@@ -27,6 +30,8 @@ pub struct ShellApp {
     chords: ChordMatcher,
     status: String,
     last_command: Option<CommandId>,
+    workspace: Workspace<Panel>,
+    output: Vec<String>,
     screenshot: Option<Screenshot>,
 }
 
@@ -45,6 +50,8 @@ impl Default for ShellApp {
             chords: ChordMatcher::default(),
             status: READY.to_string(),
             last_command: None,
+            workspace: panels::default_layout(),
+            output: Vec::new(),
             screenshot: None,
         }
     }
@@ -108,11 +115,46 @@ impl ShellApp {
         self.last_command
     }
 
+    /// Se o painel está aberto (encaixado ou flutuando).
+    pub fn is_panel_open(&self, panel: Panel) -> bool {
+        self.workspace.is_open(&panel)
+    }
+
+    /// Se dois painéis estão como abas do mesmo grupo.
+    pub fn panels_grouped(&self, a: Panel, b: Panel) -> bool {
+        self.workspace.same_group(&a, &b)
+    }
+
+    /// Retângulo do grupo de abas onde o painel está (barra de abas e corpo).
+    pub fn panel_rect(&self, panel: Panel) -> Option<egui::Rect> {
+        self.workspace.group_rect(&panel)
+    }
+
+    /// Fecha um painel, como o botão de fechar da aba.
+    pub fn close_panel(&mut self, panel: Panel) {
+        self.workspace.close(&panel);
+    }
+
+    /// Linhas do painel Output.
+    pub fn output(&self) -> &[String] {
+        &self.output
+    }
+
     /// Se o comando já tem implementação. Os demais aparecem desabilitados
     /// nos menus e, pelo atalho, só avisam na status bar.
     pub fn is_available(cmd: CommandId) -> bool {
         use CommandId::*;
-        matches!(cmd, Exit | ThemeLight | ThemeDark | FullScreen | About)
+        matches!(
+            cmd,
+            Exit | ThemeLight
+                | ThemeDark
+                | FullScreen
+                | About
+                | ObjectExplorer
+                | PropertiesWindow
+                | Output
+                | ResetWindowLayout
+        )
     }
 
     /// Executa um comando, venha ele de menu, toolbar ou atalho.
@@ -128,10 +170,20 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
             }
             CommandId::About => self.about_open = true,
+            CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
+            CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
+            CommandId::Output => self.workspace.open(Panel::Output),
+            CommandId::ResetWindowLayout => self.workspace = panels::default_layout(),
             _ => {
                 self.status = format!("\"{}\" is not available yet.", cmd.label());
             }
         }
+        let note = if Self::is_available(cmd) {
+            String::new()
+        } else {
+            " (not available yet)".to_string()
+        };
+        self.output.push(format!("> {}{note}", cmd.label()));
     }
 
     /// Desenha a casca inteira num `Ui` que ocupa a janela.
@@ -159,9 +211,10 @@ impl ShellApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.weak("Object Explorer and query windows will appear here.");
-                });
+                let mut viewer = panels::Viewer {
+                    output: &self.output,
+                };
+                self.workspace.show(ui, &mut viewer);
             });
 
         if self.about_open {

@@ -4,8 +4,8 @@ Aplicativo desktop para administrar PostgreSQL, inspirado no Microsoft SQL Serve
 Management Studio (SSMS). Escrito 100% em Rust, para Windows e Linux, sem Electron
 nem WebView.
 
-> Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar e os
-> atalhos do SSMS, mas ainda não conecta a um banco.
+> Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
+> atalhos e os painéis encaixáveis do SSMS, mas ainda não conecta a um banco.
 
 ## Estrutura
 
@@ -13,9 +13,10 @@ nem WebView.
 apps/desktop/     binário `pgstudio`
 crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
 crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
+crates/docking/   painéis encaixáveis (invólucro do egui_dock)
 ```
 
-Novas crates (`docking`, `object-explorer`, `pg-connection`, …) entram na fase do
+Novas crates (`object-explorer`, `pg-connection`, …) entram na fase do
 roteiro que as usa.
 
 ## Atalhos de teclado
