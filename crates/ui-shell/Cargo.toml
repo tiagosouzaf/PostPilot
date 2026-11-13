@@ -14,6 +14,8 @@ image.workspace = true
 egui-phosphor.workspace = true
 pgstudio-docking.workspace = true
 pgstudio-object-explorer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true

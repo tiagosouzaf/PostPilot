@@ -10,7 +10,7 @@ use pgstudio_object_explorer::{Event, ObjectExplorer};
 use crate::documents::Documents;
 
 /// Um painel encaixável.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Panel {
     ObjectExplorer,
     Properties,
