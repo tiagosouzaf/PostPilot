@@ -15,15 +15,27 @@
 //!   medição usam sempre o layout padrão.
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PGStudio/keymap.txt`.
+//! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
+//!   modos de screenshot e medição, usa o servidor de demonstração). Com
+//!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
+//!   (`host` ou `host,porta`), conecta direto usando `PGUSER`, `PGDATABASE` e
+//!   `PGPASSWORD`.
+//!
+//! As conexões recentes ficam em `<config>/PGStudio/connections.json`, sem
+//! senha.
 
 use eframe::egui;
 use std::path::PathBuf;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use pgstudio_core::Theme;
+use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE};
 use pgstudio_core::keymap::Keymap;
+use pgstudio_pg_client::{DbRuntime, PgConnector};
 use pgstudio_ui_shell::ShellApp;
+use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::documents::FileDialogs;
 use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 
@@ -60,6 +72,15 @@ fn main() -> eframe::Result {
     };
     let (keymap, keymap_status) = load_keymap();
     let files: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let connect = std::env::var("PGSTUDIO_CONNECT").ok();
+    let demo = (screenshot.is_some() || bench) && connect.is_none();
+    let recent = if screenshot.is_some() || bench {
+        RecentConnections::in_memory(Vec::new())
+    } else {
+        config_dir()
+            .map(|d| RecentConnections::open(d.join("PGStudio").join("connections.json")))
+            .unwrap_or_default()
+    };
     eframe::run_native(
         "pgstudio",
         options,
@@ -77,6 +98,22 @@ fn main() -> eframe::Result {
             if let Some(store) = layout {
                 app = app.with_layout_store(store);
             }
+            if !demo {
+                match DbRuntime::new() {
+                    Ok(runtime) => {
+                        app = app
+                            .with_recent_connections(recent)
+                            .with_connector(Arc::new(PgConnector::new(runtime)));
+                    }
+                    Err(e) => {
+                        eprintln!("could not start the database runtime: {e}");
+                        app = app.with_status("Could not start the database runtime.");
+                    }
+                }
+                if let Some(server) = connect.as_deref().filter(|c| *c != "dialog") {
+                    connect_from_env(&mut app, server);
+                }
+            }
             for file in &files {
                 app.open_file(file);
             }
@@ -89,6 +126,22 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Conecta direto ao servidor de `PGSTUDIO_CONNECT`, com as variáveis do
+/// libpq para o resto.
+fn connect_from_env(app: &mut ShellApp, server: &str) {
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    let mut settings = ConnectionSettings {
+        user: env("PGUSER").unwrap_or_else(|| "postgres".into()),
+        database: env("PGDATABASE").unwrap_or_else(|| DEFAULT_DATABASE.into()),
+        ..Default::default()
+    };
+    if let Err(e) = settings.set_server_name(server) {
+        eprintln!("PGSTUDIO_CONNECT: {e}");
+        return;
+    }
+    app.connect_to(settings, env("PGPASSWORD").unwrap_or_default());
 }
 
 /// Arquivo de keymap do usuário: `PGSTUDIO_KEYMAP` ou a pasta de configuração.

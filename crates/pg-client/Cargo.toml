@@ -1,0 +1,19 @@
+[package]
+name = "pgstudio-pg-client"
+description = "Conexão do PGStudio com o PostgreSQL: TLS, erros legíveis e cancelamento."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+tokio-postgres-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+
+[lints]
+workspace = true

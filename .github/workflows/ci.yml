@@ -40,6 +40,43 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
 
+  postgres:
+    name: PostgreSQL ${{ matrix.pg }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # A menor e a maior versão suportadas.
+        pg: ["13", "17"]
+    runs-on: ubuntu-latest
+    env:
+      PGSTUDIO_TEST_HOST: 127.0.0.1
+      PGSTUDIO_TEST_PORT: "5432"
+      PGSTUDIO_TEST_USER: postgres
+      PGSTUDIO_TEST_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Servidor com TLS (certificado próprio) e senha, para testar os modos
+      # de Encryption e os erros de login.
+      - name: Subir o PostgreSQL ${{ matrix.pg }}
+        run: |
+          mkdir certs
+          openssl req -new -x509 -days 2 -nodes -subj /CN=localhost \
+            -out certs/server.crt -keyout certs/server.key
+          sudo chown 999:999 certs/server.crt certs/server.key
+          sudo chmod 600 certs/server.key
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
+            -v "$PWD/certs:/certs:ro" postgres:${{ matrix.pg }} \
+            -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 60); do
+            docker exec pg pg_isready -h 127.0.0.1 -U postgres && exit 0
+            sleep 1
+          done
+          docker logs pg
+          exit 1
+      - run: cargo test --locked -p pgstudio-pg-client
+
   screenshot:
     name: Janela (${{ matrix.os }})
     strategy:
@@ -66,6 +103,9 @@ jobs:
               xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/pgstudio
             test -s pgstudio-$theme.png
           done
+          PGSTUDIO_CONNECT=dialog PGSTUDIO_SCREENSHOT=pgstudio-connect.png timeout 120 \
+            xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/pgstudio
+          test -s pgstudio-connect.png
       - name: Screenshot (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -77,6 +117,12 @@ jobs:
             if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
             if (-not (Test-Path "pgstudio-$theme.png")) { throw "screenshot não gerado" }
           }
+          $env:PGSTUDIO_THEME = "light"
+          $env:PGSTUDIO_CONNECT = "dialog"
+          $env:PGSTUDIO_SCREENSHOT = "pgstudio-connect.png"
+          $p = Start-Process -FilePath ".\target\release\pgstudio.exe" -PassThru -NoNewWindow
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
+          if (-not (Test-Path "pgstudio-connect.png")) { throw "screenshot não gerado" }
       - uses: actions/upload-artifact@v4
         with:
           name: janela-${{ matrix.os }}
