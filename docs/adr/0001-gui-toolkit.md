@@ -1,6 +1,6 @@
 # ADR 0001: toolkit de GUI
 
-- **Status:** proposta (aguardando as medições no Windows e a revisão do Tiago)
+- **Status:** proposta (aguardando a revisão do Tiago)
 - **Data:** 2026-11-13
 
 ## Contexto
@@ -31,8 +31,30 @@ meta de 100 MB precisa ser verificada numa máquina com GPU. Os ~16 ms de
 intervalo parecem ser o ritmo de 60 Hz do Xvfb: os dois toolkits sustentam 60
 FPS rolando a grade.
 
-Medições no Windows: a preencher com o resultado do workflow
-`.github/workflows/spikes.yml`.
+## Medições no Windows
+
+Ambiente: runner `windows-latest` do GitHub Actions, sem GPU (Direct3D cai no
+WARP, o rasterizador por software da Microsoft). Workflow
+`.github/workflows/spikes.yml`, mediana de 3 execuções.
+
+| Protótipo | Primeiro frame | Intervalo entre frames (p50 / p95) | Memória em repouso (working set) | Binário (release) |
+| --- | --- | --- | --- | --- |
+| egui + wgpu, vsync | 212 ms | 344 / 397 ms | 78 MB | 15 MB |
+| egui + wgpu, sem vsync | 232 ms | 299 / 312 ms | 81 MB | 15 MB |
+| Slint | não mediu | não mediu | não mediu | 14 MB |
+| GPUI | 91 ms | 33 ms | 53 MB | 8 MB |
+
+- **egui:** o tempo de CPU do próprio egui por frame rolando a grade é de
+  ~3,5 ms (p95 ~4,5 ms); os ~300 ms são o WARP desenhando via wgpu/Direct3D 12.
+  Desligar o vsync quase não muda, então não é espera pela apresentação. Numa
+  máquina com GPU isso some, mas é um sinal de que o egui fica lento em
+  Windows sem aceleração (VMs, RDP). Mitigação: oferecer o backend glow
+  (OpenGL) ou o Direct3D 11 do wgpu e medir numa máquina real.
+- **Slint:** o padrão (femtovg) usa OpenGL, que o runner não tem; ele cai no
+  renderizador por software, que não oferece o callback de renderização usado
+  para medir. Abre e roda, mas sem números.
+- **GPUI:** no Windows roda bem (renderizador DirectX próprio) e foi o mais
+  rápido e leve. Isso não muda as lacunas funcionais abaixo.
 
 ## O que cada protótipo mostrou
 
@@ -70,14 +92,19 @@ Medições no Windows: a preencher com o resultado do workflow
 - Não traz campo de texto editável (o exemplo oficial de input tem ~750 linhas),
   nem docking; `set_menus` só vira menu nativo no macOS.
 - No Linux sem GPU (Xvfb + lavapipe) desenhou um frame e não apresentou mais
-  nenhum, então não foi possível medir. O CI no Windows vai mostrar se roda lá.
+  nenhum, então não foi possível medir. No Windows foi o mais rápido e leve.
 
 ## Decisão proposta
 
 Usar **egui + eframe + egui_dock**, com renderizador **wgpu** como padrão e
 glow como alternativa. É o único dos três que entrega docking pronto e onde o
 popup de IntelliSense funcionou sem construir um editor do zero; desempenho e
-memória ficaram equivalentes ou melhores que os do Slint no mesmo ambiente.
+memória ficaram equivalentes ou melhores que os do Slint no Linux.
+
+O GPUI foi melhor em desempenho no Windows, mas exigiria construir campo de
+texto, docking e menus do zero, sobre uma crate que nem compila sem remendo e
+não roda no Linux sem GPU. Para um app cujo coração é o editor, esse custo é
+maior que a diferença de desempenho, que numa máquina com GPU deve ser pequena.
 
 ## Consequências
 
@@ -86,4 +113,6 @@ memória ficaram equivalentes ou melhores que os do Slint no mesmo ambiente.
 - A crate `sql-editor` terá buffer próprio (ex.: `ropey`) e realce incremental
   (ex.: `tree-sitter`), usando o `TextEdit` só como ponto de partida.
 - Tema próprio e fonte de ícones entram já no marco 1.2.
-- Reavaliar se as medições do Windows contradisserem as do Linux.
+- Medir o egui numa máquina Windows com GPU (ou pedir a alguém) no marco 1.1;
+  se ficar lento em VMs/RDP, expor a escolha de backend (glow, D3D11) nas
+  configurações.
