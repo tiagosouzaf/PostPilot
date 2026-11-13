@@ -250,6 +250,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::OpenFile, "Ctrl+O"),
     (CommandId::Save, "Ctrl+S"),
     (CommandId::SaveAs, "Ctrl+Shift+S"),
+    (CommandId::CloseDocument, "Ctrl+F4"),
     (CommandId::Exit, "Alt+F4"),
     (CommandId::Undo, "Ctrl+Z"),
     (CommandId::Redo, "Ctrl+Y"),

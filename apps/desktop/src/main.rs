@@ -1,6 +1,8 @@
 //! Ponto de entrada do PGStudio.
 //!
-//! Variável de ambiente opcional:
+//! Uso: `pgstudio [arquivo.sql ...]` abre os arquivos em janelas de consulta.
+//!
+//! Variáveis de ambiente opcionais:
 //! - `PGSTUDIO_SCREENSHOT=arquivo.png`: salva um PNG da janela depois dos
 //!   primeiros frames e fecha. Usado pelo CI.
 //! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
@@ -12,9 +14,12 @@
 use eframe::egui;
 use std::path::PathBuf;
 
+use std::path::Path;
+
 use pgstudio_core::Theme;
 use pgstudio_core::keymap::Keymap;
 use pgstudio_ui_shell::ShellApp;
+use pgstudio_ui_shell::documents::FileDialogs;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -30,17 +35,23 @@ fn main() -> eframe::Result {
         _ => Theme::Light,
     };
     let (keymap, keymap_status) = load_keymap();
+    let files: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     eframe::run_native(
         "pgstudio",
         options,
         Box::new(move |cc| {
-            let mut app = ShellApp::new(&cc.egui_ctx).with_keymap(keymap);
+            let mut app = ShellApp::new(&cc.egui_ctx)
+                .with_keymap(keymap)
+                .with_file_dialogs(NativeDialogs::default());
             if let Some(status) = keymap_status {
                 app = app.with_status(status);
             }
             app.set_theme(&cc.egui_ctx, theme);
             if let Ok(paths) = std::env::var("PGSTUDIO_EXPAND") {
                 app = app.with_expanded(paths.split(';').map(str::to_string));
+            }
+            for file in &files {
+                app.open_file(file);
             }
             if let Some(path) = screenshot {
                 app = app.with_screenshot(path);
@@ -99,4 +110,45 @@ fn load_keymap() -> (Keymap, Option<String>) {
         )
     });
     (keymap, status)
+}
+
+/// Diálogos de arquivo nativos do sistema (rfd). Lembra a última pasta.
+#[derive(Default)]
+struct NativeDialogs {
+    last_dir: Option<PathBuf>,
+}
+
+impl NativeDialogs {
+    fn dialog(&self) -> rfd::FileDialog {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("SQL Files (*.sql)", &["sql"])
+            .add_filter("All Files (*.*)", &["*"]);
+        match &self.last_dir {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        }
+    }
+
+    fn remember(&mut self, path: Option<PathBuf>) -> Option<PathBuf> {
+        if let Some(dir) = path.as_deref().and_then(Path::parent) {
+            self.last_dir = Some(dir.to_path_buf());
+        }
+        path
+    }
+}
+
+impl FileDialogs for NativeDialogs {
+    fn save_path(&mut self, name: &str, current: Option<&Path>) -> Option<PathBuf> {
+        let mut dialog = self.dialog().set_title("Save File As").set_file_name(name);
+        if let Some(dir) = current.and_then(Path::parent) {
+            dialog = dialog.set_directory(dir);
+        }
+        let path = dialog.save_file();
+        self.remember(path)
+    }
+
+    fn open_path(&mut self) -> Option<PathBuf> {
+        let path = self.dialog().set_title("Open File").pick_file();
+        self.remember(path)
+    }
 }

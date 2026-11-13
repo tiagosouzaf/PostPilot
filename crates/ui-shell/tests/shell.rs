@@ -328,3 +328,209 @@ fn ten_thousand_tables_render_only_visible_rows() {
         .count();
     assert!(drawn > 0 && drawn < 200, "{drawn} linhas desenhadas");
 }
+
+// Janelas de consulta (marco 1.6).
+
+use eframe::egui::Event;
+use pgstudio_ui_shell::documents::FileDialogs;
+use std::path::{Path, PathBuf};
+
+/// Diálogos com respostas prontas.
+struct Answers {
+    save: Option<PathBuf>,
+    open: Option<PathBuf>,
+}
+
+impl FileDialogs for Answers {
+    fn save_path(&mut self, _name: &str, _current: Option<&Path>) -> Option<PathBuf> {
+        self.save.clone()
+    }
+
+    fn open_path(&mut self) -> Option<PathBuf> {
+        self.open.clone()
+    }
+}
+
+fn with_dialogs(save: Option<PathBuf>, open: Option<PathBuf>) -> Harness<'static, ShellApp> {
+    let app = ShellApp::default().with_file_dialogs(Answers { save, open });
+    Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app)
+}
+
+fn temp_file(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("pgstudio-shell-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+fn type_text(harness: &mut Harness<'static, ShellApp>, text: &str) {
+    harness.event(Event::Text(text.to_string()));
+    harness.run();
+}
+
+fn active_text(harness: &Harness<'static, ShellApp>) -> String {
+    let app = harness.state();
+    let id = app.active_document().expect("no active query");
+    app.documents().get(id).unwrap().text.clone()
+}
+
+#[test]
+fn ctrl_n_opens_a_query_window_in_the_document_area() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    let id = harness.state().active_document().expect("query opened");
+    let app = harness.state();
+    assert_eq!(app.documents().get(id).unwrap().name(), "SQLQuery1.sql");
+    assert!(app.is_panel_open(Panel::Query(id)));
+    let query = app.panel_rect(Panel::Query(id)).unwrap();
+    let explorer = app.panel_rect(Panel::ObjectExplorer).unwrap();
+    let props = app.panel_rect(Panel::Properties).unwrap();
+    let output = app.panel_rect(Panel::Output).unwrap();
+    assert!(query.left() >= explorer.right() - 1.0);
+    assert!(query.right() <= props.left() + 1.0);
+    assert!(query.bottom() <= output.top() + 1.0);
+
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    let second = harness.state().active_document().unwrap();
+    assert_ne!(second, id);
+    assert!(
+        harness
+            .state()
+            .panels_grouped(Panel::Query(id), Panel::Query(second))
+    );
+}
+
+#[test]
+fn typing_goes_to_the_editor_and_marks_the_query_changed() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select 1;");
+    assert_eq!(active_text(&harness), "select 1;");
+    let id = harness.state().active_document().unwrap();
+    let doc = harness.state().documents().get(id).unwrap();
+    assert!(doc.is_dirty());
+    assert_eq!(doc.title(), "SQLQuery1.sql*");
+    // Atalhos de edição ficam com o editor, não viram comandos da casca.
+    harness.event(Event::Copy);
+    press(&mut harness, Modifiers::CTRL, Key::A);
+    assert_eq!(harness.state().last_command(), Some(CommandId::NewQuery));
+}
+
+#[test]
+fn ctrl_s_asks_for_a_file_and_saves() {
+    let path = temp_file("save.sql");
+    let mut harness = with_dialogs(Some(path.clone()), None);
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select now();");
+    press(&mut harness, Modifiers::CTRL, Key::S);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "select now();");
+    let id = harness.state().active_document().unwrap();
+    let doc = harness.state().documents().get(id).unwrap();
+    assert!(!doc.is_dirty());
+    assert_eq!(doc.name(), "save.sql");
+    assert_eq!(harness.state().status(), "Item(s) Saved");
+}
+
+#[test]
+fn cancelled_save_keeps_the_changes() {
+    let mut harness = with_dialogs(None, None);
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "x");
+    press(&mut harness, Modifiers::CTRL | Modifiers::SHIFT, Key::S);
+    let id = harness.state().active_document().unwrap();
+    assert!(harness.state().documents().get(id).unwrap().is_dirty());
+}
+
+#[test]
+fn ctrl_o_reopens_a_saved_file_identical() {
+    let text = "select 'olá';\r\n\tselect 2;\n";
+    let path = temp_file("open.sql");
+    std::fs::write(&path, text).unwrap();
+    let mut harness = with_dialogs(None, Some(path.clone()));
+    press(&mut harness, Modifiers::CTRL, Key::O);
+    assert_eq!(active_text(&harness), text);
+    let id = harness.state().active_document().unwrap();
+    assert_eq!(
+        harness.state().documents().get(id).unwrap().name(),
+        "open.sql"
+    );
+    // Abrir de novo traz a mesma aba.
+    press(&mut harness, Modifiers::CTRL, Key::O);
+    assert_eq!(harness.state().documents().ids(), vec![id]);
+}
+
+#[test]
+fn closing_an_unchanged_query_does_not_ask() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    press(&mut harness, Modifiers::CTRL, Key::F4);
+    assert!(harness.state().confirm_pending().is_none());
+    assert!(harness.state().documents().ids().is_empty());
+    assert_eq!(harness.state().active_document(), None);
+}
+
+#[test]
+fn closing_a_changed_query_asks_first() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select 1;");
+    press(&mut harness, Modifiers::CTRL, Key::F4);
+    assert!(harness.state().confirm_pending().is_some());
+    harness.get_by_label("Save changes to the following items?");
+    harness.get_by_label("SQLQuery1.sql");
+
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(harness.state().confirm_pending().is_none());
+    assert_eq!(harness.state().documents().ids().len(), 1);
+
+    press(&mut harness, Modifiers::CTRL, Key::F4);
+    harness.get_by_label("No").click();
+    harness.run();
+    assert!(harness.state().documents().ids().is_empty());
+}
+
+#[test]
+fn answering_yes_saves_then_closes() {
+    let path = temp_file("yes.sql");
+    let mut harness = with_dialogs(Some(path.clone()), None);
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select 3;");
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Close Ctrl+F4").click();
+    harness.run();
+    harness.get_by_label("Yes").click();
+    harness.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "select 3;");
+    assert!(harness.state().documents().ids().is_empty());
+}
+
+#[test]
+fn exit_with_changed_queries_asks_first() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select 4;");
+    press(&mut harness, Modifiers::ALT, Key::F4);
+    assert!(harness.state().confirm_pending().is_some());
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert_eq!(harness.state().documents().ids().len(), 1);
+}
+
+#[test]
+fn reset_window_layout_keeps_query_windows() {
+    let mut harness = harness();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    type_text(&mut harness, "select 5;");
+    let id = harness.state().active_document().unwrap();
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Reset Window Layout").click();
+    harness.run();
+    assert!(harness.state().is_panel_open(Panel::Query(id)));
+    assert_eq!(active_text(&harness), "select 5;");
+}

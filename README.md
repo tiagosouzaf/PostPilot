@@ -5,7 +5,8 @@ Management Studio (SSMS). Escrito 100% em Rust, para Windows e Linux, sem Electr
 nem WebView.
 
 > Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
-> atalhos e os painéis encaixáveis do SSMS, mas ainda não conecta a um banco.
+> atalhos, os painéis encaixáveis, um Object Explorer de demonstração e janelas
+> de consulta que abrem e salvam arquivos `.sql`, mas ainda não conecta a um banco.
 
 ## Estrutura
 
@@ -14,10 +15,20 @@ apps/desktop/     binário `pgstudio`
 crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
 crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 crates/docking/   painéis encaixáveis (invólucro do egui_dock)
+crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
 ```
 
-Novas crates (`object-explorer`, `pg-connection`, …) entram na fase do
-roteiro que as usa.
+Novas crates (`pg-connection`, …) entram na fase do roteiro que as usa.
+
+## Uso
+
+```sh
+pgstudio [arquivo.sql ...]
+```
+
+Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
+Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
+fechar a aba ou o aplicativo pergunta antes de descartar.
 
 ## Atalhos de teclado
 

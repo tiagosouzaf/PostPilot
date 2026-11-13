@@ -15,6 +15,7 @@ path = "src/main.rs"
 pgstudio-core.workspace = true
 pgstudio-ui-shell.workspace = true
 eframe.workspace = true
+rfd.workspace = true
 
 [lints]
 workspace = true
