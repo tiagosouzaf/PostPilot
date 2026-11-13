@@ -14,6 +14,29 @@ pub fn window_title() -> String {
     format!("{APP_NAME} {VERSION}")
 }
 
+/// Tema de cores da interface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Theme {
+    /// Tema claro, o padrão do SSMS.
+    #[default]
+    Light,
+    /// Tema escuro.
+    Dark,
+}
+
+impl Theme {
+    /// Todos os temas, na ordem em que aparecem nos menus.
+    pub const ALL: [Theme; 2] = [Theme::Light, Theme::Dark];
+
+    /// Nome exibido no menu.
+    pub fn label(self) -> &'static str {
+        match self {
+            Theme::Light => "Light",
+            Theme::Dark => "Dark",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,5 +47,10 @@ mod tests {
             window_title(),
             format!("PGStudio {}", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn default_theme_is_light() {
+        assert_eq!(Theme::default(), Theme::Light);
     }
 }
