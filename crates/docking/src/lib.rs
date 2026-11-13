@@ -433,8 +433,17 @@ impl<P: Pane> Workspace<P> {
     }
 
     /// Mostra o painel: se já está aberto, traz para a frente; se não, abre
-    /// junto de outro painel da mesma área ou recria a área na borda.
+    /// junto de outro painel da mesma área ou recria a área na borda. Em
+    /// todo caso, o painel fica com o foco (é o que [`Self::focused`] vê).
     pub fn open(&mut self, pane: P) {
+        self.insert(pane.clone());
+        if let Some(path) = self.state.find_tab(&pane) {
+            let _ = self.state.set_active_tab(path);
+            self.state.set_focused_node_and_surface(path.node_path());
+        }
+    }
+
+    fn insert(&mut self, pane: P) {
         if self.is_hidden(&pane) {
             self.flyout = Some(pane);
             return;

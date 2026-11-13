@@ -7,6 +7,7 @@ pub mod command;
 pub mod connection;
 pub mod keymap;
 pub mod metadata;
+pub mod query;
 
 pub use command::CommandId;
 

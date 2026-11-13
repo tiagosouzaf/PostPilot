@@ -33,6 +33,7 @@ impl Connector for FakeConnector {
             settings: s.clone(),
             server_version: "17.2".into(),
             metadata: Arc::new(FakeProvider::new(Duration::ZERO)),
+            queries: Arc::new(pgstudio_core::query::Offline("offline")),
         })
     }
 }

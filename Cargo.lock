@@ -2619,6 +2619,7 @@ dependencies = [
 name = "pgstudio-pg-client"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "pgstudio-core",
  "rustls",
  "rustls-native-certs",

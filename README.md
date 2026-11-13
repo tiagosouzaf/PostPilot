@@ -6,8 +6,9 @@ nem WebView.
 
 > Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
 > atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
-> arquivos `.sql`, e conecta a um PostgreSQL mostrando o catálogo no Object
-> Explorer. Ainda não executa consultas.
+> arquivos `.sql` com realce de SQL, conecta a um PostgreSQL mostrando o
+> catálogo no Object Explorer e executa consultas (F5). A grade de resultados
+> completa e o IntelliSense ainda não estão prontos.
 
 ## Estrutura
 
@@ -55,6 +56,20 @@ palavra selecionada, e Ctrl+G vai para uma linha. A status bar mostra a linha e
 a coluna do cursor. Arquivos de milhares de linhas funcionam, mas digitar fica
 mais lento a partir de ~5 mil linhas (cerca de 95 ms por tecla), porque o
 layout ainda é refeito para o texto inteiro.
+
+F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
+selecionado, numa conexão própria da janela de consulta (aberta na primeira
+execução, no banco da conexão do Object Explorer). Vários comandos separados
+por `;` rodam juntos, como no protocolo simples do PostgreSQL: se um falhar, os
+anteriores do mesmo lote são desfeitos, a menos que haja `BEGIN`/`COMMIT`
+explícitos. Embaixo do editor, a aba Results mostra cada resultado e a aba
+Messages mostra as linhas afetadas, os avisos (`RAISE NOTICE`) e os erros com
+linha e coluna; o cursor vai até o erro, e clicar na mensagem volta a ele. A
+faixa embaixo mostra a situação, o servidor, o banco, o tempo e as linhas.
+"Cancel Executing Query" (botão ■ da toolbar ou menu Query) cancela pelo
+`pg_cancel_backend` do protocolo. O atalho Alt+Break do SSMS está no keymap, mas
+o egui ainda não entrega a tecla Pause/Break, então por enquanto ele não chega.
+Resultados guardam até 100 mil linhas; a grade completa vem no marco 2.5.
 
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados

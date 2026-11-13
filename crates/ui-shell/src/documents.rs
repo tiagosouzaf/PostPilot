@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Uma janela de consulta.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Document {
     name: String,
     path: Option<PathBuf>,
@@ -16,6 +16,20 @@ pub struct Document {
     pub editor: pgstudio_sql_editor::EditorState,
     /// Linha e coluna do cursor (a partir de 1), para a status bar.
     pub cursor: Option<(usize, usize)>,
+    /// Conexão da janela, aberta na primeira execução.
+    pub session: Option<Session>,
+    /// Última execução: resultados e mensagens.
+    pub execution: Option<crate::execution::Execution>,
+}
+
+/// A conexão de uma janela de consulta.
+#[derive(Clone)]
+pub struct Session(pub std::sync::Arc<dyn pgstudio_core::query::QuerySession>);
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Session").field(&self.0.database()).finish()
+    }
 }
 
 impl Document {
@@ -79,6 +93,8 @@ impl Documents {
             saved: String::new(),
             editor: Default::default(),
             cursor: None,
+            session: None,
+            execution: None,
         })
     }
 
@@ -101,6 +117,8 @@ impl Documents {
             text,
             editor: Default::default(),
             cursor: None,
+            session: None,
+            execution: None,
         }))
     }
 

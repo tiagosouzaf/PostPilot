@@ -68,6 +68,8 @@ pub struct Viewer<'a> {
     pub close_requests: Vec<u32>,
     /// Cores do editor de SQL (seguem o tema).
     pub editor_colors: pgstudio_sql_editor::Colors,
+    /// Servidor e usuário, para a faixa de status das janelas de consulta.
+    pub server: String,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -151,6 +153,19 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 };
                 if self.focus_editor == Some(*id) {
                     doc.editor.focus_editor();
+                }
+                if let Some(exec) = &mut doc.execution {
+                    let height = ui.available_height();
+                    let action = egui::Panel::bottom(egui::Id::new(("results_pane", *id)))
+                        .resizable(true)
+                        .default_size(height * 0.45)
+                        .min_size(90.0)
+                        .show(ui, |ui| crate::results::show(ui, *id, exec, &self.server))
+                        .inner;
+                    if let Some(pos) = action.jump_to {
+                        pgstudio_sql_editor::set_selection(ui.ctx(), editor_id(*id), (pos, pos));
+                        doc.editor.focus_editor();
+                    }
                 }
                 let out = pgstudio_sql_editor::SqlEditor::new(
                     &mut doc.text,

@@ -72,10 +72,7 @@ fn f5_and_ctrl_e_trigger_execute() {
     let mut harness = harness();
     press(&mut harness, Modifiers::NONE, Key::F5);
     assert_eq!(harness.state().last_command(), Some(CommandId::Execute));
-    assert_eq!(
-        harness.state().status(),
-        "\"Execute\" is not available yet."
-    );
+    assert_eq!(harness.state().status(), "No query window is open.");
 
     let mut harness = self::harness();
     press(&mut harness, Modifiers::CTRL, Key::E);
@@ -243,7 +240,12 @@ fn output_logs_executed_commands() {
     press(&mut harness, Modifiers::NONE, Key::F5);
     assert_eq!(
         harness.state().output().last().map(String::as_str),
-        Some("> Execute (not available yet)")
+        Some("> Execute")
+    );
+    press(&mut harness, Modifiers::CTRL, Key::F5);
+    assert_eq!(
+        harness.state().output().last().map(String::as_str),
+        Some("> Parse (not available yet)")
     );
 }
 

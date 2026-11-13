@@ -11,16 +11,19 @@
 //! O Object Explorer e o `Connector` da interface ficam em `pg-metadata`.
 
 mod error;
+mod query;
 mod tls;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use pgstudio_core::connection::{ConnectError, ConnectionSettings, SslMode};
 use tokio::runtime::{Handle, Runtime};
-use tokio_postgres::{CancelToken, Client, SimpleQueryMessage};
+use tokio_postgres::error::DbError;
+use tokio_postgres::{AsyncMessage, CancelToken, Client, SimpleQueryMessage};
 
 pub use error::{connect_error, describe};
+pub use query::{PgQueryService, PgQuerySession};
 
 /// Tempo máximo para abrir a conexão.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -35,6 +38,27 @@ pub struct Session {
     ssl: SslMode,
     settings: ConnectionSettings,
     server_version: String,
+    /// Avisos do servidor (`NOTICE`, `WARNING`), na ordem em que chegaram.
+    notices: Mutex<mpsc::Receiver<DbError>>,
+}
+
+/// Cancela o comando em andamento de uma sessão, mesmo com a sessão
+/// ocupada.
+#[derive(Clone)]
+pub struct Canceller {
+    token: CancelToken,
+    ssl: SslMode,
+}
+
+impl Canceller {
+    /// Pede o cancelamento por uma segunda conexão.
+    pub async fn cancel(&self) -> Result<(), String> {
+        let tls = tls::connector(self.ssl)?;
+        self.token
+            .cancel_query(tls)
+            .await
+            .map_err(|e| error::describe(&e))
+    }
 }
 
 impl Session {
@@ -66,9 +90,17 @@ impl Session {
             .connect(tls)
             .await
             .map_err(|e| connect_error(&e, settings))?;
+        let (notice_tx, notices) = mpsc::channel();
         tokio::spawn(async move {
+            let mut connection = connection;
             // Erros aqui aparecem na próxima consulta como conexão fechada.
-            let _ = connection.await;
+            while let Some(Ok(message)) =
+                std::future::poll_fn(|cx| connection.poll_message(cx)).await
+            {
+                if let AsyncMessage::Notice(notice) = message {
+                    let _ = notice_tx.send(notice);
+                }
+            }
         });
         let server_version = server_version(&client)
             .await
@@ -79,6 +111,7 @@ impl Session {
             ssl: settings.ssl,
             settings: settings.clone(),
             server_version,
+            notices: Mutex::new(notices),
         })
     }
 
@@ -108,11 +141,23 @@ impl Session {
 
     /// Pede ao servidor para cancelar o comando em andamento nesta sessão.
     pub async fn cancel(&self) -> Result<(), String> {
-        let tls = tls::connector(self.ssl)?;
-        self.cancel
-            .cancel_query(tls)
-            .await
-            .map_err(|e| error::describe(&e))
+        self.canceller().cancel().await
+    }
+
+    /// Quem cancela o comando desta sessão, para guardar fora dela.
+    pub fn canceller(&self) -> Canceller {
+        Canceller {
+            token: self.cancel.clone(),
+            ssl: self.ssl,
+        }
+    }
+
+    /// Avisos recebidos desde a última chamada.
+    pub fn take_notices(&self) -> Vec<DbError> {
+        match self.notices.lock() {
+            Ok(rx) => rx.try_iter().collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Se a conexão caiu.

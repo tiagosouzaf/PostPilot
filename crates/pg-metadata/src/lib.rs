@@ -32,7 +32,7 @@ use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Con
 use pgstudio_core::metadata::{
     Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
 };
-use pgstudio_pg_client::{DbRuntime, Session, describe};
+use pgstudio_pg_client::{DbRuntime, PgQueryService, Session, describe};
 use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
 
@@ -486,6 +486,11 @@ impl Connector for PgConnector {
             settings: settings.clone(),
             server_version,
             metadata: Arc::new(explorer),
+            queries: Arc::new(PgQueryService::new(
+                settings.clone(),
+                password.to_string(),
+                self.runtime.clone(),
+            )),
         })
     }
 }

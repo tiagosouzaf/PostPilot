@@ -10,6 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::metadata::MetadataProvider;
+use crate::query::QueryService;
 
 /// Porta padrão do PostgreSQL.
 pub const DEFAULT_PORT: u16 = 5432;
@@ -185,6 +186,8 @@ pub struct Connected {
     /// Metadados para o Object Explorer. Soltar o último `Arc` fecha a
     /// conexão.
     pub metadata: Arc<dyn MetadataProvider>,
+    /// Abre as conexões das janelas de consulta.
+    pub queries: Arc<dyn QueryService>,
 }
 
 impl fmt::Debug for Connected {

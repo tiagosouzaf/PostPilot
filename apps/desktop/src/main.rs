@@ -15,6 +15,8 @@
 //!   medição usam sempre o layout padrão.
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PGStudio/keymap.txt`.
+//! - `PGSTUDIO_RUN=1`: executa a janela de consulta ativa (o primeiro
+//!   arquivo aberto) assim que conectar, como um F5.
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -116,6 +118,9 @@ fn main() -> eframe::Result {
             }
             for file in &files {
                 app.open_file(file);
+            }
+            if std::env::var_os("PGSTUDIO_RUN").is_some() {
+                app = app.with_run_on_connect();
             }
             if bench {
                 app = app.with_bench();
