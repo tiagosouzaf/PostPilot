@@ -2,9 +2,10 @@
 //! status bar, tema e atalhos de teclado.
 //!
 //! Só esta camada conhece o egui. Menus, toolbar e atalhos viram
-//! [`CommandId`] e passam por [`ShellApp::execute`]. O docking (marco 1.4) e o
-//! Object Explorer (marco 1.5) entram depois na área central.
+//! [`CommandId`] e passam por [`ShellApp::execute`]. A área central tem o
+//! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
+pub mod documents;
 pub mod keys;
 pub mod menus;
 pub mod panels;
@@ -16,6 +17,7 @@ use eframe::egui::{self, RichText};
 use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
 use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
 
+use documents::{Documents, FileDialogs, NoDialogs};
 use menus::{Entry, MENUS, TOOLBAR, Tool};
 use panels::Panel;
 use pgstudio_docking::Workspace;
@@ -39,6 +41,33 @@ pub struct ShellApp {
     screenshot: Option<Screenshot>,
     /// Nós a expandir assim que carregarem (demonstração e screenshots).
     pending_expand: std::collections::VecDeque<pgstudio_core::metadata::NodeId>,
+    documents: Documents,
+    /// Janela de consulta ativa (a última que teve foco).
+    active_doc: Option<u32>,
+    focus_editor: Option<u32>,
+    dialogs: Box<dyn FileDialogs>,
+    confirm: Option<Confirm>,
+    /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
+    allow_close: bool,
+}
+
+/// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
+#[derive(Clone, Debug)]
+struct Confirm {
+    /// Documentos com alterações, listados na pergunta.
+    save: Vec<u32>,
+    /// Documentos a fechar depois da resposta.
+    close: Vec<u32>,
+    /// Sair do aplicativo depois de fechar.
+    exit: bool,
+}
+
+/// Resposta à pergunta de salvar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Yes,
+    No,
+    Cancel,
 }
 
 struct Screenshot {
@@ -61,6 +90,12 @@ impl Default for ShellApp {
             explorer: ObjectExplorer::default(),
             screenshot: None,
             pending_expand: Default::default(),
+            documents: Documents::default(),
+            active_doc: None,
+            focus_editor: None,
+            dialogs: Box::new(NoDialogs),
+            confirm: None,
+            allow_close: false,
         }
     }
 }
@@ -95,6 +130,57 @@ impl ShellApp {
     pub fn with_keymap(mut self, keymap: Keymap) -> Self {
         self.keymap = keymap;
         self
+    }
+
+    /// Usa estes diálogos de arquivo (o aplicativo passa os nativos).
+    pub fn with_file_dialogs(mut self, dialogs: impl FileDialogs + 'static) -> Self {
+        self.dialogs = Box::new(dialogs);
+        self
+    }
+
+    /// Janelas de consulta abertas.
+    pub fn documents(&self) -> &Documents {
+        &self.documents
+    }
+
+    /// Janelas de consulta, mutável.
+    pub fn documents_mut(&mut self) -> &mut Documents {
+        &mut self.documents
+    }
+
+    /// Abre um arquivo numa janela de consulta (ou traz a que já o tem).
+    /// Em caso de erro, avisa na status bar e devolve `false`.
+    pub fn open_file(&mut self, path: &std::path::Path) -> bool {
+        match self.documents.open(path) {
+            Ok(id) => {
+                self.activate_document(id);
+                true
+            }
+            Err(e) => {
+                self.status = format!("Could not open {}: {e}", path.display());
+                false
+            }
+        }
+    }
+
+    /// Janela de consulta ativa.
+    pub fn active_document(&self) -> Option<u32> {
+        self.active_doc
+    }
+
+    /// Torna a janela de consulta ativa e traz a aba para a frente.
+    pub fn activate_document(&mut self, id: u32) {
+        if self.documents.get(id).is_some() {
+            self.workspace.open(Panel::Query(id));
+            self.active_doc = Some(id);
+            self.focus_editor = Some(id);
+        }
+    }
+
+    /// Se a pergunta "salvar alterações?" está aberta, e sobre quais
+    /// documentos.
+    pub fn confirm_pending(&self) -> Option<&[u32]> {
+        self.confirm.as_ref().map(|c| c.save.as_slice())
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -201,6 +287,13 @@ impl ShellApp {
                 | ResetWindowLayout
                 | ConnectObjectExplorer
                 | DisconnectObjectExplorer
+                | NewQuery
+                | OpenFile
+                | CloseDocument
+                | CloseAllDocuments
+                | Save
+                | SaveAs
+                | SaveAll
         )
     }
 
@@ -209,7 +302,19 @@ impl ShellApp {
         self.last_command = Some(cmd);
         self.status = READY.to_string();
         match cmd {
-            CommandId::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            CommandId::Exit => {
+                let dirty = self.documents.dirty();
+                if dirty.is_empty() {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.confirm = Some(Confirm {
+                        save: dirty,
+                        close: self.documents.ids(),
+                        exit: true,
+                    });
+                }
+            }
             CommandId::ThemeLight => self.set_theme(ctx, Theme::Light),
             CommandId::ThemeDark => self.set_theme(ctx, Theme::Dark),
             CommandId::FullScreen => {
@@ -220,7 +325,42 @@ impl ShellApp {
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::Output => self.workspace.open(Panel::Output),
-            CommandId::ResetWindowLayout => self.workspace = panels::default_layout(),
+            CommandId::ResetWindowLayout => {
+                self.workspace = panels::default_layout();
+                for id in self.documents.ids() {
+                    self.workspace.open(Panel::Query(id));
+                }
+                if let Some(id) = self.active_doc {
+                    self.workspace.open(Panel::Query(id));
+                }
+            }
+            CommandId::NewQuery => {
+                let id = self.documents.new_query();
+                self.activate_document(id);
+            }
+            CommandId::OpenFile => {
+                if let Some(path) = self.dialogs.open_path() {
+                    self.open_file(&path);
+                }
+            }
+            CommandId::Save | CommandId::SaveAs => match self.active_doc {
+                Some(id) => {
+                    self.save(id, cmd == CommandId::SaveAs);
+                }
+                None => self.status = "No query window is open.".to_string(),
+            },
+            CommandId::SaveAll => {
+                for id in self.documents.dirty() {
+                    if !self.save(id, false) {
+                        break;
+                    }
+                }
+            }
+            CommandId::CloseDocument => match self.active_doc {
+                Some(id) => self.request_close(vec![id], false),
+                None => self.status = "No query window is open.".to_string(),
+            },
+            CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
             CommandId::ConnectObjectExplorer => {
                 self.workspace.open(Panel::ObjectExplorer);
                 if !self.explorer.is_connected() {
@@ -240,10 +380,144 @@ impl ShellApp {
         self.output.push(format!("> {}{note}", cmd.label()));
     }
 
+    /// Salva o documento; `ask` pede o arquivo mesmo se já tiver um.
+    /// Devolve `false` se o usuário cancelou ou a gravação falhou.
+    fn save(&mut self, id: u32, ask: bool) -> bool {
+        let Some(doc) = self.documents.get(id) else {
+            return false;
+        };
+        let path = match doc.path() {
+            Some(p) if !ask => p.to_path_buf(),
+            current => match self.dialogs.save_path(doc.name(), current) {
+                Some(p) => p,
+                None => return false,
+            },
+        };
+        let Some(doc) = self.documents.get_mut(id) else {
+            return false;
+        };
+        match doc.save_to(&path) {
+            Ok(()) => {
+                self.status = "Item(s) Saved".to_string();
+                true
+            }
+            Err(e) => {
+                self.status = format!("Could not save {}: {e}", path.display());
+                false
+            }
+        }
+    }
+
+    /// Fecha os documentos, perguntando antes se algum tem alterações.
+    fn request_close(&mut self, close: Vec<u32>, exit: bool) {
+        let save: Vec<u32> = close
+            .iter()
+            .copied()
+            .filter(|id| self.documents.get(*id).is_some_and(|d| d.is_dirty()))
+            .collect();
+        if save.is_empty() {
+            self.close_documents(&close);
+        } else {
+            self.confirm = Some(Confirm { save, close, exit });
+        }
+    }
+
+    fn close_documents(&mut self, ids: &[u32]) {
+        for id in ids {
+            self.workspace.close(&Panel::Query(*id));
+            self.documents.remove(*id);
+        }
+    }
+
+    /// Responde à pergunta "salvar alterações?".
+    pub fn answer(&mut self, ctx: &egui::Context, answer: Answer) {
+        let Some(confirm) = self.confirm.take() else {
+            return;
+        };
+        match answer {
+            Answer::Cancel => return,
+            Answer::Yes => {
+                for id in &confirm.save {
+                    if !self.save(*id, false) {
+                        return;
+                    }
+                }
+            }
+            Answer::No => {}
+        }
+        self.close_documents(&confirm.close);
+        if confirm.exit {
+            self.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(confirm) = &self.confirm else {
+            return;
+        };
+        let names: Vec<String> = confirm
+            .save
+            .iter()
+            .filter_map(|id| self.documents.get(*id))
+            .map(|d| {
+                d.path()
+                    .map_or(d.name().to_string(), |p| p.display().to_string())
+            })
+            .collect();
+        let mut answer = None;
+        let modal = egui::Modal::new(egui::Id::new("save_changes")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading(APP_NAME);
+            ui.label("Save changes to the following items?");
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for name in &names {
+                    ui.label(name);
+                }
+            });
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Cancel").clicked() {
+                    answer = Some(Answer::Cancel);
+                }
+                if ui.button("No").clicked() {
+                    answer = Some(Answer::No);
+                }
+                if ui.button("Yes").clicked() {
+                    answer = Some(Answer::Yes);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(Answer::Cancel);
+        }
+        if let Some(answer) = answer {
+            self.answer(ctx, answer);
+        }
+    }
+
     /// Desenha a casca inteira num `Ui` que ocupa a janela.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let mut commands = self.keyboard(&ctx);
+        let mut commands = if self.confirm.is_some() {
+            Vec::new()
+        } else {
+            self.keyboard(&ctx)
+        };
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
+            let dirty = self.documents.dirty();
+            if !dirty.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.confirm.is_none() {
+                    self.confirm = Some(Confirm {
+                        save: dirty,
+                        close: self.documents.ids(),
+                        exit: true,
+                    });
+                }
+            }
+        }
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -268,11 +542,21 @@ impl ShellApp {
                 let mut viewer = panels::Viewer {
                     output: &self.output,
                     explorer: &mut self.explorer,
+                    documents: &mut self.documents,
+                    focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
+                    close_requests: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
                 commands.extend(viewer.commands);
+                for id in viewer.close_requests {
+                    self.workspace.open(Panel::Query(id));
+                    self.active_doc = Some(id);
+                    self.request_close(vec![id], false);
+                }
             });
+        self.sync_documents();
+        self.confirm_window(&ctx);
 
         if self.about_open {
             let mut open = true;
@@ -295,11 +579,32 @@ impl ShellApp {
         }
     }
 
+    /// Esquece documentos cuja aba foi fechada e acompanha a aba ativa.
+    fn sync_documents(&mut self) {
+        let workspace = &self.workspace;
+        self.documents
+            .retain(|id| workspace.is_open(&Panel::Query(id)));
+        if let Some(Panel::Query(id)) = self.workspace.focused() {
+            self.active_doc = Some(*id);
+        }
+        if self
+            .active_doc
+            .is_some_and(|id| self.documents.get(id).is_none())
+        {
+            self.active_doc = self.documents.ids().last().copied();
+        }
+    }
+
     /// Lê as teclas do frame e devolve os comandos completados.
     fn keyboard(&mut self, ctx: &egui::Context) -> Vec<CommandId> {
         let chords: Vec<_> = ctx.input(|i| i.events.iter().filter_map(keys::chord).collect());
+        // Com um campo de texto em foco, as teclas de edição são dele.
+        let typing = ctx.egui_wants_keyboard_input();
         let mut commands = Vec::new();
         for chord in chords {
+            if typing && self.chords.pending().is_none() && keys::is_text_editing(chord) {
+                continue;
+            }
             match self.chords.feed(&self.keymap, chord) {
                 Match::Command(cmd) => commands.push(cmd),
                 Match::Pending(first) => {

@@ -21,6 +21,7 @@ egui_kittest = "0.36"
 egui_dock = "0.21"
 egui-phosphor = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.18"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

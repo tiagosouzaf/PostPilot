@@ -1,19 +1,22 @@
 //! Painéis da janela principal (tool windows do SSMS).
 //!
-//! O conteúdo ainda é provisório: o Object Explorer de verdade entra no marco
-//! 1.5 e as janelas de consulta no 1.6.
+//! Tool windows (Object Explorer, Properties, Output) e janelas de consulta.
 
 use eframe::egui;
 use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
 use pgstudio_object_explorer::{Event, ObjectExplorer};
 
+use crate::documents::Documents;
+
 /// Um painel encaixável.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Panel {
     ObjectExplorer,
     Properties,
     Output,
+    /// Janela de consulta, pelo número do documento.
+    Query(u32),
 }
 
 impl Panel {
@@ -23,6 +26,7 @@ impl Panel {
             Panel::ObjectExplorer => "Object Explorer",
             Panel::Properties => "Properties",
             Panel::Output => "Output",
+            Panel::Query(_) => "Query",
         }
     }
 }
@@ -33,6 +37,7 @@ impl Pane for Panel {
             Panel::ObjectExplorer => Area::Left,
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
+            Panel::Query(_) => Area::Document,
         }
     }
 }
@@ -53,13 +58,36 @@ pub struct Viewer<'a> {
     pub output: &'a [String],
     /// Árvore do Object Explorer.
     pub explorer: &'a mut ObjectExplorer,
+    /// Janelas de consulta.
+    pub documents: &'a mut Documents,
+    /// Documento cujo editor deve receber o foco neste frame.
+    pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
     pub commands: Vec<CommandId>,
+    /// Documentos com alterações cujo fechamento foi pedido pela aba.
+    pub close_requests: Vec<u32>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
     fn title(&mut self, pane: &Panel) -> String {
-        pane.title().to_string()
+        match pane {
+            Panel::Query(id) => self
+                .documents
+                .get(*id)
+                .map(|d| d.title())
+                .unwrap_or_default(),
+            _ => pane.title().to_string(),
+        }
+    }
+
+    fn on_close(&mut self, pane: &Panel) -> bool {
+        match pane {
+            Panel::Query(id) if self.documents.get(*id).is_some_and(|d| d.is_dirty()) => {
+                self.close_requests.push(*id);
+                false
+            }
+            _ => true,
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, pane: &mut Panel) {
@@ -115,6 +143,23 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     ui.weak("No object selected.");
                 }
             },
+            Panel::Query(id) => {
+                let Some(doc) = self.documents.get_mut(*id) else {
+                    return;
+                };
+                egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                    let editor = egui::TextEdit::multiline(&mut doc.text)
+                        .id(editor_id(*id))
+                        .code_editor()
+                        .frame(egui::Frame::NONE)
+                        .desired_width(f32::INFINITY)
+                        .min_size(ui.available_size());
+                    let response = ui.add(editor);
+                    if self.focus_editor == Some(*id) {
+                        response.request_focus();
+                    }
+                });
+            }
             Panel::Output => {
                 ui.horizontal(|ui| {
                     ui.label("Show output from:");
@@ -136,4 +181,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
             }
         }
     }
+}
+
+/// Id do editor de um documento (para dar foco e para testes).
+pub fn editor_id(doc: u32) -> egui::Id {
+    egui::Id::new(("query_editor", doc))
 }

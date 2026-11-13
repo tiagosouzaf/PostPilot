@@ -5,7 +5,8 @@
 //! docking (por exemplo, para ter auto-hide) sem mexer na casca.
 
 use eframe::egui;
-use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
+use egui_dock::tab_viewer::OnCloseResponse;
+use egui_dock::{DockArea, DockState, NodeIndex, NodePath, Style, SurfaceIndex, TabViewer};
 
 /// Onde um painel mora no layout padrão e para onde volta ao ser reaberto.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +22,7 @@ pub enum Area {
 }
 
 /// Um painel que pode ser encaixado.
-pub trait Pane: Clone + PartialEq {
+pub trait Pane: Clone + PartialEq + std::hash::Hash + std::fmt::Debug {
     /// Área de origem do painel.
     fn area(&self) -> Area;
 }
@@ -34,6 +35,11 @@ pub trait PaneViewer<P> {
     fn ui(&mut self, ui: &mut egui::Ui, pane: &mut P);
     /// Se a aba mostra o botão de fechar.
     fn closeable(&mut self, _pane: &P) -> bool {
+        true
+    }
+    /// Chamado quando o usuário fecha a aba; `false` mantém a aba aberta
+    /// (por exemplo, para perguntar antes de descartar alterações).
+    fn on_close(&mut self, _pane: &P) -> bool {
         true
     }
 }
@@ -130,8 +136,57 @@ impl<P: Pane> Workspace<P> {
             Area::Bottom => {
                 tree.split_below(root, BOTTOM, vec![pane]);
             }
-            Area::Document => self.state.push_to_focused_leaf(pane),
+            Area::Document => self.open_document_area(pane),
         }
+    }
+
+    /// Recria a área de documentos quando a última aba foi fechada: acima da
+    /// faixa de baixo, à direita da coluna da esquerda ou à esquerda da
+    /// coluna da direita, nessa ordem.
+    fn open_document_area(&mut self, pane: P) {
+        let find = |state: &DockState<P>, area: Area| {
+            state
+                .main_surface()
+                .iter()
+                .enumerate()
+                .find(|(_, node)| {
+                    node.tabs()
+                        .is_some_and(|tabs| tabs.iter().any(|t| t.area() == area))
+                })
+                .map(|(i, _)| NodeIndex(i))
+        };
+        let empty = self
+            .state
+            .main_surface()
+            .iter()
+            .position(|node| node.is_leaf() && node.tabs_count() == 0);
+        if let Some(i) = empty {
+            if let Ok(leaf) = self.state.leaf_mut(NodePath {
+                surface: SurfaceIndex::main(),
+                node: NodeIndex(i),
+            }) {
+                leaf.append_tab(pane);
+            }
+            return;
+        }
+        let bottom = find(&self.state, Area::Bottom);
+        let left = find(&self.state, Area::Left);
+        let right = find(&self.state, Area::Right);
+        let tree = self.state.main_surface_mut();
+        if let Some(node) = bottom {
+            tree.split_above(node, 1.0 - BOTTOM, vec![pane]);
+        } else if let Some(node) = left {
+            tree.split_right(node, LEFT / RIGHT, vec![pane]);
+        } else if let Some(node) = right {
+            tree.split_left(node, 0.5, vec![pane]);
+        } else {
+            tree.push_to_first_leaf(pane);
+        }
+    }
+
+    /// Painel ativo do grupo com foco, se houver.
+    pub fn focused(&mut self) -> Option<&P> {
+        self.state.find_active_focused().map(|(_, p)| &*p)
     }
 
     /// Fecha o painel, se estiver aberto.
@@ -168,11 +223,19 @@ impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
     }
 
     fn id(&mut self, tab: &mut P) -> egui::Id {
-        egui::Id::new(("pgstudio_pane", self.0.title(tab)))
+        egui::Id::new(("pgstudio_pane", &*tab))
     }
 
     fn closeable(&mut self, tab: &mut P) -> bool {
         self.0.closeable(tab)
+    }
+
+    fn on_close(&mut self, tab: &mut P) -> OnCloseResponse {
+        if self.0.on_close(tab) {
+            OnCloseResponse::Close
+        } else {
+            OnCloseResponse::Ignore
+        }
     }
 }
 
@@ -180,7 +243,7 @@ impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
 mod tests {
     use super::*;
 
-    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq, Hash)]
     enum P {
         Explorer,
         Props,
@@ -246,6 +309,29 @@ mod tests {
         ws.open(P::Props);
         ws.open(P::Doc(2));
         assert_eq!(ws.panes().count(), 4);
+    }
+
+    #[test]
+    fn documents_open_between_the_tool_windows() {
+        // Sem documentos no início, a área central fica vazia e recebe o
+        // primeiro; depois de fechar o último, ela volta acima da faixa de baixo.
+        let mut ws = Workspace::new(
+            Vec::new(),
+            vec![P::Explorer],
+            vec![P::Props],
+            vec![P::Output],
+        );
+        for round in 0..2 {
+            ws.open(P::Doc(round));
+            for tool in [P::Explorer, P::Props, P::Output] {
+                assert!(!ws.same_group(&P::Doc(round), &tool), "{round} {tool:?}");
+            }
+            ws.open(P::Doc(10 + round));
+            assert!(ws.same_group(&P::Doc(round), &P::Doc(10 + round)));
+            assert_eq!(ws.state.iter_leaves().count(), 4);
+            ws.close(&P::Doc(round));
+            ws.close(&P::Doc(10 + round));
+        }
     }
 
     #[test]

@@ -31,6 +31,30 @@ pub fn chord(event: &egui::Event) -> Option<Chord> {
     }
 }
 
+/// Se o acorde é uma tecla de edição de texto, que pertence ao campo em
+/// foco e não ao keymap: teclas sem Ctrl e Alt (exceto F1–F12 e Esc), e
+/// Ctrl com letras de edição, setas, Home, End, Backspace e Delete.
+pub fn is_text_editing(chord: Chord) -> bool {
+    if chord.mods.alt || matches!(chord.key, Key::F(_) | Key::Escape) {
+        return false;
+    }
+    if !chord.mods.ctrl {
+        return true;
+    }
+    matches!(
+        chord.key,
+        Key::Letter('A' | 'C' | 'V' | 'X' | 'Y' | 'Z')
+            | Key::Left
+            | Key::Right
+            | Key::Up
+            | Key::Down
+            | Key::Home
+            | Key::End
+            | Key::Backspace
+            | Key::Delete
+    )
+}
+
 fn key_of(key: egui::Key) -> Option<Key> {
     use egui::Key as E;
     let name = key.name();
@@ -110,6 +134,25 @@ mod tests {
             *pressed = false;
         }
         assert_eq!(chord(&e), None);
+    }
+
+    #[test]
+    fn editing_keys_belong_to_the_text_field() {
+        let p = |s| Chord::parse(s).unwrap();
+        for s in [
+            "A",
+            "Shift+A",
+            "Enter",
+            "Tab",
+            "Ctrl+C",
+            "Ctrl+Z",
+            "Ctrl+Left",
+        ] {
+            assert!(is_text_editing(p(s)), "{s}");
+        }
+        for s in ["F5", "Ctrl+S", "Ctrl+N", "Alt+X", "Esc", "Ctrl+Shift+S"] {
+            assert!(!is_text_editing(p(s)), "{s}");
+        }
     }
 
     #[test]
