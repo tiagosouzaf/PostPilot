@@ -1,0 +1,21 @@
+[package]
+name = "spike-gpui"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui = "0.2"
+env_logger = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[workspace]
+
+[patch.crates-io]
+xattr = { path = "vendor-xattr" }
