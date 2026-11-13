@@ -35,7 +35,8 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 ### Marco 1.8 (fim da Fase 1)
 
 Medido no CI do [PR #8](https://github.com/tiagosouzaf/PostPilot/pull/8)
-(runners do GitHub, sem GPU), 5 execuções, 30 s em repouso.
+(runners do GitHub, sem GPU), 5 execuções, 30 s em repouso
+([execução do CI](https://github.com/tiagosouzaf/PostPilot/actions/runs/43471960170)).
 
 | Sistema | Até o 1º frame (mediana) | Até o 1º frame (pior) | RAM em repouso (mediana) | RAM em repouso (pior) |
 | --- | --- | --- | --- | --- |
