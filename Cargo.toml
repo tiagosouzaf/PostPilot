@@ -7,6 +7,7 @@ members = [
     "crates/docking",
     "crates/object-explorer",
     "crates/pg-client",
+    "crates/pg-metadata",
     "xtask",
 ]
 exclude = ["spikes"]
@@ -24,6 +25,7 @@ pgstudio-ui-shell = { path = "crates/ui-shell" }
 pgstudio-docking = { path = "crates/docking" }
 pgstudio-object-explorer = { path = "crates/object-explorer" }
 pgstudio-pg-client = { path = "crates/pg-client" }
+pgstudio-pg-metadata = { path = "crates/pg-metadata" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"

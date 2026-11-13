@@ -75,7 +75,7 @@ jobs:
           done
           docker logs pg
           exit 1
-      - run: cargo test --locked -p pgstudio-pg-client
+      - run: cargo test --locked -p pgstudio-pg-client -p pgstudio-pg-metadata
 
   screenshot:
     name: Janela (${{ matrix.os }})

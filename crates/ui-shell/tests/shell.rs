@@ -300,6 +300,45 @@ fn clicking_a_node_shows_it_in_properties() {
 }
 
 #[test]
+fn f5_in_object_explorer_refreshes_the_selected_node() {
+    let mut harness = connected(&["srv"]);
+    // Com atraso, para ver o nó carregando de novo depois do F5.
+    let oe = harness.state_mut().explorer_mut();
+    oe.connect(Arc::new(FakeProvider::new(Duration::from_millis(300))));
+    assert!(oe.wait_idle(Duration::from_secs(5)));
+    oe.expand(&NodeId("srv".into()));
+    assert!(oe.wait_idle(Duration::from_secs(5)));
+    harness.run();
+    harness.get(by().label_contains(SERVER_NAME)).click();
+    harness.run();
+    let srv = NodeId("srv".into());
+    assert!(!harness.state().explorer().is_loading());
+    harness.key_press(Key::F5);
+    harness.step();
+    assert!(
+        harness.state().explorer().is_loading(),
+        "F5 should reload the children of the selected node"
+    );
+    assert!(
+        harness
+            .state_mut()
+            .explorer_mut()
+            .wait_idle(Duration::from_secs(5))
+    );
+    harness.run();
+    assert!(harness.state().explorer().children(&srv).is_some());
+    assert!(
+        !harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l.contains("not available")),
+        "{:?}",
+        harness.state().output()
+    );
+}
+
+#[test]
 fn expand_arrow_loads_children() {
     let mut harness = connected(&[]);
     // Só o servidor está na árvore, então só há uma seta.

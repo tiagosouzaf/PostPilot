@@ -447,6 +447,7 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
     match kind {
         NodeKind::Server => icon::DESKTOP_TOWER,
         NodeKind::Folder(Folder::Databases) => icon::HARD_DRIVES,
+        NodeKind::Folder(Folder::Security) => icon::SHIELD,
         NodeKind::Folder(_) if expanded => icon::FOLDER_OPEN,
         NodeKind::Folder(_) => icon::FOLDER,
         NodeKind::Database => icon::DATABASE,
@@ -456,6 +457,9 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
         NodeKind::Function => icon::FUNCTION,
         NodeKind::Column => icon::COLUMNS,
         NodeKind::Index => icon::LIGHTNING,
+        NodeKind::Sequence => icon::LIST_NUMBERS,
+        NodeKind::Constraint => icon::KEY,
+        NodeKind::Role => icon::USER,
     }
 }
 

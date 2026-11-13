@@ -15,6 +15,10 @@ pub enum Folder {
     Functions,
     Columns,
     Indexes,
+    Sequences,
+    Constraints,
+    Security,
+    Roles,
 }
 
 impl Folder {
@@ -28,6 +32,10 @@ impl Folder {
             Folder::Functions => "Functions",
             Folder::Columns => "Columns",
             Folder::Indexes => "Indexes",
+            Folder::Sequences => "Sequences",
+            Folder::Constraints => "Constraints",
+            Folder::Security => "Security",
+            Folder::Roles => "Roles",
         }
     }
 }
@@ -44,6 +52,9 @@ pub enum NodeKind {
     Function,
     Column,
     Index,
+    Sequence,
+    Constraint,
+    Role,
 }
 
 impl NodeKind {
@@ -59,6 +70,9 @@ impl NodeKind {
             NodeKind::Function => "Function",
             NodeKind::Column => "Column",
             NodeKind::Index => "Index",
+            NodeKind::Sequence => "Sequence",
+            NodeKind::Constraint => "Constraint",
+            NodeKind::Role => "Role",
         }
     }
 }

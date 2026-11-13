@@ -5,26 +5,22 @@
 //!   dizem ao usuário o que fazer.
 //! - [`Session::cancel`] cancela o comando em andamento por uma segunda
 //!   conexão, como o `pg_cancel_backend`.
-//! - [`PgConnector`] implementa o [`Connector`] da interface: conecta numa
-//!   runtime Tokio própria e entrega os metadados para o Object Explorer.
+//! - [`DbRuntime`] é a runtime Tokio compartilhada pelas conexões; quem usa
+//!   de fora de uma runtime chama [`DbRuntime::block_on`].
 //!
-//! A interface nunca espera o banco: o [`Connector`] e o
-//! [`MetadataProvider`] são chamados em threads separadas.
+//! O Object Explorer e o `Connector` da interface ficam em `pg-metadata`.
 
 mod error;
-mod explorer;
 mod tls;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector, SslMode};
-use pgstudio_core::metadata::MetadataProvider;
+use pgstudio_core::connection::{ConnectError, ConnectionSettings, SslMode};
 use tokio::runtime::{Handle, Runtime};
 use tokio_postgres::{CancelToken, Client, SimpleQueryMessage};
 
-pub use error::connect_error;
-pub use explorer::ServerExplorer;
+pub use error::{connect_error, describe};
 
 /// Tempo máximo para abrir a conexão.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -166,38 +162,5 @@ impl DbRuntime {
     /// runtime.
     pub fn block_on<F: Future>(&self, f: F) -> F::Output {
         self.0.block_on(f)
-    }
-}
-
-/// O [`Connector`] de verdade: conecta ao PostgreSQL e devolve o Object
-/// Explorer do servidor.
-#[derive(Clone)]
-pub struct PgConnector {
-    runtime: DbRuntime,
-}
-
-impl PgConnector {
-    pub fn new(runtime: DbRuntime) -> Self {
-        PgConnector { runtime }
-    }
-}
-
-impl Connector for PgConnector {
-    fn connect(
-        &self,
-        settings: &ConnectionSettings,
-        password: &str,
-    ) -> Result<Connected, ConnectError> {
-        let session = self
-            .runtime
-            .block_on(async { Session::connect(settings, password).await })?;
-        let server_version = session.server_version().to_string();
-        let metadata: Arc<dyn MetadataProvider> =
-            Arc::new(ServerExplorer::new(session, self.runtime.clone()));
-        Ok(Connected {
-            settings: settings.clone(),
-            server_version,
-            metadata,
-        })
     }
 }
