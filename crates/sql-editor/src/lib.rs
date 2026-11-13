@@ -1,6 +1,6 @@
 //! Editor de SQL do PGStudio.
 //!
-//! O editor é um widget próprio ([`widget`]) que monta e desenha só as
+//! O editor é um widget próprio (módulo `widget`) que monta e desenha só as
 //! linhas visíveis, então digitar num script de milhares de linhas não
 //! refaz o layout do texto inteiro. Ele tem:
 //!
