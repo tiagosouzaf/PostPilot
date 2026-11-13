@@ -5,8 +5,9 @@ Management Studio (SSMS). Escrito 100% em Rust, para Windows e Linux, sem Electr
 nem WebView.
 
 > Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
-> atalhos, os painéis encaixáveis, um Object Explorer de demonstração e janelas
-> de consulta que abrem e salvam arquivos `.sql`, mas ainda não conecta a um banco.
+> atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
+> arquivos `.sql`, e conecta a um PostgreSQL mostrando os bancos no Object
+> Explorer. Ainda não executa consultas.
 
 ## Estrutura
 
@@ -16,16 +17,25 @@ crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
 crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 crates/docking/   painéis encaixáveis (invólucro do egui_dock)
 crates/object-explorer/  árvore do Object Explorer e provedor de demonstração
+crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
 ```
 
-Novas crates (`pg-connection`, …) entram na fase do roteiro que as usa.
+Novas crates (`pg-metadata`, `sql-editor`, …) entram na fase do roteiro que as usa.
 
 ## Uso
 
 ```sh
 pgstudio [arquivo.sql ...]
 ```
+
+Ao abrir, o PGStudio mostra o "Connect to Server", como o SSMS: Server name
+(`host` ou `host,porta`), Login, Password, Database e Encryption (Disable,
+Prefer, Require ou Verify full, os modos `sslmode` do libpq). Depois de conectar,
+o servidor e os bancos aparecem no Object Explorer; File > Connect Object
+Explorer abre o diálogo de novo. As conexões usadas ficam em
+`connections.json`, na pasta de configuração, sem a senha; a seta ao lado do
+Server name lista as recentes.
 
 Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
@@ -70,12 +80,18 @@ Requer Rust estável (o `rust-toolchain.toml` instala rustfmt e clippy).
 ```sh
 cargo run -p pgstudio-desktop     # executa o app
 cargo test --workspace            # testes
+PGSTUDIO_CONNECT=localhost PGPASSWORD=... cargo run -p pgstudio-desktop  # conecta direto
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
 O CI roda formatação, clippy e testes em Linux e Windows, e o `cargo-deny` para
 licenças e vulnerabilidades.
+
+Os testes de `pg-client` que precisam de servidor usam `PGSTUDIO_TEST_HOST`,
+`PGSTUDIO_TEST_PORT`, `PGSTUDIO_TEST_USER` e `PGSTUDIO_TEST_PASSWORD`; sem
+`PGSTUDIO_TEST_HOST` eles só avisam. No CI eles rodam contra o PostgreSQL 13 e 17
+em container, com TLS ligado.
 
 `cargo xtask bench` mede o tempo até o primeiro frame e a RAM em repouso contra
 as metas (inicialização < 1 s, RAM < 100 MB). Os números ficam em

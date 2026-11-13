@@ -4,6 +4,7 @@
 //! backend se comunicam através dos tipos definidos aqui.
 
 pub mod command;
+pub mod connection;
 pub mod keymap;
 pub mod metadata;
 

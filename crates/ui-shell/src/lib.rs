@@ -5,6 +5,7 @@
 //! [`CommandId`] e passam por [`ShellApp::execute`]. A área central tem o
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
+pub mod connect;
 pub mod documents;
 pub mod keys;
 pub mod layout;
@@ -18,10 +19,12 @@ use eframe::egui::{self, RichText};
 use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
 use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
 
+use connect::{ConnectDialog, DialogAction, RecentConnections};
 use documents::{Documents, FileDialogs, NoDialogs};
 use layout::{LayoutStore, SavedLayout, WindowGeometry};
 use menus::{Entry, MENUS, TOOLBAR, Tool};
 use panels::Panel;
+use pgstudio_core::connection::{Connected, ConnectionSettings, Connector};
 use pgstudio_docking::Workspace;
 use pgstudio_object_explorer::ObjectExplorer;
 use pgstudio_object_explorer::fake::FakeProvider;
@@ -60,6 +63,13 @@ pub struct ShellApp {
     window: Option<WindowGeometry>,
     /// Modo de medição: frames desenhados até agora.
     bench_frames: Option<u32>,
+    /// Quem abre conexões de verdade. Sem ele, "Connect" usa o servidor de
+    /// demonstração.
+    connector: Option<Arc<dyn Connector>>,
+    connect_dialog: Option<ConnectDialog>,
+    /// Servidor conectado no Object Explorer.
+    connection: Option<Connected>,
+    recent: RecentConnections,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -110,6 +120,10 @@ impl Default for ShellApp {
             layout_store: None,
             window: None,
             bench_frames: None,
+            connector: None,
+            connect_dialog: None,
+            connection: None,
+            recent: RecentConnections::default(),
         }
     }
 }
@@ -128,6 +142,127 @@ impl ShellApp {
     /// até a Fase 2 trazer conexões reais.
     pub fn connect_demo(&mut self) {
         self.explorer.connect(Arc::new(FakeProvider::default()));
+    }
+
+    /// Conecta de verdade com `connector`: tira o servidor de demonstração
+    /// e abre o "Connect to Server", como o SSMS faz ao abrir.
+    pub fn with_connector(mut self, connector: Arc<dyn Connector>) -> Self {
+        self.connector = Some(connector);
+        self.explorer.disconnect();
+        self.open_connect_dialog();
+        self
+    }
+
+    /// Usa esta lista de conexões recentes (o aplicativo lê de
+    /// `connections.json`).
+    pub fn with_recent_connections(mut self, recent: RecentConnections) -> Self {
+        self.recent = recent;
+        if let Some(dialog) = &mut self.connect_dialog {
+            if let Some(last) = self.recent.list().first() {
+                dialog.fill(&last.clone());
+            }
+        }
+        self
+    }
+
+    /// Conexões recentes.
+    pub fn recent_connections(&self) -> &RecentConnections {
+        &self.recent
+    }
+
+    /// Abre o "Connect to Server" preenchido com a última conexão. Sem
+    /// conector, conecta o servidor de demonstração.
+    pub fn open_connect_dialog(&mut self) {
+        if self.connector.is_none() {
+            if !self.explorer.is_connected() {
+                self.connect_demo();
+            }
+            return;
+        }
+        if self.connect_dialog.is_none() {
+            let settings = self.recent.list().first().cloned().unwrap_or_default();
+            self.connect_dialog = Some(ConnectDialog::new(&settings));
+        }
+    }
+
+    /// Diálogo "Connect to Server", se aberto.
+    pub fn connect_dialog(&self) -> Option<&ConnectDialog> {
+        self.connect_dialog.as_ref()
+    }
+
+    /// Diálogo "Connect to Server", mutável.
+    pub fn connect_dialog_mut(&mut self) -> Option<&mut ConnectDialog> {
+        self.connect_dialog.as_mut()
+    }
+
+    /// Conecta direto, sem mostrar o diálogo (linha de comando e testes).
+    /// O resultado chega nos próximos frames, como pelo diálogo.
+    pub fn connect_to(&mut self, settings: ConnectionSettings, password: String) {
+        let Some(connector) = self.connector.clone() else {
+            return;
+        };
+        let dialog = self
+            .connect_dialog
+            .get_or_insert_with(|| ConnectDialog::new(&settings));
+        dialog.start(connector, settings, password);
+    }
+
+    /// Servidor conectado no Object Explorer.
+    pub fn connection(&self) -> Option<&Connected> {
+        self.connection.as_ref()
+    }
+
+    /// Recebe o resultado de uma conexão em andamento.
+    fn connect_step(&mut self) {
+        let Some(dialog) = &mut self.connect_dialog else {
+            return;
+        };
+        let was_connecting = dialog.is_connecting();
+        match dialog.poll() {
+            Some(connected) => {
+                self.connect_dialog = None;
+                let name = connected.settings.server_name();
+                self.recent.remember(&connected.settings);
+                self.explorer.connect(connected.metadata.clone());
+                self.workspace.open(Panel::ObjectExplorer);
+                self.output.push(format!(
+                    "Connected to {name} (PostgreSQL {}) as {}.",
+                    connected.server_version, connected.settings.user
+                ));
+                self.status = format!("Connected to {name}.");
+                self.connection = Some(connected);
+            }
+            None if was_connecting => {
+                if let Some(error) = dialog.error() {
+                    self.output.push(format!("Connection failed: {error}"));
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn connect_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.connect_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.recent.list()) {
+            DialogAction::None => {}
+            DialogAction::Cancel => self.connect_dialog = None,
+            DialogAction::Connect(settings, password) => {
+                if let Some(connector) = self.connector.clone() {
+                    dialog.start(connector, settings, password);
+                }
+            }
+        }
+    }
+
+    /// Texto da conexão na status bar.
+    pub fn connection_label(&self) -> String {
+        match &self.connection {
+            Some(c) => format!("{} ({})", c.settings.server_name(), c.settings.user),
+            None if self.explorer.is_connected() => "Demo server".to_string(),
+            None => "Not connected".to_string(),
+        }
     }
 
     /// Object Explorer, para testes e para a casca.
@@ -275,7 +410,8 @@ impl ShellApp {
         // A árvore também é atualizada quando o painel está escondido
         // (desafixado ou fechado), não só quando é desenhada.
         self.explorer.poll();
-        if self.explorer.is_loading() {
+        // Espera a conexão (que pode estar a caminho) antes de expandir.
+        if self.explorer.is_loading() || !self.explorer.is_connected() {
             return;
         }
         if let Some(id) = self.pending_expand.pop_front() {
@@ -501,11 +637,15 @@ impl ShellApp {
             CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
             CommandId::ConnectObjectExplorer => {
                 self.workspace.open(Panel::ObjectExplorer);
-                if !self.explorer.is_connected() {
-                    self.connect_demo();
-                }
+                self.open_connect_dialog();
             }
-            CommandId::DisconnectObjectExplorer => self.explorer.disconnect(),
+            CommandId::DisconnectObjectExplorer => {
+                if let Some(c) = self.connection.take() {
+                    self.output
+                        .push(format!("Disconnected from {}.", c.settings.server_name()));
+                }
+                self.explorer.disconnect();
+            }
             _ => {
                 self.status = format!("\"{}\" is not available yet.", cmd.label());
             }
@@ -638,7 +778,8 @@ impl ShellApp {
     /// Desenha a casca inteira num `Ui` que ocupa a janela.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let mut commands = if self.confirm.is_some() {
+        self.connect_step();
+        let mut commands = if self.confirm.is_some() || self.connect_dialog.is_some() {
             Vec::new()
         } else {
             self.keyboard(&ctx)
@@ -698,6 +839,7 @@ impl ShellApp {
             });
         self.sync_documents();
         self.confirm_window(&ctx);
+        self.connect_window(&ctx);
 
         if self.about_open {
             let mut open = true;
@@ -836,12 +978,13 @@ impl ShellApp {
 
     fn status_bar(&self, ui: &mut egui::Ui) {
         let color = theme::palette(self.theme).on_accent;
+        let connection = self.connection_label();
         ui.horizontal(|ui| {
             ui.label(RichText::new(&self.status).color(color));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
-                ui.label(RichText::new("Not connected").color(color));
+                ui.label(RichText::new(connection).color(color));
             });
         });
     }
@@ -852,7 +995,12 @@ impl ShellApp {
         };
         // Espera o layout assentar e a árvore carregar antes de capturar.
         shot.frames += 1;
-        let busy = self.explorer.is_loading() || !self.pending_expand.is_empty();
+        let connecting = self
+            .connect_dialog
+            .as_ref()
+            .is_some_and(ConnectDialog::is_connecting);
+        let expanding = !self.pending_expand.is_empty() && self.explorer.is_connected();
+        let busy = self.explorer.is_loading() || expanding || connecting;
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));

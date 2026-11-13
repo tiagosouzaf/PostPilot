@@ -6,6 +6,7 @@ members = [
     "crates/ui-shell",
     "crates/docking",
     "crates/object-explorer",
+    "crates/pg-client",
     "xtask",
 ]
 exclude = ["spikes"]
@@ -13,7 +14,7 @@ exclude = ["spikes"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tiagosouzaf/postpilot"
 
@@ -22,6 +23,7 @@ pgstudio-core = { path = "crates/core" }
 pgstudio-ui-shell = { path = "crates/ui-shell" }
 pgstudio-docking = { path = "crates/docking" }
 pgstudio-object-explorer = { path = "crates/object-explorer" }
+pgstudio-pg-client = { path = "crates/pg-client" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -31,6 +33,13 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# PostgreSQL (Fase 2). tokio-postgres em vez de SQLx: vários comandos por
+# execução, resultados de tipo desconhecido em texto e cancelamento.
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "macros"] }
+tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
