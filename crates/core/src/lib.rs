@@ -5,6 +5,7 @@
 
 pub mod command;
 pub mod keymap;
+pub mod metadata;
 
 pub use command::CommandId;
 

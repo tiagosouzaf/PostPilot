@@ -2354,6 +2354,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-object-explorer"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui-phosphor",
+ "egui_kittest",
+ "pgstudio-core",
+]
+
+[[package]]
 name = "pgstudio-ui-shell"
 version = "0.1.0"
 dependencies = [
@@ -2363,6 +2373,7 @@ dependencies = [
  "image",
  "pgstudio-core",
  "pgstudio-docking",
+ "pgstudio-object-explorer",
 ]
 
 [[package]]
