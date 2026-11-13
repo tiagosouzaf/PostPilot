@@ -8,6 +8,9 @@
 //! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
+//! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
+//!   `<config>/PGStudio/layout.json`. O layout não é lido nem salvo no modo
+//!   screenshot.
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PGStudio/keymap.txt`.
 
@@ -20,16 +23,31 @@ use pgstudio_core::Theme;
 use pgstudio_core::keymap::Keymap;
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::documents::FileDialogs;
+use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 
 fn main() -> eframe::Result {
+    let screenshot: Option<PathBuf> = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
+    // O screenshot do CI usa sempre o layout padrão.
+    let layout = match screenshot {
+        Some(_) => None,
+        None => layout_path().map(LayoutStore::open),
+    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(pgstudio_core::window_title())
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size(MIN_SIZE);
+    if let Some(window) = layout.as_ref().and_then(|l| l.saved.as_ref()?.window) {
+        viewport = viewport
+            .with_inner_size(window.size)
+            .with_maximized(window.maximized);
+        if let Some(position) = window.position {
+            viewport = viewport.with_position(position);
+        }
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(pgstudio_core::window_title())
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
+        viewport,
         ..Default::default()
     };
-    let screenshot = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
         Ok("dark") => Theme::Dark,
         _ => Theme::Light,
@@ -50,6 +68,9 @@ fn main() -> eframe::Result {
             if let Ok(paths) = std::env::var("PGSTUDIO_EXPAND") {
                 app = app.with_expanded(paths.split(';').map(str::to_string));
             }
+            if let Some(store) = layout {
+                app = app.with_layout_store(store);
+            }
             for file in &files {
                 app.open_file(file);
             }
@@ -66,6 +87,13 @@ fn keymap_path() -> Option<PathBuf> {
     std::env::var_os("PGSTUDIO_KEYMAP")
         .map(PathBuf::from)
         .or_else(|| config_dir().map(|d| d.join("PGStudio").join("keymap.txt")))
+}
+
+/// Arquivo de layout: `PGSTUDIO_LAYOUT` ou a pasta de configuração.
+fn layout_path() -> Option<PathBuf> {
+    std::env::var_os("PGSTUDIO_LAYOUT")
+        .map(PathBuf::from)
+        .or_else(|| config_dir().map(|d| d.join("PGStudio").join("layout.json")))
 }
 
 /// Pasta de configuração do usuário: `%APPDATA%` no Windows,

@@ -6,7 +6,10 @@
 
 use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
-use egui_dock::{DockArea, DockState, NodeIndex, NodePath, Style, SurfaceIndex, TabViewer};
+use egui_dock::{
+    DockArea, DockState, Node, NodeIndex, NodePath, Split, Style, SurfaceIndex, TabViewer, Tree,
+};
+use serde::{Deserialize, Serialize};
 
 /// Onde um painel mora no layout padrão e para onde volta ao ser reaberto.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +47,162 @@ pub trait PaneViewer<P> {
     }
 }
 
+/// Retrato do layout que pode ser salvo e restaurado.
+///
+/// É um formato próprio, independente do formato interno do egui_dock, para
+/// que um arquivo salvo continue legível quando o egui_dock mudar e para que
+/// um arquivo estragado nunca produza uma árvore inválida.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layout<P> {
+    /// Árvore da janela principal; `None` se tudo foi fechado.
+    pub root: Option<LayoutNode<P>>,
+    /// Painéis que estavam flutuando; voltam encaixados na área de origem.
+    #[serde(default = "Vec::new")]
+    pub floating: Vec<P>,
+}
+
+/// Um nó do layout salvo.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LayoutNode<P> {
+    /// Grupo de abas.
+    Tabs {
+        tabs: Vec<P>,
+        #[serde(default)]
+        active: usize,
+    },
+    /// Divisão em duas partes; `fraction` é a parte da primeira.
+    Split {
+        direction: Direction,
+        fraction: f32,
+        first: Box<LayoutNode<P>>,
+        second: Box<LayoutNode<P>>,
+    },
+}
+
+/// Direção de uma divisão.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    /// Lado a lado (primeira à esquerda).
+    Horizontal,
+    /// Empilhadas (primeira em cima).
+    Vertical,
+}
+
+/// Profundidade máxima aceita ao restaurar. O egui_dock guarda a árvore num
+/// vetor de 2^profundidade nós, então um arquivo patológico pesaria muito.
+const MAX_DEPTH: usize = 10;
+
+impl<P: Pane> LayoutNode<P> {
+    /// Remove abas repetidas ou recusadas por `keep`, grupos vazios e
+    /// divisões inúteis; corrige frações e índices. `None` se nada sobrou.
+    fn sanitize(self, depth: usize, seen: &mut Vec<P>, keep: &impl Fn(&P) -> bool) -> Option<Self> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        match self {
+            LayoutNode::Tabs { tabs, active } => {
+                let active_tab = tabs.get(active).cloned();
+                let mut kept = Vec::new();
+                for tab in tabs {
+                    if keep(&tab) && !seen.contains(&tab) {
+                        seen.push(tab.clone());
+                        kept.push(tab);
+                    }
+                }
+                let active = active_tab
+                    .and_then(|a| kept.iter().position(|t| *t == a))
+                    .unwrap_or(0);
+                (!kept.is_empty()).then_some(LayoutNode::Tabs { tabs: kept, active })
+            }
+            LayoutNode::Split {
+                direction,
+                fraction,
+                first,
+                second,
+            } => {
+                let first = first.sanitize(depth + 1, seen, keep);
+                let second = second.sanitize(depth + 1, seen, keep);
+                match (first, second) {
+                    (Some(a), Some(b)) => Some(LayoutNode::Split {
+                        direction,
+                        fraction: if fraction.is_finite() {
+                            fraction.clamp(0.05, 0.95)
+                        } else {
+                            0.5
+                        },
+                        first: Box::new(a),
+                        second: Box::new(b),
+                    }),
+                    (a, b) => a.or(b),
+                }
+            }
+        }
+    }
+
+    fn first_tab(&self) -> &P {
+        match self {
+            LayoutNode::Tabs { tabs, .. } => &tabs[0],
+            LayoutNode::Split { first, .. } => first.first_tab(),
+        }
+    }
+
+    /// Recria este nó na posição `index` da árvore, que já é uma folha.
+    fn build(self, tree: &mut Tree<P>, index: NodeIndex) {
+        match self {
+            LayoutNode::Tabs { tabs, active } => {
+                if let Some(leaf) = tree[index].get_leaf_mut() {
+                    leaf.tabs = tabs;
+                    let _ = leaf.set_active_tab(active);
+                }
+            }
+            LayoutNode::Split {
+                direction,
+                fraction,
+                first,
+                second,
+            } => {
+                let split = match direction {
+                    Direction::Horizontal => Split::Right,
+                    Direction::Vertical => Split::Below,
+                };
+                let placeholder = Node::leaf(second.first_tab().clone());
+                let [a, b] = tree.split(index, split, fraction, placeholder);
+                first.build(tree, a);
+                second.build(tree, b);
+            }
+        }
+    }
+}
+
+fn snapshot<P: Pane>(nodes: &[&Node<P>], index: usize) -> Option<LayoutNode<P>> {
+    match nodes.get(index)? {
+        Node::Leaf(leaf) => Some(LayoutNode::Tabs {
+            tabs: leaf.tabs.clone(),
+            active: leaf.active.0,
+        }),
+        Node::Horizontal(split) | Node::Vertical(split) => {
+            let direction = match nodes[index] {
+                Node::Horizontal(_) => Direction::Horizontal,
+                _ => Direction::Vertical,
+            };
+            let first = snapshot(nodes, 2 * index + 1);
+            let second = snapshot(nodes, 2 * index + 2);
+            match (first, second) {
+                (Some(a), Some(b)) => Some(LayoutNode::Split {
+                    direction,
+                    fraction: split.fraction,
+                    first: Box::new(a),
+                    second: Box::new(b),
+                }),
+                (a, b) => a.or(b),
+            }
+        }
+        Node::Empty => None,
+    }
+}
+
 /// Proporções do layout padrão, como frações da janela.
 const LEFT: f32 = 0.2;
 const RIGHT: f32 = 0.78;
@@ -71,6 +230,47 @@ impl<P: Pane> Workspace<P> {
             tree.split_below(center, BOTTOM, bottom);
         }
         Workspace { state }
+    }
+
+    /// Retrato do layout atual, só com os painéis aceitos por `keep`
+    /// (as janelas de consulta, por exemplo, não são salvas).
+    pub fn layout(&self, keep: impl Fn(&P) -> bool) -> Layout<P> {
+        let nodes: Vec<&Node<P>> = self.state.main_surface().iter().collect();
+        let mut seen = Vec::new();
+        let root = snapshot(&nodes, 0).and_then(|n| n.sanitize(0, &mut seen, &keep));
+        let floating = self
+            .state
+            .iter_surfaces_indexed()
+            .filter(|(index, _)| !index.is_main())
+            .flat_map(|(_, surface)| surface.iter_all_tabs().map(|(_, t)| t.clone()))
+            .filter(|t| keep(t) && !seen.contains(t))
+            .collect();
+        Layout { root, floating }
+    }
+
+    /// Recria o docking a partir de um retrato. Abas repetidas, grupos vazios
+    /// e frações inválidas são corrigidos; nunca falha.
+    pub fn from_layout(layout: Layout<P>) -> Self {
+        let mut seen = Vec::new();
+        let root = layout
+            .root
+            .and_then(|n| n.sanitize(0, &mut seen, &|_| true));
+        let state = match root {
+            Some(root) => {
+                let mut state = DockState::new(vec![root.first_tab().clone()]);
+                root.build(state.main_surface_mut(), NodeIndex::root());
+                state
+            }
+            None => DockState::new(Vec::new()),
+        };
+        let mut workspace = Workspace { state };
+        for pane in layout.floating {
+            if !seen.contains(&pane) {
+                seen.push(pane.clone());
+                workspace.open(pane);
+            }
+        }
+        workspace
     }
 
     /// Se o painel está aberto, encaixado ou flutuando.
@@ -243,7 +443,7 @@ impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
 mod tests {
     use super::*;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Hash)]
+    #[derive(Clone, Copy, Debug, PartialEq, Hash, Serialize, Deserialize)]
     enum P {
         Explorer,
         Props,
@@ -340,5 +540,116 @@ mod tests {
         ws.open(P::Doc(2));
         assert!(ws.same_group(&P::Doc(1), &P::Doc(2)));
         assert!(!ws.same_group(&P::Doc(1), &P::Explorer));
+    }
+
+    struct Viewer;
+
+    impl PaneViewer<P> for Viewer {
+        fn title(&mut self, pane: &P) -> String {
+            format!("{pane:?}")
+        }
+
+        fn ui(&mut self, ui: &mut egui::Ui, pane: &mut P) {
+            ui.label(format!("{pane:?}"));
+        }
+    }
+
+    /// Desenha alguns frames, para garantir que o layout não entra em pânico.
+    fn render(ws: &mut Workspace<P>) {
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| ws.show(ui, &mut Viewer));
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn layout_round_trips_through_json() {
+        let mut ws = ssms();
+        ws.open(P::Doc(2));
+        let layout = ws.layout(|_| true);
+        let json = serde_json::to_string(&layout).unwrap();
+        let back: Layout<P> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, layout);
+        let mut restored = Workspace::from_layout(back);
+        assert_eq!(restored.layout(|_| true), layout);
+        for p in [P::Explorer, P::Props, P::Output, P::Doc(1), P::Doc(2)] {
+            assert!(restored.is_open(&p), "{p:?}");
+        }
+        assert!(restored.same_group(&P::Doc(1), &P::Doc(2)));
+        render(&mut restored);
+    }
+
+    #[test]
+    fn layout_can_leave_panes_out() {
+        let ws = ssms();
+        let restored = Workspace::from_layout(ws.layout(|p| !matches!(p, P::Doc(_))));
+        assert!(!restored.is_open(&P::Doc(1)));
+        assert!(restored.is_open(&P::Output));
+    }
+
+    #[test]
+    fn broken_layouts_are_repaired_without_panicking() {
+        let tabs = |tabs: Vec<P>, active| LayoutNode::Tabs { tabs, active };
+        let split = |fraction, a, b| LayoutNode::Split {
+            direction: Direction::Vertical,
+            fraction,
+            first: Box::new(a),
+            second: Box::new(b),
+        };
+        let cases = vec![
+            Layout {
+                root: None,
+                floating: vec![P::Props, P::Props],
+            },
+            Layout {
+                root: Some(tabs(vec![], 3)),
+                floating: vec![],
+            },
+            Layout {
+                root: Some(split(
+                    f32::NAN,
+                    tabs(vec![P::Explorer], 9),
+                    tabs(vec![P::Explorer], 0),
+                )),
+                floating: vec![P::Explorer],
+            },
+            Layout {
+                root: Some(split(
+                    -4.0,
+                    tabs(vec![], 0),
+                    tabs(vec![P::Output, P::Doc(1)], 1),
+                )),
+                floating: vec![],
+            },
+        ];
+        for layout in cases {
+            let mut ws = Workspace::from_layout(layout.clone());
+            let panes: Vec<P> = ws.panes().copied().collect();
+            for p in &panes {
+                assert_eq!(panes.iter().filter(|q| *q == p).count(), 1, "{layout:?}");
+            }
+            render(&mut ws);
+            ws.open(P::Doc(7));
+            assert!(ws.is_open(&P::Doc(7)));
+            render(&mut ws);
+        }
+        // Árvore profunda demais vira nada em vez de estourar a pilha.
+        let mut deep = tabs(vec![P::Doc(0)], 0);
+        for i in 1..200 {
+            deep = split(0.5, tabs(vec![P::Doc(i)], 0), deep);
+        }
+        let mut ws = Workspace::from_layout(Layout {
+            root: Some(deep),
+            floating: vec![],
+        });
+        render(&mut ws);
     }
 }

@@ -10,6 +10,10 @@ repository.workspace = true
 [dependencies]
 eframe.workspace = true
 egui_dock.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

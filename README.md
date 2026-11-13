@@ -30,6 +30,12 @@ Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
 fechar a aba ou o aplicativo pergunta antes de descartar.
 
+O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
+`layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
+ao abrir. Se o arquivo estiver estragado, o PGStudio abre com o layout padrão e
+avisa na status bar. Window > Reset Window Layout volta ao padrão a qualquer
+momento.
+
 ## Atalhos de teclado
 
 Os atalhos seguem o SSMS (F5 ou Ctrl+E executa, Ctrl+K, Ctrl+C comenta etc.). Para

@@ -534,3 +534,86 @@ fn reset_window_layout_keeps_query_windows() {
     assert!(harness.state().is_panel_open(Panel::Query(id)));
     assert_eq!(active_text(&harness), "select 5;");
 }
+
+// Layout salvo entre sessões (marco 1.7).
+
+use pgstudio_ui_shell::layout::LayoutStore;
+
+fn restarted(path: &Path) -> Harness<'static, ShellApp> {
+    let app = ShellApp::default().with_layout_store(LayoutStore::open(path));
+    Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app)
+}
+
+#[test]
+fn restart_restores_the_layout() {
+    let path = temp_file("layout-restore.json");
+    let mut harness = restarted(&path);
+    // Leva o Properties para junto do Output e fecha o Object Explorer.
+    let tab = |harness: &Harness<'static, ShellApp>, panel| {
+        let rect = harness.state().panel_rect(panel).unwrap();
+        rect.left_top() + eframe::egui::vec2(30.0, 12.0)
+    };
+    let from = tab(&harness, Panel::Properties);
+    let to = tab(&harness, Panel::Output) + eframe::egui::vec2(150.0, 0.0);
+    harness.drag_at(from);
+    harness.run_steps(2);
+    for i in 1..=10 {
+        let t = i as f32 / 10.0;
+        harness.hover_at(from + (to - from) * t);
+        harness.run_steps(2);
+    }
+    harness.drop_at(to);
+    harness.run_steps(3);
+    assert!(
+        harness
+            .state()
+            .panels_grouped(Panel::Properties, Panel::Output)
+    );
+    harness.state_mut().close_panel(Panel::ObjectExplorer);
+    harness.run();
+    press(&mut harness, Modifiers::CTRL, Key::N);
+    harness.state_mut().save_layout();
+
+    let harness = restarted(&path);
+    let app = harness.state();
+    assert!(!app.is_panel_open(Panel::ObjectExplorer));
+    assert!(app.panels_grouped(Panel::Properties, Panel::Output));
+    // Janelas de consulta não são salvas.
+    assert!(app.documents().ids().is_empty());
+    assert!(
+        !app.current_layout()
+            .docking
+            .floating
+            .contains(&Panel::Query(1))
+    );
+    assert_eq!(app.status(), "Ready");
+}
+
+#[test]
+fn corrupt_layout_file_falls_back_to_default() {
+    let path = temp_file("layout-corrupt.json");
+    std::fs::write(&path, "{\"version\": 1, \"docking\": {\"root\": 42").unwrap();
+    let harness = restarted(&path);
+    let app = harness.state();
+    for panel in [Panel::ObjectExplorer, Panel::Properties, Panel::Output] {
+        assert!(app.is_panel_open(panel), "{panel:?}");
+    }
+    assert!(app.status().contains("default layout"));
+}
+
+#[test]
+fn reset_after_restore_brings_back_the_default() {
+    let path = temp_file("layout-reset.json");
+    let mut harness = restarted(&path);
+    harness.state_mut().close_panel(Panel::Output);
+    harness.state_mut().save_layout();
+    let mut harness = restarted(&path);
+    assert!(!harness.state().is_panel_open(Panel::Output));
+    harness.get_by_label("Window").click();
+    harness.run();
+    harness.get_by_label("Reset Window Layout").click();
+    harness.run();
+    assert!(harness.state().is_panel_open(Panel::Output));
+}

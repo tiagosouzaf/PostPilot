@@ -7,6 +7,7 @@
 
 pub mod documents;
 pub mod keys;
+pub mod layout;
 pub mod menus;
 pub mod panels;
 pub mod theme;
@@ -18,6 +19,7 @@ use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
 use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
 
 use documents::{Documents, FileDialogs, NoDialogs};
+use layout::{LayoutStore, SavedLayout, WindowGeometry};
 use menus::{Entry, MENUS, TOOLBAR, Tool};
 use panels::Panel;
 use pgstudio_docking::Workspace;
@@ -49,6 +51,10 @@ pub struct ShellApp {
     confirm: Option<Confirm>,
     /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
     allow_close: bool,
+    /// Onde o layout é salvo ao sair.
+    layout_store: Option<LayoutStore>,
+    /// Última geometria conhecida da janela (fora de maximizado).
+    window: Option<WindowGeometry>,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -96,6 +102,8 @@ impl Default for ShellApp {
             dialogs: Box::new(NoDialogs),
             confirm: None,
             allow_close: false,
+            layout_store: None,
+            window: None,
         }
     }
 }
@@ -136,6 +144,64 @@ impl ShellApp {
     pub fn with_file_dialogs(mut self, dialogs: impl FileDialogs + 'static) -> Self {
         self.dialogs = Box::new(dialogs);
         self
+    }
+
+    /// Restaura o layout lido do arquivo e o salva lá ao sair. Se o arquivo
+    /// estava ruim, usa o layout padrão e avisa na status bar.
+    pub fn with_layout_store(mut self, store: LayoutStore) -> Self {
+        if let Some(saved) = &store.saved {
+            self.workspace = pgstudio_docking::Workspace::from_layout(saved.docking.clone());
+            self.window = saved.window;
+        }
+        if let Some(error) = &store.error {
+            eprintln!("layout: {}: {error}", store.path().display());
+            self.status =
+                "The saved window layout could not be read; using the default layout.".to_string();
+        }
+        self.layout_store = Some(store);
+        self
+    }
+
+    /// Retrato do layout atual, como seria salvo.
+    pub fn current_layout(&self) -> SavedLayout {
+        SavedLayout {
+            window: self.window,
+            docking: self.workspace.layout(|p| !matches!(p, Panel::Query(_))),
+        }
+    }
+
+    /// Salva o layout no arquivo, se houver um. Chamado ao fechar a janela.
+    pub fn save_layout(&mut self) {
+        let Some(store) = &self.layout_store else {
+            return;
+        };
+        if let Err(e) = store.save(&self.current_layout()) {
+            eprintln!("layout: could not save {}: {e}", store.path().display());
+        }
+    }
+
+    /// Guarda a geometria da janela; maximizada, mantém o tamanho normal.
+    fn track_window(&mut self, ctx: &egui::Context) {
+        let (inner, outer, maximized, fullscreen) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.inner_rect, v.outer_rect, v.maximized, v.fullscreen)
+        });
+        if fullscreen == Some(true) {
+            return;
+        }
+        if maximized == Some(true) {
+            if let Some(w) = &mut self.window {
+                w.maximized = true;
+            }
+            return;
+        }
+        if let Some(inner) = inner {
+            self.window = Some(WindowGeometry {
+                position: outer.map(|r| [r.min.x, r.min.y]),
+                size: [inner.width(), inner.height()],
+                maximized: false,
+            });
+        }
     }
 
     /// Janelas de consulta abertas.
@@ -505,9 +571,12 @@ impl ShellApp {
         } else {
             self.keyboard(&ctx)
         };
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
+        self.track_window(&ctx);
+        if ctx.input(|i| i.viewport().close_requested()) {
             let dirty = self.documents.dirty();
-            if !dirty.is_empty() {
+            if self.allow_close || dirty.is_empty() {
+                self.save_layout();
+            } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 if self.confirm.is_none() {
                     self.confirm = Some(Confirm {
