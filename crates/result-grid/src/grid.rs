@@ -697,7 +697,10 @@ fn cell_editor(
             i.modifiers.command && i.key_pressed(Key::Num0),
         )
     });
-    if resp.has_focus() && null {
+    // O foco pela memória, não por `has_focus`: trocar de janela (Alt+Tab)
+    // tira o foco da janela, não da edição.
+    let focused = ui.memory(|m| m.has_focus(edit_id));
+    if focused && null {
         state.editing = None;
         grid.request_focus();
         return (store.cell(cell.row, cell.col).is_some()).then_some((cell, None));
@@ -713,7 +716,7 @@ fn cell_editor(
         s.store(ui.ctx(), edit_id);
         return None;
     }
-    if !resp.has_focus() {
+    if !focused {
         if escape {
             state.editing = None;
             grid.request_focus();
