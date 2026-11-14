@@ -184,6 +184,9 @@ pub struct TableDesigner {
     buffers: BTreeMap<(Id, Field), String>,
     /// Nome digitado na linha vazia do fim da grade.
     new_column: String,
+    /// Distância medida entre duas linhas da grade, para desenhar só as
+    /// visíveis.
+    row_pitch: f32,
     types: Vec<String>,
     types_rx: Option<Receiver<Result<Vec<String>, MetadataError>>>,
     saving: Option<Saving>,
@@ -235,6 +238,7 @@ impl TableDesigner {
             selected: None,
             buffers: BTreeMap::new(),
             new_column: String::new(),
+            row_pitch: ROW_HEIGHT + 4.0,
             types: pgstudio_core::metadata::COMMON_TYPES
                 .iter()
                 .map(|t| (*t).to_string())
@@ -777,9 +781,16 @@ impl TableDesigner {
         let name_w = (width * 0.3).max(120.0);
         let type_w = (width * 0.3).max(120.0);
         let mut actions: Vec<RowAction> = Vec::new();
+        let mut pitch = self.row_pitch;
+        let mut tops: Vec<(usize, f32)> = Vec::new();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
-            .show(ui, |ui| {
+            .show_viewport(ui, |ui, viewport| {
+                // Só as linhas perto da área visível são desenhadas de
+                // verdade; as outras ocupam o mesmo espaço vazias.
+                let first = ((viewport.min.y / pitch).floor() as usize).saturating_sub(2);
+                let last = (viewport.max.y / pitch).ceil() as usize + 2;
+                let gap = ui.spacing().item_spacing.y;
                 egui::Grid::new("designer_columns")
                     .num_columns(5)
                     .striped(true)
@@ -791,8 +802,16 @@ impl TableDesigner {
                         ui.label("");
                         ui.strong("Allow Nulls");
                         ui.end_row();
-                        for c in &columns {
+                        for (i, c) in columns.iter().enumerate() {
                             let selected = self.selected == Some(c.id);
+                            if !selected && (i < first || i > last) {
+                                ui.allocate_exact_size(
+                                    egui::vec2(1.0, (pitch - gap).max(ROW_HEIGHT)),
+                                    egui::Sense::hover(),
+                                );
+                                ui.end_row();
+                                continue;
+                            }
                             let marker = if pk.contains(&c.name) {
                                 icon::KEY
                             } else if selected {
@@ -806,6 +825,7 @@ impl TableDesigner {
                                         .min_size(egui::vec2(22.0, ROW_HEIGHT - 4.0)),
                                 )
                                 .on_hover_text(c.name.clone());
+                            tops.push((i, r.rect.top()));
                             if r.clicked() {
                                 actions.push(RowAction::Select(c.id));
                             }
@@ -874,6 +894,12 @@ impl TableDesigner {
                         ui.end_row();
                     });
             });
+        if let Some(w) = tops.windows(2).find(|w| w[1].0 == w[0].0 + 1) {
+            pitch = w[1].1 - w[0].1;
+            if pitch > 1.0 {
+                self.row_pitch = pitch;
+            }
+        }
         for action in actions {
             match action {
                 RowAction::Select(c) => self.select(c),

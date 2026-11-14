@@ -209,7 +209,7 @@ impl TableDesigner {
                     .tables
                     .iter()
                     .find(|o| o.id != t.id && o.schema == t.schema && o.primary_key.is_some())
-                    .unwrap_or(t);
+                    .map_or(t, |o| &**o);
                 let ref_columns = target
                     .primary_key
                     .as_ref()

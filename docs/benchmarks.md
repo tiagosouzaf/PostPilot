@@ -2,8 +2,8 @@
 
 Números do `pgstudio` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
-vezes e mede quatro cenários
-(`--scenario startup|grid|intellisense|diagram|all`):
+vezes e mede seis cenários
+(`--scenario startup|grid|intellisense|diagram|diagram2000|designer|all`):
 
 - **startup, até o primeiro frame:** do início do processo até o primeiro
   frame exibido (o app avisa pela saída padrão no modo `PGSTUDIO_BENCH=1`).
@@ -32,6 +32,13 @@ vezes e mede quatro cenários
   zoom indo de 120% a 8% e voltando duas vezes. Mede o tempo de montar o
   diagrama (layout automático), o intervalo entre frames e a CPU da
   interface em cada frame.
+- **diagram2000:** o mesmo passeio com 2.000 tabelas (cerca de 3.000 FKs),
+  quatro vezes a meta, para ver quanto sobra.
+- **designer:** com `PGSTUDIO_BENCH=designer`, o app abre o Table Designer
+  numa tabela de um banco sintético de 2.000 tabelas, acrescenta 300 colunas,
+  uma por frame, e gera o change script no fim. Mede o tempo até o designer
+  abrir, o intervalo entre frames, a CPU de cada edição (incluindo o undo) e
+  o tempo do script.
 
 Os cenários rodam no app de verdade, com a janela, a GPU (ou o renderizador
 por software) e o servidor de demonstração, sem PostgreSQL. Ao terminar, o
@@ -61,6 +68,8 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 | Grade: memória | limitada pelo buffer: < 96 MB a mais que o repouso |
 | IntelliSense: 5 mil tabelas | sugestões em < 50 ms (pior tecla) |
 | Diagrama: 500 tabelas com zoom e pan | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Diagrama: 2.000 tabelas com zoom e pan | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Table Designer: editar num banco de 2.000 tabelas | 60 FPS: intervalo entre frames (p95) < 20 ms |
 
 - **60 FPS como p95 < 20 ms:** um frame a 60 Hz dura 16,7 ms. Com vsync, o
   intervalo medido oscila em volta disso mesmo sem nenhum frame perdido, e um
@@ -176,7 +185,47 @@ sem GPU), 3 execuções de `cargo xtask bench --scenario diagram`:
 - A folga para a meta é pequena porque o renderizador por software gasta uns
   14 ms por frame só para desenhar a janela (a interface gasta menos de 1
   ms). Com GPU, o intervalo deve ficar preso ao vsync. Os números de Windows
-  ficam para o marco 3.7.
+  ficaram de fora (veja o marco 3.7).
+
+### Marco 3.7 (fim da Fase 3)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
+sem GPU), 3 execuções de cada cenário (`cargo xtask bench --scenario
+diagram`, `diagram2000` e `designer`):
+
+| Cenário | Meta | Mediana | Pior | Situação |
+| --- | --- | --- | --- | --- |
+| Diagrama: 500 tabelas montadas (layout) | — | 3.8 ms | 4.1 ms | — |
+| Diagrama: frame com zoom e pan (p95) | < 20 ms (60 FPS) | 18.2 ms | 18.6 ms | ✅ dentro |
+| Diagrama: CPU da interface por frame (p95) | — | 0.7 ms | 0.7 ms | — |
+| Diagrama: RAM com 500 tabelas | — | 138.2 MB | 138.5 MB | — |
+| Diagrama: 2.000 tabelas montadas (layout) | — | 16.2 ms | 19.5 ms | — |
+| Diagrama 2.000: frame com zoom e pan (p95) | < 20 ms (60 FPS) | 21.6 ms | 21.8 ms | ❌ acima |
+| Diagrama 2.000: CPU da interface por frame (p95) | — | 0.8 ms | 0.9 ms | — |
+| Diagrama: RAM com 2.000 tabelas | — | 154.2 MB | 154.4 MB | — |
+| Table Designer: abre num banco de 2.000 tabelas | — | 33.3 ms | 40.4 ms | — |
+| Table Designer: frame com uma coluna nova (p95) | < 20 ms (60 FPS) | 17.0 ms | 17.1 ms | ✅ dentro |
+| Table Designer: CPU da interface por edição (p95) | — | 0.7 ms | 0.7 ms | — |
+| Table Designer: script de 300 colunas novas | — | 0.4 ms | 0.5 ms | — |
+
+- **Windows não foi medido.** Não há máquina Windows disponível e os
+  minutos do GitHub Actions acabaram, então o job de Windows não rodou. Os
+  cenários estão prontos: `cargo xtask bench --scenario diagram`,
+  `diagram2000` e `designer` numa máquina Windows completam a tabela.
+- **Diagrama com 2.000 tabelas:** fica 1,6 ms acima da meta, mas a interface
+  gasta menos de 1 ms por frame; o resto é o renderizador por software
+  pintando até 1.650 caixas e 3.000 linhas na tela. A meta do plano é a de
+  500 tabelas, que passa. Pintar cada pixel uma vez só (borda em tiras,
+  corpo abaixo do cabeçalho) baixou o p95 de 23,3 ms para 21,6 ms; tirar os
+  nomes das tabelas não mudou nada, então o próximo passo seria agrupar
+  tabelas quando afastado, o que só vale medir com GPU.
+- **Table Designer:** o cenário acrescenta 300 colunas, uma por frame, a
+  uma tabela num banco de 2.000 tabelas. Na primeira versão cada edição
+  custava 8 ms e o script 27 ms, porque o modelo inteiro era copiado para o
+  histórico de undo e comparado tabela por tabela. Com as tabelas
+  compartilhadas (`Arc`, copiadas só quando mudam), a edição caiu para
+  0,4 ms e o script para 0,4 ms. A grade desenha só as linhas visíveis, o que
+  baixou a CPU da interface de 3,3 ms para 0,7 ms com 300 colunas.
 
 ## Como ler
 

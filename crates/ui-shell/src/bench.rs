@@ -13,6 +13,13 @@
 //!   sintéticas (com FKs) passeia de um canto a outro com o zoom indo e
 //!   voltando entre [`DIAGRAM_ZOOM`] em [`DIAGRAM_SECONDS`] segundos.
 //!
+//! - **Diagrama grande:** o mesmo passeio com [`DIAGRAM_LARGE_TABLES`]
+//!   tabelas.
+//! - **Table Designer:** num banco de [`DESIGNER_TABLES`] tabelas, abre o
+//!   designer de uma delas e acrescenta [`DESIGNER_EDITS`] colunas, uma por
+//!   frame (cada uma é uma edição com undo); no fim, mede o tempo de gerar
+//!   o script de alterações.
+//!
 //! Ao terminar, o app escreve uma linha [`RESULT_PREFIX`] com os números
 //! (`chave=valor`) e fica parado para a memória ser lida de fora.
 
@@ -38,6 +45,14 @@ select t.balance from table_0789 t where t.cr\n\
 select t.name from table_09 t join table_08 u on u.id = t.id\n";
 /// Tabelas do cenário do diagrama.
 pub const DIAGRAM_TABLES: usize = 500;
+/// Tabelas do cenário do diagrama grande.
+pub const DIAGRAM_LARGE_TABLES: usize = 2_000;
+/// Tabelas do banco no cenário do Table Designer.
+pub const DESIGNER_TABLES: usize = 2_000;
+/// Tabela aberta no Table Designer (a primeira do modelo sintético).
+pub const DESIGNER_TABLE: u64 = 1;
+/// Colunas acrescentadas no Table Designer, uma por frame.
+pub const DESIGNER_EDITS: usize = 300;
 /// Duração do passeio pelo diagrama.
 pub const DIAGRAM_SECONDS: f64 = 10.0;
 /// Zoom mínimo e máximo do passeio (de tudo na tela a colunas legíveis).
@@ -51,6 +66,10 @@ pub enum Scenario {
     Grid,
     IntelliSense,
     Diagram,
+    /// O diagrama com [`DIAGRAM_LARGE_TABLES`] tabelas.
+    DiagramLarge,
+    /// Table Designer num banco de [`DESIGNER_TABLES`] tabelas.
+    Designer,
 }
 
 impl Scenario {
@@ -60,6 +79,8 @@ impl Scenario {
             "grid" => Some(Scenario::Grid),
             "intellisense" => Some(Scenario::IntelliSense),
             "diagram" => Some(Scenario::Diagram),
+            "diagram2000" => Some(Scenario::DiagramLarge),
+            "designer" => Some(Scenario::Designer),
             _ => None,
         }
     }
@@ -69,6 +90,17 @@ impl Scenario {
             Scenario::Grid => "grid",
             Scenario::IntelliSense => "intellisense",
             Scenario::Diagram => "diagram",
+            Scenario::DiagramLarge => "diagram2000",
+            Scenario::Designer => "designer",
+        }
+    }
+
+    /// Tabelas do modelo sintético do cenário.
+    pub fn tables(self) -> usize {
+        match self {
+            Scenario::DiagramLarge => DIAGRAM_LARGE_TABLES,
+            Scenario::Designer => DESIGNER_TABLES,
+            _ => DIAGRAM_TABLES,
         }
     }
 }
@@ -105,6 +137,8 @@ pub(crate) struct Run {
     pub popup_keys: usize,
     /// Mais tabelas desenhadas num frame (diagrama).
     pub drawn_max: usize,
+    /// Tempo de cada edição (Table Designer), fora do desenho.
+    pub edit_ms: Vec<f64>,
     /// Tecla a mandar no próximo frame (IntelliSense).
     pub next_key: Option<char>,
     /// Frames esperando o editor receber o foco antes de digitar.
@@ -124,6 +158,7 @@ impl Run {
             last_frame: None,
             popup_keys: 0,
             drawn_max: 0,
+            edit_ms: Vec::new(),
             next_key: None,
             warmup: 0,
             scroll_start: None,
@@ -320,6 +355,48 @@ pub fn diagram_camera(
     pgstudio_diagram_engine::Camera {
         pan: canvas / 2.0 - center.to_vec2() * zoom,
         zoom,
+    }
+}
+
+/// Modelo do cenário do Table Designer: o sintético de
+/// [`DESIGNER_TABLES`] tabelas.
+pub fn designer_model() -> pgstudio_core::metadata::Model {
+    synthetic_model(DESIGNER_TABLES)
+}
+
+/// Servidor de mentira que só devolve um modelo pronto (medição do Table
+/// Designer, sem PostgreSQL).
+pub struct ModelProvider(pub pgstudio_core::metadata::Model);
+
+impl pgstudio_core::metadata::MetadataProvider for ModelProvider {
+    fn roots(
+        &self,
+    ) -> Result<Vec<pgstudio_core::metadata::ObjectNode>, pgstudio_core::metadata::MetadataError>
+    {
+        Ok(Vec::new())
+    }
+
+    fn children(
+        &self,
+        _parent: &pgstudio_core::metadata::NodeId,
+    ) -> Result<Vec<pgstudio_core::metadata::ObjectNode>, pgstudio_core::metadata::MetadataError>
+    {
+        Ok(Vec::new())
+    }
+
+    fn load_model(
+        &self,
+        _database: &str,
+    ) -> Result<pgstudio_core::metadata::Model, pgstudio_core::metadata::MetadataError> {
+        Ok(self.0.clone())
+    }
+
+    fn apply_ddl(
+        &self,
+        _database: &str,
+        _statements: &[String],
+    ) -> Result<(), pgstudio_core::metadata::MetadataError> {
+        Ok(())
     }
 }
 

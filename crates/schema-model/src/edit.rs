@@ -8,6 +8,7 @@
 //! se desfaz de uma vez.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::{
     Check, Column, ForeignKey, Id, Index, Key, Model, Table, default_constraint_name,
@@ -34,11 +35,28 @@ fn err<T>(msg: impl Into<String>) -> Result<T, EditError> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
     /// Insere a tabela nesta posição da lista.
-    Insert(usize, Table),
+    Insert(usize, Arc<Table>),
     /// Remove a tabela com este id.
     Remove(Id),
     /// Troca a tabela de mesmo id por esta.
-    Replace(Table),
+    Replace(Arc<Table>),
+}
+
+/// As tabelas com FK para `schema.name`, prontas para mudar. Só essas são
+/// copiadas; as outras continuam compartilhadas com o modelo de antes.
+fn referencing<'a>(
+    m: &'a mut Model,
+    schema: &'a str,
+    name: &'a str,
+) -> impl Iterator<Item = &'a mut Table> + 'a {
+    m.tables
+        .iter_mut()
+        .filter(move |t| {
+            t.foreign_keys
+                .iter()
+                .any(|fk| fk.ref_schema == schema && fk.ref_table == name)
+        })
+        .map(Arc::make_mut)
 }
 
 /// Aplica `op` e devolve a operação que desfaz.
@@ -59,7 +77,9 @@ fn apply(model: &mut Model, op: Op) -> Op {
         }
         Op::Replace(table) => {
             let slot = model
-                .table_mut(table.id)
+                .tables
+                .iter_mut()
+                .find(|t| t.id == table.id)
                 .expect("a operação foi montada a partir do modelo");
             Op::Replace(std::mem::replace(slot, table))
         }
@@ -175,16 +195,24 @@ impl Document {
         let out = edit(&mut after)?;
         let before = &self.model;
         let mut ops = Vec::new();
+        // As tabelas que a edição não tocou são o mesmo ponteiro nos dois
+        // modelos: só as outras são comparadas.
+        let after_by_id: std::collections::HashMap<Id, &Arc<Table>> =
+            after.tables.iter().map(|t| (t.id, t)).collect();
+        let before_ids: std::collections::HashSet<Id> =
+            before.tables.iter().map(|t| t.id).collect();
         for t in &before.tables {
-            match after.table(t.id) {
+            match after_by_id.get(&t.id) {
                 None => ops.push(Op::Remove(t.id)),
-                Some(new) if new != t => ops.push(Op::Replace(new.clone())),
+                Some(new) if !Arc::ptr_eq(new, t) && *new != t => {
+                    ops.push(Op::Replace(Arc::clone(new)));
+                }
                 Some(_) => {}
             }
         }
         for (at, t) in after.tables.iter().enumerate() {
-            if before.table(t.id).is_none() {
-                ops.push(Op::Insert(at, t.clone()));
+            if !before_ids.contains(&t.id) {
+                ops.push(Op::Insert(at, Arc::clone(t)));
             }
         }
         // Os ids dados durante a edição continuam reservados mesmo se ela
@@ -208,7 +236,7 @@ impl Document {
             }
             let id = m.new_id();
             let column = m.new_id();
-            m.tables.push(Table {
+            m.push(Table {
                 id,
                 schema: schema.into(),
                 name: name.into(),
@@ -243,7 +271,7 @@ impl Document {
             if m.find(schema, name).is_some() {
                 return err(format!("A table named {schema}.{name} already exists."));
             }
-            for t in &mut m.tables {
+            for t in referencing(m, &old_schema, &old_name) {
                 for fk in &mut t.foreign_keys {
                     if fk.ref_schema == old_schema && fk.ref_table == old_name {
                         fk.ref_schema = schema.into();
@@ -265,7 +293,7 @@ impl Document {
             let t = get(m, table)?;
             let (schema, name) = (t.schema.clone(), t.name.clone());
             m.tables.retain(|t| t.id != table);
-            for t in &mut m.tables {
+            for t in referencing(m, &schema, &name) {
                 t.foreign_keys
                     .retain(|fk| !(fk.ref_schema == schema && fk.ref_table == name));
             }
@@ -307,7 +335,7 @@ impl Document {
                     *c = name.to_string();
                 }
             };
-            for other in &mut m.tables {
+            for other in referencing(m, &schema, &tname) {
                 for fk in &mut other.foreign_keys {
                     if fk.ref_schema == schema && fk.ref_table == tname {
                         rename(&mut fk.ref_columns);
@@ -381,7 +409,7 @@ impl Document {
                 return err("A table needs at least one column.");
             }
             let (schema, tname) = (t.schema.clone(), t.name.clone());
-            for other in &mut m.tables {
+            for other in referencing(m, &schema, &tname) {
                 other.foreign_keys.retain(|fk| {
                     !(fk.ref_schema == schema
                         && fk.ref_table == tname

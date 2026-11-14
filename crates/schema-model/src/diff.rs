@@ -17,6 +17,7 @@
 //! 8. cria as FKs, por último, quando todas as tabelas e chaves já existem.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{
     Column, ForeignKey, Id, Key, Model, Table, idents, qualified, quote_ident, rename_in_expr,
@@ -26,13 +27,19 @@ use crate::{
 /// `new`. Vazio se não há diferença.
 pub fn diff(old: &Model, new: &Model) -> Vec<String> {
     let mut out = Plan::default();
-    let new_by_id: HashMap<Id, &Table> = new.tables.iter().map(|t| (t.id, t)).collect();
-    let old_by_id: HashMap<Id, &Table> = old.tables.iter().map(|t| (t.id, t)).collect();
+    let new_arcs: HashMap<Id, &Arc<Table>> = new.tables.iter().map(|t| (t.id, t)).collect();
+    let new_by_id: HashMap<Id, &Table> = new.tables.iter().map(|t| (t.id, &**t)).collect();
+    let old_by_id: HashMap<Id, &Table> = old.tables.iter().map(|t| (t.id, &**t)).collect();
     // Destino de uma FK pelo id da tabela, para não recriar FKs só porque a
     // tabela referenciada mudou de nome.
     let target = |m: &Model, fk: &ForeignKey| m.find(&fk.ref_schema, &fk.ref_table).map(|t| t.id);
 
     for o in &old.tables {
+        // A mesma tabela nos dois modelos (a edição não tocou nela): nada
+        // a fazer.
+        if new_arcs.get(&o.id).is_some_and(|n| Arc::ptr_eq(n, o)) {
+            continue;
+        }
         let Some(n) = new_by_id.get(&o.id) else {
             // A tabela sai: as FKs dela saem junto. As de outras tabelas
             // que apontam para ela já sumiram do modelo novo.
