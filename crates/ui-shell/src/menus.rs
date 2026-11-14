@@ -114,6 +114,7 @@ pub const MENUS: &[Menu] = &[
             I(ObjectExplorerDetails),
             I(RegisteredServers),
             I(WorkspaceExplorer),
+            I(ClaudePanel),
             I(TemplateExplorer),
             I(PropertiesWindow),
             I(Output),

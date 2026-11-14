@@ -864,7 +864,7 @@ impl ShellApp {
     }
 
     /// A janela pedida, ou a ativa.
-    fn claude_window(&self, window: Option<u32>) -> Result<u32, String> {
+    pub(crate) fn claude_window(&self, window: Option<u32>) -> Result<u32, String> {
         match window.or(self.active_doc) {
             Some(id) if self.documents.get(id).is_some() => Ok(id),
             Some(id) => Err(format!(
@@ -933,7 +933,7 @@ impl ShellApp {
         }))
     }
 
-    fn claude_edit_window(
+    pub(crate) fn claude_edit_window(
         &mut self,
         ctx: &egui::Context,
         id: u32,
