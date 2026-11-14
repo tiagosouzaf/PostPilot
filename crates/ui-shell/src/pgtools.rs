@@ -185,7 +185,7 @@ pub fn connection_env(settings: &ConnectionSettings, password: &str) -> Vec<(Str
     };
     let mut env = vec![
         ("PGSSLMODE".to_string(), ssl.to_string()),
-        ("PGAPPNAME".to_string(), "PGStudio".to_string()),
+        ("PGAPPNAME".to_string(), "PostPilot".to_string()),
     ];
     if !password.is_empty() {
         env.push(("PGPASSWORD".to_string(), password.to_string()));

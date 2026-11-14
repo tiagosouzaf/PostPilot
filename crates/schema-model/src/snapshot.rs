@@ -61,7 +61,7 @@ impl Snapshot {
             .map_err(|e| format!("This is not a schema snapshot ({e})."))?;
         if header.format > FORMAT {
             return Err(format!(
-                "The snapshot was saved by a newer PGStudio (format {}).",
+                "The snapshot was saved by a newer PostPilot (format {}).",
                 header.format
             ));
         }
@@ -130,7 +130,7 @@ mod tests {
         assert!(
             Snapshot::from_json("{\"format\": 99}")
                 .unwrap_err()
-                .contains("newer PGStudio")
+                .contains("newer PostPilot")
         );
         assert!(
             Snapshot::from_json("{\"format\": 1}")

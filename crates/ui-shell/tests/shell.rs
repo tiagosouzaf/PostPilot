@@ -57,7 +57,7 @@ fn help_menu_opens_about() {
     let mut harness = harness();
     harness.get_by_label("Help").click();
     harness.run();
-    harness.get_by_label("About PGStudio").click();
+    harness.get_by_label("About PostPilot").click();
     harness.run();
     assert!(harness.state().about_open());
 }

@@ -1,8 +1,15 @@
-# PGStudio
+# PostPilot
 
 Aplicativo desktop para administrar PostgreSQL, inspirado no Microsoft SQL Server
 Management Studio (SSMS). Escrito 100% em Rust, para Windows e Linux, sem Electron
 nem WebView.
+
+Até a versão 0.1 o app se chamava **PGStudio**; o nome mudou porque outros
+produtos de PostgreSQL já usam esse. Na primeira execução, o PostPilot copia a
+configuração antiga (`~/.config/PGStudio` ou `%APPDATA%\PGStudio`: conexões
+recentes, servidores registrados, layout e keymap) e as senhas lembradas no
+cofre do sistema. Os pacotes novos substituem os antigos (`pgstudio`) no apt e
+no pacman.
 
 > As Fases 0 a 6 do roteiro estão prontas: janela no estilo do SSMS com
 > painéis encaixáveis, Object Explorer, editor com IntelliSense, grade que
@@ -14,7 +21,7 @@ nem WebView.
 ## Estrutura
 
 ```txt
-apps/desktop/     binário `pgstudio`
+apps/desktop/     binário `postpilot`
 crates/core/      tipos de domínio, comandos e keymap, sem GUI e sem I/O
 crates/ui-shell/  janela, menus, toolbar, status bar e tema (egui)
 crates/docking/   painéis encaixáveis (invólucro do egui_dock)
@@ -37,23 +44,23 @@ Novas crates entram na fase do roteiro que as usa.
 `cargo xtask dist` gera os pacotes em `target/packages/` (veja
 [Pacotes](#pacotes)):
 
-- **Ubuntu, Debian e derivados:** `sudo apt install ./pgstudio_<versão>_amd64.deb`.
-  O PGStudio aparece no menu de aplicativos; para remover,
-  `sudo apt remove pgstudio`.
+- **Ubuntu, Debian e derivados:** `sudo apt install ./postpilot_<versão>_amd64.deb`.
+  O PostPilot aparece no menu de aplicativos; para remover,
+  `sudo apt remove postpilot`.
 - **Arch Linux e derivados (Omarchy, Manjaro, EndeavourOS):**
-  `sudo pacman -U pgstudio-<versão>-1-x86_64.pkg.tar.zst`, ou compile do código
+  `sudo pacman -U postpilot-<versão>-1-x86_64.pkg.tar.zst`, ou compile do código
   com `cd packaging/arch && makepkg -si`. O atalho aparece no lançador de
-  aplicativos; para remover, `sudo pacman -R pgstudio`.
-- **Outras distribuições Linux:** `chmod +x PGStudio-<versão>-x86_64.AppImage`
+  aplicativos; para remover, `sudo pacman -R postpilot`.
+- **Outras distribuições Linux:** `chmod +x PostPilot-<versão>-x86_64.AppImage`
   e execute. Sem FUSE (alguns containers), use
-  `./PGStudio-<versão>-x86_64.AppImage --appimage-extract-and-run`.
+  `./PostPilot-<versão>-x86_64.AppImage --appimage-extract-and-run`.
 - **Windows 10 e 11 (64 bits):** dê dois cliques em
-  `PGStudio-<versão>-x86_64.msi` (ou `msiexec /i PGStudio-<versão>-x86_64.msi`).
-  Ele instala para todos os usuários em `C:\Program Files\PGStudio`, pede
-  elevação, põe o atalho no menu Iniciar e o PGStudio no "Abrir com" dos
+  `PostPilot-<versão>-x86_64.msi` (ou `msiexec /i PostPilot-<versão>-x86_64.msi`).
+  Ele instala para todos os usuários em `C:\Program Files\PostPilot`, pede
+  elevação, põe o atalho no menu Iniciar e o PostPilot no "Abrir com" dos
   arquivos `.sql` (sem virar o programa padrão). Uma versão nova substitui a
-  anterior; para remover, Configurações > Aplicativos > PGStudio. Sem
-  instalar, extraia o `.zip` e abra `pgstudio.exe`. O exe e o msi não são
+  anterior; para remover, Configurações > Aplicativos > PostPilot. Sem
+  instalar, extraia o `.zip` e abra `postpilot.exe`. O exe e o msi não são
   assinados, então o SmartScreen pode avisar ("Mais informações" > "Executar
   assim mesmo"). O instalador só foi testado no Wine (`msiexec` do Wine 9), não
   num Windows de verdade.
@@ -67,12 +74,12 @@ testado).
 
 ### Renderizador e Wayland
 
-O PGStudio desenha a janela com o **wgpu** (Vulkan no Linux, Direct3D 12 no
+O PostPilot desenha a janela com o **wgpu** (Vulkan no Linux, Direct3D 12 no
 Windows) e traz o **glow** (OpenGL) como alternativa. Para escolher:
 
 ```sh
-pgstudio --renderer glow            # ou --renderer=glow
-PGSTUDIO_RENDERER=glow pgstudio     # o mesmo, por variável de ambiente
+postpilot --renderer glow            # ou --renderer=glow
+PGSTUDIO_RENDERER=glow postpilot     # o mesmo, por variável de ambiente
 ```
 
 A opção da linha de comando vence a variável. Sem nenhuma das duas, o app
@@ -81,9 +88,9 @@ sozinho com o glow e avisa no terminal. Help > About mostra o renderizador em
 uso (no wgpu, também o backend e a placa). Para deixar o glow fixo no
 Hyprland, ponha `env = PGSTUDIO_RENDERER,glow` no `hyprland.conf`.
 
-No Wayland o app abre nativo, sem XWayland, com o `app_id` `pgstudio` (o mesmo
+No Wayland o app abre nativo, sem XWayland, com o `app_id` `postpilot` (o mesmo
 do `.desktop`, para o ícone e para as regras de janela do compositor, que
-veem `pgstudio` como class). A escala fracionária ou inteira do
+veem `postpilot` como class). A escala fracionária ou inteira do
 monitor vem do compositor. O copiar e colar usa a área de transferência do
 Wayland (a mesma do `wl-copy`/`wl-paste`). Os diálogos de abrir e salvar
 arquivo passam pelo xdg-desktop-portal, que precisa de um backend com seletor
@@ -99,10 +106,10 @@ portal (GTK). Não foi testado no Hyprland nem com GPU de verdade.
 ## Uso
 
 ```sh
-pgstudio [--renderer wgpu|glow] [arquivo.sql ...]
+postpilot [--renderer wgpu|glow] [arquivo.sql ...]
 ```
 
-Ao abrir, o PGStudio mostra o "Connect to Server", como o SSMS: Server name
+Ao abrir, o PostPilot mostra o "Connect to Server", como o SSMS: Server name
 (`host` ou `host,porta`), Login, Password, Database e Encryption (Disable,
 Prefer, Require ou Verify full, os modos `sslmode` do libpq). Depois de conectar,
 o Object Explorer mostra o servidor como no SSMS: Databases > banco > Schemas >
@@ -202,7 +209,7 @@ milhão de linhas.
 
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
-ao abrir. Se o arquivo estiver estragado, o PGStudio abre com o layout padrão e
+ao abrir. Se o arquivo estiver estragado, o PostPilot abre com o layout padrão e
 avisa na status bar. Window > Reset Window Layout volta ao padrão a qualquer
 momento.
 
@@ -283,7 +290,7 @@ Import... / Export... num grupo troca a árvore com outra máquina (sem senhas).
 A árvore fica em `registered_servers.json`. Vários servidores aparecem juntos
 no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret
-Service no Linux), nunca em arquivo; sem cofre, o PGStudio pede a senha.
+Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 
 ### Layout
 
@@ -297,8 +304,8 @@ borda dele muda o tamanho (que fica salvo no layout), e o alfinete o fixa de nov
 Os atalhos seguem o SSMS (F5 ou Ctrl+E executa, Ctrl+K, Ctrl+C comenta etc.). Para
 mudar, crie o arquivo `keymap.txt` na pasta de configuração:
 
-- Linux: `~/.config/PGStudio/keymap.txt`
-- Windows: `%APPDATA%\PGStudio\keymap.txt`
+- Linux: `~/.config/PostPilot/keymap.txt`
+- Windows: `%APPDATA%\PostPilot\keymap.txt`
 
 Uma linha por atalho, com o nome do comando à esquerda:
 
@@ -355,11 +362,11 @@ gera em `target/packages/`, com um `SHA256SUMS`:
 
 | Pacote | Ferramentas |
 | --- | --- |
-| `pgstudio_<versão>_amd64.deb` | `dpkg-deb` |
-| `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
-| `pgstudio-<versão>-1-x86_64.pkg.tar.zst` | `bsdtar` (libarchive-tools no Ubuntu; no Arch já vem); `packaging/arch/PKGBUILD` gera o mesmo pacote com o `makepkg` |
-| `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
-| `PGStudio-<versão>-x86_64.msi` | o mesmo exe do zip e o `wixl` (pacote `wixl` no Ubuntu, `msitools` no Arch), que lê `packaging/windows/pgstudio.wxs` |
+| `postpilot_<versão>_amd64.deb` | `dpkg-deb` |
+| `PostPilot-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
+| `postpilot-<versão>-1-x86_64.pkg.tar.zst` | `bsdtar` (libarchive-tools no Ubuntu; no Arch já vem); `packaging/arch/PKGBUILD` gera o mesmo pacote com o `makepkg` |
+| `PostPilot-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
+| `PostPilot-<versão>-x86_64.msi` | o mesmo exe do zip e o `wixl` (pacote `wixl` no Ubuntu, `msitools` no Arch), que lê `packaging/windows/postpilot.wxs` |
 
 O binário Linux sai ligado contra a glibc 2.31 quando há o
 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
