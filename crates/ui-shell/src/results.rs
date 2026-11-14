@@ -107,6 +107,20 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
         });
 }
 
+/// Faixa de status de uma janela de consulta que ainda não executou:
+/// o servidor e o banco dela.
+pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10)));
+        ui.label("Connected.");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(database);
+            ui.separator();
+            ui.label(server);
+        });
+    });
+}
+
 fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str) {
     let outcome = exec.outcome();
     let (icon, color) = match outcome {
