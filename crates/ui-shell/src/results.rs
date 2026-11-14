@@ -78,11 +78,17 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
         .show(ui, |ui| {
             for (i, (plan, view)) in exec.plans.iter_mut().enumerate() {
                 ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
-                    ui.label(format!(
+                    let mut header = format!(
                         "Query {}: Query cost (relative to the batch): {:.0}%",
                         i + 1,
                         shares[i] * 100.0
-                    ));
+                    );
+                    if let (Some(p), Some(e)) = (plan.planning_ms, plan.execution_ms) {
+                        header.push_str(&format!(
+                            "   Planning time: {p:.3} ms   Execution time: {e:.3} ms"
+                        ));
+                    }
+                    ui.label(header);
                     let statement: String = plan
                         .statement
                         .split_whitespace()

@@ -165,12 +165,17 @@ impl PlanView {
             // Para leitores de tela (e testes): o que o nó diz.
             let node = &plan.nodes[id];
             let label = format!(
-                "{}{}, Cost: {:.0} %",
+                "{}{}, Cost: {:.0} %{}",
                 node.title(),
                 node.subtitle()
                     .map(|s| format!(", {s}"))
                     .unwrap_or_default(),
-                plan.cost_share(id) * 100.0
+                plan.cost_share(id) * 100.0,
+                if plan.misestimate(id).is_some() {
+                    ", Warning: estimated rows differ from actual"
+                } else {
+                    ""
+                }
             );
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone())
@@ -232,6 +237,15 @@ fn paint_node(
         FontId::proportional((22.0 * zoom).round().max(6.0)),
         text,
     );
+    if plan.misestimate(id).is_some() {
+        painter.text(
+            icon_rect.right_top() + vec2(2.0 * zoom, -2.0 * zoom),
+            Align2::CENTER_CENTER,
+            icon::WARNING,
+            FontId::proportional((14.0 * zoom).round().max(6.0)),
+            v.warn_fg_color,
+        );
+    }
     if zoom < 0.45 {
         return;
     }
@@ -267,6 +281,15 @@ fn tooltip(ui: &mut egui::Ui, plan: &Plan, id: usize) {
     ui.strong(node.title());
     if let Some(s) = node.subtitle() {
         ui.label(s);
+    }
+    if let Some(r) = plan.misestimate(id) {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            format!(
+                "{} Estimated rows differ from the actual rows by {r:.0}x. The statistics may be out of date; try ANALYZE on the table.",
+                icon::WARNING
+            ),
+        );
     }
     ui.separator();
     egui::Grid::new(("plan_tooltip", id))

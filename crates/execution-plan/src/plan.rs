@@ -220,6 +220,18 @@ impl Plan {
         }
     }
 
+    /// Quantas vezes a estimativa de linhas errou no nó `id`, quando errou
+    /// muito (10 vezes ou mais, com pelo menos 100 linhas de um dos lados):
+    /// sinal de estatística velha, que leva o planejador a escolher mal.
+    pub fn misestimate(&self, id: usize) -> Option<f64> {
+        let n = &self.nodes[id];
+        let actual = n.actual?;
+        // Os dois números são por execução do nó.
+        let (a, e) = (actual.rows, n.plan_rows);
+        let (hi, lo) = (a.max(e), a.min(e).max(1.0));
+        (actual.loops > 0.0 && hi >= 100.0 && hi / lo >= 10.0).then_some(hi / lo)
+    }
+
     /// Profundidade de cada nó (a raiz é 0).
     pub fn depths(&self) -> Vec<usize> {
         let mut depth = vec![0; self.nodes.len()];
@@ -320,6 +332,26 @@ mod tests {
         assert_eq!((a.rows, a.loops, a.total_ms), (7.0, 3.0, 0.5));
         assert_eq!(p.root().actual_total_rows(), Some(21.0));
         assert_eq!((p.planning_ms, p.execution_ms), (Some(0.2), Some(1.5)));
+    }
+
+    #[test]
+    fn big_misestimates_are_flagged() {
+        let json = |est: u32, act: u32| {
+            format!(
+                r#"[{{"Plan": {{"Node Type": "Seq Scan", "Plan Rows": {est}, "Actual Rows": {act}, "Actual Loops": 1}}}}]"#
+            )
+        };
+        let ratio = |est, act| parse(&json(est, act), "").unwrap()[0].misestimate(0);
+        assert_eq!(ratio(100, 5000), Some(50.0));
+        assert_eq!(ratio(5000, 0), Some(5000.0));
+        assert_eq!(ratio(100, 900), None);
+        assert_eq!(ratio(1, 50), None);
+        let estimated = parse(
+            r#"[{"Plan": {"Node Type": "Seq Scan", "Plan Rows": 1}}]"#,
+            "",
+        )
+        .unwrap();
+        assert_eq!(estimated[0].misestimate(0), None);
     }
 
     #[test]

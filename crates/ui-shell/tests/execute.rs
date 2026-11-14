@@ -75,13 +75,30 @@ impl QuerySession for FakeSession {
                 sink(QueryEvent::Finished { canceled: false });
                 return;
             }
-            if sql.starts_with("EXPLAIN") && !sql.contains("bad") {
-                // Um plano por comando, com o custo crescendo.
-                for (i, _) in sql.split(";\n").enumerate() {
+            if sql.contains("EXPLAIN") && !sql.contains("bad") {
+                // Um plano por comando, com o custo crescendo; com ANALYZE,
+                // 5.000 linhas reais contra 10 estimadas.
+                let mut i = 0;
+                for part in sql.split(";\n") {
+                    if !part.starts_with("EXPLAIN") {
+                        sink(QueryEvent::CommandComplete { rows: 0 });
+                        continue;
+                    }
+                    let actual = if part.contains("ANALYZE") {
+                        r#", "Actual Rows": 5000, "Actual Loops": 1, "Actual Total Time": 2.5"#
+                    } else {
+                        ""
+                    };
+                    let timing = if part.contains("ANALYZE") {
+                        r#", "Planning Time": 0.1, "Execution Time": 3.0"#
+                    } else {
+                        ""
+                    };
                     let json = format!(
-                        r#"[{{"Plan": {{"Node Type": "Seq Scan", "Relation Name": "t{i}", "Total Cost": {}.0, "Plan Rows": 10}}}}]"#,
+                        r#"[{{"Plan": {{"Node Type": "Seq Scan", "Relation Name": "t{i}", "Total Cost": {}.0, "Plan Rows": 10{actual}}}{timing}}}]"#,
                         i + 1
                     );
+                    i += 1;
                     sink(QueryEvent::Columns(vec!["QUERY PLAN".into()]));
                     sink(QueryEvent::Row(vec![Some(json)]));
                     sink(QueryEvent::CommandComplete { rows: 1 });
@@ -322,6 +339,104 @@ fn ctrl_l_without_statements_only_warns() {
 }
 
 #[test]
+fn ctrl_m_makes_f5_show_the_actual_plan() {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, "select 1");
+    harness.key_press_modifiers(Modifiers::CTRL, Key::M);
+    harness.run();
+    assert!(harness.state().documents().get(id).unwrap().actual_plan);
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) select 1".to_string()]
+    );
+    let exec = execution(&harness, id);
+    assert_eq!(exec.tab, Tab::Plan);
+    let plan = &exec.plans[0].0;
+    assert_eq!(plan.root().actual_total_rows(), Some(5000.0));
+    assert_eq!(plan.misestimate(0), Some(500.0));
+    harness.get(by().label_contains("Execution time: 3.000 ms"));
+    harness.get_by_label("Seq Scan, t0, Cost: 100 %, Warning: estimated rows differ from actual");
+    // Ctrl+M de novo desliga: o F5 volta a mostrar resultados.
+    harness.key_press_modifiers(Modifiers::CTRL, Key::M);
+    harness.run();
+    assert!(!harness.state().documents().get(id).unwrap().actual_plan);
+}
+
+fn dml_with_actual_plan(text: &str) -> (Harness<'static, ShellApp>, Log, u32) {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, text);
+    harness.key_press_modifiers(Modifiers::CTRL, Key::M);
+    harness.run();
+    harness.key_press(Key::F5);
+    harness.run();
+    assert!(log.lock().unwrap().is_empty(), "ran before asking");
+    harness.get_by_label("Include Actual Execution Plan");
+    (harness, log, id)
+}
+
+#[test]
+fn actual_plan_of_dml_asks_and_rolls_back_by_default() {
+    let (mut harness, log, id) = dml_with_actual_plan("update t set a = 1");
+    harness.get_by_label("Run and Roll Back").click();
+    harness.run_steps(4);
+    wait(&mut harness, id);
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec![
+            "BEGIN;\nEXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) update t set a = 1;\nROLLBACK"
+                .to_string()
+        ]
+    );
+    let exec = execution(&harness, id);
+    assert_eq!(exec.plans.len(), 1);
+    assert!(
+        texts(&harness, id)
+            .contains(&"The changes made by the statements were rolled back.".to_string())
+    );
+}
+
+#[test]
+fn actual_plan_of_dml_can_keep_the_changes_or_cancel() {
+    let (mut harness, log, id) = dml_with_actual_plan("delete from t");
+    harness.get_by_label("Run and Keep Changes").click();
+    harness.run_steps(4);
+    wait(&mut harness, id);
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) delete from t".to_string()]
+    );
+
+    let (mut harness, log, _) = dml_with_actual_plan("delete from t");
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(4);
+    assert!(log.lock().unwrap().is_empty());
+    assert_eq!(harness.state().status(), "The query was not executed.");
+}
+
+#[test]
+fn a_failed_rolled_back_batch_closes_the_transaction() {
+    let (mut harness, log, id) = dml_with_actual_plan("update t set bad = 1");
+    harness.get_by_label("Run and Roll Back").click();
+    harness.run_steps(4);
+    wait(&mut harness, id);
+    let start = Instant::now();
+    while log.lock().unwrap().len() < 2 {
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(log.lock().unwrap()[1], "ROLLBACK");
+    let error = execution(&harness, id)
+        .messages
+        .iter()
+        .find(|m| m.kind == MessageKind::Error)
+        .cloned()
+        .unwrap();
+    assert_eq!(error.position, Some(13));
+}
+
+#[test]
 fn ctrl_e_runs_only_the_selection() {
     let (mut harness, log) = harness_with(true);
     let id = query_with(&mut harness, "select 1;\nselect 2;");
@@ -454,7 +569,7 @@ fn executing_without_a_connection_opens_the_connect_dialog() {
     harness.state_mut().connect_dialog_mut();
     // Fecha o diálogo de abertura para ver que o F5 o abre de novo.
     harness.get_by_label("Cancel").click();
-    harness.run();
+    harness.run_steps(4);
     assert!(harness.state().connect_dialog().is_none());
     let id = query_with(&mut harness, "select 1");
     harness.key_press(Key::F5);
@@ -652,7 +767,9 @@ fn script_as_create_opens_a_query_without_running_it() {
     harness.get_by_label_contains("Script Table as").hover();
     harness.run();
     harness.get_by_label("CREATE To New Query Window").click();
-    harness.run();
+    // O catálogo do IntelliSense chega por outra thread e pede repaint;
+    // `wait_document` espera por ele.
+    harness.step();
     let id = wait_document(&mut harness);
     harness.run();
     let doc = harness.state().documents().get(id).unwrap();
