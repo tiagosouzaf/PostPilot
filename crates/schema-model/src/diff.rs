@@ -199,6 +199,104 @@ pub fn diff(old: &Model, new: &Model) -> Vec<String> {
     out.into_statements()
 }
 
+/// Avisos de perda de dados ao ir de `old` a `new`: tabelas e colunas
+/// apagadas e tipos que mudam para algo que pode não caber (o SSMS mostra
+/// isso antes de salvar).
+pub fn data_loss_warnings(old: &Model, new: &Model) -> Vec<String> {
+    let mut out = Vec::new();
+    for o in &old.tables {
+        let Some(n) = new.table(o.id) else {
+            out.push(format!("Table {} will be deleted.", o.qualified()));
+            continue;
+        };
+        for oc in &o.columns {
+            match n.column_by_id(oc.id) {
+                None if oc.generated.is_none() => out.push(format!(
+                    "Column {} will be deleted from {}.",
+                    oc.name,
+                    n.qualified()
+                )),
+                Some(nc) if nc.generated.is_none() && !widens(&oc.ty, &nc.ty) => {
+                    out.push(format!(
+                        "Data might be lost converting column {} of {} from {} to {}.",
+                        nc.name,
+                        n.qualified(),
+                        oc.ty,
+                        nc.ty
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Se todo valor de `from` cabe em `to` sem mudar (mesmo tipo, inteiro
+/// maior, texto sem limite ou com limite maior, numeric mais largo).
+fn widens(from: &str, to: &str) -> bool {
+    let (from, to) = (from.trim(), to.trim());
+    if from == to {
+        return true;
+    }
+    let (fb, fa) = split_type(from);
+    let (tb, ta) = split_type(to);
+    let rank = |t: &str| match t {
+        "smallint" => Some(1),
+        "integer" => Some(2),
+        "bigint" => Some(3),
+        "numeric" => Some(4),
+        _ => None,
+    };
+    let text = |t: &str| matches!(t, "character varying" | "character" | "text");
+    match (fb, tb) {
+        (f, t) if rank(f).is_some() && rank(t).is_some() && f != "numeric" => {
+            // Inteiro para inteiro maior ou para numeric sem limite.
+            rank(f) < rank(t) && (t != "numeric" || ta.is_empty())
+        }
+        ("numeric", "numeric") => match (numeric_args(fa), numeric_args(ta)) {
+            (_, None) => true,
+            (Some((fp, fs)), Some((tp, ts))) => ts >= fs && tp - ts >= fp - fs,
+            (None, Some(_)) => false,
+        },
+        (f, t) if text(f) && text(t) => {
+            let len = |a: &str| a.parse::<u32>().ok();
+            match t {
+                "text" => true,
+                // `character` sem tamanho é `character(1)`.
+                "character varying" => {
+                    let from_len = if f == "character" && fa.is_empty() {
+                        Some(1)
+                    } else {
+                        len(fa)
+                    };
+                    ta.is_empty() || matches!((from_len, len(ta)), (Some(a), Some(b)) if b >= a)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// `numeric(10,2)` → (`numeric`, `10,2`).
+fn split_type(ty: &str) -> (&str, &str) {
+    match ty.split_once('(') {
+        Some((base, args)) => (base.trim(), args.trim_end_matches(')').trim()),
+        None => (ty, ""),
+    }
+}
+
+fn numeric_args(args: &str) -> Option<(i64, i64)> {
+    if args.is_empty() {
+        return None;
+    }
+    let mut it = args.split(',').map(|a| a.trim().parse::<i64>().ok());
+    let p = it.next()??;
+    let s = it.next().flatten().unwrap_or(0);
+    Some((p, s))
+}
+
 /// Nomes novos das colunas renomeadas de `o` (que virou `n`).
 fn renames(o: &Table, n: &Table) -> HashMap<String, String> {
     o.columns
@@ -467,6 +565,121 @@ mod tests {
                 "ALTER TABLE public.cliente RENAME COLUMN nome TO \"Nome\";",
             ]
         );
+    }
+
+    #[test]
+    fn widening_types_does_not_warn() {
+        for (from, to) in [
+            ("integer", "bigint"),
+            ("smallint", "integer"),
+            ("integer", "numeric"),
+            ("character varying(10)", "character varying(20)"),
+            ("character varying(10)", "text"),
+            ("character varying(10)", "character varying"),
+            ("character(3)", "text"),
+            ("numeric(10,2)", "numeric(12,2)"),
+            ("numeric(10,2)", "numeric"),
+            ("text", "text"),
+        ] {
+            assert!(widens(from, to), "{from} -> {to}");
+        }
+        for (from, to) in [
+            ("bigint", "integer"),
+            ("text", "character varying(10)"),
+            ("character varying(20)", "character varying(10)"),
+            ("numeric(10,2)", "numeric(10,1)"),
+            ("numeric", "numeric(10,2)"),
+            ("integer", "numeric(5,0)"),
+            ("text", "integer"),
+            ("timestamp with time zone", "date"),
+        ] {
+            assert!(!widens(from, to), "{from} -> {to}");
+        }
+    }
+
+    #[test]
+    fn data_loss_is_warned_before_saving() {
+        let (mut d, saved) = shop();
+        let cliente = id(&d, "cliente");
+        let pedido = id(&d, "pedido");
+        let t = d.model.table(cliente).unwrap();
+        let nome = t.column("nome").unwrap().id;
+        d.update_column(cliente, nome, |c| c.ty = "character varying(50)".into())
+            .unwrap();
+        let cid = d
+            .model
+            .table(pedido)
+            .unwrap()
+            .column("cliente_id")
+            .unwrap()
+            .id;
+        d.update_column(pedido, cid, |c| c.ty = "bigint".into())
+            .unwrap();
+        d.add_column(cliente, text("obs", "text")).unwrap();
+        let obs = d.model.table(cliente).unwrap().column("obs").unwrap().id;
+        d.update_column(cliente, obs, |c| c.ty = "integer".into())
+            .unwrap();
+        assert_eq!(
+            data_loss_warnings(&saved, &d.model),
+            [
+                "Data might be lost converting column nome of public.cliente from text to character varying(50)."
+            ]
+        );
+        d.drop_column(cliente, nome).unwrap();
+        d.drop_table(pedido).unwrap();
+        assert_eq!(
+            data_loss_warnings(&saved, &d.model),
+            [
+                "Column nome will be deleted from public.cliente.",
+                "Table public.pedido will be deleted.",
+            ]
+        );
+    }
+
+    #[test]
+    fn updating_constraints_replaces_them_in_one_edit() {
+        let (mut d, saved) = shop();
+        let pedido = id(&d, "pedido");
+        d.update_foreign_key(
+            pedido,
+            "pedido_cliente_id_fkey",
+            ForeignKey {
+                name: "pedido_cliente_fk".into(),
+                columns: vec!["cliente_id".into()],
+                ref_schema: "public".into(),
+                ref_table: "cliente".into(),
+                ref_columns: vec!["id".into()],
+                on_delete: Action::Cascade,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            d.history.undo_label(),
+            Some("Change Relationship pedido_cliente_id_fkey")
+        );
+        assert_eq!(
+            diff(&saved, &d.model),
+            [
+                "ALTER TABLE public.pedido DROP CONSTRAINT pedido_cliente_id_fkey;",
+                "ALTER TABLE public.pedido ADD CONSTRAINT pedido_cliente_fk FOREIGN KEY (cliente_id) REFERENCES public.cliente (id) ON DELETE CASCADE;",
+            ]
+        );
+        // Um erro não muda nada.
+        let bad = ForeignKey {
+            columns: vec!["nope".into()],
+            ..d.model.table(pedido).unwrap().foreign_keys[0].clone()
+        };
+        assert!(
+            d.update_foreign_key(pedido, "pedido_cliente_fk", bad)
+                .is_err()
+        );
+        assert_eq!(
+            d.model.table(pedido).unwrap().foreign_keys[0].name,
+            "pedido_cliente_fk"
+        );
+        d.undo();
+        assert!(diff(&saved, &d.model).is_empty());
     }
 
     #[test]

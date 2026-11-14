@@ -429,115 +429,173 @@ impl Document {
     }
 
     /// Acrescenta uma constraint unique (nome padrão se vier vazio).
-    pub fn add_unique(&mut self, table: Id, mut key: Key) -> Result<(), EditError> {
-        self.change("Add Unique Key", |m| {
-            let t = get_mut(m, table)?;
-            check_columns(t, &key.columns)?;
-            if key.name.is_empty() {
-                key.name = default_constraint_name(&t.name, &key.columns, "key");
-            }
-            check_constraint_name(t, &key.name)?;
-            t.uniques.push(key);
-            Ok(())
-        })
+    pub fn add_unique(&mut self, table: Id, key: Key) -> Result<(), EditError> {
+        self.change("Add Unique Key", |m| insert_unique(m, table, key))
     }
 
     /// Acrescenta uma constraint check (nome padrão se vier vazio).
-    pub fn add_check(&mut self, table: Id, mut check: Check) -> Result<(), EditError> {
-        self.change("Add Check Constraint", |m| {
-            if check.expr.trim().is_empty() {
-                return err("The check expression is empty.");
-            }
-            let t = get_mut(m, table)?;
-            if check.name.is_empty() {
-                check.name = default_constraint_name(&t.name, &[], "check");
-            }
-            check_constraint_name(t, &check.name)?;
-            t.checks.push(check);
-            Ok(())
-        })
+    pub fn add_check(&mut self, table: Id, check: Check) -> Result<(), EditError> {
+        self.change("Add Check Constraint", |m| insert_check(m, table, check))
     }
 
     /// Acrescenta uma chave estrangeira (nome padrão se vier vazio).
-    pub fn add_foreign_key(&mut self, table: Id, mut fk: ForeignKey) -> Result<(), EditError> {
-        self.change("Add Relationship", |m| {
-            let target = m.find(&fk.ref_schema, &fk.ref_table).ok_or_else(|| {
-                EditError(format!(
-                    "Table {}.{} does not exist.",
-                    fk.ref_schema, fk.ref_table
-                ))
-            })?;
-            check_columns(target, &fk.ref_columns)?;
-            let t = get_mut(m, table)?;
-            check_columns(t, &fk.columns)?;
-            if fk.columns.len() != fk.ref_columns.len() || fk.columns.is_empty() {
-                return err("A relationship needs the same number of columns on both sides.");
-            }
-            if fk.name.is_empty() {
-                fk.name = default_constraint_name(&t.name, &fk.columns, "fkey");
-            }
-            check_constraint_name(t, &fk.name)?;
-            t.foreign_keys.push(fk);
-            Ok(())
+    pub fn add_foreign_key(&mut self, table: Id, fk: ForeignKey) -> Result<(), EditError> {
+        self.change("Add Relationship", |m| insert_fk(m, table, fk))
+    }
+
+    /// Troca a unique `name` por `key` (nome, colunas), numa edição só.
+    pub fn update_unique(&mut self, table: Id, name: &str, key: Key) -> Result<(), EditError> {
+        self.change(format!("Change Unique Key {name}"), |m| {
+            remove_constraint(m, table, name)?;
+            insert_unique(m, table, key)
+        })
+    }
+
+    /// Troca a check `name` por `check`, numa edição só.
+    pub fn update_check(&mut self, table: Id, name: &str, check: Check) -> Result<(), EditError> {
+        self.change(format!("Change Check Constraint {name}"), |m| {
+            remove_constraint(m, table, name)?;
+            insert_check(m, table, check)
+        })
+    }
+
+    /// Troca a FK `name` por `fk`, numa edição só.
+    pub fn update_foreign_key(
+        &mut self,
+        table: Id,
+        name: &str,
+        fk: ForeignKey,
+    ) -> Result<(), EditError> {
+        self.change(format!("Change Relationship {name}"), |m| {
+            remove_constraint(m, table, name)?;
+            insert_fk(m, table, fk)
+        })
+    }
+
+    /// Troca o índice `name` por `index`, numa edição só.
+    pub fn update_index(&mut self, table: Id, name: &str, index: Index) -> Result<(), EditError> {
+        self.change(format!("Change Index {name}"), |m| {
+            remove_index(m, table, name)?;
+            insert_index(m, table, index)
         })
     }
 
     /// Apaga uma constraint pelo nome (PK, unique, check ou FK).
     pub fn drop_constraint(&mut self, table: Id, name: &str) -> Result<(), EditError> {
         self.change(format!("Delete Constraint {name}"), |m| {
-            let t = get_mut(m, table)?;
-            let before = constraint_names(t).len();
-            if t.primary_key.as_ref().is_some_and(|k| k.name == name) {
-                t.primary_key = None;
-            }
-            t.uniques.retain(|k| k.name != name);
-            t.checks.retain(|c| c.name != name);
-            t.foreign_keys.retain(|fk| fk.name != name);
-            if constraint_names(t).len() == before {
-                return err(format!("Constraint {name} does not exist."));
-            }
-            Ok(())
+            remove_constraint(m, table, name)
         })
     }
 
     /// Acrescenta um índice.
     pub fn add_index(&mut self, table: Id, index: Index) -> Result<(), EditError> {
         self.change(format!("Add Index {}", index.name), |m| {
-            check_name(&index.name)?;
-            if index.columns.is_empty() {
-                return err("An index needs at least one column.");
-            }
-            let schema = get(m, table)?.schema.clone();
-            let taken = m.tables.iter().filter(|t| t.schema == schema).any(|t| {
-                t.indexes.iter().any(|i| i.name == index.name)
-                    || t.primary_key
-                        .iter()
-                        .chain(&t.uniques)
-                        .any(|k| k.name == index.name)
-            });
-            if taken {
-                return err(format!(
-                    "An index named {} already exists in {schema}.",
-                    index.name
-                ));
-            }
-            get_mut(m, table)?.indexes.push(index);
-            Ok(())
+            insert_index(m, table, index)
         })
     }
 
     /// Apaga um índice pelo nome.
     pub fn drop_index(&mut self, table: Id, name: &str) -> Result<(), EditError> {
         self.change(format!("Delete Index {name}"), |m| {
-            let t = get_mut(m, table)?;
-            let before = t.indexes.len();
-            t.indexes.retain(|i| i.name != name);
-            if t.indexes.len() == before {
-                return err(format!("Index {name} does not exist."));
-            }
-            Ok(())
+            remove_index(m, table, name)
         })
     }
+}
+
+fn insert_unique(m: &mut Model, table: Id, mut key: Key) -> Result<(), EditError> {
+    let t = get_mut(m, table)?;
+    check_columns(t, &key.columns)?;
+    if key.name.is_empty() {
+        key.name = default_constraint_name(&t.name, &key.columns, "key");
+    }
+    check_name(&key.name)?;
+    check_constraint_name(t, &key.name)?;
+    t.uniques.push(key);
+    Ok(())
+}
+
+fn insert_check(m: &mut Model, table: Id, mut check: Check) -> Result<(), EditError> {
+    if check.expr.trim().is_empty() {
+        return err("The check expression is empty.");
+    }
+    let t = get_mut(m, table)?;
+    if check.name.is_empty() {
+        check.name = default_constraint_name(&t.name, &[], "check");
+    }
+    check_name(&check.name)?;
+    check_constraint_name(t, &check.name)?;
+    t.checks.push(check);
+    Ok(())
+}
+
+fn insert_fk(m: &mut Model, table: Id, mut fk: ForeignKey) -> Result<(), EditError> {
+    let target = m.find(&fk.ref_schema, &fk.ref_table).ok_or_else(|| {
+        EditError(format!(
+            "Table {}.{} does not exist.",
+            fk.ref_schema, fk.ref_table
+        ))
+    })?;
+    check_columns(target, &fk.ref_columns)?;
+    let t = get_mut(m, table)?;
+    check_columns(t, &fk.columns)?;
+    if fk.columns.len() != fk.ref_columns.len() || fk.columns.is_empty() {
+        return err("A relationship needs the same number of columns on both sides.");
+    }
+    if fk.name.is_empty() {
+        fk.name = default_constraint_name(&t.name, &fk.columns, "fkey");
+    }
+    check_name(&fk.name)?;
+    check_constraint_name(t, &fk.name)?;
+    t.foreign_keys.push(fk);
+    Ok(())
+}
+
+fn insert_index(m: &mut Model, table: Id, index: Index) -> Result<(), EditError> {
+    check_name(&index.name)?;
+    if index.columns.is_empty() {
+        return err("An index needs at least one column.");
+    }
+    let schema = get(m, table)?.schema.clone();
+    let taken = m.tables.iter().filter(|t| t.schema == schema).any(|t| {
+        t.indexes.iter().any(|i| i.name == index.name)
+            || t.primary_key
+                .iter()
+                .chain(&t.uniques)
+                .any(|k| k.name == index.name)
+    });
+    if taken {
+        return err(format!(
+            "An index named {} already exists in {schema}.",
+            index.name
+        ));
+    }
+    get_mut(m, table)?.indexes.push(index);
+    Ok(())
+}
+
+fn remove_constraint(m: &mut Model, table: Id, name: &str) -> Result<(), EditError> {
+    let t = get_mut(m, table)?;
+    let before = constraint_names(t).len();
+    if t.primary_key.as_ref().is_some_and(|k| k.name == name) {
+        t.primary_key = None;
+    }
+    t.uniques.retain(|k| k.name != name);
+    t.checks.retain(|c| c.name != name);
+    t.foreign_keys.retain(|fk| fk.name != name);
+    if constraint_names(t).len() == before {
+        return err(format!("Constraint {name} does not exist."));
+    }
+    Ok(())
+}
+
+fn remove_index(m: &mut Model, table: Id, name: &str) -> Result<(), EditError> {
+    let t = get_mut(m, table)?;
+    let before = t.indexes.len();
+    t.indexes.retain(|i| i.name != name);
+    if t.indexes.len() == before {
+        return err(format!("Index {name} does not exist."));
+    }
+    Ok(())
 }
 
 fn get(m: &Model, id: Id) -> Result<&Table, EditError> {

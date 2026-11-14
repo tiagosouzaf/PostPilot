@@ -13,8 +13,12 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{DesignTarget, MetadataError, MetadataProvider, Model, NodeId};
+use pgstudio_core::schema::diff::{data_loss_warnings, diff};
 use pgstudio_core::schema::edit::{Document, EditError};
-use pgstudio_core::schema::{Column, Id, Identity, diff::diff};
+use pgstudio_core::schema::{Column, Id, Identity};
+
+mod dialogs;
+pub use dialogs::{Dialog, DialogKind, Draft, IndexDraft, KeyKind};
 
 /// Altura das linhas da grade de colunas.
 const ROW_HEIGHT: f32 = 22.0;
@@ -193,6 +197,10 @@ pub struct TableDesigner {
     log: Vec<String>,
     /// Nó do Object Explorer de onde o designer foi aberto.
     node: Option<NodeId>,
+    /// Relationships, Indexes/Keys ou Check Constraints aberta.
+    dialog: Option<Dialog>,
+    /// Avisos de perda de dados esperando "Yes" para salvar.
+    warnings: Option<Vec<String>>,
     /// O nó a recarregar depois de salvar.
     refresh: Option<NodeId>,
 }
@@ -241,6 +249,8 @@ impl TableDesigner {
             log: Vec::new(),
             node: None,
             refresh: None,
+            dialog: None,
+            warnings: None,
         }
     }
 
@@ -435,11 +445,36 @@ impl TableDesigner {
     }
 
     /// Aplica as alterações no banco, numa transação, fora da thread da
-    /// interface.
+    /// interface. Se alguma mudança pode perder dados, pergunta antes.
     pub fn save(&mut self, ctx: &egui::Context) {
         if !matches!(self.state, State::Ready) || self.saving.is_some() {
             return;
         }
+        let warnings = data_loss_warnings(&self.base, &self.doc.model);
+        if warnings.is_empty() {
+            self.save_now(ctx);
+        } else {
+            self.warnings = Some(warnings);
+        }
+    }
+
+    /// Avisos de perda de dados mostrados antes de salvar.
+    pub fn pending_warnings(&self) -> Option<&[String]> {
+        self.warnings.as_deref()
+    }
+
+    /// Resposta aos avisos: `true` salva mesmo assim.
+    pub fn answer_warnings(&mut self, ctx: &egui::Context, save: bool) {
+        self.warnings = None;
+        if save {
+            self.save_now(ctx);
+        } else {
+            self.close_after_save = false;
+            self.notice = Some(Notice::Info("Nothing was saved.".into()));
+        }
+    }
+
+    fn save_now(&mut self, ctx: &egui::Context) {
         self.buffers.clear();
         let ddl = self.change_script();
         if ddl.is_empty() {
@@ -596,6 +631,8 @@ impl TableDesigner {
             .show(ui, |ui| self.column_properties(ui));
         egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
         self.script_window(ui.ctx(), id);
+        self.dialog_window(ui.ctx(), id);
+        self.warnings_window(ui.ctx(), id);
         self.close_window(ui.ctx(), id);
     }
 
@@ -656,6 +693,16 @@ impl TableDesigner {
                 .clicked()
             {
                 self.redo();
+            }
+            ui.separator();
+            for (kind, glyph, label) in [
+                (DialogKind::Relationships, icon::FLOW_ARROW, "Relationships"),
+                (DialogKind::IndexesKeys, icon::LIST_NUMBERS, "Indexes/Keys"),
+                (DialogKind::Checks, icon::CHECK_SQUARE, "Check Constraints"),
+            ] {
+                if ui.button(format!("{glyph} {label}")).clicked() {
+                    self.open_dialog(kind);
+                }
             }
             ui.separator();
             if ui
@@ -948,35 +995,69 @@ impl TableDesigner {
         } else {
             script.clone()
         };
-        egui::Window::new("Save Change Script")
-            .id(egui::Id::new(("change_script", id)))
-            .open(&mut open)
-            .collapsible(false)
-            .default_size([560.0, 320.0])
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "These statements run in one transaction when {} is saved:",
-                    self.qualified_name()
-                ));
-                egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text)
-                            .code_editor()
-                            .interactive(true)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Copy", icon::COPY)).clicked() {
-                        ui.ctx().copy_text(text.clone());
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
-                });
+        let modal = egui::Modal::new(egui::Id::new(("change_script", id))).show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.heading("Save Change Script");
+            ui.label(format!(
+                "These statements run in one transaction when {} is saved:",
+                self.qualified_name()
+            ));
+            egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .code_editor()
+                        .interactive(true)
+                        .desired_width(f32::INFINITY),
+                );
             });
+            ui.horizontal(|ui| {
+                if ui.button(format!("{} Copy", icon::COPY)).clicked() {
+                    ui.ctx().copy_text(text.clone());
+                }
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            open = false;
+        }
         if !open || close {
             self.script = None;
+        }
+    }
+
+    fn warnings_window(&mut self, ctx: &egui::Context, id: u32) {
+        let Some(warnings) = &self.warnings else {
+            return;
+        };
+        let mut answer = None;
+        let modal = egui::Modal::new(egui::Id::new(("designer_warnings", id))).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading("Validation Warnings");
+            ui.label("Saving these changes might lose data:");
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for w in warnings {
+                    ui.label(format!("{} {w}", icon::WARNING));
+                }
+            });
+            ui.label("Do you want to save anyway?");
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("No").clicked() {
+                    answer = Some(false);
+                }
+                if ui.button("Yes").clicked() {
+                    answer = Some(true);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        if let Some(save) = answer {
+            self.answer_warnings(ctx, save);
         }
     }
 

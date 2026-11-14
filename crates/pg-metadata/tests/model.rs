@@ -327,3 +327,108 @@ fn a_failed_statement_rolls_everything_back() {
         .unwrap();
     assert!(db.load().find("loja", "ok").is_some());
 }
+
+#[test]
+fn keys_indexes_and_checks_from_the_designer_show_up_in_the_explorer_and_scripts() {
+    use pgstudio_core::metadata::{Folder, ScriptAction};
+    use pgstudio_pg_metadata::{Path, Relation};
+
+    let Some(db) = TestDb::create("keys") else {
+        return;
+    };
+    let saved = db.load();
+    let mut d = Document::new(saved.clone());
+    let cliente = id(&d.model, "loja", "cliente");
+    let pedido = id(&d.model, "loja", "pedido");
+    d.update_foreign_key(
+        pedido,
+        "pedido_cliente_id_fkey",
+        ForeignKey {
+            name: "pedido_cliente_fk".into(),
+            columns: vec!["cliente_id".into()],
+            ref_schema: "loja".into(),
+            ref_table: "cliente".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: Action::SetNull,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    d.add_unique(
+        cliente,
+        Key {
+            name: String::new(),
+            columns: vec!["nome".into(), "email".into()],
+        },
+    )
+    .unwrap();
+    d.update_check(
+        pedido,
+        "pedido_qty_check",
+        Check {
+            name: "pedido_qty_positiva".into(),
+            expr: "qty > 0 AND qty < 1000".into(),
+        },
+    )
+    .unwrap();
+    d.update_index(
+        pedido,
+        "pedido_cliente_idx",
+        Index {
+            name: "pedido_cliente_qty_idx".into(),
+            unique: false,
+            method: "btree".into(),
+            columns: vec!["cliente_id".into(), "qty".into()],
+            predicate: None,
+        },
+    )
+    .unwrap();
+    let ddl = diff(&saved, &d.model);
+    db.explorer
+        .apply_ddl(&db.name, &ddl)
+        .unwrap_or_else(|e| panic!("{e}\n{}", ddl.join("\n")));
+    assert_eq!(shape(&db.load()), shape(&d.model), "{}", ddl.join("\n"));
+
+    let names = |oid: u64, folder| -> Vec<String> {
+        let node = Path::RelationFolder(db.name.clone(), Relation::Table, oid as u32, folder).id();
+        db.explorer
+            .children(&node)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.name)
+            .collect()
+    };
+    let has = |list: Vec<String>, name: &str| list.iter().any(|n| n.starts_with(name));
+    assert!(has(
+        names(pedido, Folder::Constraints),
+        "pedido_cliente_fk (foreign key)"
+    ));
+    assert!(has(
+        names(pedido, Folder::Constraints),
+        "pedido_qty_positiva (check)"
+    ));
+    assert!(has(
+        names(cliente, Folder::Constraints),
+        "cliente_nome_email_key"
+    ));
+    let indexes = names(pedido, Folder::Indexes);
+    assert!(
+        has(indexes.clone(), "pedido_cliente_qty_idx"),
+        "{indexes:?}"
+    );
+
+    let script = db
+        .explorer
+        .script(
+            &Path::Table(db.name.clone(), pedido as u32).id(),
+            ScriptAction::Create,
+        )
+        .unwrap();
+    for part in [
+        "CONSTRAINT pedido_cliente_fk FOREIGN KEY (cliente_id) REFERENCES loja.cliente(id) ON DELETE SET NULL",
+        "CONSTRAINT pedido_qty_positiva CHECK (qty > 0 AND qty < 1000)",
+        "CREATE INDEX pedido_cliente_qty_idx ON loja.pedido USING btree (cliente_id, qty)",
+    ] {
+        assert!(script.contains(part), "{part}\n{script}");
+    }
+}
