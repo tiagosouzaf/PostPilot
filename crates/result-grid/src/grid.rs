@@ -89,6 +89,29 @@ pub struct GridState {
     pub selection: Option<Selection>,
     /// Geometria do último frame, para achar células pela posição.
     pub layout: Option<Layout>,
+    /// Colunas que dá para editar na própria grade (vazio: resultado só
+    /// leitura). Quem preenche é quem sabe de onde o resultado veio.
+    pub editable: Vec<bool>,
+    /// Por que o resultado (ou a coluna) não é editável, para dizer ao
+    /// usuário quando ele tenta.
+    pub read_only_reason: Option<String>,
+    /// Colunas `json`/`jsonb`: o duplo clique nelas abre o visualizador
+    /// de JSON, não a edição.
+    pub json_columns: Vec<bool>,
+    /// Célula em edição e o texto digitado.
+    pub editing: Option<CellEditor>,
+    /// Uma alteração está sendo gravada: não começa outra.
+    pub busy: bool,
+}
+
+/// Edição de uma célula na própria grade.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellEditor {
+    pub cell: Cell,
+    pub text: String,
+    /// A caixa de texto já recebeu o foco (perder o foco depois disso
+    /// termina a edição).
+    focused: bool,
 }
 
 /// Onde a grade foi desenhada no último frame.
@@ -133,6 +156,60 @@ impl GridState {
             self.column_x(col)? + self.widths[col],
             l.header.center().y,
         ))
+    }
+
+    /// Retângulo da célula na tela, se estiver visível.
+    pub fn cell_rect(&self, cell: Cell) -> Option<Rect> {
+        let l = self.layout?;
+        let y = l.body.top() + (cell.row as f64 - self.top) as f32 * l.row_h;
+        let x = self.column_x(cell.col)?;
+        let rect = Rect::from_min_size(egui::pos2(x, y), vec2(self.widths[cell.col], l.row_h));
+        (rect.top() >= l.body.top() - 0.5 && rect.bottom() <= l.body.bottom() + 0.5).then_some(rect)
+    }
+
+    /// A coluna pode ser editada na grade.
+    pub fn is_editable(&self, col: usize) -> bool {
+        self.editable.get(col).copied().unwrap_or(false)
+    }
+
+    /// Coluna JSON (duplo clique abre o visualizador).
+    pub fn is_json(&self, col: usize) -> bool {
+        self.json_columns.get(col).copied().unwrap_or(false)
+    }
+
+    /// Começa a editar `cell` com o valor atual. Devolve `false` (sem
+    /// mudar nada) quando a coluna não é editável ou há uma gravação em
+    /// andamento.
+    pub fn start_edit(&mut self, store: &mut ResultStore, cell: Cell) -> bool {
+        if self.busy || !self.is_editable(cell.col) || cell.row >= store.len() {
+            return false;
+        }
+        let value = store.cell(cell.row, cell.col);
+        let text = value.unwrap_or("").to_string();
+        self.reopen_edit(cell, text);
+        true
+    }
+
+    /// Volta a editar `cell` com `text` (a gravação falhou e o usuário
+    /// corrige o que digitou).
+    pub fn reopen_edit(&mut self, cell: Cell, text: String) {
+        self.editing = Some(CellEditor {
+            cell,
+            text,
+            focused: false,
+        });
+        self.selection = Some(Selection::at(cell, Mode::Cells));
+    }
+
+    /// Linhas que o Delete exclui: as da seleção, a não ser que ela seja de
+    /// colunas inteiras (aí seria o resultado todo sem querer).
+    pub fn rows_to_delete(&self, store: &ResultStore) -> Option<Range<u64>> {
+        let s = self.selection?;
+        if s.mode == Mode::Columns || self.editable.iter().all(|e| !e) {
+            return None;
+        }
+        let rows = s.rows(store.len());
+        (!rows.is_empty()).then_some(rows)
     }
 
     fn column_x(&self, col: usize) -> Option<f32> {
@@ -184,6 +261,15 @@ pub struct GridOutput {
     pub copied: Option<String>,
     /// Pediu "Save Results As..." pelo menu de contexto.
     pub save_as: bool,
+    /// Terminou a edição de uma célula com este valor (diferente do que
+    /// havia): quem chamou grava no banco e, dando certo, troca no
+    /// [`ResultStore`].
+    pub commit: Option<(Cell, Option<String>)>,
+    /// Delete (ou o menu) nestas linhas: quem chamou confirma e exclui.
+    pub delete_rows: Option<Range<u64>>,
+    /// Tentou editar ou excluir num resultado (ou coluna) só leitura; o
+    /// motivo está em [`GridState::read_only_reason`].
+    pub edit_refused: bool,
 }
 
 /// Largura máxima inicial de uma coluna, em caracteres.
@@ -402,6 +488,8 @@ pub fn show(
     // Teclado.
     let mut copied = None;
     let mut save_as = false;
+    let mut edit_refused = false;
+    let mut delete_rows = None;
     if response.has_focus() {
         let keys = ui.input(|i| {
             let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy))
@@ -459,8 +547,59 @@ pub fn show(
         if let Some(headers) = copy {
             copied = state.copy(store, headers);
         }
+        let (f2, delete) = ui.input(|i| {
+            (
+                i.key_pressed(Key::F2) && i.modifiers.is_none(),
+                i.key_pressed(Key::Delete) && i.modifiers.is_none(),
+            )
+        });
+        if f2 && let Some(sel) = state.selection {
+            edit_refused |= !state.is_json(sel.cursor.col) && !state.start_edit(store, sel.cursor);
+        }
+        if delete && !state.busy {
+            delete_rows = state.rows_to_delete(store);
+            edit_refused |=
+                delete_rows.is_none() && state.selection.is_some_and(|s| s.mode != Mode::Columns);
+        }
     }
+    // Dois cliques numa célula: edita ali mesmo (colunas JSON ficam com o
+    // visualizador).
+    if response.double_clicked()
+        && let Some(Hit::Cell(cell)) = response
+            .interact_pointer_pos()
+            .or(response.hover_pos())
+            .and_then(|p| hit(p, state))
+        && !state.is_json(cell.col)
+    {
+        edit_refused |= !state.start_edit(store, cell);
+    }
+    let can_edit = !state.busy && state.editable.iter().any(|e| *e);
     response.context_menu(|ui| {
+        if can_edit {
+            let cursor = state.selection.map(|s| s.cursor);
+            let cell_editable = cursor.is_some_and(|c| state.is_editable(c.col));
+            if ui
+                .add_enabled(cell_editable, egui::Button::new("Edit Cell"))
+                .clicked()
+                && let Some(c) = cursor
+            {
+                state.start_edit(store, c);
+                ui.close();
+            }
+            let rows = state.rows_to_delete(store);
+            let label = match &rows {
+                Some(r) if r.end - r.start > 1 => format!("Delete {} Rows", r.end - r.start),
+                _ => "Delete Row".to_string(),
+            };
+            if ui
+                .add_enabled(rows.is_some(), egui::Button::new(label))
+                .clicked()
+            {
+                delete_rows = rows;
+                ui.close();
+            }
+            ui.separator();
+        }
         if ui.button("Copy").clicked() {
             copied = state.copy(store, false);
             ui.close();
@@ -510,11 +649,95 @@ pub fn show(
     paint_scrollbars(
         ui, vtrack, htrack, vthumb_h, hthumb_w, state, max_top, max_left,
     );
+    let commit = cell_editor(ui, id, &m, store, state, &response);
     GridOutput {
         response,
         copied,
         save_as,
+        commit,
+        delete_rows,
+        edit_refused,
     }
+}
+
+/// A caixa de texto da célula em edição, por cima da grade. Enter (ou
+/// clicar fora) termina e devolve o valor novo; Esc desiste; Ctrl+0 grava
+/// NULL, como na janela Edit Rows.
+fn cell_editor(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    m: &Metrics,
+    store: &mut ResultStore,
+    state: &mut GridState,
+    grid: &egui::Response,
+) -> Option<(Cell, Option<String>)> {
+    let editor = state.editing.as_mut()?;
+    let cell = editor.cell;
+    if cell.row >= store.len() || cell.col >= store.columns().len() {
+        state.editing = None;
+        return None;
+    }
+    let Some(rect) = state.cell_rect(cell) else {
+        // Rolou para longe: termina a edição como se tivesse clicado fora.
+        return finish_edit(store, state);
+    };
+    let edit_id = id.with("cell_editor");
+    let editor = state.editing.as_mut()?;
+    let resp = ui.put(
+        rect,
+        egui::TextEdit::singleline(&mut editor.text)
+            .id(edit_id)
+            .font(m.font.clone())
+            .margin(vec2(PAD - 2.0, 2.0)),
+    );
+    let (enter, escape, null) = ui.input(|i| {
+        (
+            i.key_pressed(Key::Enter),
+            i.key_pressed(Key::Escape),
+            i.modifiers.command && i.key_pressed(Key::Num0),
+        )
+    });
+    if resp.has_focus() && null {
+        state.editing = None;
+        grid.request_focus();
+        return (store.cell(cell.row, cell.col).is_some()).then_some((cell, None));
+    }
+    if !editor.focused {
+        editor.focused = true;
+        resp.request_focus();
+        // O cursor vai para o fim do texto.
+        let mut s = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+        let end = egui::text::CCursor::new(editor.text.chars().count());
+        s.cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        s.store(ui.ctx(), edit_id);
+        return None;
+    }
+    if !resp.has_focus() {
+        if escape {
+            state.editing = None;
+            grid.request_focus();
+            return None;
+        }
+        let out = finish_edit(store, state);
+        if enter {
+            grid.request_focus();
+        }
+        return out;
+    }
+    None
+}
+
+/// Fecha a edição; devolve o valor novo se ele mudou. Texto vazio numa
+/// célula que era NULL continua NULL.
+fn finish_edit(store: &mut ResultStore, state: &mut GridState) -> Option<(Cell, Option<String>)> {
+    let editor = state.editing.take()?;
+    let current = store.cell(editor.cell.row, editor.cell.col);
+    let unchanged = match current {
+        None => editor.text.is_empty(),
+        Some(v) => v == editor.text,
+    };
+    (!unchanged).then_some((editor.cell, Some(editor.text)))
 }
 
 /// Rola para a célula ficar visível.
