@@ -123,6 +123,8 @@ pub struct ConnectDialog {
 struct Pending {
     rx: Receiver<Result<Connected, ConnectError>>,
     server: String,
+    /// A senha usada, para as ferramentas externas (pg_dump) depois.
+    password: String,
 }
 
 impl ConnectDialog {
@@ -188,6 +190,7 @@ impl ConnectDialog {
         self.pending = Some(Pending {
             rx,
             server: settings.server_name(),
+            password: password.clone(),
         });
         std::thread::Builder::new()
             .name("pgstudio-connect".into())
@@ -199,12 +202,13 @@ impl ConnectDialog {
 
     /// Resultado da conexão, quando chegar. Em caso de erro o diálogo
     /// continua aberto mostrando a mensagem.
-    pub fn poll(&mut self) -> Option<Connected> {
+    /// Com a conexão vem a senha usada (fica só na memória).
+    pub fn poll(&mut self) -> Option<(Connected, String)> {
         let pending = self.pending.as_ref()?;
         match pending.rx.try_recv() {
             Ok(Ok(connected)) => {
-                self.pending = None;
-                Some(connected)
+                let password = self.pending.take().map(|p| p.password).unwrap_or_default();
+                Some((connected, password))
             }
             Ok(Err(e)) => {
                 self.pending = None;

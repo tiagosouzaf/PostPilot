@@ -58,6 +58,8 @@ pub enum Event {
     /// "Properties" (roles e objetos com permissões) ou "New Role..." na
     /// pasta Roles.
     Properties(NodeId),
+    /// Tasks > Back Up... num banco.
+    BackUp(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -397,6 +399,15 @@ impl ObjectExplorer {
                                             events.push(Event::Properties(node.id.clone()));
                                             ui.close();
                                         }
+                                        ui.separator();
+                                    }
+                                    if node.kind == NodeKind::Database {
+                                        ui.menu_button("Tasks", |ui| {
+                                            if ui.button("Back Up...").clicked() {
+                                                events.push(Event::BackUp(node.id.clone()));
+                                                ui.close();
+                                            }
+                                        });
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Server {
