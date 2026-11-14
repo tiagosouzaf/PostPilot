@@ -30,8 +30,11 @@ pub enum ResultsMode {
 pub struct ResultSet {
     store: Arc<Mutex<ResultStore>>,
     pub grid: GridState,
-    /// Larguras do modo texto, calculadas na primeira vez que ele aparece.
+    /// Larguras do modo texto, calculadas quando ele aparece e de novo
+    /// enquanto chegam linhas da amostra.
     pub text_widths: Option<Vec<usize>>,
+    /// Linhas da amostra quando as larguras foram calculadas.
+    pub text_width_rows: u64,
     /// Posição da rolagem do modo texto, em linhas.
     pub text_top: f64,
 }
@@ -42,6 +45,7 @@ impl ResultSet {
             store,
             grid: GridState::default(),
             text_widths: None,
+            text_width_rows: 0,
             text_top: 0.0,
         }
     }

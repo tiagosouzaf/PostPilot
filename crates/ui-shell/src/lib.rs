@@ -16,6 +16,9 @@ pub mod panels;
 pub mod results;
 pub mod theme;
 
+/// Ações do menu de contexto do Object Explorer.
+pub use pgstudio_object_explorer::Event as ExplorerEvent;
+
 use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
@@ -81,6 +84,22 @@ pub struct ShellApp {
     /// Abrir o IntelliSense no fim da janela ativa quando o catálogo chegar
     /// (screenshots).
     list_members_on_load: bool,
+    /// Scripts do menu de contexto sendo gerados.
+    scripts: Vec<PendingScript>,
+    /// Ação do menu de contexto a fazer no nó selecionado depois das
+    /// expansões (screenshots).
+    pending_events: Vec<pgstudio_object_explorer::Event>,
+    selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
+}
+
+/// Um script do Object Explorer sendo gerado fora da thread da interface.
+struct PendingScript {
+    rx: std::sync::mpsc::Receiver<Result<String, pgstudio_core::metadata::MetadataError>>,
+    database: Option<String>,
+    /// Executar ao abrir (Select Top, Edit Top).
+    run: bool,
+    /// Edit Top: avisa que a grade ainda não edita.
+    read_only: bool,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -138,6 +157,9 @@ impl Default for ShellApp {
             run_on_connect: false,
             catalogs: Default::default(),
             list_members_on_load: false,
+            scripts: Vec::new(),
+            selected_action: None,
+            pending_events: Vec::new(),
         }
     }
 }
@@ -421,6 +443,17 @@ impl ShellApp {
         self
     }
 
+    /// Faz uma ação do menu de contexto no nó selecionado assim que as
+    /// expansões de [`Self::with_expanded`] terminarem. Usado para
+    /// screenshots.
+    pub fn with_selected_action(
+        mut self,
+        make: fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event,
+    ) -> Self {
+        self.selected_action = Some(make);
+        self
+    }
+
     fn expand_step(&mut self) {
         // A árvore também é atualizada quando o painel está escondido
         // (desafixado ou fechado), não só quando é desenhada.
@@ -432,6 +465,10 @@ impl ShellApp {
         if let Some(id) = self.pending_expand.pop_front() {
             self.explorer.select(&id);
             self.explorer.expand(&id);
+        } else if let Some(make) = self.selected_action.take()
+            && let Some(node) = self.explorer.selected()
+        {
+            self.pending_events.push(make(node.id.clone()));
         }
     }
 
@@ -769,7 +806,10 @@ impl ShellApp {
         };
         let session = doc
             .session
-            .get_or_insert_with(|| documents::Session(queries.0.open(&queries.1)))
+            .get_or_insert_with(|| {
+                let db = doc.database.clone().unwrap_or(queries.1);
+                documents::Session(queries.0.open(&db))
+            })
             .0
             .clone();
         let mut exec = execution::Execution::start(session, sql, offset, ctx);
@@ -866,7 +906,80 @@ impl ShellApp {
         let doc = self.documents.get(id)?;
         match &doc.session {
             Some(s) => Some(s.0.database()),
-            None => self.default_database(),
+            None => doc.database.clone().or_else(|| self.default_database()),
+        }
+    }
+
+    /// Ações do menu de contexto do Object Explorer.
+    fn explorer_event(&mut self, ctx: &egui::Context, event: pgstudio_object_explorer::Event) {
+        use pgstudio_core::metadata::ScriptAction;
+        use pgstudio_object_explorer::{EDIT_TOP_ROWS, Event, SELECT_TOP_ROWS};
+        let Some(provider) = self.explorer.provider() else {
+            return;
+        };
+        let (node, action, run, read_only) = match event {
+            Event::NewQuery(node) => {
+                let db = provider.database_of(&node);
+                let id = self.documents.new_script(String::new(), db);
+                self.activate_document(id);
+                return;
+            }
+            Event::SelectTop(node) => (node, ScriptAction::SelectTop(SELECT_TOP_ROWS), true, false),
+            Event::EditTop(node) => (node, ScriptAction::SelectTop(EDIT_TOP_ROWS), true, true),
+            Event::Script(node, action) => (node, action, false, false),
+        };
+        let database = provider.database_of(&node);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(provider.script(&node, action));
+            repaint.request_repaint();
+        });
+        self.status = "Generating script...".to_string();
+        self.scripts.push(PendingScript {
+            rx,
+            database,
+            run,
+            read_only,
+        });
+    }
+
+    /// Abre as janelas dos scripts que ficaram prontos.
+    fn script_step(&mut self, ctx: &egui::Context) {
+        let mut i = 0;
+        while i < self.scripts.len() {
+            let result = match self.scripts[i].rx.try_recv() {
+                Ok(r) => r,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    i += 1;
+                    continue;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(
+                    pgstudio_core::metadata::MetadataError("Script generation failed.".into()),
+                ),
+            };
+            let pending = self.scripts.remove(i);
+            match result {
+                Ok(sql) => {
+                    let id = self.documents.new_script(sql, pending.database);
+                    self.activate_document(id);
+                    self.status = "Ready".to_string();
+                    if pending.run {
+                        self.execute_query(ctx);
+                    }
+                    if pending.read_only {
+                        self.output.push(
+                            "Edit Top Rows: editing in the grid is not available yet; \
+                             the rows are read-only."
+                                .to_string(),
+                        );
+                    }
+                }
+                Err(e) => {
+                    self.output.push(format!("Script failed: {e}"));
+                    self.status = e.to_string();
+                }
+            }
         }
     }
 
@@ -1074,8 +1187,10 @@ impl ShellApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.connect_step();
+        self.expand_step();
         self.execution_step(&ctx);
         self.intellisense_step(&ctx);
+        self.script_step(&ctx);
         let mut commands = if self.confirm.is_some() || self.connect_dialog.is_some() {
             Vec::new()
         } else {
@@ -1117,6 +1232,7 @@ impl ShellApp {
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
         let default_db = self.default_database();
+        let mut explorer_events = std::mem::take(&mut self.pending_events);
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -1126,6 +1242,7 @@ impl ShellApp {
                     documents: &mut self.documents,
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
+                    explorer_events: Vec::new(),
                     close_requests: Vec::new(),
                     editor_colors: match self.theme {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
@@ -1137,6 +1254,7 @@ impl ShellApp {
                 };
                 self.workspace.show(ui, &mut viewer);
                 commands.extend(viewer.commands);
+                explorer_events.extend(viewer.explorer_events);
                 for id in viewer.close_requests {
                     self.workspace.open(Panel::Query(id));
                     self.active_doc = Some(id);
@@ -1165,6 +1283,9 @@ impl ShellApp {
 
         for cmd in commands {
             self.execute(&ctx, cmd);
+        }
+        for event in explorer_events {
+            self.explorer_event(&ctx, event);
         }
     }
 
@@ -1248,6 +1369,10 @@ impl ShellApp {
 
     /// Toolbar padrão do SSMS.
     fn toolbar(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>) {
+        let database = self
+            .active_doc
+            .and_then(|id| self.document_database(id))
+            .unwrap_or_else(|| "(no database)".to_string());
         ui.horizontal(|ui| {
             for tool in TOOLBAR {
                 match *tool {
@@ -1277,7 +1402,7 @@ impl ShellApp {
                     Tool::Database => {
                         ui.add_enabled_ui(false, |ui| {
                             egui::ComboBox::from_id_salt("database")
-                                .selected_text("(no database)")
+                                .selected_text(&database)
                                 .width(160.0)
                                 .show_ui(ui, |_| {});
                         });
@@ -1328,7 +1453,9 @@ impl ShellApp {
             || connecting
             || executing
             || self.catalogs.is_loading()
-            || self.list_members_on_load;
+            || self.list_members_on_load
+            || self.selected_action.is_some()
+            || !self.scripts.is_empty();
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -1358,7 +1485,6 @@ impl ShellApp {
 impl eframe::App for ShellApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.bench_step();
-        self.expand_step();
         self.show(ui);
         let ctx = ui.ctx().clone();
         if !self.pending_expand.is_empty() {

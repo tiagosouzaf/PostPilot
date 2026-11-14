@@ -24,6 +24,7 @@
 //! Schemas do sistema (`pg_*`, `information_schema`) ficam de fora.
 
 mod path;
+mod script;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -31,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use pgstudio_core::catalog::{self, Catalog, Column, RelationKind, Schema};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
+    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
 };
 use pgstudio_pg_client::{DbRuntime, PgQueryService, Session, describe};
 use tokio_postgres::Row;
@@ -537,6 +538,14 @@ impl MetadataProvider for CatalogExplorer {
 
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
         self.read_catalog(database)
+    }
+
+    fn database_of(&self, node: &NodeId) -> Option<String> {
+        script::database_of(node)
+    }
+
+    fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
+        self.script_for(node, action)
     }
 }
 

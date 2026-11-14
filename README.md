@@ -8,7 +8,8 @@ nem WebView.
 > atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
 > arquivos `.sql` com realce de SQL, conecta a um PostgreSQL mostrando o
 > catálogo no Object Explorer e executa consultas (F5) com resultados numa
-> grade que aguenta milhões de linhas. O IntelliSense ainda não está pronto.
+> grade que aguenta milhões de linhas, com IntelliSense e scripts gerados
+> pelo menu de contexto do Object Explorer.
 
 ## Estrutura
 
@@ -45,6 +46,16 @@ Explorer abre o diálogo de novo. As conexões usadas ficam em
 `connections.json`, na pasta de configuração, sem a senha; a seta ao lado do
 Server name lista as recentes.
 
+O menu de contexto do Object Explorer abre janelas de consulta no banco do nó:
+New Query (vazia), Select Top 1000 Rows e Edit Top 200 Rows em tabelas e views
+(já executam; por enquanto a grade é só leitura) e Script as > CREATE To / DROP
+To New Query Window em bancos, schemas, tabelas, views, funções, índices,
+sequences e constraints. O CREATE vem do próprio servidor (`pg_get_viewdef`,
+`pg_get_functiondef`, `pg_get_indexdef`, `pg_get_constraintdef`), e o de
+tabela inclui colunas, `serial`, identity, colunas geradas, defaults,
+constraints, `PARTITION BY` e os índices; os scripts rodam sem erro num banco
+limpo (há um teste que faz isso).
+
 Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
 fechar a aba ou o aplicativo pergunta antes de descartar.
@@ -73,7 +84,7 @@ execução; o mouse em cima mostra a mensagem.
 
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira
-execução, no banco da conexão do Object Explorer). Vários comandos separados
+execução, no banco de onde a janela veio ou no da conexão do Object Explorer). Vários comandos separados
 por `;` rodam juntos, como no protocolo simples do PostgreSQL: se um falhar, os
 anteriores do mesmo lote são desfeitos, a menos que haja `BEGIN`/`COMMIT`
 explícitos. Embaixo do editor, a aba Results mostra cada resultado e a aba

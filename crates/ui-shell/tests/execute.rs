@@ -447,3 +447,145 @@ fn a_large_result_arrives_over_several_frames_without_blocking() {
         vec![Some("299999".into()), Some("row 299999".into())]
     );
 }
+
+/// Conectado, com a árvore aberta até as tabelas de `app_01.public`.
+fn harness_with_tables() -> (Harness<'static, ShellApp>, Log) {
+    let log = Log::default();
+    let mut app = ShellApp::default().with_connector(Arc::new(FakeConnector(log.clone())));
+    app.connect_to(
+        ConnectionSettings {
+            database: "loja".into(),
+            ..Default::default()
+        },
+        "secret".into(),
+    );
+    let schema = "srv/Databases/app_01/Schemas/public";
+    let app = app.with_expanded(
+        [
+            "srv",
+            "srv/Databases",
+            "srv/Databases/app_01",
+            "srv/Databases/app_01/Schemas",
+            schema,
+        ]
+        .into_iter()
+        .map(String::from)
+        .chain([format!("{schema}/Tables")]),
+    );
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 900.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    let start = Instant::now();
+    while harness
+        .query_by_label_contains("public.table_00003")
+        .is_none()
+    {
+        harness.step();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "tree never loaded"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    (harness, log)
+}
+
+/// Roda frames até uma janela de consulta nova abrir.
+fn wait_document(harness: &mut Harness<'static, ShellApp>) -> u32 {
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if let Some(id) = harness.state().active_document() {
+            return id;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "no query window opened"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn context_menu(harness: &mut Harness<'static, ShellApp>, node: &str, item: &str) {
+    harness.get_by_label_contains(node).click_secondary();
+    harness.run();
+    harness.get_by_label(item).click();
+    // A janela nova pode já estar executando (e redesenhando).
+    harness.step();
+}
+
+#[test]
+fn select_top_runs_in_the_database_of_the_table() {
+    let (mut harness, log) = harness_with_tables();
+    context_menu(&mut harness, "public.table_00003", "Select Top 1000 Rows");
+    let id = wait_document(&mut harness);
+    wait(&mut harness, id);
+    let doc = harness.state().documents().get(id).unwrap();
+    assert!(
+        doc.text.starts_with("SELECT id,\n       name,"),
+        "{}",
+        doc.text
+    );
+    assert!(
+        doc.text
+            .ends_with("FROM public.table_00003\n LIMIT 1000;\n")
+    );
+    assert_eq!(doc.session.as_ref().unwrap().0.database(), "app_01");
+    assert_eq!(log.lock().unwrap().last(), Some(&doc.text));
+    assert_eq!(execution(&harness, id).outcome(), Outcome::Succeeded);
+}
+
+#[test]
+fn edit_top_shows_two_hundred_rows_read_only() {
+    let (mut harness, log) = harness_with_tables();
+    context_menu(&mut harness, "public.table_00003", "Edit Top 200 Rows");
+    let id = wait_document(&mut harness);
+    wait(&mut harness, id);
+    assert!(log.lock().unwrap()[0].ends_with(" LIMIT 200;\n"));
+    assert!(
+        harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l.contains("read-only"))
+    );
+}
+
+#[test]
+fn script_as_create_opens_a_query_without_running_it() {
+    let (mut harness, log) = harness_with_tables();
+    harness
+        .get_by_label_contains("public.table_00003")
+        .click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Script Table as").hover();
+    harness.run();
+    harness.get_by_label("CREATE To New Query Window").click();
+    harness.run();
+    let id = wait_document(&mut harness);
+    harness.run();
+    let doc = harness.state().documents().get(id).unwrap();
+    assert!(
+        doc.text.starts_with("CREATE TABLE public.table_00003 (\n"),
+        "{}",
+        doc.text
+    );
+    assert!(doc.execution.is_none());
+    assert!(log.lock().unwrap().is_empty());
+    assert_eq!(doc.database.as_deref(), Some("app_01"));
+}
+
+#[test]
+fn new_query_on_a_database_connects_to_that_database() {
+    let (mut harness, _log) = harness_with_tables();
+    context_menu(&mut harness, " app_01", "New Query");
+    let id = wait_document(&mut harness);
+    harness.run();
+    harness.event(Event::Text("select 1".into()));
+    harness.run();
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    let doc = harness.state().documents().get(id).unwrap();
+    assert_eq!(doc.session.as_ref().unwrap().0.database(), "app_01");
+}

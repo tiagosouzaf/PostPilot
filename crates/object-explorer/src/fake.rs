@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
+    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
 };
 
 /// Bancos comuns do servidor falso.
@@ -39,6 +39,16 @@ impl Default for FakeProvider {
         FakeProvider::new(Duration::from_millis(200))
     }
 }
+
+/// Colunas de toda tabela do servidor falso.
+const COLUMN_DEFS: [(&str, &str); 6] = [
+    ("id", "bigint NOT NULL"),
+    ("name", "text"),
+    ("email", "text"),
+    ("created_at", "timestamptz NOT NULL"),
+    ("balance", "numeric(12,2)"),
+    ("active", "boolean NOT NULL"),
+];
 
 /// Nome exibido do servidor falso.
 pub const SERVER_NAME: &str = "localhost (PostgreSQL 17, demo)";
@@ -174,6 +184,67 @@ impl MetadataProvider for FakeProvider {
         Ok(out)
     }
 
+    fn database_of(&self, node: &NodeId) -> Option<String> {
+        let parts: Vec<&str> = node.0.split('/').collect();
+        match parts.as_slice() {
+            ["srv", "Databases", db, ..] => Some((*db).to_string()),
+            _ => None,
+        }
+    }
+
+    /// Scripts de banco, schema, tabela e view, montados como o servidor
+    /// real montaria.
+    fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
+        thread::sleep(self.delay);
+        let parts: Vec<&str> = node.0.split('/').collect();
+        let (kind, name) = match parts.as_slice() {
+            ["srv", "Databases", db] => ("DATABASE", (*db).to_string()),
+            ["srv", "Databases", _, "Schemas", s] => ("SCHEMA", (*s).to_string()),
+            ["srv", "Databases", _, "Schemas", s, "Tables", i] => {
+                let i: usize = i.parse().map_err(|_| unknown(node))?;
+                ("TABLE", format!("{s}.table_{i:05}"))
+            }
+            ["srv", "Databases", _, "Schemas", s, "Views", i] => ("VIEW", format!("{s}.view_{i}")),
+            _ => {
+                return Err(MetadataError(
+                    "The demo server cannot script this object.".to_string(),
+                ));
+            }
+        };
+        let columns = if kind == "VIEW" {
+            &COLUMN_DEFS[..2]
+        } else {
+            &COLUMN_DEFS[..]
+        };
+        Ok(match action {
+            ScriptAction::Drop => format!("DROP {kind} {name};\n"),
+            ScriptAction::SelectTop(n) if matches!(kind, "TABLE" | "VIEW") => {
+                let names: Vec<&str> = columns.iter().map(|c| c.0).collect();
+                format!(
+                    "SELECT {}\n  FROM {name}\n LIMIT {n};\n",
+                    names.join(",\n       ")
+                )
+            }
+            ScriptAction::SelectTop(_) => return Err(unknown(node)),
+            ScriptAction::Create if kind == "TABLE" => {
+                let cols: Vec<String> = columns
+                    .iter()
+                    .map(|(c, t)| format!("    {c} {t}"))
+                    .chain([format!(
+                        "    CONSTRAINT {}_pkey PRIMARY KEY (id)",
+                        name.rsplit('.').next().unwrap_or(&name)
+                    )])
+                    .collect();
+                format!("CREATE TABLE {name} (\n{}\n);\n", cols.join(",\n"))
+            }
+            ScriptAction::Create if kind == "VIEW" => {
+                let base = name.replace("view_", "table_0000");
+                format!("CREATE VIEW {name} AS\n SELECT id,\n    name\n   FROM {base};\n")
+            }
+            ScriptAction::Create => format!("CREATE {kind} {name};\n"),
+        })
+    }
+
     /// O mesmo catálogo da árvore: tabelas `table_NNNNN` com as colunas da
     /// pasta Columns. Como a árvore, aceita qualquer banco.
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
@@ -233,6 +304,10 @@ impl MetadataProvider for FakeProvider {
     }
 }
 
+fn unknown(node: &NodeId) -> MetadataError {
+    MetadataError(format!("unknown node: {node}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +342,26 @@ mod tests {
         let p = FakeProvider::new(Duration::ZERO);
         let tables = children(&p, "srv/Databases/stress/Schemas/public/Tables");
         assert_eq!(tables.len(), STRESS_TABLES);
+    }
+
+    #[test]
+    fn scripts_tables_and_knows_the_database() {
+        let p = FakeProvider::new(Duration::ZERO);
+        let t = NodeId("srv/Databases/app_01/Schemas/public/Tables/3".into());
+        assert_eq!(p.database_of(&t).as_deref(), Some("app_01"));
+        assert_eq!(p.database_of(&NodeId("srv".into())), None);
+        let top = p.script(&t, ScriptAction::SelectTop(1000)).unwrap();
+        assert!(top.starts_with("SELECT id,\n       name,"), "{top}");
+        assert!(
+            top.ends_with("  FROM public.table_00003\n LIMIT 1000;\n"),
+            "{top}"
+        );
+        let create = p.script(&t, ScriptAction::Create).unwrap();
+        assert!(create.starts_with("CREATE TABLE public.table_00003 (\n    id bigint NOT NULL,"));
+        assert_eq!(
+            p.script(&t, ScriptAction::Drop).unwrap(),
+            "DROP TABLE public.table_00003;\n"
+        );
     }
 
     #[test]

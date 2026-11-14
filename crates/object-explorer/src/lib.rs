@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
+    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
 };
 
 /// Estado de carga dos filhos de um nó (ou das raízes).
@@ -38,9 +38,20 @@ type Reply = (Target, Result<Vec<ObjectNode>, MetadataError>);
 /// Algo que o usuário pediu pelo Object Explorer e que a casca trata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// "New Query" no menu de contexto.
+    /// "New Query" no menu de contexto (no banco do nó).
     NewQuery(NodeId),
+    /// "Select Top 1000 Rows".
+    SelectTop(NodeId),
+    /// "Edit Top 200 Rows" (por enquanto abre só para leitura).
+    EditTop(NodeId),
+    /// "Script as" > CREATE ou DROP numa janela de consulta nova.
+    Script(NodeId, ScriptAction),
 }
+
+/// Linhas do "Select Top N Rows", como no SSMS.
+pub const SELECT_TOP_ROWS: u32 = 1000;
+/// Linhas do "Edit Top N Rows".
+pub const EDIT_TOP_ROWS: u32 = 200;
 
 /// Altura de cada linha da árvore.
 const ROW_HEIGHT: f32 = 20.0;
@@ -369,9 +380,43 @@ impl ObjectExplorer {
                                         events.push(Event::NewQuery(node.id.clone()));
                                         ui.close();
                                     }
-                                    ui.add_enabled_ui(false, |ui| {
-                                        let _ = ui.button("Script as");
-                                    });
+                                    if node.kind.has_rows() {
+                                        ui.separator();
+                                        let top = format!("Select Top {SELECT_TOP_ROWS} Rows");
+                                        if ui.button(top).clicked() {
+                                            events.push(Event::SelectTop(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        let edit = format!("Edit Top {EDIT_TOP_ROWS} Rows");
+                                        if ui.button(edit).clicked() {
+                                            events.push(Event::EditTop(node.id.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                    if node.kind.scriptable() {
+                                        let label = format!("Script {} as", node.kind.label());
+                                        ui.menu_button(label, |ui| {
+                                            for (text, action) in [
+                                                (
+                                                    "CREATE To New Query Window",
+                                                    ScriptAction::Create,
+                                                ),
+                                                ("DROP To New Query Window", ScriptAction::Drop),
+                                            ] {
+                                                if ui.button(text).clicked() {
+                                                    events.push(Event::Script(
+                                                        node.id.clone(),
+                                                        action,
+                                                    ));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                    } else {
+                                        ui.add_enabled_ui(false, |ui| {
+                                            let _ = ui.button("Script as");
+                                        });
+                                    }
                                     ui.separator();
                                     if ui
                                         .add_enabled(

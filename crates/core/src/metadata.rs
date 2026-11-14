@@ -109,6 +109,39 @@ impl fmt::Display for MetadataError {
 
 impl std::error::Error for MetadataError {}
 
+/// O que gerar para um objeto pelo menu de contexto.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptAction {
+    /// Script as > CREATE To.
+    Create,
+    /// Script as > DROP To.
+    Drop,
+    /// Select Top N Rows (e Edit Top N Rows, só leitura por enquanto).
+    SelectTop(u32),
+}
+
+impl NodeKind {
+    /// Se "Script as CREATE/DROP" vale para este tipo de nó.
+    pub fn scriptable(self) -> bool {
+        matches!(
+            self,
+            NodeKind::Database
+                | NodeKind::Schema
+                | NodeKind::Table
+                | NodeKind::View
+                | NodeKind::Function
+                | NodeKind::Index
+                | NodeKind::Sequence
+                | NodeKind::Constraint
+        )
+    }
+
+    /// Se dá para ler linhas (Select Top, Edit Top).
+    pub fn has_rows(self) -> bool {
+        matches!(self, NodeKind::Table | NodeKind::View)
+    }
+}
+
 /// Fonte dos nós do Object Explorer.
 ///
 /// As chamadas podem demorar (vão ao banco); quem usa chama fora da thread da
@@ -119,6 +152,21 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Filhos de um nó.
     fn children(&self, parent: &NodeId) -> Result<Vec<ObjectNode>, MetadataError>;
+
+    /// Banco a que o nó pertence (None para o servidor e o que fica fora
+    /// dos bancos, como roles).
+    fn database_of(&self, node: &NodeId) -> Option<String> {
+        let _ = node;
+        None
+    }
+
+    /// Gera o SQL de uma ação do menu de contexto (Script as, Select Top).
+    fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
+        let _ = (node, action);
+        Err(MetadataError(
+            "Scripting is not available for this server.".to_string(),
+        ))
+    }
 
     /// Catálogo inteiro de um banco, para o IntelliSense.
     fn catalog(&self, database: &str) -> Result<crate::catalog::Catalog, MetadataError> {
