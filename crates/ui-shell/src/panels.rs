@@ -97,6 +97,8 @@ pub struct Viewer<'a> {
     pub close_requests: Vec<u32>,
     /// "Save Results As...": janela e índice do resultado.
     pub save_results: Vec<(u32, usize)>,
+    /// Atalhos em uso, para o menu de contexto do editor.
+    pub keymap: &'a pgstudio_core::keymap::Keymap,
     /// Cores do editor de SQL (seguem o tema).
     pub editor_colors: pgstudio_sql_editor::Colors,
     /// Servidor e usuário, para a faixa de status das janelas de consulta.
@@ -305,6 +307,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 if out.cursor.is_some() {
                     doc.cursor = out.cursor;
                 }
+                out.response.context_menu(|ui| {
+                    editor_context_menu(ui, self.keymap, &mut self.commands);
+                });
             }
             Panel::TableDesigner(id) => {
                 if let Some(d) = self.designers.get_mut(*id) {
@@ -351,6 +356,32 @@ impl PaneViewer<Panel> for Viewer<'_> {
 }
 
 /// Id do editor de um documento (para dar foco e para testes).
+/// Menu de contexto do editor: cada item vira um comando.
+fn editor_context_menu(
+    ui: &mut egui::Ui,
+    keymap: &pgstudio_core::keymap::Keymap,
+    commands: &mut Vec<CommandId>,
+) {
+    for entry in crate::menus::EDITOR_CONTEXT {
+        match *entry {
+            crate::menus::Entry::Item(cmd) => {
+                let mut button = egui::Button::new(cmd.label());
+                if let Some(s) = keymap.shortcut_for(cmd) {
+                    button = button.shortcut_text(s.to_string());
+                }
+                if ui.add(button).clicked() {
+                    commands.push(cmd);
+                    ui.close();
+                }
+            }
+            crate::menus::Entry::Separator => {
+                ui.separator();
+            }
+            crate::menus::Entry::Submenu { .. } => {}
+        }
+    }
+}
+
 pub fn editor_id(doc: u32) -> egui::Id {
     egui::Id::new(("query_editor", doc))
 }

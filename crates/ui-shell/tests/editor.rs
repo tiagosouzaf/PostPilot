@@ -3,6 +3,7 @@
 
 use eframe::egui::{Event, Key, Modifiers};
 use egui_kittest::Harness;
+use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::{Queryable, by};
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::panels::editor_id;
@@ -226,4 +227,99 @@ fn typing_in_a_five_thousand_line_script_stays_responsive() {
     // fica bem abaixo de um frame (16 ms); o limite é folgado para o build
     // de teste.
     assert!(worst < std::time::Duration::from_millis(500), "{worst:?}");
+}
+
+#[test]
+fn shift_alt_f_formats_the_document_and_ctrl_z_undoes_it_at_once() {
+    let mut harness = harness();
+    let id = query_with(&mut harness, "select a,b from t where x=1 -- fim");
+    select(&mut harness, id, (0, 0));
+    press(&mut harness, Modifiers::SHIFT | Modifiers::ALT, Key::F);
+    assert_eq!(
+        text_of(&harness, id),
+        "SELECT a,\n    b\nFROM t\nWHERE x = 1 -- fim"
+    );
+    assert_eq!(harness.state().status(), "Formatted.");
+    press(&mut harness, Modifiers::CTRL, Key::Z);
+    assert_eq!(text_of(&harness, id), "select a,b from t where x=1 -- fim");
+}
+
+#[test]
+fn ctrl_shift_i_formats_only_the_selected_lines() {
+    let mut harness = harness();
+    let id = query_with(&mut harness, "select 1 from a;\nselect 2 from b;");
+    select(&mut harness, id, (17, 20));
+    press(&mut harness, Modifiers::CTRL | Modifiers::SHIFT, Key::I);
+    assert_eq!(
+        text_of(&harness, id),
+        "select 1 from a;\nSELECT 2\nFROM b;"
+    );
+    assert_eq!(
+        pgstudio_sql_editor::selection(&harness.ctx, editor_id(id)),
+        Some((17, 33))
+    );
+}
+
+#[test]
+fn sql_that_cannot_be_formatted_is_left_alone_with_a_warning() {
+    let mut harness = harness();
+    let id = query_with(&mut harness, "select 'sem fim from t");
+    press(&mut harness, Modifiers::CTRL, Key::K);
+    press(&mut harness, Modifiers::CTRL, Key::D);
+    assert_eq!(text_of(&harness, id), "select 'sem fim from t");
+    assert!(
+        harness.state().status().starts_with("Couldn't format the SQL"),
+        "{}",
+        harness.state().status()
+    );
+}
+
+#[test]
+fn format_document_is_in_the_edit_menu_and_the_editor_context_menu() {
+    let mut harness = harness();
+    let id = query_with(&mut harness, "select 1 from t");
+    harness.get_by_label("Edit").click();
+    harness.run();
+    harness.get(by().label_contains("Advanced")).hover();
+    harness.run();
+    harness.get(by().label_contains("Format Document")).click();
+    harness.run();
+    assert_eq!(text_of(&harness, id), "SELECT 1\nFROM t");
+
+    harness.event(Event::Text("\nwhere x=1".into()));
+    harness.run();
+    harness
+        .get(by().value("SELECT 1\nFROM t\nwhere x=1"))
+        .click_secondary();
+    harness.run();
+    // O Output também lista "> Format Document" do primeiro comando.
+    harness
+        .get(by().label_contains("Format Document").role(Role::Button))
+        .click();
+    harness.run();
+    assert_eq!(text_of(&harness, id), "SELECT 1\nFROM t\nWHERE x = 1");
+}
+
+#[test]
+fn shift_alt_f_does_not_type_an_f_like_on_linux() {
+    let mut harness = harness();
+    let id = query_with(&mut harness, "select 1");
+    // O winit no Linux manda o texto "F" junto com a tecla.
+    let modifiers = Modifiers::SHIFT | Modifiers::ALT;
+    // Os dois chegam no mesmo frame, como no winit.
+    let events = &mut harness.input_mut().events;
+    events.push(Event::Key {
+        key: Key::F,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    });
+    events.push(Event::Text("F".into()));
+    harness.run();
+    assert_eq!(text_of(&harness, id), "SELECT 1");
+    // Sem Alt, digita normalmente.
+    harness.event(Event::Text("x".into()));
+    harness.run();
+    assert_eq!(text_of(&harness, id), "SELECT 1x");
 }

@@ -271,6 +271,11 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::UncommentSelection, "Ctrl+K, Ctrl+U"),
     (CommandId::MakeUppercase, "Ctrl+Shift+U"),
     (CommandId::MakeLowercase, "Ctrl+Shift+L"),
+    // O SSMS não formata SQL: estes são os do VS Code (Windows e Linux) e o
+    // Format Document do Visual Studio.
+    (CommandId::FormatDocument, "Shift+Alt+F"),
+    (CommandId::FormatDocument, "Ctrl+Shift+I"),
+    (CommandId::FormatDocument, "Ctrl+K, Ctrl+D"),
     (CommandId::ObjectExplorer, "F8"),
     (CommandId::ObjectExplorerDetails, "F7"),
     (CommandId::RegisteredServers, "Ctrl+Alt+G"),

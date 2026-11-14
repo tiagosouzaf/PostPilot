@@ -9,6 +9,7 @@
 //! - desfazer e refazer ([`buffer::History`]);
 //! - números de linha;
 //! - comentar e descomentar linhas ([`comment_selection`]);
+//! - formatar o SQL ([`format_selection`], módulo [`format`]);
 //! - barra de busca (Ctrl+F) e "Go To Line" (Ctrl+G).
 //!
 //! O texto continua sendo uma `String` do documento.
@@ -17,6 +18,7 @@ pub mod buffer;
 pub mod complete;
 pub mod diagnostics;
 pub mod edit;
+pub mod format;
 pub mod highlight;
 pub mod lexer;
 mod widget;
@@ -166,6 +168,24 @@ pub fn comment_selection(ctx: &egui::Context, id: Id, text: &mut String, uncomme
     };
     *text = edited.text;
     set_selection(ctx, id, edited.selection);
+}
+
+/// Formata a seleção do editor `id` (estendida a linhas inteiras) ou, sem
+/// seleção, o texto inteiro. A mudança entra no desfazer como um passo só.
+/// Se o SQL não puder ser formatado, o texto fica como está.
+pub fn format_selection(
+    ctx: &egui::Context,
+    id: Id,
+    text: &mut String,
+    options: &format::FormatOptions,
+) -> Result<(), format::FormatError> {
+    let (a, b) = selection(ctx, id).unwrap_or((0, 0));
+    let edited = format::format_selection(text, a, b, options)?;
+    if edited.text != *text {
+        *text = edited.text;
+    }
+    set_selection(ctx, id, edited.selection);
+    Ok(())
 }
 
 /// O editor de um documento.

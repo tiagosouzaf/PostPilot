@@ -1264,6 +1264,7 @@ impl ShellApp {
                 | AutoHideAll
                 | CommentSelection
                 | UncommentSelection
+                | FormatDocument
                 | QuickFind
                 | GoTo
                 | ListMembers
@@ -1432,6 +1433,7 @@ impl ShellApp {
             CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
             CommandId::CommentSelection
             | CommandId::UncommentSelection
+            | CommandId::FormatDocument
             | CommandId::QuickFind
             | CommandId::ListMembers
             | CommandId::CompleteWord
@@ -2083,6 +2085,20 @@ impl ShellApp {
                 );
                 doc.editor.focus_editor();
             }
+            CommandId::FormatDocument => {
+                let options = pgstudio_sql_editor::format::FormatOptions::default();
+                match pgstudio_sql_editor::format_selection(ctx, editor, &mut doc.text, &options) {
+                    Ok(()) => self.status = "Formatted.".to_string(),
+                    Err(e) => {
+                        if let Some(at) = e.at {
+                            let at = pgstudio_sql_editor::edit::char_of(&doc.text, at);
+                            doc.editor.mark_error(at, e.message.clone());
+                        }
+                        self.status = format!("Couldn't format the SQL: {e} The text was not changed.");
+                    }
+                }
+                doc.editor.focus_editor();
+            }
             CommandId::QuickFind => {
                 let selected = pgstudio_sql_editor::selected_text(ctx, editor, &doc.text);
                 doc.editor.open_find(selected);
@@ -2290,6 +2306,7 @@ impl ShellApp {
                     explorer_events: Vec::new(),
                     close_requests: Vec::new(),
                     save_results: Vec::new(),
+                    keymap: &self.keymap,
                     editor_colors: match self.theme {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
