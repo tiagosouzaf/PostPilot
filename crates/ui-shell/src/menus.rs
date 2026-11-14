@@ -100,6 +100,8 @@ pub const MENUS: &[Menu] = &[
             I(PropertiesWindow),
             I(Output),
             SEP,
+            I(ActivityMonitor),
+            SEP,
             sub("Color Theme", &[I(ThemeLight), I(ThemeDark)]),
             SEP,
             I(FullScreen),
@@ -191,6 +193,8 @@ pub const TOOLBAR: &[Tool] = {
         Tool::Separator,
         b(icon::FLOW_ARROW, "", EstimatedPlan),
         b(icon::TREE_STRUCTURE, "", ActualPlan),
+        Tool::Separator,
+        b(icon::PULSE, "", ActivityMonitor),
     ]
 };
 
