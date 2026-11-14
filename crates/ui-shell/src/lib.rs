@@ -1747,7 +1747,8 @@ impl ShellApp {
             Event::Properties(node) => {
                 match provider.securable(&node) {
                     Some(target) => self.open_security(ctx, target),
-                    None => self.status = "This object has no security properties.".to_string(),
+                    // Sem permissões: as propriedades ficam na janela F4.
+                    None => self.workspace.open(Panel::Properties),
                 }
                 return;
             }
