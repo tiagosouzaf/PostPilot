@@ -28,6 +28,8 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
+//! - `PGSTUDIO_DATABASES=1`: abre a lista de bancos da toolbar (Ctrl+U)
+//!   quando a janela de consulta ativa estiver pronta.
 //! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign|plan|actualplan|info|activity|properties|backup`:
 //!   depois de
 //!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
@@ -57,7 +59,7 @@
 //!   abre a janela (para screenshots).
 //! - `PGSTUDIO_WORKSPACE=pasta`: abre este workspace (veja
 //!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
-//!   lembrado em `<config>/PGStudio/workspace.txt`.
+//!   lembrado em `<config>/PostPilot/workspace.txt`.
 //!
 //! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
 //! servidores registrados em `<config>/PostPilot/registered_servers.json`,
@@ -238,7 +240,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 && !bench
                 && let Some(dir) = config_dir()
             {
-                app = app.with_workspace_memory(dir.join("PGStudio").join("workspace.txt"));
+                app = app.with_workspace_memory(
+                    dir.join(pgstudio_core::CONFIG_DIR_NAME)
+                        .join("workspace.txt"),
+                );
             }
             if !demo {
                 match DbRuntime::new() {
@@ -264,6 +269,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             }
             if std::env::var_os("PGSTUDIO_LIST_MEMBERS").is_some() {
                 app = app.with_list_members_on_load();
+            }
+            if std::env::var_os("PGSTUDIO_DATABASES").is_some() {
+                app = app.with_database_list_on_load();
             }
             if let Ok(action) = std::env::var("PGSTUDIO_ACTION") {
                 use pgstudio_core::metadata::ScriptAction;

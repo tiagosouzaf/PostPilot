@@ -1,11 +1,11 @@
 //! Workspace: uma pasta (normalmente um repositório git) com o trabalho do
-//! PGStudio, para clonar em outra máquina e ter tudo de volta. É o
+//! PostPilot, para clonar em outra máquina e ter tudo de volta. É o
 //! equivalente às Solutions do SSMS (Solution Explorer com Connections e
 //! Queries).
 //!
 //! ```text
 //! meu-workspace/
-//!   pgstudio-workspace.json   nome e versão do formato
+//!   postpilot-workspace.json   nome e versão do formato
 //!   servers.json              servidores, no formato do Registered Servers, sem senha
 //!   queries/                  consultas .sql em pastas livres
 //!   .gitignore                o que é local da máquina
@@ -17,7 +17,9 @@
 //! em `servers.json`.
 
 mod app;
+pub mod git;
 pub mod panel;
+pub mod source_control;
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::registered::{RegisteredServer, RegisteredServers, ServerGroup};
 
 /// Arquivo que marca a pasta como workspace.
-pub const MANIFEST: &str = "pgstudio-workspace.json";
+pub const MANIFEST: &str = "postpilot-workspace.json";
 /// Servidores do workspace.
 pub const SERVERS: &str = "servers.json";
 /// Pasta das consultas.
@@ -35,11 +37,11 @@ pub const QUERIES: &str = "queries";
 /// Versão do formato do workspace.
 pub const FORMAT: u32 = 1;
 
-/// O que nunca vai para o repositório. Arquivos temporários do PGStudio e
+/// O que nunca vai para o repositório. Arquivos temporários do PostPilot e
 /// a senha mestra lembrada não ficam na pasta, mas o `.gitignore` protege
 /// também cópias de segurança de editores.
 const GITIGNORE: &str = "\
-# PGStudio: arquivos locais desta máquina
+# PostPilot: arquivos locais desta máquina
 *.tmp
 *.json.tmp
 *~
@@ -69,7 +71,7 @@ impl Workspace {
         }
         if root.join(MANIFEST).exists() {
             return Err(format!(
-                "{} already has a PGStudio workspace. Use Open Workspace.",
+                "{} already has a PostPilot workspace. Use Open Workspace.",
                 root.display()
             ));
         }
@@ -105,7 +107,7 @@ impl Workspace {
         let text = std::fs::read_to_string(root.join(MANIFEST)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 format!(
-                    "{} is not a PGStudio workspace (no {MANIFEST}). Use New Workspace to create one.",
+                    "{} is not a PostPilot workspace (no {MANIFEST}). Use New Workspace to create one.",
                     root.display()
                 )
             } else {
@@ -116,7 +118,7 @@ impl Workspace {
             serde_json::from_str(&text).map_err(|e| format!("{MANIFEST} is invalid: {e}"))?;
         if manifest.format > FORMAT {
             return Err(format!(
-                "This workspace was saved by a newer PGStudio (format {}). Update PGStudio to open it.",
+                "This workspace was saved by a newer PostPilot (format {}). Update PostPilot to open it.",
                 manifest.format
             ));
         }
@@ -222,7 +224,7 @@ impl Folder {
 /// em `servers.json`) e em que banco ela roda.
 ///
 /// ```text
-/// -- pgstudio: server=Produção; database=vendas
+/// -- postpilot: server=Produção; database=vendas
 /// ```
 ///
 /// `;` e `\` dentro dos valores vão escapados com `\`.
@@ -232,7 +234,7 @@ pub struct QueryLink {
     pub database: Option<String>,
 }
 
-const LINK_PREFIX: &str = "-- pgstudio:";
+const LINK_PREFIX: &str = "-- postpilot:";
 
 impl QueryLink {
     /// Lê a ligação da primeira linha do texto, se houver.
@@ -379,7 +381,7 @@ mod tests {
         let dir = temp_dir("nomanifest");
         std::fs::create_dir_all(&dir).unwrap();
         let e = Workspace::open(&dir).unwrap_err();
-        assert!(e.contains("not a PGStudio workspace"), "{e}");
+        assert!(e.contains("not a PostPilot workspace"), "{e}");
         std::fs::write(dir.join(MANIFEST), r#"{"format": 99, "name": "x"}"#).unwrap();
         assert!(Workspace::open(&dir).unwrap_err().contains("newer"));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -422,7 +424,7 @@ mod tests {
         let text = link.apply("select 1;\n");
         assert_eq!(
             text.lines().next().unwrap(),
-            r"-- pgstudio: server=Prod\; A\\B; database=vendas"
+            r"-- postpilot: server=Prod\; A\\B; database=vendas"
         );
         assert_eq!(QueryLink::read(&text), Some(link.clone()));
         // Trocar a ligação não duplica a linha.
@@ -431,12 +433,12 @@ mod tests {
             database: None,
         };
         let again = other.apply(&text);
-        assert_eq!(again, "-- pgstudio: server=Dev\nselect 1;\n");
+        assert_eq!(again, "-- postpilot: server=Dev\nselect 1;\n");
         assert_eq!(QueryLink::read(&again), Some(other));
         assert_eq!(QueryLink::read("select 1"), None);
-        assert_eq!(QueryLink::read("-- pgstudio: database=x"), None);
+        assert_eq!(QueryLink::read("-- postpilot: database=x"), None);
         assert_eq!(
-            QueryLink::read("-- pgstudio: server=X\r\nselect 1")
+            QueryLink::read("-- postpilot: server=X\r\nselect 1")
                 .unwrap()
                 .server,
             "X"
