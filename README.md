@@ -11,12 +11,12 @@ recentes, servidores registrados, layout e keymap) e as senhas lembradas no
 cofre do sistema. Os pacotes novos substituem os antigos (`pgstudio`) no apt e
 no pacman.
 
-> Em desenvolvimento inicial. Já abre a janela com os menus, a toolbar, os
-> atalhos, os painéis encaixáveis e janelas de consulta que abrem e salvam
-> arquivos `.sql` com realce de SQL, conecta a um PostgreSQL mostrando o
-> catálogo no Object Explorer e executa consultas (F5) com resultados numa
-> grade que aguenta milhões de linhas, com IntelliSense e scripts gerados
-> pelo menu de contexto do Object Explorer.
+> As Fases 0 a 6 do roteiro estão prontas: janela no estilo do SSMS com
+> painéis encaixáveis, Object Explorer, editor com IntelliSense, grade que
+> edita e exporta, Table Designer, diagramas, Query Designer, planos de
+> execução, Activity Monitor, segurança, backup e restore, Schema Compare e
+> servidores registrados. O que ainda não foi testado está em
+> [Limitações conhecidas](#limitações-conhecidas).
 
 ## Estrutura
 
@@ -30,6 +30,9 @@ crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
 crates/sql-editor/ editor de SQL: realce, números de linha, busca, Go To Line
 crates/result-grid/ buffer paginado, grade de resultados e resultados em texto
+crates/schema-model/ modelo do schema, diff para DDL, comparação e snapshot
+crates/diagram-engine/ desenho de tabelas e relacionamentos (diagramas e Query Designer)
+crates/execution-plan/ leitura e desenho do EXPLAIN (FORMAT JSON)
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`, `dist`, `pgmatrix`)
 packaging/        ícone, atalho .desktop e textos dos pacotes de instalação
 ```
@@ -210,6 +213,87 @@ ao abrir. Se o arquivo estiver estragado, o PostPilot abre com o layout padrão 
 avisa na status bar. Window > Reset Window Layout volta ao padrão a qualquer
 momento.
 
+### Designers
+
+"New Table..." na pasta Tables e "Design" numa tabela abrem o **Table
+Designer**: a grade de colunas (nome, tipo, Allow Nulls), Column Properties, a
+chave primária e as janelas Relationships, Indexes/Keys e Check Constraints.
+Generate Change Script mostra o DDL exato que Save aplica, numa transação: se
+der erro, nada muda e as edições continuam na tela. Antes de salvar, o designer
+avisa quando a mudança pode perder dados.
+
+"New Database Diagram" na pasta Database Diagrams de um banco abre o **diagrama**
+das tabelas escolhidas, com zoom (Ctrl + roda), pan e layout automático. Dá para
+mover e redimensionar tabelas, criar tabela e coluna e arrastar uma coluna até
+outra para criar um relacionamento, com undo e redo. Ctrl+S mostra o DDL e
+aplica, e o diagrama (tabelas, posições e zoom) fica num arquivo `.pgsdiagram`,
+que File > Open abre de novo.
+
+Query > Design Query in Editor (Ctrl+Shift+Q) abre o **Query Designer** no banco
+da janela de consulta. Com um SELECT selecionado, ele abre já montado com ele, e
+o OK troca a seleção pelo SQL novo. As FKs entre as tabelas viram JOINs, e
+arrastar uma coluna até outra cria um JOIN; a linha Joins escolhe o tipo
+(LEFT, RIGHT ou FULL, as "all rows from" do SSMS). A grade tem apelido, saída,
+ordenação, filtro, colunas Or... (cada uma um grupo de condições ligado por
+AND, e os grupos por OR) e, com Group By, a agregação de cada coluna (o filtro
+de uma coluna agregada vai para o HAVING). Distinct e Limit ficam na barra, e
+Add Expression põe uma coluna digitada à mão, como `lower(nome)` ou
+`count(*)`. CTE, subconsulta e UNION ele não desenha: avisa, e o OK põe a
+consulta nova depois da seleção, sem apagá-la.
+
+### Planos de execução e monitoramento
+
+Ctrl+L mostra o **plano estimado** da seleção (ou do documento) na aba
+Execution plan, desenhado como no SSMS: raiz à esquerda, custo de cada
+operação e setas que engrossam com as linhas. Ctrl+M liga o **plano real**: o
+F5 roda `EXPLAIN (ANALYZE, BUFFERS)` e mostra linhas, execuções e tempos de
+verdade, e um nó que errou a estimativa em 10 vezes ou mais ganha um aviso.
+Um lote com INSERT, UPDATE ou DELETE pergunta antes e, por padrão, roda dentro
+de `BEGIN ... ROLLBACK`.
+
+O **Activity Monitor** (Ctrl+Alt+A, ou no menu do servidor) mostra gráficos,
+as sessões (com filtro, Cancel Query e Kill Process, que pedem confirmação),
+esperas, E/S por banco, as consultas mais caras (com `pg_stat_statements`) e
+os locks, com as cadeias de bloqueio em árvore. Alt+F1 no nome de uma tabela
+faz o que o `sp_help` faz no SQL Server: objeto, colunas, índices,
+constraints e as FKs que apontam para ela.
+
+### Segurança, backup e comparação
+
+"New Role..." em Security > Roles e "Properties" numa role abrem a janela da
+role (senha, validade, atributos e Membership); "Properties" num banco,
+schema, tabela, view ou função abre Permissions, com Grant e With Grant por
+privilégio. Script mostra o SQL das mudanças, e OK aplica numa transação. Nos
+outros objetos, "Properties" (ou F4) mostra as propriedades lidas do catálogo.
+
+Tasks > Back Up... num banco abre o "Back Up Database", que roda o `pg_dump`
+(formato custom, plain ou directory) com progresso e Stop. Tasks >
+Restore... abre o "Restore Database", que lista o conteúdo do arquivo com o
+`pg_restore -l`, deixa escolher os itens e restaura num banco existente, num
+banco novo ou no do arquivo. Os dois procuram o `pg_dump` e o `pg_restore`
+no PATH e nas pastas de instalação do PostgreSQL (ou em `PGSTUDIO_PG_BIN`).
+
+Tools > Schema Compare... (ou Tasks > Compare Schema... num banco) compara
+origem e destino: cada lado é um banco do servidor conectado, um banco de
+outro servidor ou um snapshot `.pgsschema` gravado antes com "Save
+Snapshot...". Entram tabelas, colunas, chaves, índices, checks, views,
+funções, procedures, triggers, sequências e tipos. A janela lista as
+diferenças com o script de cada uma, deixa marcar o que entra, gera o script
+ou aplica numa transação e compara de novo.
+
+### Servidores
+
+O **Registered Servers** (Ctrl+Alt+G) guarda servidores em grupos, que podem
+ser arrastados de um grupo a outro; dois cliques conectam. "Register..." no
+menu de um servidor do Object Explorer registra aquela conexão, e Tasks >
+Import... / Export... num grupo troca a árvore com outra máquina (sem senhas).
+A árvore fica em `registered_servers.json`. Vários servidores aparecem juntos
+no Object Explorer. "Remember password", no Connect to Server e no registro,
+guarda a senha no cofre do sistema (Credential Manager no Windows, Secret
+Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
+
+### Layout
+
 Como no SSMS, um painel pode ser desafixado (auto-hide): "Auto Hide" no menu de
 contexto da aba ou no menu Window o esconde numa faixa na borda; passar o mouse
 ou clicar na faixa faz o painel deslizar por cima dos documentos, arrastar a
@@ -300,6 +384,34 @@ O `wixl` não tem as telas do WiX: o msi abre direto na barra de progresso, sem
 escolher pasta. O `UpgradeCode` do `.wxs` é fixo; é ele que faz a versão nova
 substituir a velha, então não o troque.
 
+## Limitações conhecidas
+
+O que não foi feito, ou foi feito e não pôde ser testado aqui. O que depende de
+uma máquina de verdade tem os passos em
+[`docs/na-sua-maquina.md`](docs/na-sua-maquina.md).
+
+- **Windows nunca rodou num Windows de verdade.** O `.exe` e o `.msi` foram
+  testados só no Wine, sem assinatura (o SmartScreen avisa). Os números de
+  medição no Windows existem só para a partida e a RAM (marco 1.8, no CI).
+- **Sem medição com GPU.** Todos os números de `docs/benchmarks.md` depois do
+  marco 1.8 vêm de renderização por software. A RAM em repouso (cerca de
+  129 MB) e o frame do diagrama de 2.000 tabelas, do plano de 2.000 nós e da
+  exportação ficam acima da meta assim, com a interface gastando menos de
+  1 ms por frame.
+- **Wayland:** testado num sway sem tela, não no Hyprland; sem escala
+  fracionária e sem mouse de verdade. File > Open precisa de um portal com
+  seletor de arquivos (`xdg-desktop-portal-gtk`).
+- **Query Designer:** não desenha CTE, subconsulta, UNION, `USING`,
+  `OFFSET`, `DISTINCT ON`, `NULLS FIRST` nem dois grupos de OR no mesmo
+  WHERE (avisa e não apaga a consulta).
+- **Edição na grade:** uma tabela por vez, pela chave primária; sem chave
+  primária, ou numa view, fica só leitura.
+- **Alt+Break** (cancelar) não funciona: o egui não entrega a tecla
+  Pause/Break. Cancel fica no botão ■ e no menu Query.
+- **PostgreSQL 13 a 17:** a suíte passa nas cinco versões (`cargo xtask
+  pgmatrix`), mas o 13 e o 15 testados não eram as últimas correções.
+- **macOS** não é alvo e nunca foi testado.
+
 ## Roteiro
 
 1. **Fase 0:** escolha do toolkit de GUI (egui, Slint ou GPUI).
@@ -310,6 +422,10 @@ substituir a velha, então não o troque.
 4. **Fase 3:** Table Designer, diagramas e Query Designer.
 5. **Fase 4:** planos de execução, monitoramento, permissões, backup/restore e
    comparação de schemas.
+6. **Fase 5:** edição e exportação na grade, Object Explorer completo, servidores
+   registrados, Query Designer de mão dupla e pacotes de instalação.
+7. **Fase 6:** acabamento: Query Designer, Schema Compare e servidores
+   registrados completos, auto-hide, PostgreSQL 13 a 17, Wayland e `.msi`.
 
 Versão mínima do PostgreSQL suportada: 13.
 
