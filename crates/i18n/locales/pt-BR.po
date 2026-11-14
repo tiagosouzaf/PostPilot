@@ -3829,3 +3829,37 @@ msgstr "{folder} não é um workspace do PostPilot (sem {file}). Use Novo Worksp
 
 msgid "{folder} already has a PostPilot workspace. Use Open Workspace."
 msgstr "{folder} já tem um workspace do PostPilot. Use Abrir Workspace."
+
+# Ações rápidas do Claude (marco 7.5)
+msgid "Explain with Claude"
+msgstr "Explicar com o Claude"
+
+msgid "Optimize with Claude"
+msgstr "Otimizar com o Claude"
+
+msgid "Fix Error with Claude"
+msgstr "Corrigir o Erro com o Claude"
+
+msgid "Ask Claude"
+msgstr "Perguntar ao Claude"
+
+msgid "Explain the selected SQL."
+msgstr "Explique o SQL selecionado."
+
+msgid "Explain this query."
+msgstr "Explique esta consulta."
+
+msgid "Optimize the selected SQL."
+msgstr "Otimize o SQL selecionado."
+
+msgid "Optimize this query."
+msgstr "Otimize esta consulta."
+
+msgid "Fix the error in this query."
+msgstr "Corrija o erro desta consulta."
+
+msgid "Tell me about {name}."
+msgstr "Me fale sobre {name}."
+
+msgid "Claude is still answering. Wait for it, or press Stop."
+msgstr "O Claude ainda está respondendo. Espere ou clique em Parar."
