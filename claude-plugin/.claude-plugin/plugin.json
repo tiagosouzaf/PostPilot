@@ -1,0 +1,12 @@
+{
+  "name": "postpilot",
+  "version": "0.1.0",
+  "description": "Use PostPilot, the desktop PostgreSQL manager, from Claude Code: see its servers, catalog, query windows and results, write SQL into its editor and run queries, with reads free and every change confirmed in PostPilot.",
+  "author": {
+    "name": "Tiago de Souza"
+  },
+  "homepage": "https://github.com/tiagosouzaf/postpilot",
+  "repository": "https://github.com/tiagosouzaf/postpilot",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["postgresql", "postgres", "sql", "database", "mcp", "postpilot"]
+}
