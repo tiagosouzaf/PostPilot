@@ -948,7 +948,7 @@ impl DiagramView {
             script.statements.join("\n")
         };
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new(("diagram_script", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("diagram_script", id))).show(ctx, |ui| {
             ui.set_width(560.0);
             ui.heading(if save {
                 "Save Diagram"
@@ -995,7 +995,7 @@ impl DiagramView {
         }
         let mut answer = None;
         let title = self.title();
-        let modal = egui::Modal::new(egui::Id::new(("diagram_close", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("diagram_close", id))).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading("Unsaved Changes");
             ui.label(format!(
@@ -1030,7 +1030,7 @@ pub(crate) fn table_picker(
     candidates: &[(Id, String)],
 ) -> Option<bool> {
     let mut answer = None;
-    let modal = egui::Modal::new(id).show(ctx, |ui| {
+    let modal = crate::theme::modal(id).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.heading("Add Table");
         ui.horizontal(|ui| {

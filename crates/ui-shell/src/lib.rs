@@ -1300,6 +1300,7 @@ impl ShellApp {
         matches!(
             cmd,
             Exit | ThemeLight
+                | ClaudeCodeAccess
                 | ThemeDark
                 | FullScreen
                 | About
@@ -1391,6 +1392,10 @@ impl ShellApp {
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
             CommandId::SchemaCompare => self.open_compare(ctx, None),
+            CommandId::ClaudeCodeAccess => {
+                let on = !self.claude.is_listening();
+                self.set_claude_code_access(ctx, on);
+            }
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
@@ -1821,7 +1826,7 @@ impl ShellApp {
             return;
         }
         let mut answer: Option<Option<bool>> = None;
-        let modal = egui::Modal::new(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading("Include Actual Execution Plan");
             ui.label(
@@ -2423,7 +2428,7 @@ impl ShellApp {
             })
             .collect();
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("save_changes")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("save_changes")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(APP_NAME);
             ui.label("Save changes to the following items?");
@@ -2505,6 +2510,9 @@ impl ShellApp {
                         self.menu_entries(ui, menu.entries, &mut commands);
                     });
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.theme_switch(ui, &mut commands);
+                });
             });
         });
         let mut picked = Picked::default();
@@ -2519,8 +2527,8 @@ impl ShellApp {
         egui::Panel::bottom("status_bar")
             .frame(
                 egui::Frame::new()
-                    .fill(theme::palette(self.theme).accent)
-                    .inner_margin(egui::Margin::symmetric(8, 3)),
+                    .fill(theme::palette(self.theme).status_bar)
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
             )
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
@@ -2619,6 +2627,7 @@ impl ShellApp {
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
+                .frame(theme::dialog_frame(&ctx.global_style()))
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
@@ -3282,6 +3291,7 @@ impl ShellApp {
                         .and_then(|id| self.documents.get(id))
                         .is_some_and(|d| d.actual_plan);
                     let selected = (cmd == CommandId::ActualPlan && actual)
+                        || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.theme),
                             (CommandId::ThemeLight, Theme::Light)
@@ -3309,6 +3319,28 @@ impl ShellApp {
                     ui.separator();
                 }
             }
+        }
+    }
+
+    /// Botão de trocar entre os temas claro e escuro, no canto da barra de
+    /// menus (o mesmo que View > Color Theme).
+    fn theme_switch(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>) {
+        use egui_phosphor::regular as icon;
+        let (glyph, command) = match self.theme {
+            Theme::Dark => (icon::SUN, CommandId::ThemeLight),
+            Theme::Light => (icon::MOON, CommandId::ThemeDark),
+        };
+        let tip = format!(
+            "Color Theme: {} (click for {})",
+            self.theme.label(),
+            theme::toggled(self.theme).label()
+        );
+        if ui
+            .add(egui::Button::new(glyph).frame(false))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            clicked.push(command);
         }
     }
 
@@ -3400,7 +3432,7 @@ impl ShellApp {
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
-        let color = theme::palette(self.theme).on_accent;
+        let color = theme::palette(self.theme).on_status_bar;
         let connection = self.connection_label();
         let cursor = self
             .active_doc
@@ -3412,6 +3444,7 @@ impl ShellApp {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
                 ui.label(RichText::new(connection).color(color));
+                self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {
                     ui.separator();
                     ui.label(RichText::new(format!("Ln {line}   Col {col}")).color(color));

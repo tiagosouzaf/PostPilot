@@ -366,7 +366,7 @@ impl SourceControl {
         let mut commit: Option<bool> = None;
         let mut cancel = false;
         if let Some(dialog) = &mut self.commit {
-            egui::Modal::new(egui::Id::new("workspace_commit")).show(ctx, |ui| {
+            crate::theme::modal(egui::Id::new("workspace_commit")).show(ctx, |ui| {
                 ui.set_width(460.0);
                 ui.heading("Commit");
                 ui.label("Changes:");
@@ -423,7 +423,7 @@ impl SourceControl {
         let mut ok = false;
         let mut cancel = false;
         if let Some(dialog) = &mut self.remote {
-            egui::Modal::new(egui::Id::new("workspace_remote")).show(ctx, |ui| {
+            crate::theme::modal(egui::Id::new("workspace_remote")).show(ctx, |ui| {
                 ui.set_width(460.0);
                 ui.heading("Remote");
                 ui.label("Repository URL (origin), for example git@github.com:you/sql.git:");

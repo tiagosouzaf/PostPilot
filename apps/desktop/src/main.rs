@@ -3,6 +3,10 @@
 //! Uso: `postpilot [--renderer wgpu|glow] [arquivo.sql ...]` abre os arquivos
 //! em janelas de consulta.
 //!
+//! `postpilot mcp` não abre janela: é o servidor MCP do Claude Code, por
+//! stdio, que repassa as chamadas para o PostPilot aberto (veja
+//! `pgstudio_automation::mcp`). Uso: `claude mcp add postpilot -- postpilot mcp`.
+//!
 //! `--renderer` escolhe o renderizador gráfico (veja o módulo `renderer`):
 //! `wgpu` (o padrão) ou `glow` (OpenGL). Sem escolha, o app tenta o wgpu e
 //! reabre com o glow se ele falhar.
@@ -15,7 +19,7 @@
 //!   quando o primeiro frame aparece e ignora o layout salvo. Com `grid` ou
 //!   `intellisense`, roda também esse cenário e escreve os números (veja
 //!   `pgstudio_ui_shell::bench`).
-//! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
+//! - `PGSTUDIO_THEME=light|dark`: abre com esse tema (sem ela, o escuro).
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
@@ -100,6 +104,9 @@ const APP_ID: &str = "postpilot";
 const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/postpilot-256.png");
 
 fn main() -> std::process::ExitCode {
+    if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
+        return pgstudio_automation::mcp::serve_stdio();
+    }
     let launch = renderer::Launch::parse(
         std::env::args_os().skip(1),
         std::env::var(renderer::ENV).ok().as_deref(),
@@ -187,8 +194,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         ..Default::default()
     };
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
+        Ok("light") => Theme::Light,
         Ok("dark") => Theme::Dark,
-        _ => Theme::Light,
+        _ => Theme::default(),
     };
     let (keymap, keymap_status) = load_keymap();
     let files = launch.files.clone();
@@ -236,6 +244,17 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     app = app.with_registered_servers(RegisteredServers::open(file));
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
+            // Claude Code pelo MCP (Tools > Allow Claude Code), fora dos
+            // modos de screenshot e medição, a menos que o canal seja dado.
+            let explicit_endpoint = std::env::var_os(pgstudio_automation::endpoint::ENV).is_some();
+            if (screenshot.is_none() && !bench) || explicit_endpoint {
+                if let (Some(endpoint), Some(dir)) =
+                    (pgstudio_automation::endpoint::default_path(), config_dir())
+                {
+                    let settings = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("claude.json");
+                    app = app.with_claude_code(&cc.egui_ctx, endpoint, settings);
+                }
             }
             if let Some(root) = std::env::var_os("PGSTUDIO_WORKSPACE").map(PathBuf::from) {
                 app.open_workspace(&root);

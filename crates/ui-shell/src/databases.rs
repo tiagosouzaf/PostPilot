@@ -359,7 +359,7 @@ impl crate::ShellApp {
             .unwrap_or_default();
         let database = pending.database.clone();
         let mut answer: Option<bool> = None;
-        let modal = egui::Modal::new(egui::Id::new("change_database_tx")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("change_database_tx")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading("Change Database");
             ui.label(format!(
