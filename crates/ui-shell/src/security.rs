@@ -6,6 +6,7 @@
 //! sem interface: [`role_sql`] compara a role como estava com a editada, e
 //! [`grant_sql`] faz o mesmo com as permissões, em GRANT e REVOKE.
 
+use pgstudio_i18n::tr;
 use std::collections::{BTreeMap, BTreeSet};
 
 use pgstudio_core::metadata::Securable;
@@ -87,13 +88,13 @@ pub fn parse_role(
 ) -> Result<(Option<RoleSpec>, Vec<String>), String> {
     let names = |rows: &Rows| rows.iter().map(|r| text(r, 0)).collect::<Vec<_>>();
     if !existing {
-        let all = results.first().ok_or("The roles could not be read.")?;
+        let all = results.first().ok_or(tr("The roles could not be read."))?;
         return Ok((None, names(all)));
     }
     let [role, member_of, members, all] = results else {
-        return Err("The role could not be read.".into());
+        return Err(tr("The role could not be read.").into());
     };
-    let r = role.first().ok_or("The role no longer exists.")?;
+    let r = role.first().ok_or(tr("The role no longer exists."))?;
     let flag = |i: usize| text(r, i) == "t";
     let spec = RoleSpec {
         name: text(r, 0),
@@ -253,13 +254,13 @@ impl ObjectKind {
 
     /// Nome do tipo no título da janela.
     pub fn label(self) -> &'static str {
-        match self {
+        pgstudio_i18n::tr(match self {
             ObjectKind::Database => "Database",
             ObjectKind::Schema => "Schema",
             ObjectKind::Table => "Table",
             ObjectKind::View => "View",
             ObjectKind::Function => "Function",
-        }
+        })
     }
 }
 
@@ -315,9 +316,9 @@ pub struct GrantTarget {
 /// Lê o que [`grants_read_sql`] devolveu.
 pub fn parse_grants(results: &[Rows]) -> Result<(GrantTarget, Grants, Vec<String>), String> {
     let [head, acl, roles] = results else {
-        return Err("The permissions could not be read.".into());
+        return Err(tr("The permissions could not be read.").into());
     };
-    let h = head.first().ok_or("The object no longer exists.")?;
+    let h = head.first().ok_or(tr("The object no longer exists."))?;
     let kind = match text(h, 2).as_str() {
         "d" => ObjectKind::Database,
         "s" => ObjectKind::Schema,
