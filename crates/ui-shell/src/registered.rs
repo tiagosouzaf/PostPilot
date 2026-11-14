@@ -7,6 +7,7 @@
 //! conectar um servidor registrado procura a senha lá e só pede ao usuário
 //! quando não acha (ou quando não há cofre).
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,6 +24,15 @@ pub const VERSION: u32 = 1;
 
 /// Nome do grupo raiz, como no SSMS.
 pub const ROOT_NAME: &str = "Local Server Groups";
+
+/// Nome de um grupo na tela: o grupo raiz sai traduzido.
+pub fn display_name(name: &str) -> &str {
+    if name == ROOT_NAME {
+        tr(ROOT_NAME)
+    } else {
+        name
+    }
+}
 
 /// Um servidor registrado.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +186,7 @@ impl RegisteredServers {
         let name = group.name.trim().to_string();
         let g = self
             .group_mut(parent)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         check_name(&name, g.groups.iter().map(|g| g.name.as_str()), "group")?;
         g.groups.push(ServerGroup { name, ..group });
         let mut path = parent.to_vec();
@@ -193,12 +203,12 @@ impl RegisteredServers {
         description: &str,
     ) -> Result<(), String> {
         let Some((&last, parent)) = groups.split_last() else {
-            return Err("The root group cannot be renamed.".into());
+            return Err(tr("The root group cannot be renamed.").into());
         };
         let name = name.trim().to_string();
         let p = self
             .group_mut(parent)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         let others = p
             .groups
             .iter()
@@ -209,7 +219,7 @@ impl RegisteredServers {
         let g = p
             .groups
             .get_mut(last)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         g.name = name;
         g.description = description.trim().to_string();
         self.save_or_log();
@@ -225,7 +235,7 @@ impl RegisteredServers {
         let server = clean(server);
         let g = self
             .group_mut(parent)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         check_name(
             &server.name,
             g.servers.iter().map(|s| s.name.as_str()),
@@ -244,10 +254,10 @@ impl RegisteredServers {
         server: RegisteredServer,
     ) -> Result<(), String> {
         let server = clean(server);
-        let index = path.server.ok_or("Not a server.")?;
+        let index = path.server.ok_or(tr("Not a server."))?;
         let g = self
             .group_mut(&path.groups)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         let others = g
             .servers
             .iter()
@@ -257,7 +267,7 @@ impl RegisteredServers {
         check_name(&server.name, others, "server")?;
         *g.servers
             .get_mut(index)
-            .ok_or("The server no longer exists.")? = server;
+            .ok_or(tr("The server no longer exists."))? = server;
         self.save_or_log();
         Ok(())
     }
@@ -290,14 +300,15 @@ impl RegisteredServers {
     /// `to`, no fim dele, como arrastar no SSMS. Devolve o caminho novo. A
     /// raiz não se move, e um grupo não vai para dentro dele mesmo.
     pub fn move_node(&mut self, from: &NodePath, to: &[usize]) -> Result<NodePath, String> {
-        self.group(to).ok_or("The target group no longer exists.")?;
+        self.group(to)
+            .ok_or(tr("The target group no longer exists."))?;
         if let Some(index) = from.server {
             if from.groups == to {
                 return Ok(from.clone());
             }
             let server = self
                 .server(from)
-                .ok_or("The server no longer exists.")?
+                .ok_or(tr("The server no longer exists."))?
                 .clone();
             let target = self.group(to).expect("checked above");
             check_name(
@@ -317,17 +328,17 @@ impl RegisteredServers {
             return Ok(path);
         }
         let Some((&last, parent)) = from.groups.split_last() else {
-            return Err("The root group cannot be moved.".into());
+            return Err(tr("The root group cannot be moved.").into());
         };
         if to.starts_with(&from.groups) {
-            return Err("A group cannot be moved into itself.".into());
+            return Err(tr("A group cannot be moved into itself.").into());
         }
         if to == parent {
             return Ok(from.clone());
         }
         let group = self
             .group(&from.groups)
-            .ok_or("The group no longer exists.")?
+            .ok_or(tr("The group no longer exists."))?
             .clone();
         let target = self.group(to).expect("checked above");
         check_name(
@@ -359,14 +370,20 @@ impl RegisteredServers {
     pub fn export(&self, groups: &[usize], path: &Path) -> Result<(), String> {
         let root = self
             .group(groups)
-            .ok_or("The group no longer exists.")?
+            .ok_or(tr("The group no longer exists."))?
             .clone();
         let file = File {
             version: VERSION,
             root,
         };
         let text = serde_json::to_string_pretty(&file).expect("always serializable");
-        std::fs::write(path, text).map_err(|e| format!("Could not write {}: {e}", path.display()))
+        std::fs::write(path, text).map_err(|e| {
+            trf!(
+                "Could not write {path}: {error}",
+                path = path.display(),
+                error = e
+            )
+        })
     }
 
     /// Importa um arquivo exportado para dentro do grupo `parent`. Um
@@ -375,20 +392,30 @@ impl RegisteredServers {
     /// se juntam e um servidor de mesmo nome é substituído. Devolve
     /// quantos servidores vieram.
     pub fn import(&mut self, parent: &[usize], path: &Path) -> Result<usize, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
-        let file: File = serde_json::from_str(&text)
-            .map_err(|e| format!("{} is not a registered servers file: {e}", path.display()))?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            trf!(
+                "Could not read {path}: {error}",
+                path = path.display(),
+                error = e
+            )
+        })?;
+        let file: File = serde_json::from_str(&text).map_err(|e| {
+            trf!(
+                "{path} is not a registered servers file: {error}",
+                path = path.display(),
+                error = e
+            )
+        })?;
         if file.version != VERSION {
-            return Err(format!(
-                "{} has an unsupported version ({}).",
-                path.display(),
-                file.version
+            return Err(trf!(
+                "{path} has an unsupported version ({version}).",
+                path = path.display(),
+                version = file.version
             ));
         }
         let target = self
             .group_mut(parent)
-            .ok_or("The group no longer exists.")?;
+            .ok_or(tr("The group no longer exists."))?;
         let count = if file.root.name == ROOT_NAME || file.root.name.trim().is_empty() {
             merge(target, file.root)
         } else {
@@ -491,13 +518,27 @@ fn check_name<'a>(
     mut siblings: impl Iterator<Item = &'a str>,
     what: &str,
 ) -> Result<(), String> {
+    let group = what == "group";
     if name.is_empty() {
-        return Err(format!("Enter a {what} name."));
+        return Err(if group {
+            tr("Enter a group name.")
+        } else {
+            tr("Enter a server name.")
+        }
+        .to_string());
     }
     if siblings.any(|s| s.eq_ignore_ascii_case(name)) {
-        return Err(format!(
-            "A {what} named \"{name}\" already exists in this group."
-        ));
+        return Err(if group {
+            trf!(
+                "A group named \"{name}\" already exists in this group.",
+                name = name
+            )
+        } else {
+            trf!(
+                "A server named \"{name}\" already exists in this group.",
+                name = name
+            )
+        });
     }
     Ok(())
 }
@@ -637,7 +678,11 @@ impl RegisteredPanel {
                     .group(to)
                     .map(|g| g.name.clone())
                     .unwrap_or_default();
-                format!("Moved \"{name}\" to \"{group}\".")
+                trf!(
+                    "Moved \"{name}\" to \"{group}\".",
+                    name = name,
+                    group = display_name(&group)
+                )
             }
             Err(e) => e,
         }
@@ -682,14 +727,14 @@ impl RegisteredPanel {
         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(icon::DESKTOP_TOWER);
-                ui.strong("Database Engine");
+                ui.strong(tr("Database Engine"));
             });
             self.group_rows(ui, &[], 0, &mut actions, &mut menu);
             if self.servers.all_servers().is_empty() && self.servers.root().groups.is_empty() {
                 ui.add_space(6.0);
-                ui.weak(format!(
-                    "No registered servers. Right-click \"{}\" and choose \"New Server Registration...\".",
-                    self.servers.root().name
+                ui.weak(trf!(
+                    "No registered servers. Right-click \"{group}\" and choose \"New Server Registration...\".",
+                    group = display_name(&self.servers.root().name)
                 ));
             }
         });
@@ -751,7 +796,7 @@ impl RegisteredPanel {
             let label = ui.add(
                 egui::Button::selectable(
                     self.selected.as_ref() == Some(&here),
-                    format!("{folder} {name}"),
+                    format!("{folder} {}", display_name(&name)),
                 )
                 .frame_when_inactive(false)
                 .sense(sense),
@@ -773,33 +818,33 @@ impl RegisteredPanel {
             }
             label.context_menu(|ui| {
                 self.selected = Some(here.clone());
-                if ui.button("New Server Group...").clicked() {
+                if ui.button(tr("New Server Group...")).clicked() {
                     *menu = Some(Menu::NewGroup(groups.to_vec()));
                     ui.close();
                 }
-                if ui.button("New Server Registration...").clicked() {
+                if ui.button(tr("New Server Registration...")).clicked() {
                     *menu = Some(Menu::NewServer(groups.to_vec()));
                     ui.close();
                 }
                 ui.separator();
-                ui.menu_button("Tasks", |ui| {
-                    if ui.button("Import...").clicked() {
+                ui.menu_button(tr("Tasks"), |ui| {
+                    if ui.button(tr("Import...")).clicked() {
                         actions.push(Action::Import(groups.to_vec()));
                         ui.close();
                     }
-                    if ui.button("Export...").clicked() {
+                    if ui.button(tr("Export...")).clicked() {
                         actions.push(Action::Export(groups.to_vec()));
                         ui.close();
                     }
                 });
                 if !is_root {
                     ui.separator();
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         *menu = Some(Menu::Delete(here.clone()));
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Properties").clicked() {
+                    if ui.button(tr("Properties")).clicked() {
                         *menu = Some(Menu::Edit(here.clone()));
                         ui.close();
                     }
@@ -859,23 +904,23 @@ impl RegisteredPanel {
                 }
                 label.context_menu(|ui| {
                     self.selected = Some(path.clone());
-                    ui.menu_button("Connect", |ui| {
-                        if ui.button("Object Explorer").clicked() {
+                    ui.menu_button(tr("Connect"), |ui| {
+                        if ui.button(tr("Object Explorer")).clicked() {
                             actions.push(Action::ConnectExplorer(server.settings.clone()));
                             ui.close();
                         }
-                        if ui.button("New Query").clicked() {
+                        if ui.button(tr("New Query")).clicked() {
                             actions.push(Action::NewQuery(server.settings.clone()));
                             ui.close();
                         }
                     });
                     ui.separator();
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         *menu = Some(Menu::Delete(path.clone()));
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Properties").clicked() {
+                    if ui.button(tr("Properties")).clicked() {
                         *menu = Some(Menu::Edit(path.clone()));
                         ui.close();
                     }
@@ -896,9 +941,10 @@ impl RegisteredPanel {
                     let dialog = self.server_dialog.take().expect("dialog is open");
                     match dialog.apply(&mut self.servers) {
                         Ok(path) => {
-                            status = Some(format!(
-                                "Registered server \"{}\" saved.",
-                                self.servers
+                            status = Some(trf!(
+                                "Registered server \"{name}\" saved.",
+                                name = self
+                                    .servers
                                     .server(&path)
                                     .map(|s| s.name.as_str())
                                     .unwrap_or("")
@@ -935,8 +981,10 @@ impl RegisteredPanel {
                     };
                     match result {
                         Ok(path) => {
-                            status =
-                                Some(format!("Server group \"{}\" saved.", dialog.name.trim()));
+                            status = Some(trf!(
+                                "Server group \"{name}\" saved.",
+                                name = dialog.name.trim()
+                            ));
                             self.selected = Some(NodePath::group(&path));
                             self.group_dialog = None;
                         }
@@ -954,25 +1002,29 @@ impl RegisteredPanel {
                 self.confirm_delete = None;
                 return status;
             };
-            let what = if path.server.is_some() {
-                "server registration"
+            let question = if path.server.is_some() {
+                trf!(
+                    "Are you sure you want to delete the server registration \"{name}\"?",
+                    name = name
+                )
             } else {
-                "server group and everything in it"
+                trf!(
+                    "Are you sure you want to delete the server group \"{name}\" and everything in it?",
+                    name = display_name(&name)
+                )
             };
             let mut answer = None;
             let modal = crate::theme::modal(egui::Id::new("registered_delete")).show(ctx, |ui| {
                 ui.set_width(360.0);
-                ui.heading("Delete");
+                ui.heading(tr("Delete"));
                 ui.add_space(4.0);
-                ui.label(format!(
-                    "Are you sure you want to delete the {what} \"{name}\"?"
-                ));
+                ui.label(question);
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("No").clicked() {
+                    if ui.button(tr("No")).clicked() {
                         answer = Some(false);
                     }
-                    if ui.button("Yes").clicked() {
+                    if ui.button(tr("Yes")).clicked() {
                         answer = Some(true);
                     }
                 });
@@ -984,7 +1036,7 @@ impl RegisteredPanel {
                 self.confirm_delete = None;
                 if yes && self.servers.remove(&path) {
                     self.selected = None;
-                    status = Some(format!("Deleted \"{name}\"."));
+                    status = Some(trf!("Deleted \"{name}\".", name = name));
                 }
             }
         }
@@ -1122,7 +1174,7 @@ impl ServerDialog {
         };
         s.set_server_name(&self.server)?;
         if s.user.is_empty() {
-            return Err("Enter a login.".into());
+            return Err(tr("Enter a login.").into());
         }
         if s.database.is_empty() {
             s.database = DEFAULT_DATABASE.into();
@@ -1171,9 +1223,9 @@ impl ServerDialog {
         }
         let mut reply = Reply::None;
         let title = if self.editing.is_some() {
-            "Edit Server Registration Properties"
+            tr("Edit Server Registration Properties")
         } else {
-            "New Server Registration"
+            tr("New Server Registration")
         };
         let modal = crate::theme::modal(egui::Id::new("registered_server")).show(ctx, |ui| {
             ui.set_width(460.0);
@@ -1183,21 +1235,21 @@ impl ServerDialog {
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
-                    let label = ui.label("Server name:");
+                    let label = ui.label(tr("Server name:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.server)
                             .desired_width(300.0)
-                            .hint_text("host or host,port"),
+                            .hint_text(tr("host or host,port")),
                     )
                     .labelled_by(label.id);
                     ui.end_row();
 
-                    let label = ui.label("Login:");
+                    let label = ui.label(tr("Login:"));
                     ui.add(egui::TextEdit::singleline(&mut self.user).desired_width(300.0))
                         .labelled_by(label.id);
                     ui.end_row();
 
-                    let label = ui.label("Password:");
+                    let label = ui.label(tr("Password:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.password)
                             .password(true)
@@ -1207,10 +1259,10 @@ impl ServerDialog {
                     ui.end_row();
 
                     ui.label("");
-                    ui.checkbox(&mut self.remember, "Remember password");
+                    ui.checkbox(&mut self.remember, tr("Remember password"));
                     ui.end_row();
 
-                    let label = ui.label("Database:");
+                    let label = ui.label(tr("Database:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.database)
                             .desired_width(300.0)
@@ -1219,7 +1271,7 @@ impl ServerDialog {
                     .labelled_by(label.id);
                     ui.end_row();
 
-                    let label = ui.label("Encryption:");
+                    let label = ui.label(tr("Encryption:"));
                     egui::ComboBox::from_id_salt("registered_ssl")
                         .selected_text(self.ssl.label())
                         .width(300.0)
@@ -1232,16 +1284,16 @@ impl ServerDialog {
                         .labelled_by(label.id);
                     ui.end_row();
 
-                    let label = ui.label("Registered server name:");
+                    let label = ui.label(tr("Registered server name:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.name)
                             .desired_width(300.0)
-                            .hint_text("same as the server name"),
+                            .hint_text(tr("same as the server name")),
                     )
                     .labelled_by(label.id);
                     ui.end_row();
 
-                    let label = ui.label("Registered server description:");
+                    let label = ui.label(tr("Registered server description:"));
                     ui.add(
                         egui::TextEdit::multiline(&mut self.description)
                             .desired_rows(2)
@@ -1256,10 +1308,10 @@ impl ServerDialog {
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     reply = Reply::Cancel;
                 }
-                if ui.button("Save").clicked() {
+                if ui.button(tr("Save")).clicked() {
                     reply = Reply::Ok;
                 }
             });
@@ -1290,9 +1342,9 @@ impl GroupDialog {
     fn show(&mut self, ctx: &egui::Context) -> Reply {
         let mut reply = Reply::None;
         let title = if self.editing {
-            "Edit Server Group Properties"
+            tr("Edit Server Group Properties")
         } else {
-            "New Server Group Properties"
+            tr("New Server Group Properties")
         };
         let modal = crate::theme::modal(egui::Id::new("registered_group")).show(ctx, |ui| {
             ui.set_width(400.0);
@@ -1302,11 +1354,11 @@ impl GroupDialog {
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
-                    let label = ui.label("Group name:");
+                    let label = ui.label(tr("Group name:"));
                     ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(260.0))
                         .labelled_by(label.id);
                     ui.end_row();
-                    let label = ui.label("Group description:");
+                    let label = ui.label(tr("Group description:"));
                     ui.add(
                         egui::TextEdit::multiline(&mut self.description)
                             .desired_rows(2)
@@ -1321,10 +1373,10 @@ impl GroupDialog {
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     reply = Reply::Cancel;
                 }
-                if ui.button("OK").clicked() {
+                if ui.button(tr("OK")).clicked() {
                     reply = Reply::Ok;
                 }
             });

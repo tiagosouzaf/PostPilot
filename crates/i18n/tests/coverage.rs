@@ -31,18 +31,15 @@ const PENDING: &[&str] = &[
     "crates/sql-editor/src/lib.rs",
     "crates/ui-shell/src/activity.rs",
     "crates/ui-shell/src/backup.rs",
-    "crates/ui-shell/src/connect.rs",
     "crates/ui-shell/src/designer/dialogs.rs",
     "crates/ui-shell/src/designer/mod.rs",
     "crates/ui-shell/src/diagrams.rs",
     "crates/ui-shell/src/edit_rows.rs",
     "crates/ui-shell/src/properties.rs",
     "crates/ui-shell/src/query_designer.rs",
-    "crates/ui-shell/src/registered.rs",
     "crates/ui-shell/src/restore.rs",
     "crates/ui-shell/src/results.rs",
     "crates/ui-shell/src/schema_compare.rs",
-    "crates/ui-shell/src/servers.rs",
 ];
 
 /// Pastas com código da interface.

@@ -667,3 +667,218 @@ msgstr "Permitir o Claude Code (MCP)"
 
 msgid "Check for Updates…"
 msgstr "Verificar se Há Atualizações…"
+
+# Conexão e Servidores Registrados
+
+msgid "\"{port}\" is not a valid port."
+msgstr "\"{port}\" não é uma porta válida."
+
+msgid "A group cannot be moved into itself."
+msgstr "Um grupo não pode ser movido para dentro dele mesmo."
+
+msgid "A group named \"{name}\" already exists in this group."
+msgstr "Já existe um grupo chamado \"{name}\" neste grupo."
+
+msgid "A server named \"{name}\" already exists in this group."
+msgstr "Já existe um servidor chamado \"{name}\" neste grupo."
+
+msgid "Are you sure you want to delete the server group \"{name}\" and everything in it?"
+msgstr "Tem certeza de que deseja excluir o grupo de servidores \"{name}\" e tudo o que há nele?"
+
+msgid "Are you sure you want to delete the server registration \"{name}\"?"
+msgstr "Tem certeza de que deseja excluir o registro de servidor \"{name}\"?"
+
+msgid "Authentication:"
+msgstr "Autenticação:"
+
+msgid "Connect to Server"
+msgstr "Conectar ao Servidor"
+
+msgid "Connecting to {server}…"
+msgstr "Conectando a {server}…"
+
+msgid "Could not read {path}: {error}"
+msgstr "Não foi possível ler {path}: {error}"
+
+msgid "Could not write {path}: {error}"
+msgstr "Não foi possível gravar {path}: {error}"
+
+msgid "Database Engine"
+msgstr "Mecanismo de Banco de Dados"
+
+msgid "Database:"
+msgstr "Banco de dados:"
+
+msgid "Deleted \"{name}\"."
+msgstr "\"{name}\" excluído."
+
+msgid "Edit Server Group Properties"
+msgstr "Editar Propriedades do Grupo de Servidores"
+
+msgid "Edit Server Registration Properties"
+msgstr "Editar Propriedades do Registro de Servidor"
+
+msgid "Encryption:"
+msgstr "Criptografia:"
+
+msgid "Enter a group name."
+msgstr "Digite um nome de grupo."
+
+msgid "Enter a login."
+msgstr "Digite um logon."
+
+msgid "Enter a server name."
+msgstr "Digite um nome de servidor."
+
+msgid "Export..."
+msgstr "Exportar..."
+
+msgid "Exported registered servers to {path} (passwords are not exported)."
+msgstr "Servidores registrados exportados para {path} (as senhas não são exportadas)."
+
+msgid "Group description:"
+msgstr "Descrição do grupo:"
+
+msgid "Group name:"
+msgstr "Nome do grupo:"
+
+msgid "Import..."
+msgstr "Importar..."
+
+msgid "Imported 1 registered server."
+msgstr "1 servidor registrado importado."
+
+msgid "Imported {n} registered servers."
+msgstr "{n} servidores registrados importados."
+
+msgid "Login:"
+msgstr "Logon:"
+
+msgid "Looking for the saved password…"
+msgstr "Procurando a senha salva…"
+
+msgid "Missing \"]\" after the IPv6 address."
+msgstr "Falta \"]\" depois do endereço IPv6."
+
+msgid "Moved \"{name}\" to \"{group}\"."
+msgstr "\"{name}\" movido para \"{group}\"."
+
+msgid "New Server Group Properties"
+msgstr "Propriedades do Novo Grupo de Servidores"
+
+msgid "New Server Group..."
+msgstr "Novo Grupo de Servidores..."
+
+msgid "New Server Registration"
+msgstr "Novo Registro de Servidor"
+
+msgid "New Server Registration..."
+msgstr "Novo Registro de Servidor..."
+
+msgid "No registered servers. Right-click \"{group}\" and choose \"New Server Registration...\"."
+msgstr "Nenhum servidor registrado. Clique com o botão direito em \"{group}\" e escolha \"Novo Registro de Servidor...\"."
+
+msgid "No system keyring."
+msgstr "Sem cofre de senhas do sistema."
+
+msgid "Not a server."
+msgstr "Não é um servidor."
+
+msgid "Only a real connection can be registered."
+msgstr "Só uma conexão real pode ser registrada."
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Password:"
+msgstr "Senha:"
+
+msgid "PostgreSQL"
+msgstr "PostgreSQL"
+
+msgid "Recent servers"
+msgstr "Servidores recentes"
+
+msgid "Registered server \"{name}\" saved."
+msgstr "Servidor registrado \"{name}\" salvo."
+
+msgid "Registered server description:"
+msgstr "Descrição do servidor registrado:"
+
+msgid "Registered server name:"
+msgstr "Nome do servidor registrado:"
+
+msgid "Registered servers need a real connection."
+msgstr "Servidores registrados precisam de uma conexão real."
+
+msgid "Remember password"
+msgstr "Lembrar senha"
+
+msgid "Server group \"{name}\" saved."
+msgstr "Grupo de servidores \"{name}\" salvo."
+
+msgid "Server name:"
+msgstr "Nome do servidor:"
+
+msgid "Server type:"
+msgstr "Tipo de servidor:"
+
+msgid "Tasks"
+msgstr "Tarefas"
+
+msgid "The connection attempt stopped unexpectedly."
+msgstr "A tentativa de conexão parou inesperadamente."
+
+msgid "The group no longer exists."
+msgstr "O grupo não existe mais."
+
+msgid "The root group cannot be moved."
+msgstr "O grupo raiz não pode ser movido."
+
+msgid "The root group cannot be renamed."
+msgstr "O grupo raiz não pode ser renomeado."
+
+msgid "The server no longer exists."
+msgstr "O servidor não existe mais."
+
+msgid "The system keyring failed: {error}"
+msgstr "O cofre de senhas do sistema falhou: {error}"
+
+msgid "The system keyring is not available: {error}"
+msgstr "O cofre de senhas do sistema não está disponível: {error}"
+
+msgid "The target group no longer exists."
+msgstr "O grupo de destino não existe mais."
+
+msgid "Unexpected \"{after}\" after the address."
+msgstr "\"{after}\" inesperado depois do endereço."
+
+msgid "Wait for the current connection attempt."
+msgstr "Aguarde a tentativa de conexão atual."
+
+msgid "host or host,port"
+msgstr "host ou host,porta"
+
+msgid "same as the server name"
+msgstr "igual ao nome do servidor"
+
+msgid "{path} has an unsupported version ({version})."
+msgstr "{path} tem uma versão sem suporte ({version})."
+
+msgid "{path} is not a registered servers file: {error}"
+msgstr "{path} não é um arquivo de servidores registrados: {error}"
+
+msgid "Local Server Groups"
+msgstr "Grupos de Servidores Locais"
+
+msgid "Disable"
+msgstr "Desabilitar"
+
+msgid "Prefer"
+msgstr "Preferir"
+
+msgid "Require"
+msgstr "Exigir"
+
+msgid "Verify full"
+msgstr "Verificação completa"

@@ -10,6 +10,7 @@
 
 use eframe::egui;
 use pgstudio_core::connection::{Connected, ConnectionSettings};
+use pgstudio_i18n::{tr, trf};
 use pgstudio_object_explorer::{Event, ObjectExplorer};
 
 use crate::intellisense::Catalogs;
@@ -234,7 +235,7 @@ impl ShellApp {
     /// `new_query`, abre uma janela de consulta ao conectar.
     pub fn connect_registered(&mut self, settings: &crate::ConnectionSettings, new_query: bool) {
         if self.connector.is_none() {
-            self.status = "Registered servers need a real connection.".to_string();
+            self.status = tr("Registered servers need a real connection.").to_string();
             return;
         }
         let key = server_key(settings);
@@ -254,7 +255,7 @@ impl ShellApp {
             .as_ref()
             .is_some_and(ConnectDialog::is_connecting)
         {
-            self.status = "Wait for the current connection attempt.".to_string();
+            self.status = tr("Wait for the current connection attempt.").to_string();
             return;
         }
         self.connect_dialog = Some(
@@ -270,7 +271,7 @@ impl ShellApp {
     /// conexão do servidor ativo (a árvore que recebeu o clique).
     pub fn register_active_server(&mut self) {
         let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
-            self.status = "Only a real connection can be registered.".to_string();
+            self.status = tr("Only a real connection can be registered.").to_string();
             return;
         };
         self.workspace.open(Panel::RegisteredServers);
@@ -283,8 +284,8 @@ impl ShellApp {
             return;
         };
         self.status = match self.registered.servers_mut().import(group, &path) {
-            Ok(1) => "Imported 1 registered server.".to_string(),
-            Ok(n) => format!("Imported {n} registered servers."),
+            Ok(1) => tr("Imported 1 registered server.").to_string(),
+            Ok(n) => trf!("Imported {n} registered servers.", n = n),
             Err(e) => e,
         };
     }
@@ -295,9 +296,9 @@ impl ShellApp {
             return;
         };
         self.status = match self.registered.servers().export(group, &path) {
-            Ok(()) => format!(
-                "Exported registered servers to {} (passwords are not exported).",
-                path.display()
+            Ok(()) => trf!(
+                "Exported registered servers to {path} (passwords are not exported).",
+                path = path.display()
             ),
             Err(e) => e,
         };
