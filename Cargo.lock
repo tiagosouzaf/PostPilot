@@ -2694,6 +2694,7 @@ dependencies = [
  "pgstudio-docking",
  "pgstudio-execution-plan",
  "pgstudio-object-explorer",
+ "pgstudio-pg-client",
  "pgstudio-result-grid",
  "pgstudio-sql-editor",
  "serde",

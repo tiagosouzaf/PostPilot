@@ -75,6 +75,7 @@ commands! {
     TemplateExplorer => "View.TemplateExplorer", "Template Explorer";
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";
+    ActivityMonitor => "View.ActivityMonitor", "Activity Monitor";
     ThemeLight => "View.ThemeLight", "Light";
     ThemeDark => "View.ThemeDark", "Dark";
     FullScreen => "View.FullScreen", "Full Screen";

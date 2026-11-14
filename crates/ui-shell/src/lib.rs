@@ -5,6 +5,7 @@
 //! [`CommandId`] e passam por [`ShellApp::execute`]. A área central tem o
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
+pub mod activity;
 pub mod bench;
 pub mod connect;
 pub mod designer;
@@ -65,6 +66,8 @@ pub struct ShellApp {
     diagrams: diagrams::Diagrams,
     /// Novos diagramas já com todas as tabelas (screenshots).
     diagram_all_tables: bool,
+    /// Activity Monitor aberto.
+    activity: Option<activity::ActivityMonitor>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
@@ -179,6 +182,7 @@ impl Default for ShellApp {
             designers: Default::default(),
             diagrams: Default::default(),
             diagram_all_tables: false,
+            activity: None,
             query_designer: None,
             design_query_on_open: false,
             query_on_open: None,
@@ -389,7 +393,10 @@ impl ShellApp {
             docking: self.workspace.layout(|p| {
                 !matches!(
                     p,
-                    Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_)
+                    Panel::Query(_)
+                        | Panel::TableDesigner(_)
+                        | Panel::Diagram(_)
+                        | Panel::ActivityMonitor
                 )
             }),
         }
@@ -940,6 +947,7 @@ impl ShellApp {
                 | ResultsToText
                 | ResultsToGrid
                 | DesignQuery
+                | ActivityMonitor
         )
     }
 
@@ -983,6 +991,7 @@ impl ShellApp {
             CommandId::About => self.about_open = true,
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
+            CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
@@ -1009,7 +1018,10 @@ impl ShellApp {
                     Some(p)
                         if !matches!(
                             p,
-                            Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_)
+                            Panel::Query(_)
+                                | Panel::TableDesigner(_)
+                                | Panel::Diagram(_)
+                                | Panel::ActivityMonitor
                         ) =>
                     {
                         self.workspace.auto_hide(&p);
@@ -1417,6 +1429,10 @@ impl ShellApp {
                 }
                 return;
             }
+            Event::ActivityMonitor(_) => {
+                self.open_activity_monitor(ctx);
+                return;
+            }
             Event::NewDiagram(node) => {
                 match provider.database_of(&node) {
                     Some(db) => {
@@ -1698,6 +1714,7 @@ impl ShellApp {
         let mut commands = if self.confirm.is_some()
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
+            || self.activity.as_ref().is_some_and(|a| a.is_confirming())
         {
             Vec::new()
         } else {
@@ -1751,6 +1768,7 @@ impl ShellApp {
                     documents: &mut self.documents,
                     designers: &mut self.designers,
                     diagrams: &mut self.diagrams,
+                    activity: &mut self.activity,
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
                     explorer_events: Vec::new(),
@@ -1775,6 +1793,7 @@ impl ShellApp {
         self.sync_documents();
         self.designer_step();
         self.diagram_step();
+        self.activity_step(&ctx);
         self.query_designer_step(&ctx);
         if self.diagrams.is_loading() {
             // Um diagrama aberto de arquivo não tem quem acorde a janela
@@ -1940,6 +1959,50 @@ impl ShellApp {
     pub fn with_diagram_all_tables(mut self) -> Self {
         self.diagram_all_tables = true;
         self
+    }
+
+    /// Abre (ou traz para a frente) o Activity Monitor do servidor
+    /// conectado, numa sessão própria no banco da conexão.
+    fn open_activity_monitor(&mut self, ctx: &egui::Context) {
+        if self.activity.is_none() {
+            let Some(c) = &self.connection else {
+                self.status = "Connect to a server to open the Activity Monitor.".to_string();
+                if !self.explorer.is_connected() {
+                    self.open_connect_dialog();
+                }
+                return;
+            };
+            let session = c.queries.open(&c.settings.database);
+            let mut monitor = activity::ActivityMonitor::new(session, c.settings.server_name());
+            monitor.refresh(ctx);
+            self.activity = Some(monitor);
+            self.output.push(format!(
+                "Activity Monitor: monitoring {}.",
+                c.settings.server_name()
+            ));
+        }
+        self.workspace.open(Panel::ActivityMonitor);
+    }
+
+    /// Activity Monitor aberto, para testes.
+    pub fn activity_monitor(&self) -> Option<&activity::ActivityMonitor> {
+        self.activity.as_ref()
+    }
+
+    /// Activity Monitor aberto, mutável (testes).
+    pub fn activity_monitor_mut(&mut self) -> Option<&mut activity::ActivityMonitor> {
+        self.activity.as_mut()
+    }
+
+    /// Atualiza o Activity Monitor; fechado o painel, ele some.
+    fn activity_step(&mut self, ctx: &egui::Context) {
+        if self.activity.is_some() && !self.workspace.is_open(&Panel::ActivityMonitor) {
+            self.activity = None;
+        }
+        if let Some(a) = &mut self.activity {
+            let log = a.step(ctx);
+            self.output.extend(log);
+        }
     }
 
     /// Recebe os modelos e gravações dos diagramas, leva o log ao Output,

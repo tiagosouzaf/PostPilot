@@ -277,6 +277,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::TemplateExplorer, "Ctrl+Alt+T"),
     (CommandId::PropertiesWindow, "F4"),
     (CommandId::Output, "Ctrl+Alt+O"),
+    (CommandId::ActivityMonitor, "Ctrl+Alt+A"),
     (CommandId::FullScreen, "Shift+Alt+Enter"),
     (CommandId::Execute, "F5"),
     (CommandId::Execute, "Ctrl+E"),

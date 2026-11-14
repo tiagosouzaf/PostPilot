@@ -53,6 +53,8 @@ pub enum Event {
     /// "New Database Diagram" na pasta Database Diagrams: escolhe as
     /// tabelas e abre o diagrama delas.
     NewDiagram(NodeId),
+    /// "Activity Monitor" no servidor.
+    ActivityMonitor(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -383,6 +385,13 @@ impl ObjectExplorer {
                                     if node.kind == NodeKind::Folder(Folder::Diagrams) {
                                         if ui.button("New Database Diagram").clicked() {
                                             events.push(Event::NewDiagram(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
+                                    if node.kind == NodeKind::Server {
+                                        if ui.button("Activity Monitor").clicked() {
+                                            events.push(Event::ActivityMonitor(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();

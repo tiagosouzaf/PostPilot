@@ -21,6 +21,8 @@ pub enum Panel {
     TableDesigner(u32),
     /// Database Diagram, pelo número dele.
     Diagram(u32),
+    /// Activity Monitor (um só, do servidor conectado).
+    ActivityMonitor,
 }
 
 impl Panel {
@@ -33,6 +35,7 @@ impl Panel {
             Panel::Query(_) => "Query",
             Panel::TableDesigner(_) => "Table Designer",
             Panel::Diagram(_) => "Database Diagram",
+            Panel::ActivityMonitor => "Activity Monitor",
         }
     }
 }
@@ -43,7 +46,10 @@ impl Pane for Panel {
             Panel::ObjectExplorer => Area::Left,
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
-            Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_) => Area::Document,
+            Panel::Query(_)
+            | Panel::TableDesigner(_)
+            | Panel::Diagram(_)
+            | Panel::ActivityMonitor => Area::Document,
         }
     }
 }
@@ -70,6 +76,8 @@ pub struct Viewer<'a> {
     pub designers: &'a mut crate::designer::Designers,
     /// Database Diagrams.
     pub diagrams: &'a mut crate::diagrams::Diagrams,
+    /// Activity Monitor, se aberto.
+    pub activity: &'a mut Option<crate::activity::ActivityMonitor>,
     /// Documento cujo editor deve receber o foco neste frame.
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
@@ -106,6 +114,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .get(*id)
                 .map(|d| d.title())
                 .unwrap_or_default(),
+            Panel::ActivityMonitor => self
+                .activity
+                .as_ref()
+                .map(|a| a.title())
+                .unwrap_or_else(|| pane.title().to_string()),
             _ => pane.title().to_string(),
         }
     }
@@ -124,6 +137,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .diagrams
                 .get_mut(*id)
                 .is_none_or(crate::diagrams::DiagramView::request_close),
+            Panel::ActivityMonitor => {
+                *self.activity = None;
+                true
+            }
             _ => true,
         }
     }
@@ -225,6 +242,12 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     d.show(ui, *id);
                 }
             }
+            Panel::ActivityMonitor => match self.activity {
+                Some(a) => a.show(ui),
+                None => {
+                    ui.weak("Connect to a server to monitor its activity.");
+                }
+            },
             Panel::Output => {
                 ui.horizontal(|ui| {
                     ui.label("Show output from:");
