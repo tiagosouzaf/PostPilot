@@ -45,6 +45,7 @@ commands! {
     OpenFile => "File.OpenFile", "File…";
     NewWorkspace => "File.NewWorkspace", "Workspace…";
     OpenWorkspace => "File.OpenWorkspace", "Workspace…";
+    CloneWorkspace => "File.CloneWorkspace", "Clone Workspace…";
     CloseWorkspace => "File.CloseWorkspace", "Close Workspace";
     CloseDocument => "File.Close", "Close";
     Save => "File.Save", "Save";

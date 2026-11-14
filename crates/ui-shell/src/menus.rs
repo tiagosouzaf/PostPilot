@@ -44,7 +44,7 @@ pub const MENUS: &[Menu] = &[
                 "New",
                 &[I(NewQuery), I(NewDatabaseEngineQuery), SEP, I(NewWorkspace)],
             ),
-            sub("Open", &[I(OpenFile), I(OpenWorkspace)]),
+            sub("Open", &[I(OpenFile), I(OpenWorkspace), I(CloneWorkspace)]),
             SEP,
             I(CloseDocument),
             I(CloseWorkspace),

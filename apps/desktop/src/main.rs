@@ -59,7 +59,7 @@
 //!   abre a janela (para screenshots).
 //! - `PGSTUDIO_WORKSPACE=pasta`: abre este workspace (veja
 //!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
-//!   lembrado em `<config>/PGStudio/workspace.txt`.
+//!   lembrado em `<config>/PostPilot/workspace.txt`.
 //!
 //! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
 //! servidores registrados em `<config>/PostPilot/registered_servers.json`,
@@ -240,7 +240,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 && !bench
                 && let Some(dir) = config_dir()
             {
-                app = app.with_workspace_memory(dir.join("PGStudio").join("workspace.txt"));
+                app = app.with_workspace_memory(
+                    dir.join(pgstudio_core::CONFIG_DIR_NAME)
+                        .join("workspace.txt"),
+                );
             }
             if !demo {
                 match DbRuntime::new() {
