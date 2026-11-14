@@ -23,6 +23,7 @@ pub mod passwords;
 pub mod source_control;
 pub mod vault;
 
+use pgstudio_i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 
 use pgstudio_core::connection::ConnectionSettings;
@@ -69,15 +70,15 @@ impl Workspace {
     pub fn create(root: &Path, name: &str) -> Result<Workspace, String> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("The workspace needs a name.".into());
+            return Err(tr("The workspace needs a name.").into());
         }
         if root.join(MANIFEST).exists() {
-            return Err(format!(
-                "{} already has a PostPilot workspace. Use Open Workspace.",
-                root.display()
+            return Err(trf!(
+                "{folder} already has a PostPilot workspace. Use Open Workspace.",
+                folder = root.display()
             ));
         }
-        let io = |e: std::io::Error| format!("Could not create the workspace: {e}");
+        let io = |e: std::io::Error| trf!("Could not create the workspace: {e}", e = e);
         std::fs::create_dir_all(root.join(QUERIES)).map_err(io)?;
         let manifest = Manifest {
             format: FORMAT,
@@ -108,24 +109,25 @@ impl Workspace {
     pub fn open(root: &Path) -> Result<Workspace, String> {
         let text = std::fs::read_to_string(root.join(MANIFEST)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                format!(
-                    "{} is not a PostPilot workspace (no {MANIFEST}). Use New Workspace to create one.",
-                    root.display()
+                trf!(
+                    "{folder} is not a PostPilot workspace (no {file}). Use New Workspace to create one.",
+                    folder = root.display(),
+                    file = MANIFEST
                 )
             } else {
-                format!("Could not read {MANIFEST}: {e}")
+                trf!("Could not read {file}: {e}", file = MANIFEST, e = e)
             }
         })?;
-        let manifest: Manifest =
-            serde_json::from_str(&text).map_err(|e| format!("{MANIFEST} is invalid: {e}"))?;
+        let manifest: Manifest = serde_json::from_str(&text)
+            .map_err(|e| trf!("{file} is invalid: {e}", file = MANIFEST, e = e))?;
         if manifest.format > FORMAT {
-            return Err(format!(
-                "This workspace was saved by a newer PostPilot (format {}). Update PostPilot to open it.",
-                manifest.format
+            return Err(trf!(
+                "This workspace was saved by a newer PostPilot (format {format}). Update PostPilot to open it.",
+                format = manifest.format
             ));
         }
         std::fs::create_dir_all(root.join(QUERIES))
-            .map_err(|e| format!("Could not create {QUERIES}: {e}"))?;
+            .map_err(|e| trf!("Could not create {folder}: {e}", folder = QUERIES, e = e))?;
         Ok(Workspace {
             root: root.to_path_buf(),
             name: manifest.name,

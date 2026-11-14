@@ -3054,6 +3054,7 @@ name = "pgstudio-pg-metadata"
 version = "0.1.0"
 dependencies = [
  "pgstudio-core",
+ "pgstudio-i18n",
  "pgstudio-pg-client",
  "pgstudio-schema-model",
  "tokio-postgres",

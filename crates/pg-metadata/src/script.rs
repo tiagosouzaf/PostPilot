@@ -204,8 +204,9 @@ mod sql {
 }
 
 fn not_found(what: &str) -> MetadataError {
-    MetadataError(format!(
-        "The {what} no longer exists. Refresh the Object Explorer."
+    MetadataError(pgstudio_i18n::trf!(
+        "The {what} no longer exists. Refresh the Object Explorer.",
+        what = pgstudio_i18n::tr(what)
     ))
 }
 
@@ -224,7 +225,9 @@ impl CatalogExplorer {
     }
 
     fn quote(&self, db: &str, name: &str) -> Result<String, MetadataError> {
-        Ok(self.one(db, sql::QUOTE, &[&name], "object")?.get(0))
+        Ok(self
+            .one(db, sql::QUOTE, &[&name], pgstudio_i18n::tr_noop("object"))?
+            .get(0))
     }
 
     pub(crate) fn script_for(
@@ -232,12 +235,13 @@ impl CatalogExplorer {
         node: &NodeId,
         action: ScriptAction,
     ) -> Result<String, MetadataError> {
-        let object = object(node)
-            .ok_or_else(|| MetadataError("This object cannot be scripted.".to_string()))?;
+        let object = object(node).ok_or_else(|| {
+            MetadataError(pgstudio_i18n::tr("This object cannot be scripted.").to_string())
+        })?;
         match (object, action) {
             (Object::Relation(db, oid), ScriptAction::SelectTop(n)) => self.select_top(&db, oid, n),
             (_, ScriptAction::SelectTop(_)) => Err(MetadataError(
-                "Only tables and views have rows to select.".to_string(),
+                pgstudio_i18n::tr("Only tables and views have rows to select.").to_string(),
             )),
             (Object::Database(db), action) => {
                 let home = self.settings.database.clone();
@@ -245,8 +249,14 @@ impl CatalogExplorer {
                 Ok(match action {
                     ScriptAction::Drop => format!("DROP DATABASE {name};\n"),
                     _ => {
-                        let enc: String =
-                            self.one(&home, sql::DATABASE, &[&db], "database")?.get(0);
+                        let enc: String = self
+                            .one(
+                                &home,
+                                sql::DATABASE,
+                                &[&db],
+                                pgstudio_i18n::tr_noop("database"),
+                            )?
+                            .get(0);
                         format!("CREATE DATABASE {name}\n    WITH ENCODING '{enc}';\n")
                     }
                 })
@@ -260,7 +270,12 @@ impl CatalogExplorer {
             }
             (Object::Relation(db, oid), action) => self.relation(&db, oid, action),
             (Object::Function(db, oid), action) => {
-                let r = self.one(&db, sql::FUNCTION, &[&oid], "function")?;
+                let r = self.one(
+                    &db,
+                    sql::FUNCTION,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("function"),
+                )?;
                 let (name, args, kind, def): (String, String, String, String) =
                     (r.get(0), r.get(1), r.get(2), r.get(3));
                 let what = if kind == "p" { "PROCEDURE" } else { "FUNCTION" };
@@ -270,7 +285,12 @@ impl CatalogExplorer {
                 })
             }
             (Object::Sequence(db, oid), action) => {
-                let r = self.one(&db, sql::SEQUENCE, &[&oid], "sequence")?;
+                let r = self.one(
+                    &db,
+                    sql::SEQUENCE,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("sequence"),
+                )?;
                 let name: String = r.get(0);
                 Ok(match action {
                     ScriptAction::Drop => format!("DROP SEQUENCE {name};\n"),
@@ -302,7 +322,7 @@ impl CatalogExplorer {
                 })
             }
             (Object::Index(db, oid), action) => {
-                let r = self.one(&db, sql::INDEX, &[&oid], "index")?;
+                let r = self.one(&db, sql::INDEX, &[&oid], pgstudio_i18n::tr_noop("index"))?;
                 let (name, def): (String, String) = (r.get(0), r.get(1));
                 Ok(match action {
                     ScriptAction::Drop => format!("DROP INDEX {name};\n"),
@@ -310,7 +330,12 @@ impl CatalogExplorer {
                 })
             }
             (Object::Constraint(db, oid), action) => {
-                let r = self.one(&db, sql::CONSTRAINT, &[&oid], "constraint")?;
+                let r = self.one(
+                    &db,
+                    sql::CONSTRAINT,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("constraint"),
+                )?;
                 let (table, name, def): (String, String, String) = (r.get(0), r.get(1), r.get(2));
                 Ok(match action {
                     ScriptAction::Drop => {
@@ -320,7 +345,12 @@ impl CatalogExplorer {
                 })
             }
             (Object::Trigger(db, oid), action) => {
-                let r = self.one(&db, sql::TRIGGER, &[&oid], "trigger")?;
+                let r = self.one(
+                    &db,
+                    sql::TRIGGER,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("trigger"),
+                )?;
                 let (name, table, def, enabled): (String, String, String, String) =
                     (r.get(0), r.get(1), r.get(2), r.get(3));
                 Ok(match action {
@@ -338,7 +368,12 @@ impl CatalogExplorer {
             }
             (Object::Type(db, oid), action) => self.type_script(&db, oid, action),
             (Object::Extension(db, oid), action) => {
-                let r = self.one(&db, sql::EXTENSION, &[&oid], "extension")?;
+                let r = self.one(
+                    &db,
+                    sql::EXTENSION,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("extension"),
+                )?;
                 let (name, schema, version): (String, String, String) =
                     (r.get(0), r.get(1), r.get(2));
                 Ok(match action {
@@ -358,7 +393,7 @@ impl CatalogExplorer {
         oid: u32,
         action: ScriptAction,
     ) -> Result<String, MetadataError> {
-        let r = self.one(db, sql::TYPE, &[&oid], "type")?;
+        let r = self.one(db, sql::TYPE, &[&oid], pgstudio_i18n::tr_noop("type"))?;
         let (name, kind, relid): (String, String, u32) = (r.get(0), r.get(1), r.get(2));
         if action == ScriptAction::Drop {
             let what = if kind == "d" { "DOMAIN" } else { "TYPE" };
@@ -417,7 +452,7 @@ impl CatalogExplorer {
                 )
             }
             "r" => {
-                let r = self.one(db, sql::RANGE, &[&oid], "type")?;
+                let r = self.one(db, sql::RANGE, &[&oid], pgstudio_i18n::tr_noop("type"))?;
                 let (subtype, diff): (String, Option<String>) = (r.get(0), r.get(1));
                 let mut out = format!("CREATE TYPE {name} AS RANGE (\n    SUBTYPE = {subtype}");
                 if let Some(diff) = diff {
@@ -428,14 +463,14 @@ impl CatalogExplorer {
             }
             _ => {
                 return Err(MetadataError(
-                    "Scripting this kind of type is not supported.".to_string(),
+                    pgstudio_i18n::tr("Scripting this kind of type is not supported.").to_string(),
                 ));
             }
         })
     }
 
     fn select_top(&self, db: &str, oid: u32, n: u32) -> Result<String, MetadataError> {
-        let r = self.one(db, sql::RELATION, &[&oid], "table")?;
+        let r = self.one(db, sql::RELATION, &[&oid], pgstudio_i18n::tr_noop("table"))?;
         let name: String = r.get(0);
         let cols: Vec<String> = self
             .query(db, sql::SELECT_COLUMNS, &[&oid])?
@@ -451,7 +486,7 @@ impl CatalogExplorer {
     }
 
     fn relation(&self, db: &str, oid: u32, action: ScriptAction) -> Result<String, MetadataError> {
-        let r = self.one(db, sql::RELATION, &[&oid], "table")?;
+        let r = self.one(db, sql::RELATION, &[&oid], pgstudio_i18n::tr_noop("table"))?;
         let (name, kind, persistence): (String, String, String) = (r.get(0), r.get(1), r.get(2));
         let what = match kind.as_str() {
             "v" => "VIEW",
@@ -464,7 +499,9 @@ impl CatalogExplorer {
         }
         match kind.as_str() {
             "v" | "m" => {
-                let def: String = self.one(db, sql::VIEW, &[&oid], "view")?.get(0);
+                let def: String = self
+                    .one(db, sql::VIEW, &[&oid], pgstudio_i18n::tr_noop("view"))?
+                    .get(0);
                 let def = def.trim_end().trim_end_matches(';');
                 Ok(if kind == "v" {
                     format!("CREATE VIEW {name} AS\n{def};\n")
@@ -474,7 +511,7 @@ impl CatalogExplorer {
             }
             "r" | "p" => self.create_table(db, oid, &name, &kind, &persistence),
             _ => Err(MetadataError(
-                "Scripting foreign tables is not supported yet.".to_string(),
+                pgstudio_i18n::tr("Scripting foreign tables is not supported yet.").to_string(),
             )),
         }
     }
@@ -533,7 +570,14 @@ impl CatalogExplorer {
             lines.join(",\n    ")
         );
         if kind == "p" {
-            let key: String = self.one(db, sql::PARTITION_KEY, &[&oid], "table")?.get(0);
+            let key: String = self
+                .one(
+                    db,
+                    sql::PARTITION_KEY,
+                    &[&oid],
+                    pgstudio_i18n::tr_noop("table"),
+                )?
+                .get(0);
             out.push_str(&format!(" PARTITION BY {key}"));
         }
         out.push_str(";\n");
