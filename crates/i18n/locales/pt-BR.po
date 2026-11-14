@@ -1187,9 +1187,6 @@ msgstr "Pode fazer logon (LOGIN)"
 msgid "Compare Schema..."
 msgstr "Comparar Esquema..."
 
-msgid "Confirm password:"
-msgstr "Confirmar senha:"
-
 msgid "Connection limit:"
 msgstr "Limite de conexões:"
 
