@@ -78,8 +78,13 @@ const DEB_DEPENDS: &[&str] = &[
     "libvulkan1 | libegl1",
 ];
 /// Drivers de vídeo (Vulkan ou OpenGL ES do Mesa) e o portal dos diálogos de
-/// arquivo. Um desktop já tem; um container mínimo, não.
-const DEB_RECOMMENDS: &[&str] = &["mesa-vulkan-drivers | libegl-mesa0", "xdg-desktop-portal"];
+/// arquivo, com um backend que tenha o seletor de arquivos (o `-wlr` do sway
+/// e o do Hyprland não têm). Um desktop já tem; um container mínimo, não.
+const DEB_RECOMMENDS: &[&str] = &[
+    "mesa-vulkan-drivers | libegl-mesa0",
+    "xdg-desktop-portal",
+    "xdg-desktop-portal-gtk | xdg-desktop-portal-gnome | xdg-desktop-portal-kde",
+];
 
 /// As mesmas dependências, com os nomes do Arch (e do `PKGBUILD`).
 const ARCH_DEPENDS: &[&str] = &[
@@ -99,6 +104,7 @@ const ARCH_DEPENDS: &[&str] = &[
 const ARCH_OPTDEPENDS: &[&str] = &[
     "vulkan-driver: renderização por Vulkan (sem ele, usa OpenGL ES)",
     "xdg-desktop-portal: diálogos de abrir e salvar arquivo",
+    "xdg-desktop-portal-gtk: seletor de arquivos no Hyprland e no sway (os portais deles não têm)",
 ];
 /// Revisão do pacote Arch (o `pkgrel`).
 const ARCH_PKGREL: u32 = 1;
