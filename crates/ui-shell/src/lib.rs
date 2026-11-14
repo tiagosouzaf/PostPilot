@@ -164,7 +164,8 @@ struct PendingScript {
     database: Option<String>,
     /// Executar ao abrir (Select Top, Edit Top).
     run: bool,
-    /// Edit Top: avisa que a grade ainda não edita.
+    /// Edit Top numa view ou view materializada: avisa que só tabelas
+    /// editam na grade e que as linhas ficam só leitura.
     read_only: bool,
 }
 
