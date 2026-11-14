@@ -1,4 +1,4 @@
-//! Põe o ícone e a versão no `pgstudio.exe` quando o alvo é Windows com o
+//! Põe o ícone e a versão no `postpilot.exe` quando o alvo é Windows com o
 //! toolchain GNU (a compilação cruzada de `cargo xtask dist`).
 //!
 //! Usa o `windres` do MinGW (`x86_64-w64-mingw32-windres`, ou o da variável
@@ -21,7 +21,7 @@ fn main() {
         return;
     }
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let icon = manifest.join("../../packaging/icons/pgstudio.ico");
+    let icon = manifest.join("../../packaging/icons/postpilot.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
@@ -47,12 +47,12 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "CompanyName", "PGStudio"
-      VALUE "FileDescription", "PGStudio"
+      VALUE "CompanyName", "PostPilot"
+      VALUE "FileDescription", "PostPilot"
       VALUE "FileVersion", "{version}"
-      VALUE "InternalName", "pgstudio"
-      VALUE "OriginalFilename", "pgstudio.exe"
-      VALUE "ProductName", "PGStudio"
+      VALUE "InternalName", "postpilot"
+      VALUE "OriginalFilename", "postpilot.exe"
+      VALUE "ProductName", "PostPilot"
       VALUE "ProductVersion", "{version}"
     END
   END
@@ -63,8 +63,8 @@ BEGIN
 END
 "#
     );
-    let rc_path = out.join("pgstudio.rc");
-    std::fs::write(&rc_path, rc).expect("escrever pgstudio.rc");
+    let rc_path = out.join("postpilot.rc");
+    std::fs::write(&rc_path, rc).expect("escrever postpilot.rc");
     let obj = out.join("pgstudio-res.o");
     let windres = std::env::var("WINDRES").ok().map_or_else(
         || {

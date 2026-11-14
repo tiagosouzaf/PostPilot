@@ -5,6 +5,7 @@
 use eframe::egui;
 use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
+use pgstudio_i18n::tr;
 use pgstudio_object_explorer::{Event, ObjectExplorer, Properties};
 
 use crate::documents::Documents;
@@ -27,11 +28,18 @@ pub enum Panel {
     EditRows(u32),
     /// Registered Servers (Ctrl+Alt+G).
     RegisteredServers,
+    /// Workspace Explorer (Ctrl+Alt+L), como o Solution Explorer.
+    WorkspaceExplorer,
 }
 
 impl Panel {
-    /// Texto da aba, como no SSMS.
+    /// Texto da aba, como no SSMS, no idioma da interface.
     pub fn title(self) -> &'static str {
+        tr(self.english_title())
+    }
+
+    /// Texto da aba em inglês (a chave da tradução).
+    pub fn english_title(self) -> &'static str {
         match self {
             Panel::ObjectExplorer => "Object Explorer",
             Panel::Properties => "Properties",
@@ -42,6 +50,7 @@ impl Panel {
             Panel::ActivityMonitor => "Activity Monitor",
             Panel::EditRows(_) => "Edit Rows",
             Panel::RegisteredServers => "Registered Servers",
+            Panel::WorkspaceExplorer => "Workspace Explorer",
         }
     }
 }
@@ -49,7 +58,9 @@ impl Panel {
 impl Pane for Panel {
     fn area(&self) -> Area {
         match self {
-            Panel::ObjectExplorer | Panel::RegisteredServers => Area::Left,
+            Panel::ObjectExplorer | Panel::RegisteredServers | Panel::WorkspaceExplorer => {
+                Area::Left
+            }
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
@@ -118,6 +129,10 @@ pub struct Viewer<'a> {
     pub activate_server: Option<usize>,
     /// Pedidos de conexão da janela Registered Servers.
     pub registered_actions: Vec<crate::registered::Action>,
+    /// Workspace Explorer.
+    pub workspace_panel: &'a mut crate::repo::panel::WorkspacePanel,
+    /// Pedidos do Workspace Explorer.
+    pub workspace_actions: Vec<crate::repo::panel::Action>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -184,13 +199,14 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 ui.horizontal(|ui| {
                     let connected = self.explorer.is_connected();
                     let connect = egui::Button::new(format!(
-                        "{} Connect",
-                        egui_phosphor::regular::PLUGS_CONNECTED
+                        "{} {}",
+                        egui_phosphor::regular::PLUGS_CONNECTED,
+                        tr("Connect")
                     ));
                     // Como no SSMS, dá para conectar mais servidores.
                     if ui
                         .add(connect)
-                        .on_hover_text("Connect Object Explorer")
+                        .on_hover_text(tr("Connect Object Explorer"))
                         .clicked()
                     {
                         self.commands.push(CommandId::ConnectObjectExplorer);
@@ -198,7 +214,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     let disconnect = egui::Button::new(egui_phosphor::regular::PLUGS);
                     if ui
                         .add_enabled(connected, disconnect)
-                        .on_hover_text("Disconnect")
+                        .on_hover_text(tr("Disconnect"))
                         .clicked()
                     {
                         self.commands.push(CommandId::DisconnectObjectExplorer);
@@ -213,6 +229,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let actions = self.registered.show(ui, self.secrets);
                 self.registered_actions.extend(actions);
             }
+            Panel::WorkspaceExplorer => {
+                let actions = self.workspace_panel.show(ui, self.secrets);
+                self.workspace_actions.extend(actions);
+            }
             Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
                     let props = self.explorer.properties(&node.id).cloned();
@@ -226,18 +246,18 @@ impl PaneViewer<Panel> for Viewer<'_> {
                                     ui.add(egui::Label::new(value).wrap());
                                     ui.end_row();
                                 };
-                                row(ui, "Name", &node.name);
-                                row(ui, "Type", node.kind.label());
+                                row(ui, tr("Name"), &node.name);
+                                row(ui, tr("Type"), node.kind.label());
                                 if let Some(Properties::Loaded(props)) = &props {
                                     for p in props {
                                         row(ui, &p.name, &p.value);
                                     }
                                 }
-                                row(ui, "Path", &node.id.to_string());
+                                row(ui, tr("Path"), &node.id.to_string());
                             });
                         match props {
                             Some(Properties::Loading) => {
-                                ui.weak("Loading...");
+                                ui.weak(tr("Loading..."));
                                 // A leitura não acorda a interface: olha de
                                 // novo daqui a pouco.
                                 ui.ctx()
@@ -251,7 +271,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     });
                 }
                 None => {
-                    ui.weak("No object selected.");
+                    ui.weak(tr("No object selected."));
                 }
             },
             Panel::Query(id) => {
@@ -324,15 +344,15 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::ActivityMonitor => match self.activity {
                 Some(a) => a.show(ui),
                 None => {
-                    ui.weak("Connect to a server to monitor its activity.");
+                    ui.weak(tr("Connect to a server to monitor its activity."));
                 }
             },
             Panel::Output => {
                 ui.horizontal(|ui| {
-                    ui.label("Show output from:");
+                    ui.label(tr("Show output from:"));
                     ui.add_enabled_ui(false, |ui| {
                         egui::ComboBox::from_id_salt("output_source")
-                            .selected_text("General")
+                            .selected_text(tr("General"))
                             .show_ui(ui, |_| {});
                     });
                 });

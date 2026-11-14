@@ -242,8 +242,8 @@ msgstr "Fechar Todos os Documentos"
 msgid "View Help"
 msgstr "Exibir Ajuda"
 
-msgid "About PGStudio"
-msgstr "Sobre o PGStudio"
+msgid "About PostPilot"
+msgstr "Sobre o PostPilot"
 
 # Janela principal
 
@@ -557,3 +557,58 @@ msgstr "Conexão"
 
 msgid "Results To"
 msgstr "Resultados em"
+
+# Workspace (menus)
+
+msgid "Workspace…"
+msgstr "Workspace…"
+
+msgid "Close Workspace"
+msgstr "Fechar Workspace"
+
+msgid "Workspace Explorer"
+msgstr "Gerenciador de Workspace"
+
+# Painéis
+
+msgid "Properties"
+msgstr "Propriedades"
+
+msgid "Table Designer"
+msgstr "Designer de Tabelas"
+
+msgid "Database Diagram"
+msgstr "Diagrama de Banco de Dados"
+
+msgid "Edit Rows"
+msgstr "Editar Linhas"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "Connect Object Explorer"
+msgstr "Conectar Pesquisador de Objetos"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Path"
+msgstr "Caminho"
+
+msgid "Loading..."
+msgstr "Carregando..."
+
+msgid "No object selected."
+msgstr "Nenhum objeto selecionado."
+
+msgid "Connect to a server to monitor its activity."
+msgstr "Conecte-se a um servidor para monitorar a atividade dele."
+
+msgid "Show output from:"
+msgstr "Mostrar saída de:"
+
+msgid "General"
+msgstr "Geral"

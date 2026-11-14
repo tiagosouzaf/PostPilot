@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=PGStudio
+Name=PostPilot
 GenericName=PostgreSQL Management Studio
 Comment=Administre bancos PostgreSQL como no SSMS
-Exec=pgstudio %F
-Icon=pgstudio
+Exec=postpilot %F
+Icon=postpilot
 Terminal=false
 Categories=Development;Database;
 Keywords=postgres;postgresql;sql;database;ssms;
 MimeType=application/sql;
-StartupWMClass=pgstudio
+StartupWMClass=postpilot

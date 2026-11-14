@@ -122,6 +122,12 @@ impl RegisteredServers {
         }
     }
 
+    /// Dá outro nome à raiz (a de um workspace leva o nome dele).
+    pub fn with_root_name(mut self, name: &str) -> Self {
+        self.root.name = name.into();
+        self
+    }
+
     /// Caminho do arquivo, se houver.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
@@ -400,7 +406,8 @@ impl RegisteredServers {
         }
     }
 
-    fn save(&self) -> std::io::Result<()> {
+    /// Grava o arquivo agora (as mudanças já gravam sozinhas).
+    pub fn save(&self) -> std::io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
         };
@@ -680,7 +687,10 @@ impl RegisteredPanel {
             self.group_rows(ui, &[], 0, &mut actions, &mut menu);
             if self.servers.all_servers().is_empty() && self.servers.root().groups.is_empty() {
                 ui.add_space(6.0);
-                ui.weak("No registered servers. Right-click \"Local Server Groups\" and choose \"New Server Registration...\".");
+                ui.weak(format!(
+                    "No registered servers. Right-click \"{}\" and choose \"New Server Registration...\".",
+                    self.servers.root().name
+                ));
             }
         });
         match menu {

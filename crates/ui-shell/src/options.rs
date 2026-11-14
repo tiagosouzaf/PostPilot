@@ -73,7 +73,7 @@ impl OptionsDialog {
                         ui.set_min_size(egui::vec2(200.0, 260.0));
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.set_min_size(egui::vec2(190.0, 250.0));
-                            self.tree(ui);
+                            ui.vertical(|ui| self.tree(ui));
                         });
                     });
                     ui.vertical(|ui| {

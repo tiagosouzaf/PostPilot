@@ -1,4 +1,4 @@
-//! Preferências do usuário, gravadas em `<config>/PGStudio/settings.json` e
+//! Preferências do usuário, gravadas em `<config>/PostPilot/settings.json` e
 //! editadas em Tools > Options.
 //!
 //! Para uma preferência nova: um campo em [`Preferences`] (com
