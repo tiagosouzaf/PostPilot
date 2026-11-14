@@ -2,8 +2,8 @@
 
 Números do `pgstudio` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
-vezes e mede seis cenários
-(`--scenario startup|grid|intellisense|diagram|diagram2000|designer|all`):
+vezes e mede oito cenários
+(`--scenario startup|grid|intellisense|diagram|diagram2000|designer|plan|activity|all`):
 
 - **startup, até o primeiro frame:** do início do processo até o primeiro
   frame exibido (o app avisa pela saída padrão no modo `PGSTUDIO_BENCH=1`).
@@ -39,6 +39,18 @@ vezes e mede seis cenários
   uma por frame, e gera o change script no fim. Mede o tempo até o designer
   abrir, o intervalo entre frames, a CPU de cada edição (incluindo o undo) e
   o tempo do script.
+- **plan:** com `PGSTUDIO_BENCH=plan`, o app pede o plano estimado (Ctrl+L)
+  de uma junção de duas tabelas particionadas a uma sessão sintética, que
+  devolve o `EXPLAIN (FORMAT JSON)` de 2.000 nós (duas `Append` com 997
+  partições cada). O plano passeia do topo ao fim por 10 s com o zoom indo
+  de 100% a 25% e voltando duas vezes. Mede o tempo até o plano chegar e
+  ser montado, o intervalo entre frames e a CPU da interface.
+- **activity:** com `PGSTUDIO_BENCH=activity`, o app abre o Activity Monitor
+  num servidor sintético com 5.000 sessões, 10.000 locks e 20 bancos (um
+  décimo das sessões bloqueadas, então a seção Locks abre com 500 cadeias),
+  atualizado a cada segundo por 10 s. Mede a primeira leitura, o intervalo
+  entre frames, a CPU da interface e quanto cada atualização leva do pedido
+  até estar na tela.
 
 Os cenários rodam no app de verdade, com a janela, a GPU (ou o renderizador
 por software) e o servidor de demonstração, sem PostgreSQL. Ao terminar, o
@@ -70,6 +82,8 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 | Diagrama: 500 tabelas com zoom e pan | 60 FPS: intervalo entre frames (p95) < 20 ms |
 | Diagrama: 2.000 tabelas com zoom e pan | 60 FPS: intervalo entre frames (p95) < 20 ms |
 | Table Designer: editar num banco de 2.000 tabelas | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Plano de 2.000 nós com zoom e rolagem | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Activity Monitor: 5.000 sessões, atualizando a cada 1 s | 60 FPS: intervalo entre frames (p95) < 20 ms |
 
 - **60 FPS como p95 < 20 ms:** um frame a 60 Hz dura 16,7 ms. Com vsync, o
   intervalo medido oscila em volta disso mesmo sem nenhum frame perdido, e um
@@ -226,6 +240,44 @@ diagram`, `diagram2000` e `designer`):
   compartilhadas (`Arc`, copiadas só quando mudam), a edição caiu para
   0,4 ms e o script para 0,4 ms. A grade desenha só as linhas visíveis, o que
   baixou a CPU da interface de 3,3 ms para 0,7 ms com 300 colunas.
+
+### Marco 4.9 (fim da Fase 4)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
+sem GPU), 3 execuções de cada cenário (`cargo xtask bench --scenario plan`,
+`activity` e, para comparar com o marco 3.7, `diagram`):
+
+| Cenário | Meta | Mediana | Pior | Situação |
+| --- | --- | --- | --- | --- |
+| Plano: 2.000 nós chegam e são desenhados (Ctrl+L) | — | 53.9 ms | 55.5 ms | — |
+| Plano: frame com zoom e rolagem (p95) | < 20 ms (60 FPS) | 22.1 ms | 22.7 ms | ❌ acima |
+| Plano: CPU da interface por frame (p95) | — | 4.0 ms | 4.4 ms | — |
+| Plano: RAM com o plano de 2.000 nós | — | 141.7 MB | 141.7 MB | — |
+| Activity Monitor: primeira leitura de 5.000 sessões | — | 39.0 ms | 43.1 ms | — |
+| Activity Monitor: frame atualizando a cada 1 s (p95) | < 20 ms (60 FPS) | 18.3 ms | 19.8 ms | ✅ dentro |
+| Activity Monitor: CPU da interface por frame (p95) | — | 1.1 ms | 1.1 ms | — |
+| Activity Monitor: atualização pronta (p95) | — | 27.1 ms | 31.0 ms | — |
+| Activity Monitor: RAM com 5.000 sessões | — | 162.2 MB | 162.4 MB | — |
+| Diagrama: frame com zoom e pan (p95), para comparar | < 20 ms (60 FPS) | 21.4 ms | 23.0 ms | ❌ acima |
+
+- **O container estava mais lento que no marco 3.7:** o mesmo cenário
+  `diagram`, sem nenhuma mudança no código, deu 21,4 ms de p95 (18,2 ms no
+  marco 3.7). O plano fica no mesmo patamar (22,1 ms) com a interface
+  gastando 4 ms; o resto é o renderizador por software. Fica como "precisa
+  de medição com GPU", como o diagrama de 2.000 tabelas.
+- **Plano:** a primeira versão desenhava uma seta inteira por filho, e as
+  mil setas de uma `Append` dividiam o mesmo tronco vertical, todas
+  desenhadas sempre que o pai ou qualquer filho estava na tela. Com o tronco
+  e a ponta desenhados uma vez por pai e cortados ao visível, o p95 caiu de
+  32,2 ms para 22,1 ms.
+- **Activity Monitor:** a primeira versão copiava as 5.000 sessões, filtrava
+  e ordenava a cada frame, e a seção Locks procurava cada sessão das 500
+  cadeias de bloqueio na lista inteira e desenhava todas. Com o filtro, a
+  ordem e as cadeias refeitos só quando chega uma leitura ou o filtro e a
+  ordem mudam, e as cadeias numa lista virtualizada, a CPU da interface caiu
+  de 11,6 ms para 1,1 ms por frame e o p95 de 30,6 ms para 18,3 ms.
+- **Windows não foi medido**, pelo mesmo motivo do marco 3.7: os cenários
+  `plan` e `activity` numa máquina Windows completam a tabela.
 
 ## Como ler
 
