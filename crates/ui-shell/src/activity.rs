@@ -69,6 +69,20 @@ pub struct DatabaseIo {
     pub temp_bytes: f64,
 }
 
+/// Um lock (linha de `pg_locks`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Lock {
+    pub pid: i32,
+    pub lock_type: String,
+    pub mode: String,
+    pub granted: bool,
+    /// Tabela ou índice travado, quando é um lock de relação.
+    pub relation: String,
+    /// Transação ou xid virtual, nos locks de transação.
+    pub target: String,
+    pub database: String,
+}
+
 /// Uma consulta de `pg_stat_statements`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Statement {
@@ -85,6 +99,8 @@ pub struct Snapshot {
     pub at: Instant,
     pub processes: Vec<Process>,
     pub databases: Vec<DatabaseIo>,
+    /// Locks, os que esperam primeiro.
+    pub locks: Vec<Lock>,
     /// `pg_stat_statements` está instalada no banco da sessão.
     pub has_statements: bool,
     /// Consultas mais caras, quando lidas nesta atualização.
@@ -114,6 +130,10 @@ pub fn refresh_sql(with_statements: bool) -> String {
          FROM pg_stat_activity WHERE pid <> pg_backend_pid() ORDER BY pid;\n\
          SELECT datname, xact_commit + xact_rollback, blks_read, blks_hit, temp_bytes \
          FROM pg_stat_database WHERE datname IS NOT NULL ORDER BY datname;\n\
+         SELECT l.pid, l.locktype, l.mode, l.granted, l.relation::regclass::text, \
+         coalesce(l.transactionid::text, l.virtualxid), d.datname \
+         FROM pg_locks l LEFT JOIN pg_database d ON d.oid = l.database \
+         WHERE l.pid IS DISTINCT FROM pg_backend_pid() ORDER BY l.granted, l.pid;\n\
          SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'",
     );
     if with_statements {
@@ -127,7 +147,7 @@ pub fn refresh_sql(with_statements: bool) -> String {
 
 /// Monta a leitura a partir dos resultados de [`refresh_sql`].
 pub fn parse_snapshot(results: &[Rows], at: Instant) -> Result<Snapshot, String> {
-    if results.len() < 3 {
+    if results.len() < 4 {
         return Err("The server did not return the activity data.".into());
     }
     let text = |r: &[Option<String>], i: usize| r.get(i).cloned().flatten().unwrap_or_default();
@@ -164,11 +184,23 @@ pub fn parse_snapshot(results: &[Rows], at: Instant) -> Result<Snapshot, String>
             temp_bytes: num(r, 4).unwrap_or_default(),
         })
         .collect();
-    let has_statements = results[2]
+    let locks = results[2]
+        .iter()
+        .map(|r| Lock {
+            pid: num(r, 0).unwrap_or_default() as i32,
+            lock_type: text(r, 1),
+            mode: text(r, 2),
+            granted: text(r, 3) == "t",
+            relation: text(r, 4),
+            target: text(r, 5),
+            database: text(r, 6),
+        })
+        .collect();
+    let has_statements = results[3]
         .first()
         .and_then(|r| num(r, 0))
         .is_some_and(|n| n > 0.0);
-    let statements = results.get(3).map(|rows| {
+    let statements = results.get(4).map(|rows| {
         rows.iter()
             .map(|r| Statement {
                 calls: num(r, 0).unwrap_or_default(),
@@ -183,6 +215,7 @@ pub fn parse_snapshot(results: &[Rows], at: Instant) -> Result<Snapshot, String>
         at,
         processes,
         databases,
+        locks,
         has_statements,
         statements,
     })
@@ -227,6 +260,53 @@ pub fn resource_waits(processes: &[Process]) -> Vec<(String, String, usize)> {
     }
     let mut out: Vec<_> = groups.into_iter().map(|((t, e), n)| (t, e, n)).collect();
     out.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.cmp(b)));
+    out
+}
+
+/// Cadeias de bloqueio: cada sessão que bloqueia outras sem estar
+/// bloqueada (a "head blocker" do SSMS), seguida de quem ela bloqueia, com a
+/// profundidade na cadeia.
+pub fn blocking_chains(processes: &[Process]) -> Vec<(usize, i32)> {
+    let blockers = |p: &Process| -> Vec<i32> {
+        p.blocked_by
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect()
+    };
+    let mut blocked_by: BTreeMap<i32, Vec<i32>> = BTreeMap::new();
+    let mut blocks: BTreeMap<i32, Vec<i32>> = BTreeMap::new();
+    for p in processes {
+        for b in blockers(p) {
+            blocked_by.entry(p.pid).or_default().push(b);
+            blocks.entry(b).or_default().push(p.pid);
+        }
+    }
+    let mut heads: Vec<i32> = blocks
+        .keys()
+        .copied()
+        .filter(|pid| !blocked_by.contains_key(pid))
+        .collect();
+    // Num ciclo (deadlock ainda não detectado) ninguém é cabeça: começa
+    // pelo menor pid.
+    if heads.is_empty()
+        && let Some(&pid) = blocks.keys().next()
+    {
+        heads.push(pid);
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<(usize, i32)> = heads.into_iter().rev().map(|p| (0, p)).collect();
+    while let Some((depth, pid)) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        out.push((depth, pid));
+        if let Some(children) = blocks.get(&pid) {
+            for &c in children.iter().rev() {
+                stack.push((depth + 1, c));
+            }
+        }
+    }
     out
 }
 
@@ -410,7 +490,7 @@ impl ActivityMonitor {
                     // A leitura de pg_stat_statements é a última; se ela
                     // falhar (biblioteca não carregada), o resto vale.
                     let reply = match (&error, results.len()) {
-                        (Some(e), n) if n < 3 => Err(e.clone()),
+                        (Some(e), n) if n < 4 => Err(e.clone()),
                         _ => parse_snapshot(&results, Instant::now()),
                     };
                     let _ = tx.send(Reply::Snapshot(reply));
@@ -562,6 +642,18 @@ impl ActivityMonitor {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.toolbar(ui);
         ui.separator();
+        if self.snapshot.is_none() {
+            // As seções abrem conforme a primeira leitura (Locks, por
+            // exemplo, já aberta se houver bloqueio).
+            if self.error.is_none() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Reading the server activity...");
+                });
+            }
+            self.confirm_window(ui.ctx());
+            return;
+        }
         egui::ScrollArea::vertical()
             .id_salt("activity_monitor")
             .auto_shrink(false)
@@ -572,6 +664,14 @@ impl ActivityMonitor {
                 egui::CollapsingHeader::new("Processes")
                     .default_open(true)
                     .show(ui, |ui| self.processes(ui));
+                // Começa aberta quando já há alguém bloqueado.
+                let blocked = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.processes.iter().any(|p| !p.blocked_by.is_empty()));
+                egui::CollapsingHeader::new("Locks")
+                    .default_open(blocked)
+                    .show(ui, |ui| self.locks(ui));
                 egui::CollapsingHeader::new("Resource Waits")
                     .default_open(false)
                     .show(ui, |ui| self.waits(ui));
@@ -766,6 +866,90 @@ impl ActivityMonitor {
                 .count()
         });
         ui.weak(format!("{} of {total} sessions", rows.len()));
+    }
+
+    fn locks(&mut self, ui: &mut egui::Ui) {
+        let Some(snap) = &self.snapshot else {
+            return;
+        };
+        let chains = blocking_chains(&snap.processes);
+        if chains.is_empty() {
+            ui.weak("No session is blocked.");
+        } else {
+            ui.strong("Blocking chains");
+            let mut select = None;
+            for &(depth, pid) in &chains {
+                let p = snap.processes.iter().find(|p| p.pid == pid);
+                let what = p
+                    .map(|p| {
+                        format!(
+                            "{} {} ({}{}) {}",
+                            p.application,
+                            p.user,
+                            p.state,
+                            if p.wait_event.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", {}", p.wait_event)
+                            },
+                            one_line(&p.query)
+                        )
+                    })
+                    .unwrap_or_default();
+                let text = if depth == 0 {
+                    format!("{} Head blocker {pid}: {what}", icon::LOCK)
+                } else {
+                    format!("{} {pid} waits: {what}", icon::HOURGLASS)
+                };
+                ui.horizontal(|ui| {
+                    ui.add_space(depth as f32 * 18.0);
+                    let r = ui.add(
+                        egui::Button::selectable(self.selected == Some(pid), text)
+                            .truncate()
+                            .frame_when_inactive(false),
+                    );
+                    if r.clicked() {
+                        select = Some(pid);
+                    }
+                });
+            }
+            if let Some(pid) = select {
+                self.selected = Some(pid);
+            }
+            ui.add_space(4.0);
+        }
+        let locks = &snap.locks;
+        table(
+            ui,
+            "activity_locks",
+            vec![
+                ("Process ID".into(), 78.0),
+                ("Lock Type".into(), 100.0),
+                ("Mode".into(), 150.0),
+                ("Status".into(), 80.0),
+                ("Object".into(), 180.0),
+                ("Transaction".into(), 100.0),
+                ("Database".into(), 90.0),
+            ],
+            locks.len(),
+            220.0,
+            &mut |_| {},
+            &mut |ui, i| {
+                let l = &locks[i];
+                cell(ui, 78.0, egui::Label::new(l.pid.to_string()));
+                cell(ui, 100.0, egui::Label::new(l.lock_type.as_str()));
+                cell(ui, 150.0, egui::Label::new(l.mode.as_str()).truncate());
+                let status = if l.granted {
+                    egui::RichText::new("Granted")
+                } else {
+                    egui::RichText::new("Waiting").color(ui.visuals().warn_fg_color)
+                };
+                cell(ui, 80.0, egui::Label::new(status));
+                cell(ui, 180.0, egui::Label::new(l.relation.as_str()).truncate());
+                cell(ui, 100.0, egui::Label::new(l.target.as_str()).truncate());
+                cell(ui, 90.0, egui::Label::new(l.database.as_str()).truncate());
+            },
+        );
     }
 
     fn waits(&self, ui: &mut egui::Ui) {
@@ -1087,6 +1271,15 @@ mod tests {
                 process("11", "idle", "Client", "ClientRead"),
             ],
             vec![row(&["loja", "100", "20", "80", "0"])],
+            vec![row(&[
+                "10",
+                "relation",
+                "AccessShareLock",
+                "f",
+                "t",
+                "",
+                "loja",
+            ])],
             vec![row(&["0"])],
         ];
         let s = parse_snapshot(&results, Instant::now()).unwrap();
@@ -1098,7 +1291,9 @@ mod tests {
         assert_eq!(s.databases[0].blocks_hit, 80.0);
         assert!(!s.has_statements);
         assert!(s.statements.is_none());
-        assert!(parse_snapshot(&results[..2], Instant::now()).is_err());
+        assert!(!s.locks[0].granted);
+        assert_eq!(s.locks[0].relation, "t");
+        assert!(parse_snapshot(&results[..3], Instant::now()).is_err());
     }
 
     #[test]
@@ -1109,6 +1304,7 @@ mod tests {
                 &[
                     vec![process("1", "active", "", "")],
                     vec![row(&["a", xacts, reads, "0", "0"])],
+                    vec![],
                     vec![row(&["1"])],
                 ],
                 at,
@@ -1148,6 +1344,24 @@ mod tests {
                 ("Lock".into(), "relation".into(), 2),
                 ("IO".into(), "DataFileRead".into(), 1)
             ]
+        );
+    }
+
+    #[test]
+    fn blocking_chains_start_at_the_head_blocker() {
+        let p = |pid: i32, by: &str| Process {
+            pid,
+            blocked_by: by.into(),
+            ..Default::default()
+        };
+        // 1 bloqueia 2 e 3; 3 bloqueia 4; 5 está livre.
+        let chains = blocking_chains(&[p(1, ""), p(2, "1"), p(3, "1"), p(4, "3"), p(5, "")]);
+        assert_eq!(chains, vec![(0, 1), (1, 2), (1, 3), (2, 4)]);
+        assert!(blocking_chains(&[p(1, ""), p(2, "")]).is_empty());
+        // Ciclo: ninguém é cabeça, mas a cadeia aparece sem repetir.
+        assert_eq!(
+            blocking_chains(&[p(7, "8"), p(8, "7")]),
+            vec![(0, 7), (1, 8)]
         );
     }
 

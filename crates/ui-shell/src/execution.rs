@@ -171,6 +171,16 @@ impl Batch {
         }
     }
 
+    /// SQL montado pelo PGStudio (como o do Alt+F1), que não está no
+    /// documento: os erros não apontam para nenhuma posição.
+    pub fn generated(sql: &str) -> Self {
+        Batch {
+            sent: sql.to_string(),
+            segments: Vec::new(),
+            statements: Vec::new(),
+        }
+    }
+
     /// `EXPLAIN (options)` antes de cada comando de `sql`, como o Ctrl+L.
     /// Sem comandos (só espaço e comentários), devolve `None`.
     pub fn explain(sql: &str, options: &str) -> Option<Self> {
@@ -411,6 +421,17 @@ impl Execution {
         Some(exec)
     }
 
+    /// Roda SQL montado pelo PGStudio (Alt+F1) mostrando os resultados,
+    /// sem ligar erros ao texto do documento.
+    pub fn start_generated(
+        session: Arc<dyn QuerySession>,
+        sql: String,
+        ctx: &egui::Context,
+    ) -> Self {
+        let batch = Batch::generated(&sql);
+        Self::start_batch(session, batch, String::new(), 0, ctx)
+    }
+
     /// Se a execução é de plano (Ctrl+L).
     pub fn is_plan(&self) -> bool {
         self.plan_mode
@@ -498,6 +519,7 @@ impl Execution {
                 self.open_result = false;
                 let original = e
                     .position
+                    .filter(|_| !self.batch.segments.is_empty())
                     .map(|p| self.batch.original_position(p.saturating_sub(1)));
                 let position = original.map(|p| self.offset + p);
                 let header = match original {
