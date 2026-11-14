@@ -6,6 +6,7 @@
 
 pub mod fake;
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -400,7 +401,7 @@ impl ObjectExplorer {
         self.poll();
         let mut events = Vec::new();
         if !self.is_connected() {
-            ui.weak("Not connected. Use File > Connect Object Explorer.");
+            ui.weak(tr("Not connected. Use File > Connect Object Explorer."));
             return events;
         }
         // Ações coletadas durante o desenho e aplicadas depois, porque as
@@ -437,8 +438,13 @@ impl ObjectExplorer {
                                     toggle = Some(node.id.clone());
                                 }
                                 let is_selected = selected.as_ref() == Some(&node.id);
-                                let text =
-                                    format!("{} {}", kind_icon(node.kind, expanded), node.name);
+                                // Pastas ("Tables", "Views"...) saem traduzidas; o
+                                // nome em inglês continua no caminho do nó.
+                                let name = match node.kind {
+                                    NodeKind::Folder(_) => tr(&node.name),
+                                    _ => node.name.as_str(),
+                                };
+                                let text = format!("{} {name}", kind_icon(node.kind, expanded));
                                 let label = ui.add(
                                     egui::Button::selectable(is_selected, text)
                                         .frame_when_inactive(false),
@@ -452,38 +458,38 @@ impl ObjectExplorer {
                                 label.context_menu(|ui| {
                                     select = Some(node.id.clone());
                                     if node.kind == NodeKind::Folder(Folder::Tables) {
-                                        if ui.button("New Table...").clicked() {
+                                        if ui.button(tr("New Table...")).clicked() {
                                             events.push(Event::NewTable(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Folder(Folder::Diagrams) {
-                                        if ui.button("New Database Diagram").clicked() {
+                                        if ui.button(tr("New Database Diagram")).clicked() {
                                             events.push(Event::NewDiagram(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Folder(Folder::Roles) {
-                                        if ui.button("New Role...").clicked() {
+                                        if ui.button(tr("New Role...")).clicked() {
                                             events.push(Event::Properties(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Database {
-                                        ui.menu_button("Tasks", |ui| {
-                                            if ui.button("Back Up...").clicked() {
+                                        ui.menu_button(tr("Tasks"), |ui| {
+                                            if ui.button(tr("Back Up...")).clicked() {
                                                 events.push(Event::BackUp(node.id.clone()));
                                                 ui.close();
                                             }
-                                            if ui.button("Restore...").clicked() {
+                                            if ui.button(tr("Restore...")).clicked() {
                                                 events.push(Event::Restore(node.id.clone()));
                                                 ui.close();
                                             }
                                             ui.separator();
-                                            if ui.button("Compare Schema...").clicked() {
+                                            if ui.button(tr("Compare Schema...")).clicked() {
                                                 events.push(Event::CompareSchema(node.id.clone()));
                                                 ui.close();
                                             }
@@ -491,26 +497,26 @@ impl ObjectExplorer {
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Folder(Folder::Databases) {
-                                        if ui.button("Restore Database...").clicked() {
+                                        if ui.button(tr("Restore Database...")).clicked() {
                                             events.push(Event::Restore(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Server {
-                                        if ui.button("Register...").clicked() {
+                                        if ui.button(tr("Register...")).clicked() {
                                             events.push(Event::Register(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
-                                        if ui.button("Activity Monitor").clicked() {
+                                        if ui.button(tr("Activity Monitor")).clicked() {
                                             events.push(Event::ActivityMonitor(node.id.clone()));
                                             ui.close();
                                         }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Table {
-                                        if ui.button("Design").clicked() {
+                                        if ui.button(tr("Design")).clicked() {
                                             events.push(Event::Design(node.id.clone()));
                                             ui.close();
                                         }
@@ -524,7 +530,7 @@ impl ObjectExplorer {
                                             | NodeKind::View
                                     );
                                     if ui
-                                        .add_enabled(queryable, egui::Button::new("New Query"))
+                                        .add_enabled(queryable, egui::Button::new(tr("New Query")))
                                         .clicked()
                                     {
                                         events.push(Event::NewQuery(node.id.clone()));
@@ -532,28 +538,32 @@ impl ObjectExplorer {
                                     }
                                     if node.kind.has_rows() {
                                         ui.separator();
-                                        let top = format!("Select Top {SELECT_TOP_ROWS} Rows");
+                                        let top = trf!("Select Top {n} Rows", n = SELECT_TOP_ROWS);
                                         if ui.button(top).clicked() {
                                             events.push(Event::SelectTop(node.id.clone()));
                                             ui.close();
                                         }
-                                        let edit = format!("Edit Top {EDIT_TOP_ROWS} Rows");
+                                        let edit = trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS);
                                         if ui.button(edit).clicked() {
                                             events.push(Event::EditTop(node.id.clone()));
                                             ui.close();
                                         }
                                     }
                                     if node.kind.scriptable() {
-                                        let label = format!("Script {} as", node.kind.label());
+                                        let label =
+                                            trf!("Script {kind} as", kind = node.kind.label());
                                         ui.menu_button(label, |ui| {
                                             for (text, action) in [
                                                 (
-                                                    "CREATE To New Query Window",
+                                                    tr_noop("CREATE To New Query Window"),
                                                     ScriptAction::Create,
                                                 ),
-                                                ("DROP To New Query Window", ScriptAction::Drop),
+                                                (
+                                                    tr_noop("DROP To New Query Window"),
+                                                    ScriptAction::Drop,
+                                                ),
                                             ] {
-                                                if ui.button(text).clicked() {
+                                                if ui.button(tr(text)).clicked() {
                                                     events.push(Event::Script(
                                                         node.id.clone(),
                                                         action,
@@ -564,14 +574,14 @@ impl ObjectExplorer {
                                         });
                                     } else {
                                         ui.add_enabled_ui(false, |ui| {
-                                            let _ = ui.button("Script as");
+                                            let _ = ui.button(tr("Script as"));
                                         });
                                     }
                                     ui.separator();
                                     if ui
                                         .add_enabled(
                                             node.has_children,
-                                            egui::Button::new("Refresh"),
+                                            egui::Button::new(tr("Refresh")),
                                         )
                                         .clicked()
                                     {
@@ -582,7 +592,7 @@ impl ObjectExplorer {
                                     if ui
                                         .add_enabled(
                                             node.kind.has_properties(),
-                                            egui::Button::new("Properties"),
+                                            egui::Button::new(tr("Properties")),
                                         )
                                         .clicked()
                                     {
@@ -592,11 +602,12 @@ impl ObjectExplorer {
                                 });
                             }
                             Row::Loading { .. } => {
-                                ui.weak(format!("{} Loading...", icon::SPINNER));
+                                ui.weak(format!("{} {}", icon::SPINNER, tr("Loading...")));
                             }
                             Row::Failed { error, .. } => {
                                 ui.colored_label(
                                     ui.visuals().error_fg_color,
+                                    // i18n-ignore
                                     format!("{} {error}", icon::WARNING),
                                 );
                             }
