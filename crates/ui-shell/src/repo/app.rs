@@ -1,10 +1,10 @@
 //! O workspace na casca: abrir, criar e fechar, ligar as consultas aos
 //! servidores do workspace ao abrir e ao salvar.
 
+use pgstudio_i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 
 use pgstudio_core::connection::ConnectionSettings;
-use pgstudio_i18n::{tr, trf};
 
 use super::panel::Action;
 use super::{QueryLink, Workspace, find_server_by_key, link_settings};
@@ -52,7 +52,7 @@ impl ShellApp {
     pub fn open_workspace(&mut self, root: &Path) -> bool {
         match Workspace::open(root) {
             Ok(ws) => {
-                self.status = format!("Opened workspace {}.", ws.name());
+                self.status = trf!("Opened workspace {name}.", name = ws.name());
                 self.workspace_panel.open(ws);
                 self.after_workspace_opened();
                 self.workspace.open(Panel::WorkspaceExplorer);
@@ -71,10 +71,14 @@ impl ShellApp {
         let name = root
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Workspace".into());
+            .unwrap_or_else(|| tr("Workspace").into());
         match Workspace::create(root, &name) {
             Ok(ws) => {
-                self.status = format!("Created workspace {} in {}.", ws.name(), root.display());
+                self.status = trf!(
+                    "Created workspace {name} in {folder}.",
+                    name = ws.name(),
+                    folder = root.display()
+                );
                 self.workspace_panel.open(ws);
                 self.after_workspace_opened();
                 self.workspace.open(Panel::WorkspaceExplorer);
@@ -105,12 +109,12 @@ impl ShellApp {
     /// File > Close Workspace. As janelas de consulta continuam abertas.
     pub fn close_workspace(&mut self) {
         if self.workspace_panel.workspace().is_none() {
-            self.status = "No workspace is open.".to_string();
+            self.status = tr("No workspace is open.").to_string();
             return;
         }
         self.workspace_panel.close();
         self.remember_workspace();
-        self.status = "Workspace closed.".to_string();
+        self.status = tr("Workspace closed.").to_string();
     }
 
     /// Clona `url` numa pasta nova dentro de `parent` (com o nome do
@@ -119,10 +123,13 @@ impl ShellApp {
         let dest = parent.join(super::git::repo_name(url));
         let busy = std::fs::read_dir(&dest).is_ok_and(|mut d| d.next().is_some());
         if busy {
-            self.status = format!("{} already exists and is not empty.", dest.display());
+            self.status = trf!(
+                "{folder} already exists and is not empty.",
+                folder = dest.display()
+            );
             return;
         }
-        self.status = format!("Cloning {url}...");
+        self.status = trf!("Cloning {url}...", url = url);
         self.workspace_panel.start_clone(url, &dest);
         self.workspace.open(Panel::WorkspaceExplorer);
     }
@@ -137,18 +144,18 @@ impl ShellApp {
             Ok(root) => {
                 self.create_workspace(&root);
             }
-            Err(e) => self.status = format!("Clone failed: {e}"),
+            Err(e) => self.status = trf!("Clone failed: {e}", e = e),
         }
     }
 
     pub(crate) fn ask_new_workspace(&mut self) {
-        if let Some(root) = self.dialogs.folder_path("New Workspace") {
+        if let Some(root) = self.dialogs.folder_path(tr("New Workspace")) {
             self.create_workspace(&root);
         }
     }
 
     pub(crate) fn ask_open_workspace(&mut self) {
-        if let Some(root) = self.dialogs.folder_path("Open Workspace") {
+        if let Some(root) = self.dialogs.folder_path(tr("Open Workspace")) {
             self.open_workspace(&root);
         }
     }
@@ -235,11 +242,17 @@ impl ShellApp {
         self.workspace_panel.refresh();
         self.status = match link {
             Some(l) => match l.database {
-                Some(db) => format!("Item(s) Saved. Linked to {} / {db}.", l.server),
-                None => format!("Item(s) Saved. Linked to {}.", l.server),
+                Some(db) => trf!(
+                    "Item(s) Saved. Linked to {server} / {db}.",
+                    server = l.server,
+                    db = db
+                ),
+                None => trf!("Item(s) Saved. Linked to {server}.", server = l.server),
             },
-            None => "Item(s) Saved. Register this server in the workspace to link the query to it."
-                .to_string(),
+            None => {
+                tr("Item(s) Saved. Register this server in the workspace to link the query to it.")
+                    .to_string()
+            }
         };
     }
 
@@ -262,9 +275,9 @@ impl ShellApp {
             return;
         };
         let Some(settings) = link_settings(servers.servers().root(), &link) else {
-            self.status = format!(
-                "The query is linked to \"{}\", which is not a server of this workspace.",
-                link.server
+            self.status = trf!(
+                "The query is linked to \"{server}\", which is not a server of this workspace.",
+                server = link.server
             );
             return;
         };
@@ -291,7 +304,7 @@ impl ShellApp {
         });
         let text = link.map(|l| l.line() + "\n").unwrap_or_default();
         if let Err(e) = std::fs::write(&path, text) {
-            self.status = format!("Could not create {}: {e}", path.display());
+            self.status = trf!("Could not create {path}: {e}", path = path.display(), e = e);
             return;
         }
         self.workspace_panel.refresh();
@@ -397,9 +410,9 @@ impl ShellApp {
                         continue;
                     };
                     self.status = match panel.servers().export(&group, &path) {
-                        Ok(()) => format!(
-                            "Exported servers to {} (passwords are not exported).",
-                            path.display()
+                        Ok(()) => trf!(
+                            "Exported servers to {path} (passwords are not exported).",
+                            path = path.display()
                         ),
                         Err(e) => e,
                     };
@@ -413,7 +426,7 @@ impl ShellApp {
             self.status = status;
         }
         if let Some(url) = self.workspace_panel.take_clone_request()
-            && let Some(parent) = self.dialogs.folder_path("Clone Workspace into")
+            && let Some(parent) = self.dialogs.folder_path(tr("Clone Workspace into"))
         {
             self.clone_workspace(&url, &parent);
         }
