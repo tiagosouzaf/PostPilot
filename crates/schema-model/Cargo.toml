@@ -9,3 +9,8 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+# O snapshot .pgsschema do Schema Compare (marco 6.2).
+serde = { workspace = true, features = ["rc"] }
+serde_json.workspace = true

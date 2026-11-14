@@ -11,10 +11,16 @@
 //! Cada tabela diferente pode entrar ou não: o script leva o destino a um
 //! modelo misto, com as tabelas escolhidas como na origem e as outras como
 //! estão.
+//!
+//! [`Outcome`] junta as tabelas com os outros objetos ([`crate::objects`]):
+//! uma lista só de diferenças, e um script com tudo o que foi escolhido na
+//! ordem das [`Phase`]s.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::objects::{self, Kind, Object, Phase};
+use crate::snapshot::Schema;
 use crate::{Id, Model, Table, diff::diff};
 
 /// Schema e nome de uma tabela.
@@ -158,6 +164,102 @@ impl Comparison {
             tables,
             next_id: self.source.next_id.max(self.target.next_id),
         }
+    }
+}
+
+/// Uma diferença da lista do Schema Compare.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Item {
+    pub key: objects::Key,
+    pub status: Status,
+    /// O DDL que só este objeto levaria.
+    pub statements: Vec<String>,
+}
+
+/// A comparação de dois schemas inteiros: tabelas e os outros objetos.
+#[derive(Clone, Debug)]
+pub struct Outcome {
+    tables: Comparison,
+    /// O DDL de cada objeto que difere, por fase.
+    objects: BTreeMap<objects::Key, Vec<(Phase, String)>>,
+    /// As diferenças, por tipo, schema e nome.
+    pub items: Vec<Item>,
+    /// Quantos objetos são iguais.
+    pub equal: usize,
+}
+
+impl Outcome {
+    pub fn new(source: &Schema, target: &Schema) -> Self {
+        let tables = Comparison::new(&source.model, &target.model);
+        let mut items: Vec<Item> = tables
+            .tables
+            .iter()
+            .map(|t| Item {
+                key: (Kind::Table, t.schema.clone(), t.name.clone()),
+                status: t.status,
+                statements: t.statements.clone(),
+            })
+            .collect();
+        let mut equal = tables.equal;
+        let by_key = |list: &[Object]| -> BTreeMap<objects::Key, Object> {
+            list.iter().map(|o| (o.key(), o.clone())).collect()
+        };
+        let (s, t) = (by_key(&source.objects), by_key(&target.objects));
+        let keys: BTreeSet<&objects::Key> = s.keys().chain(t.keys()).collect();
+        let mut objects = BTreeMap::new();
+        for key in keys {
+            let (so, to) = (s.get(key), t.get(key));
+            let statements = objects::statements(so, to);
+            if statements.is_empty() {
+                equal += 1;
+                continue;
+            }
+            let status = match (so, to) {
+                (Some(_), None) => Status::OnlyInSource,
+                (None, Some(_)) => Status::OnlyInTarget,
+                _ => Status::Different,
+            };
+            items.push(Item {
+                key: key.clone(),
+                status,
+                statements: statements.iter().map(|(_, s)| s.clone()).collect(),
+            });
+            objects.insert(key.clone(), statements);
+        }
+        items.sort_by(|a, b| a.key.cmp(&b.key));
+        Outcome {
+            tables,
+            objects,
+            items,
+            equal,
+        }
+    }
+
+    /// O script para os objetos `chosen`, na ordem que o PostgreSQL aceita
+    /// (veja [`Phase`]).
+    pub fn script(&self, chosen: &BTreeSet<objects::Key>) -> Vec<String> {
+        let names: BTreeSet<Name> = chosen
+            .iter()
+            .filter(|k| k.0 == Kind::Table)
+            .map(|k| (k.1.clone(), k.2.clone()))
+            .collect();
+        let mut all: Vec<(Phase, String)> = Vec::new();
+        if !names.is_empty() {
+            all.extend(
+                self.tables
+                    .script(&names)
+                    .into_iter()
+                    .map(|s| (Phase::Tables, s)),
+            );
+        }
+        for (key, statements) in &self.objects {
+            if chosen.contains(key) {
+                all.extend(statements.iter().cloned());
+            }
+        }
+        // Estável: dentro de uma fase, a ordem da lista.
+        all.sort_by_key(|(p, _)| *p);
+        all.into_iter().map(|(_, s)| s).collect()
     }
 }
 
@@ -357,5 +459,68 @@ mod tests {
                 "DROP TABLE public.cliente;"
             ]
         );
+    }
+
+    #[test]
+    fn the_whole_schema_is_scripted_in_dependency_order() {
+        use crate::objects::Object;
+        let trg = |when: &str| {
+            Object::trigger(
+                "public",
+                "pedido",
+                "audita",
+                &format!(
+                    "CREATE TRIGGER audita {when} INSERT ON public.pedido FOR EACH ROW EXECUTE FUNCTION public.audita()"
+                ),
+            )
+        };
+        let source = Schema {
+            model: Model::new(vec![cliente(100, false), pedido(200)]),
+            objects: vec![
+                Object::view("public", "v", "SELECT 1"),
+                Object::enum_type("public", "status", vec!["a".into()]),
+                trg("AFTER"),
+            ],
+        };
+        let target = Schema {
+            model: Model::new(vec![cliente(5000, false), pedido(6000)]),
+            objects: vec![
+                Object::view("public", "v", "SELECT 2"),
+                Object::domain("public", "velho", "integer"),
+                trg("BEFORE"),
+            ],
+        };
+        let o = Outcome::new(&source, &target);
+        let summary: Vec<_> = o
+            .items
+            .iter()
+            .map(|i| (i.key.0, i.key.2.as_str(), i.status))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (Kind::View, "v", Status::Different),
+                (Kind::Trigger, "pedido.audita", Status::Different),
+                (Kind::Type, "status", Status::OnlyInSource),
+                (Kind::Type, "velho", Status::OnlyInTarget),
+            ]
+        );
+        assert_eq!(o.equal, 2);
+        let all: BTreeSet<_> = o.items.iter().map(|i| i.key.clone()).collect();
+        let script = o.script(&all);
+        assert_eq!(
+            script,
+            [
+                "DROP TRIGGER audita ON public.pedido;",
+                "DROP VIEW public.v;",
+                "CREATE TYPE public.status AS ENUM ('a');",
+                "DROP DOMAIN public.velho;",
+                "CREATE VIEW public.v AS\nSELECT 1;",
+                "CREATE TRIGGER audita AFTER INSERT ON public.pedido FOR EACH ROW EXECUTE FUNCTION public.audita();",
+            ]
+        );
+        // Só o tipo novo.
+        let one = BTreeSet::from([(Kind::Type, "public".to_string(), "status".to_string())]);
+        assert_eq!(o.script(&one), ["CREATE TYPE public.status AS ENUM ('a');"]);
     }
 }

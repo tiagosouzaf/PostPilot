@@ -1,6 +1,8 @@
 //! Schema Compare num PostgreSQL de verdade (com `PGSTUDIO_TEST_HOST`; sem
 //! ele, avisa e passa): dois bancos diferentes, aplicar tudo e comparar de
-//! novo não mostra diferenças.
+//! novo não mostra diferenças. O segundo teste compara um snapshot
+//! `.pgsschema` com um banco aberto como "outro servidor", com tipos,
+//! sequências, triggers e procedures.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -10,9 +12,18 @@ use eframe::egui;
 use pgstudio_core::connection::{ConnectionSettings, Connector, SslMode};
 use pgstudio_core::query::QuerySession;
 use pgstudio_core::schema::compare::Status;
-use pgstudio_ui_shell::schema_compare::{Kind, Request, SchemaCompare};
+use pgstudio_ui_shell::schema_compare::{Kind, Place, Request, SchemaCompare, Which};
 
 fn connected() -> Option<pgstudio_core::connection::Connected> {
+    connection().map(|(c, _, _)| c)
+}
+
+/// A conexão, o conector e a senha.
+fn connection() -> Option<(
+    pgstudio_core::connection::Connected,
+    Arc<dyn Connector>,
+    String,
+)> {
     let Ok(host) = std::env::var("PGSTUDIO_TEST_HOST") else {
         eprintln!("PGSTUDIO_TEST_HOST not set; skipping");
         return None;
@@ -25,13 +36,12 @@ fn connected() -> Option<pgstudio_core::connection::Connected> {
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
     };
-    let connector =
-        pgstudio_pg_metadata::PgConnector::new(pgstudio_pg_client::DbRuntime::new().unwrap());
-    Some(
-        connector
-            .connect(&settings, &var("PGSTUDIO_TEST_PASSWORD", ""))
-            .unwrap(),
-    )
+    let connector: Arc<dyn Connector> = Arc::new(pgstudio_pg_metadata::PgConnector::new(
+        pgstudio_pg_client::DbRuntime::new().unwrap(),
+    ));
+    let password = var("PGSTUDIO_TEST_PASSWORD", "");
+    let c = connector.connect(&settings, &password).unwrap();
+    Some((c, connector, password))
 }
 
 fn run(session: &Arc<dyn QuerySession>, sql: &str) {
@@ -109,10 +119,10 @@ fn applying_the_comparison_leaves_no_differences() {
         &ctx,
     );
     wait(&mut d, &ctx);
-    d.target = src.clone();
+    d.target.database = src.clone();
     d.compare(&ctx);
     assert!(d.error().unwrap().contains("same database"));
-    d.target = dst.clone();
+    d.target.database = dst.clone();
     d.compare(&ctx);
     wait(&mut d, &ctx);
     assert_eq!(d.error(), None);
@@ -205,7 +215,8 @@ fn applying_the_comparison_leaves_no_differences() {
     assert_eq!(d.error(), None, "{script:#?}");
     let o = d.outcome().unwrap();
     assert!(o.items.is_empty(), "{:#?}\n{script:#?}", o.items);
-    assert_eq!(o.equal, 5);
+    // As cinco de antes e a sequência do serial de cliente.
+    assert_eq!(o.equal, 6);
 
     drop(d);
     for db in [&src, &dst] {
@@ -214,4 +225,155 @@ fn applying_the_comparison_leaves_no_differences() {
             &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
         );
     }
+}
+
+const SOURCE_OBJECTS: &str = "
+CREATE TYPE status AS ENUM ('novo', 'pago', 'enviado');
+CREATE DOMAIN cep AS text CHECK (VALUE ~ '^[0-9]{8}$');
+CREATE TYPE par AS (a int, b text);
+CREATE SEQUENCE nota_seq START 100 INCREMENT 5;
+CREATE TABLE pedido (id serial PRIMARY KEY, st status, cep cep,
+    nota int DEFAULT nextval('nota_seq'));
+CREATE FUNCTION audita() RETURNS trigger LANGUAGE plpgsql
+    AS $$ BEGIN RETURN NEW; END $$;
+CREATE TRIGGER audita BEFORE INSERT ON pedido FOR EACH ROW EXECUTE FUNCTION audita();
+CREATE PROCEDURE limpa() LANGUAGE sql AS $$ DELETE FROM pedido WHERE false $$;
+";
+
+const TARGET_OBJECTS: &str = "
+CREATE TYPE status AS ENUM ('novo', 'pago');
+CREATE TYPE velho AS RANGE (subtype = int);
+CREATE SEQUENCE nota_seq START 1;
+CREATE TABLE pedido (id serial PRIMARY KEY, st status);
+INSERT INTO pedido (st) VALUES ('pago');
+CREATE FUNCTION audita() RETURNS trigger LANGUAGE plpgsql
+    AS $$ BEGIN RETURN NULL; END $$;
+CREATE TRIGGER audita AFTER INSERT ON pedido FOR EACH ROW EXECUTE FUNCTION audita();
+CREATE PROCEDURE sobra() LANGUAGE sql AS $$ SELECT 1 $$;
+";
+
+#[test]
+fn a_snapshot_against_another_server_with_types_sequences_and_triggers() {
+    let Some((c, connector, password)) = connection() else {
+        return;
+    };
+    let ctx = egui::Context::default();
+    let admin = c.queries.open("postgres");
+    let pid = std::process::id();
+    let (src, dst) = (
+        format!("pgstudio_cmp2_src_{pid}"),
+        format!("pgstudio_cmp2_dst_{pid}"),
+    );
+    for db in [&src, &dst] {
+        run(
+            &admin,
+            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        );
+        run(&admin, &format!("CREATE DATABASE {db}"));
+    }
+    run(&c.queries.open(&src), SOURCE_OBJECTS);
+    run(&c.queries.open(&dst), TARGET_OBJECTS);
+
+    let mut d = SchemaCompare::open(
+        Some(src.clone()),
+        "postgres",
+        c.metadata.clone(),
+        c.queries.clone(),
+        &ctx,
+    )
+    .with_connector(Some(connector), &c.settings);
+    wait(&mut d, &ctx);
+
+    // O snapshot da origem.
+    let file = std::env::temp_dir().join(format!("pgstudio-cmp-{pid}.pgsschema"));
+    d.save_snapshot(Which::Source, file.clone(), &ctx);
+    let r = wait(&mut d, &ctx);
+    assert_eq!(d.error(), None);
+    assert!(
+        r.iter()
+            .any(|r| matches!(r, Request::Log(l) if l[0].contains("saved the snapshot"))),
+        "{r:?}"
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("\"format\": 1"), "{text}");
+    // Tirado o snapshot, a origem pode até sumir.
+    run(
+        &admin,
+        &format!("DROP DATABASE IF EXISTS {src} WITH (FORCE)"),
+    );
+
+    // Snapshot contra o destino aberto como outro servidor.
+    d.source.place = Place::Snapshot;
+    d.source.file = file.display().to_string();
+    d.target.place = Place::Server;
+    d.target.database = dst.clone();
+    d.target.password = password.clone();
+    d.compare(&ctx);
+    wait(&mut d, &ctx);
+    assert_eq!(d.error(), None);
+    assert!(d.can_apply());
+    let o = d.outcome().unwrap();
+    let summary: Vec<(Kind, &str, Status)> = o
+        .items
+        .iter()
+        .map(|i| (i.key.0, i.key.2.as_str(), i.status))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (Kind::Table, "pedido", Status::Different),
+            (Kind::Function, "audita()", Status::Different),
+            (Kind::Procedure, "limpa()", Status::OnlyInSource),
+            (Kind::Procedure, "sobra()", Status::OnlyInTarget),
+            (Kind::Trigger, "pedido.audita", Status::Different),
+            (Kind::Sequence, "nota_seq", Status::Different),
+            (Kind::Type, "cep", Status::OnlyInSource),
+            (Kind::Type, "par", Status::OnlyInSource),
+            (Kind::Type, "status", Status::Different),
+            (Kind::Type, "velho", Status::OnlyInTarget),
+        ]
+    );
+    assert_eq!(o.equal, 1, "a sequência do serial é igual");
+    let status = &o.items[8].statements;
+    assert_eq!(
+        status,
+        &["ALTER TYPE public.status ADD VALUE 'enviado' AFTER 'pago';"]
+    );
+    // A função do trigger muda sem DROP (o trigger depende dela).
+    assert_eq!(o.items[1].statements.len(), 1);
+    assert!(o.items[1].statements[0].starts_with("CREATE OR REPLACE FUNCTION"));
+
+    // Tudo, no outro servidor: comparar de novo não mostra diferenças.
+    d.chosen = o.items.iter().map(|i| i.key.clone()).collect();
+    let script = d.script();
+    d.apply(&ctx);
+    let r = wait(&mut d, &ctx);
+    assert_eq!(d.error(), None, "{script:#?}");
+    // Em outro servidor não há nó do Object Explorer para atualizar.
+    assert!(
+        r.iter()
+            .any(|r| matches!(r, Request::Log(l) if l[0].starts_with("Schema Compare: applied"))),
+        "{r:?}"
+    );
+    let o = d.outcome().unwrap();
+    assert!(o.items.is_empty(), "{:#?}\n{script:#?}", o.items);
+    assert_eq!(o.equal, 9);
+
+    // Ao contrário, o snapshot é o destino: dá para gerar o script, não
+    // para aplicar.
+    d.source.place = Place::Database;
+    d.source.database = dst.clone();
+    d.target.place = Place::Snapshot;
+    d.target.file = file.display().to_string();
+    d.compare(&ctx);
+    wait(&mut d, &ctx);
+    assert_eq!(d.error(), None);
+    assert!(!d.can_apply());
+
+    drop(d);
+    let _ = std::fs::remove_file(&file);
+    run(
+        &admin,
+        &format!("DROP DATABASE IF EXISTS {dst} WITH (FORCE)"),
+    );
 }

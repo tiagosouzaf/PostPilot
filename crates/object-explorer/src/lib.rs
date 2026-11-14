@@ -63,6 +63,9 @@ pub enum Event {
     /// "New Database Diagram" na pasta Database Diagrams: escolhe as
     /// tabelas e abre o diagrama delas.
     NewDiagram(NodeId),
+    /// "Register..." no servidor: registra a conexão dele no Registered
+    /// Servers.
+    Register(NodeId),
     /// "Activity Monitor" no servidor.
     ActivityMonitor(NodeId),
     /// "Properties" de um objeto (roles e objetos com permissões abrem a
@@ -494,6 +497,11 @@ impl ObjectExplorer {
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Server {
+                                        if ui.button("Register...").clicked() {
+                                            events.push(Event::Register(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
                                         if ui.button("Activity Monitor").clicked() {
                                             events.push(Event::ActivityMonitor(node.id.clone()));
                                             ui.close();

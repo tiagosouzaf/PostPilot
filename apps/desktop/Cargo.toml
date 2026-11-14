@@ -15,7 +15,9 @@ path = "src/main.rs"
 pgstudio-core.workspace = true
 pgstudio-ui-shell.workspace = true
 pgstudio-pg-metadata.workspace = true
-eframe.workspace = true
+# glow (OpenGL) junto com o wgpu padrão: `--renderer glow` e a reserva
+# quando o wgpu não abre (marco 6.6).
+eframe = { workspace = true, features = ["glow"] }
 rfd.workspace = true
 
 [lints]

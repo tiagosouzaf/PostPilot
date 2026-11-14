@@ -1116,7 +1116,7 @@ fn tasks_compare_schema_opens_with_the_database_as_source() {
     harness.run_steps(4);
     harness.get_by_label("Schema Compare");
     let d = harness.state().schema_compare().unwrap();
-    assert_eq!(d.source, "app_01");
+    assert_eq!(d.source.database, "app_01");
     harness.get_by_label("Close").click();
     harness.run_steps(3);
     assert!(harness.state().schema_compare().is_none());

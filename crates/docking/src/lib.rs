@@ -6,7 +6,9 @@
 //!
 //! O auto-hide do SSMS (alfinete) é feito aqui, por fora do egui_dock: um
 //! painel desafixado sai do docking e vira um botão numa faixa na borda; ao
-//! clicar, ele aparece por cima dos documentos e some ao perder o foco.
+//! clicar ou passar o mouse, ele desliza por cima dos documentos e some ao
+//! perder o foco (ou quando o mouse sai, se abriu só com o mouse por cima).
+//! A borda interna do painel aberto pode ser arrastada para mudar o tamanho.
 
 use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -56,6 +58,34 @@ pub const STRIP: f32 = 24.0;
 /// Tamanho padrão do painel aberto da faixa (largura nas laterais, altura
 /// embaixo).
 const FLYOUT_SIZE: f32 = 300.0;
+/// Menor tamanho do painel aberto ao redimensionar.
+const FLYOUT_MIN: f32 = 120.0;
+/// Fração do espaço que o painel aberto pode ocupar ao redimensionar.
+const FLYOUT_MAX: f32 = 0.9;
+/// Espessura da alça de redimensionar, na borda interna do painel aberto.
+const GRIP: f32 = 6.0;
+/// Tempo com o mouse sobre o botão da faixa até o painel abrir sozinho.
+pub const HOVER_OPEN: f64 = 0.3;
+/// Tempo com o mouse fora até um painel aberto pelo mouse se esconder.
+pub const HOVER_CLOSE: f64 = 0.5;
+/// Duração da animação de deslizar (zero se o tema desliga animações).
+const SLIDE: f32 = 0.15;
+
+/// Mouse parado sobre um botão da faixa.
+struct Hover<P> {
+    pane: P,
+    since: f64,
+    /// Se ainda vai abrir o painel; desarma ao abrir, ao clicar e ao fechar
+    /// o painel com o mouse ainda em cima, até o mouse sair e voltar.
+    armed: bool,
+}
+
+/// Painel da faixa sendo desenhado, com o progresso da animação (0 é
+/// escondido na faixa, 1 é aberto).
+struct Slide<P> {
+    pane: P,
+    progress: f32,
+}
 
 /// Pedidos feitos de dentro do desenho, aplicados depois dele.
 enum Request<P> {
@@ -80,6 +110,10 @@ pub struct Layout<P> {
     /// Painéis desafixados (auto-hide), na ordem das faixas.
     #[serde(default = "Vec::new")]
     pub hidden: Vec<P>,
+    /// Tamanho (em pontos) escolhido para o painel aberto da faixa, por
+    /// painel; os que não estão aqui usam o padrão.
+    #[serde(default = "Vec::new")]
+    pub flyout_sizes: Vec<(P, f32)>,
 }
 
 /// Um nó do layout salvo.
@@ -236,8 +270,17 @@ pub struct Workspace<P: Pane> {
     hidden: Vec<P>,
     /// Painel desafixado que está aberto por cima dos documentos.
     flyout: Option<P>,
+    /// Se o painel aberto fica até perder o foco (abriu com clique ou pelo
+    /// menu, ou foi usado); `false` se abriu só com o mouse por cima.
+    sticky: bool,
     flyout_rect: Option<egui::Rect>,
+    /// Tamanho escolhido pelo usuário para cada painel aberto da faixa.
+    flyout_sizes: Vec<(P, f32)>,
     strip_buttons: Vec<(P, egui::Rect)>,
+    hover: Option<Hover<P>>,
+    /// Quando o mouse saiu de um painel aberto pelo mouse.
+    left_at: Option<f64>,
+    slide: Option<Slide<P>>,
 }
 
 impl<P: Pane> Workspace<P> {
@@ -264,8 +307,13 @@ impl<P: Pane> Workspace<P> {
             state,
             hidden: Vec::new(),
             flyout: None,
+            sticky: false,
             flyout_rect: None,
+            flyout_sizes: Vec::new(),
             strip_buttons: Vec::new(),
+            hover: None,
+            left_at: None,
+            slide: None,
         }
     }
 
@@ -283,10 +331,17 @@ impl<P: Pane> Workspace<P> {
             .filter(|t| keep(t) && !seen.contains(t))
             .collect();
         let hidden = self.hidden.iter().filter(|t| keep(t)).cloned().collect();
+        let flyout_sizes = self
+            .flyout_sizes
+            .iter()
+            .filter(|(t, _)| keep(t))
+            .cloned()
+            .collect();
         Layout {
             root,
             floating,
             hidden,
+            flyout_sizes,
         }
     }
 
@@ -318,6 +373,11 @@ impl<P: Pane> Workspace<P> {
                 workspace.hidden.push(pane);
             }
         }
+        for (pane, size) in layout.flyout_sizes {
+            if pane.area() != Area::Document && size.is_finite() && size > 0.0 {
+                workspace.set_flyout_size(&pane, size);
+            }
+        }
         workspace
     }
 
@@ -341,9 +401,48 @@ impl<P: Pane> Workspace<P> {
         self.flyout.as_ref()
     }
 
-    /// Retângulo do painel aberto da faixa no último frame.
+    /// Se o painel aberto da faixa abriu só com o mouse por cima (e some
+    /// quando o mouse sai).
+    pub fn flyout_is_transient(&self) -> bool {
+        self.flyout.is_some() && !self.sticky
+    }
+
+    /// Retângulo do painel aberto da faixa no último frame, já aberto por
+    /// inteiro (sem a animação de deslizar).
     pub fn flyout_rect(&self) -> Option<egui::Rect> {
         self.flyout_rect.filter(|_| self.flyout.is_some())
+    }
+
+    /// Tamanho escolhido para o painel aberto da faixa (largura nas
+    /// laterais, altura embaixo), se o usuário redimensionou.
+    pub fn flyout_size(&self, pane: &P) -> Option<f32> {
+        self.flyout_sizes
+            .iter()
+            .find(|(p, _)| p == pane)
+            .map(|(_, s)| *s)
+    }
+
+    /// Guarda o tamanho do painel aberto da faixa.
+    pub fn set_flyout_size(&mut self, pane: &P, size: f32) {
+        let size = size.max(FLYOUT_MIN);
+        match self.flyout_sizes.iter_mut().find(|(p, _)| p == pane) {
+            Some(entry) => entry.1 = size,
+            None => self.flyout_sizes.push((pane.clone(), size)),
+        }
+    }
+
+    /// Abre ou esconde o painel da faixa. Um painel aberto pelo mouse
+    /// (`sticky` falso) some quando o mouse sai dele e do botão.
+    fn set_flyout(&mut self, pane: Option<P>, sticky: bool) {
+        self.sticky = sticky && pane.is_some();
+        self.left_at = None;
+        if pane.is_none() {
+            // Com o mouse ainda sobre o botão, não reabre sozinho.
+            if let Some(hover) = &mut self.hover {
+                hover.armed = false;
+            }
+        }
+        self.flyout = pane;
     }
 
     /// Retângulo do botão do painel na faixa no último frame.
@@ -380,7 +479,7 @@ impl<P: Pane> Workspace<P> {
         for pane in tools {
             self.auto_hide(&pane);
         }
-        self.flyout = None;
+        self.set_flyout(None, false);
     }
 
     /// Fixa de novo um painel desafixado, na área de origem.
@@ -388,7 +487,7 @@ impl<P: Pane> Workspace<P> {
         if let Some(i) = self.hidden.iter().position(|p| p == pane) {
             let pane = self.hidden.remove(i);
             if self.flyout.as_ref() == Some(&pane) {
-                self.flyout = None;
+                self.set_flyout(None, false);
             }
             self.open(pane);
         }
@@ -397,13 +496,13 @@ impl<P: Pane> Workspace<P> {
     /// Mostra um painel desafixado por cima dos documentos.
     pub fn show_flyout(&mut self, pane: &P) {
         if self.is_hidden(pane) {
-            self.flyout = Some(pane.clone());
+            self.set_flyout(Some(pane.clone()), true);
         }
     }
 
     /// Esconde o painel desafixado que estiver aberto.
     pub fn hide_flyout(&mut self) {
-        self.flyout = None;
+        self.set_flyout(None, false);
     }
 
     /// Se os dois painéis estão abertos como abas do mesmo grupo.
@@ -445,7 +544,7 @@ impl<P: Pane> Workspace<P> {
 
     fn insert(&mut self, pane: P) {
         if self.is_hidden(&pane) {
-            self.flyout = Some(pane);
+            self.set_flyout(Some(pane), true);
             return;
         }
         if let Some(path) = self.state.find_tab(&pane) {
@@ -544,7 +643,7 @@ impl<P: Pane> Workspace<P> {
         }
         self.hidden.retain(|p| p != pane);
         if self.flyout.as_ref() == Some(pane) {
-            self.flyout = None;
+            self.set_flyout(None, false);
         }
     }
 
@@ -577,13 +676,80 @@ impl<P: Pane> Workspace<P> {
                 Request::Dock(p) => self.dock(&p),
                 Request::Close(p) => self.close(&p),
                 Request::Toggle(p) => {
-                    self.flyout = if self.flyout.as_ref() == Some(&p) {
-                        None
+                    if let Some(hover) = &mut self.hover {
+                        hover.armed = false;
+                    }
+                    if self.flyout.as_ref() != Some(&p) {
+                        self.set_flyout(Some(p), true);
+                    } else if self.sticky {
+                        self.set_flyout(None, false);
                     } else {
-                        Some(p)
-                    };
+                        // Aberto pelo mouse: o clique só faz o painel ficar.
+                        self.sticky = true;
+                    }
                 }
             }
+        }
+        self.track_hover(ui.ctx());
+    }
+
+    /// Abre o painel com o mouse parado sobre o botão da faixa e esconde o
+    /// painel aberto assim quando o mouse sai dele e do botão.
+    fn track_hover(&mut self, ctx: &egui::Context) {
+        let (now, pos) = ctx.input(|i| (i.time, i.pointer.hover_pos()));
+        let over = pos.and_then(|pos| {
+            self.strip_buttons
+                .iter()
+                .find(|(_, rect)| rect.contains(pos))
+                .map(|(p, _)| p.clone())
+        });
+        match (over, &self.hover) {
+            (Some(p), Some(hover)) if hover.pane == p => {}
+            (Some(p), _) => {
+                self.hover = Some(Hover {
+                    armed: self.flyout.as_ref() != Some(&p),
+                    pane: p,
+                    since: now,
+                })
+            }
+            (None, _) => self.hover = None,
+        }
+        if let Some(hover) = self.hover.as_mut().filter(|h| h.armed) {
+            let waited = now - hover.since;
+            if waited >= HOVER_OPEN {
+                hover.armed = false;
+                let pane = hover.pane.clone();
+                self.set_flyout(Some(pane), false);
+                // O painel é desenhado no próximo frame.
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after_secs((HOVER_OPEN - waited) as f32);
+            }
+        }
+
+        let Some(pane) = self.flyout.clone() else {
+            return;
+        };
+        if self.sticky || ctx.dragged_id().is_some() {
+            self.left_at = None;
+            return;
+        }
+        let inside = pos.is_some_and(|pos| {
+            self.flyout_rect.is_some_and(|r| r.contains(pos))
+                || self
+                    .strip_button_rect(&pane)
+                    .is_some_and(|r| r.contains(pos))
+        });
+        if inside {
+            self.left_at = None;
+            return;
+        }
+        let left_at = *self.left_at.get_or_insert(now);
+        if now - left_at >= HOVER_CLOSE {
+            self.set_flyout(None, false);
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after_secs((HOVER_CLOSE - (now - left_at)) as f32);
         }
     }
 
@@ -649,6 +815,8 @@ impl<P: Pane> Workspace<P> {
     }
 
     /// Painel desafixado aberto por cima dos documentos, encostado na faixa.
+    /// Desliza para dentro ao abrir e para fora ao esconder; a borda interna
+    /// pode ser arrastada para mudar o tamanho.
     fn flyout_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -656,33 +824,94 @@ impl<P: Pane> Workspace<P> {
         viewer: &mut impl PaneViewer<P>,
         requests: &mut Vec<Request<P>>,
     ) {
-        let Some(mut pane) = self.flyout.clone() else {
-            self.flyout_rect = None;
-            return;
-        };
         let ctx = ui.ctx().clone();
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.flyout = None;
-            return;
+        if self.flyout.is_some() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.set_flyout(None, false);
         }
-        let side = |extent: f32| FLYOUT_SIZE.min(extent * 0.8);
-        let rect = match pane.area() {
-            Area::Right => egui::Rect::from_min_max(
-                egui::pos2(dock.right() - side(dock.width()), dock.top()),
-                dock.max,
-            ),
-            Area::Bottom => egui::Rect::from_min_max(
-                egui::pos2(dock.left(), dock.bottom() - side(dock.height())),
-                dock.max,
-            ),
-            _ => egui::Rect::from_min_size(dock.min, egui::vec2(side(dock.width()), dock.height())),
+        if self.flyout.is_none() {
+            self.flyout_rect = None;
+        }
+        // Painel fixado de novo ou fechado não desliza para fora: já está em
+        // outro lugar (ou em lugar nenhum).
+        if self
+            .slide
+            .as_ref()
+            .is_some_and(|s| !self.hidden.contains(&s.pane))
+        {
+            self.slide = None;
+        }
+
+        // Avança a animação na direção do estado atual.
+        let duration = if ui.style().animation_time > 0.0 {
+            SLIDE
+        } else {
+            0.0
         };
-        self.flyout_rect = Some(rect);
+        let step = if duration > 0.0 {
+            ctx.input(|i| i.stable_dt).min(0.1) / duration
+        } else {
+            1.0
+        };
+        match (&self.flyout, &mut self.slide) {
+            (Some(p), Some(slide)) if slide.pane == *p => {
+                slide.progress = (slide.progress + step).min(1.0);
+            }
+            (Some(p), _) => {
+                self.slide = Some(Slide {
+                    pane: p.clone(),
+                    progress: if duration > 0.0 { 0.0 } else { 1.0 },
+                });
+            }
+            (None, Some(slide)) => {
+                slide.progress -= step;
+                if slide.progress <= 0.0 {
+                    self.slide = None;
+                }
+            }
+            (None, None) => {}
+        }
+        let Some(slide) = &self.slide else {
+            return;
+        };
+        let mut pane = slide.pane.clone();
+        let progress = slide.progress;
+        let open = self.flyout.as_ref() == Some(&pane);
+        if progress < 1.0 {
+            ctx.request_repaint();
+        }
+
+        let area = pane.area();
+        let extent = match area {
+            Area::Bottom => dock.height(),
+            _ => dock.width(),
+        };
+        let max = (extent * FLYOUT_MAX).max(FLYOUT_MIN);
+        let size = match self.flyout_size(&pane) {
+            Some(size) => size.clamp(FLYOUT_MIN.min(max), max),
+            None => FLYOUT_SIZE.min(extent * 0.8),
+        };
+        let rect = flyout_rect(area, dock, size);
+        if open {
+            self.flyout_rect = Some(rect);
+        }
+        // Desliza a partir da faixa: 0 escondido, 1 encostado nela.
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let hidden_by = (1.0 - eased) * size;
+        let offset = match area {
+            Area::Right => egui::vec2(hidden_by, 0.0),
+            Area::Bottom => egui::vec2(0.0, hidden_by),
+            _ => egui::vec2(-hidden_by, 0.0),
+        };
+        let shown = rect.translate(offset);
+
         let title = viewer.title(&pane);
+        let mut resize = 0.0;
         egui::Area::new(egui::Id::new("pgstudio_autohide_flyout"))
             .order(egui::Order::Foreground)
-            .fixed_pos(rect.min)
+            .fixed_pos(shown.min)
+            .interactable(open)
             .show(&ctx, |ui| {
+                ui.set_clip_rect(dock);
                 let frame = egui::Frame::window(ui.style())
                     .corner_radius(0)
                     .inner_margin(egui::Margin::same(4));
@@ -711,25 +940,105 @@ impl<P: Pane> Workspace<P> {
                     ui.separator();
                     viewer.ui(ui, &mut pane);
                 });
+                if open {
+                    resize = resize_grip(ui, area, shown);
+                }
             });
+        if resize != 0.0 {
+            self.set_flyout_size(&pane, (size + resize).clamp(FLYOUT_MIN.min(max), max));
+            self.sticky = true;
+        }
+        if !open {
+            return;
+        }
+
         // Clicar nos documentos ou nos outros painéis esconde o painel, como
         // no SSMS. Menus, toolbar e janelas por cima (como um menu aberto
         // sobre os documentos) não contam, para Window > Auto Hide funcionar.
+        // Clicar dentro do painel faz um painel aberto pelo mouse ficar.
         let press = ctx.input(|i| {
             i.pointer
                 .any_pressed()
                 .then(|| i.pointer.interact_pos())
                 .flatten()
         });
-        let outside = press.is_some_and(|p| {
-            let over_popup = ctx
-                .layer_id_at(p)
-                .is_some_and(|layer| layer.order != egui::Order::Background);
-            dock.contains(p) && !rect.contains(p) && !over_popup
-        });
-        if outside {
-            self.flyout = None;
+        let Some(press) = press else {
+            return;
+        };
+        if rect.contains(press) {
+            self.sticky = true;
+            return;
         }
+        let over_popup = ctx
+            .layer_id_at(press)
+            .is_some_and(|layer| layer.order != egui::Order::Background);
+        if dock.contains(press) && !over_popup {
+            self.set_flyout(None, false);
+        }
+    }
+}
+
+/// Retângulo do painel aberto da faixa de `area`, com `size` de largura (ou
+/// altura, embaixo), encostado na borda de `dock`.
+fn flyout_rect(area: Area, dock: egui::Rect, size: f32) -> egui::Rect {
+    match area {
+        Area::Right => {
+            egui::Rect::from_min_max(egui::pos2(dock.right() - size, dock.top()), dock.max)
+        }
+        Area::Bottom => {
+            egui::Rect::from_min_max(egui::pos2(dock.left(), dock.bottom() - size), dock.max)
+        }
+        _ => egui::Rect::from_min_size(dock.min, egui::vec2(size, dock.height())),
+    }
+}
+
+/// Alça na borda interna do painel aberto da faixa (a que dá para os
+/// documentos). Devolve quanto o painel cresceu neste frame.
+fn resize_grip(ui: &mut egui::Ui, area: Area, rect: egui::Rect) -> f32 {
+    let half = GRIP / 2.0;
+    let (grip, cursor) = match area {
+        Area::Right => (
+            egui::Rect::from_x_y_ranges(rect.left()..=rect.left() + GRIP, rect.y_range()),
+            egui::CursorIcon::ResizeHorizontal,
+        ),
+        Area::Bottom => (
+            egui::Rect::from_x_y_ranges(rect.x_range(), rect.top()..=rect.top() + GRIP),
+            egui::CursorIcon::ResizeVertical,
+        ),
+        _ => (
+            egui::Rect::from_x_y_ranges(rect.right() - GRIP..=rect.right(), rect.y_range()),
+            egui::CursorIcon::ResizeHorizontal,
+        ),
+    };
+    let response = ui
+        .interact(
+            grip,
+            egui::Id::new("pgstudio_autohide_resize"),
+            egui::Sense::drag(),
+        )
+        .on_hover_cursor(cursor);
+    let color = if response.dragged() {
+        ui.visuals().widgets.active.bg_stroke.color
+    } else if response.hovered() {
+        ui.visuals().widgets.hovered.bg_stroke.color
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    if color != egui::Color32::TRANSPARENT {
+        let line = match area {
+            Area::Bottom => grip.shrink2(egui::vec2(0.0, half - 1.0)),
+            _ => grip.shrink2(egui::vec2(half - 1.0, 0.0)),
+        };
+        ui.painter().rect_filled(line, 0.0, color);
+    }
+    if !response.dragged() {
+        return 0.0;
+    }
+    let delta = response.drag_delta();
+    match area {
+        Area::Right => -delta.x,
+        Area::Bottom => -delta.y,
+        _ => delta.x,
     }
 }
 
@@ -978,11 +1287,13 @@ mod tests {
                 root: None,
                 floating: vec![P::Props, P::Props],
                 hidden: vec![P::Props, P::Doc(3), P::Explorer],
+                flyout_sizes: vec![],
             },
             Layout {
                 root: Some(tabs(vec![], 3)),
                 floating: vec![],
                 hidden: vec![],
+                flyout_sizes: vec![],
             },
             Layout {
                 root: Some(split(
@@ -992,6 +1303,7 @@ mod tests {
                 )),
                 floating: vec![P::Explorer],
                 hidden: vec![],
+                flyout_sizes: vec![],
             },
             Layout {
                 root: Some(split(
@@ -1001,6 +1313,7 @@ mod tests {
                 )),
                 floating: vec![],
                 hidden: vec![],
+                flyout_sizes: vec![],
             },
         ];
         for layout in cases {
@@ -1023,6 +1336,7 @@ mod tests {
             root: Some(deep),
             floating: vec![],
             hidden: vec![],
+            flyout_sizes: vec![],
         });
         render(&mut ws);
     }
@@ -1107,5 +1421,233 @@ mod tests {
         let output = ws.group_rect(&P::Output).unwrap();
         assert!(doc.height() > 2.0 * output.height(), "{doc:?} {output:?}");
         assert!(doc.bottom() <= output.top() + 1.0);
+    }
+
+    /// Roda frames com relógio e eventos de mouse, para testar o auto-hide.
+    struct Driver {
+        ctx: egui::Context,
+        time: f64,
+        pointer: egui::Pos2,
+    }
+
+    impl Driver {
+        fn new() -> Self {
+            Driver {
+                ctx: egui::Context::default(),
+                time: 0.0,
+                pointer: egui::pos2(640.0, 300.0),
+            }
+        }
+
+        fn frame(&mut self, ws: &mut Workspace<P>, dt: f64, events: Vec<egui::Event>) {
+            self.time += dt;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                time: Some(self.time),
+                predicted_dt: dt as f32,
+                events,
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(input, |ui| ws.show(ui, &mut Viewer));
+            output.textures_delta.clear();
+        }
+
+        /// Espera `secs` com o mouse parado, em frames de 1/60 s.
+        fn wait(&mut self, ws: &mut Workspace<P>, secs: f64) {
+            let frames = (secs * 60.0).ceil() as usize;
+            for _ in 0..frames {
+                self.frame(ws, 1.0 / 60.0, Vec::new());
+            }
+        }
+
+        fn move_to(&mut self, ws: &mut Workspace<P>, pos: egui::Pos2) {
+            self.pointer = pos;
+            self.frame(ws, 1.0 / 60.0, vec![egui::Event::PointerMoved(pos)]);
+        }
+
+        fn button(&mut self, ws: &mut Workspace<P>, pressed: bool) {
+            let event = egui::Event::PointerButton {
+                pos: self.pointer,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(ws, 1.0 / 60.0, vec![event]);
+        }
+
+        fn click(&mut self, ws: &mut Workspace<P>) {
+            self.button(ws, true);
+            self.button(ws, false);
+        }
+    }
+
+    #[test]
+    fn hovering_the_strip_opens_the_panel_until_the_mouse_leaves() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Explorer);
+        let mut d = Driver::new();
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        let button = ws.strip_button_rect(&P::Explorer).unwrap();
+        d.move_to(&mut ws, button.center());
+        d.wait(&mut ws, HOVER_OPEN / 2.0);
+        assert_eq!(ws.flyout(), None, "passar rápido não abre");
+        d.wait(&mut ws, HOVER_OPEN);
+        assert_eq!(ws.flyout(), Some(&P::Explorer));
+        assert!(ws.flyout_is_transient());
+
+        // Ir do botão para o painel não esconde.
+        let rect = ws.flyout_rect().unwrap();
+        d.move_to(&mut ws, rect.center());
+        d.wait(&mut ws, HOVER_CLOSE * 2.0);
+        assert_eq!(ws.flyout(), Some(&P::Explorer));
+
+        // Sair para os documentos esconde, depois de um tempo.
+        d.move_to(&mut ws, egui::pos2(900.0, 300.0));
+        d.wait(&mut ws, HOVER_CLOSE / 2.0);
+        assert_eq!(ws.flyout(), Some(&P::Explorer));
+        d.wait(&mut ws, HOVER_CLOSE);
+        assert_eq!(ws.flyout(), None);
+
+        // Voltar ao botão abre de novo.
+        d.move_to(&mut ws, button.center());
+        d.wait(&mut ws, HOVER_OPEN * 1.5);
+        assert_eq!(ws.flyout(), Some(&P::Explorer));
+    }
+
+    #[test]
+    fn using_a_hover_opened_panel_keeps_it_open() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Props);
+        let mut d = Driver::new();
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        let button = ws.strip_button_rect(&P::Props).unwrap();
+        d.move_to(&mut ws, button.center());
+        d.wait(&mut ws, HOVER_OPEN * 1.5);
+        let rect = ws.flyout_rect().unwrap();
+        d.move_to(&mut ws, rect.center());
+        d.click(&mut ws);
+        assert!(!ws.flyout_is_transient());
+        d.move_to(&mut ws, egui::Pos2::new(10.0, 10.0));
+        d.wait(&mut ws, HOVER_CLOSE * 2.0);
+        assert_eq!(ws.flyout(), Some(&P::Props));
+    }
+
+    #[test]
+    fn closed_panel_does_not_reopen_under_a_resting_mouse() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Output);
+        let mut d = Driver::new();
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        let button = ws.strip_button_rect(&P::Output).unwrap();
+        d.move_to(&mut ws, button.center());
+        d.click(&mut ws);
+        assert_eq!(ws.flyout(), Some(&P::Output));
+        assert!(!ws.flyout_is_transient(), "clique deixa o painel aberto");
+        d.click(&mut ws);
+        assert_eq!(ws.flyout(), None);
+        d.wait(&mut ws, HOVER_OPEN * 3.0);
+        assert_eq!(ws.flyout(), None);
+    }
+
+    #[test]
+    fn the_panel_slides_in_and_out() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Explorer);
+        let mut d = Driver::new();
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        ws.show_flyout(&P::Explorer);
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        let progress = ws.slide.as_ref().unwrap().progress;
+        assert!(progress > 0.0 && progress < 1.0, "{progress}");
+        d.wait(&mut ws, f64::from(SLIDE));
+        assert_eq!(ws.slide.as_ref().unwrap().progress, 1.0);
+
+        ws.hide_flyout();
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        assert!(ws.slide.is_some(), "ainda deslizando para fora");
+        assert_eq!(ws.flyout_rect(), None);
+        d.wait(&mut ws, f64::from(SLIDE) * 2.0);
+        assert!(ws.slide.is_none());
+
+        // Fixar de novo não anima: o painel já voltou para o docking.
+        ws.show_flyout(&P::Explorer);
+        d.wait(&mut ws, f64::from(SLIDE) * 2.0);
+        ws.dock(&P::Explorer);
+        d.frame(&mut ws, 1.0 / 60.0, Vec::new());
+        assert!(ws.slide.is_none());
+    }
+
+    #[test]
+    fn dragging_the_inner_edge_resizes_the_panel() {
+        for (pane, grab, drag, grows) in [
+            (
+                P::Explorer,
+                (|r: egui::Rect| r.right_center() - egui::vec2(2.0, 0.0))
+                    as fn(egui::Rect) -> egui::Pos2,
+                egui::vec2(100.0, 0.0),
+                (|r: egui::Rect| r.width()) as fn(egui::Rect) -> f32,
+            ),
+            (
+                P::Props,
+                |r: egui::Rect| r.left_center() + egui::vec2(2.0, 0.0),
+                egui::vec2(-100.0, 0.0),
+                |r: egui::Rect| r.width(),
+            ),
+            (
+                P::Output,
+                |r: egui::Rect| r.center_top() + egui::vec2(0.0, 2.0),
+                egui::vec2(0.0, -100.0),
+                |r: egui::Rect| r.height(),
+            ),
+        ] {
+            let mut ws = ssms();
+            ws.auto_hide(&pane);
+            ws.show_flyout(&pane);
+            let mut d = Driver::new();
+            d.wait(&mut ws, 0.5);
+            let before = ws.flyout_rect().unwrap();
+            d.move_to(&mut ws, grab(before));
+            d.button(&mut ws, true);
+            for _ in 0..4 {
+                let to = d.pointer + drag / 4.0;
+                d.move_to(&mut ws, to);
+            }
+            d.button(&mut ws, false);
+            d.wait(&mut ws, 0.1);
+            let after = ws.flyout_rect().unwrap();
+            let grew = grows(after) - grows(before);
+            assert!((grew - 100.0).abs() < 2.0, "{pane:?} {grew}");
+            assert_eq!(ws.flyout(), Some(&pane), "arrastar não esconde");
+
+            // O tamanho fica salvo no layout.
+            let layout = ws.layout(|_| true);
+            let json = serde_json::to_string(&layout).unwrap();
+            let restored = Workspace::from_layout(serde_json::from_str(&json).unwrap());
+            assert_eq!(restored.flyout_size(&pane), ws.flyout_size(&pane));
+        }
+    }
+
+    #[test]
+    fn resized_panel_stays_within_bounds() {
+        let mut ws = ssms();
+        ws.auto_hide(&P::Explorer);
+        ws.set_flyout_size(&P::Explorer, 5000.0);
+        ws.show_flyout(&P::Explorer);
+        render(&mut ws);
+        let rect = ws.flyout_rect().unwrap();
+        assert!(rect.width() < 1280.0 * FLYOUT_MAX + 1.0, "{rect:?}");
+        ws.set_flyout_size(&P::Explorer, 1.0);
+        render(&mut ws);
+        assert!(ws.flyout_rect().unwrap().width() >= FLYOUT_MIN);
+        // Tamanho inválido num arquivo é ignorado.
+        let mut layout = ws.layout(|_| true);
+        layout.flyout_sizes = vec![(P::Explorer, f32::NAN), (P::Doc(1), 200.0)];
+        let restored = Workspace::from_layout(layout);
+        assert_eq!(restored.flyout_size(&P::Explorer), None);
+        assert_eq!(restored.flyout_size(&P::Doc(1)), None);
     }
 }
