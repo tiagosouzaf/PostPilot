@@ -2,24 +2,30 @@
 //! sessão (em outra thread) e guarda resultados e mensagens para as abas
 //! Results e Messages, como no SSMS.
 
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
 use pgstudio_execution_plan::{Plan, PlanView};
+use pgstudio_result_grid::export::{Format, Writer};
+use pgstudio_result_grid::grid::INSERT_TABLE;
 use pgstudio_result_grid::{GridState, ResultStore};
 
 /// Linhas recebidas entre um pedido de frame e outro, para a contagem na
 /// tela andar sem pedir um frame por linha.
 const REPAINT_EVERY_ROWS: u64 = 5000;
 
-/// Como mostrar os resultados: grade (Ctrl+D) ou texto (Ctrl+T).
+/// Como mostrar os resultados: grade (Ctrl+D), texto (Ctrl+T) ou direto
+/// num arquivo (Ctrl+Shift+F).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ResultsMode {
     #[default]
     Grid,
     Text,
+    File,
 }
 
 /// Um resultado (um `SELECT`): as linhas no buffer paginado e o estado da
@@ -54,6 +60,11 @@ impl ResultSet {
     /// O buffer, travado enquanto o guarda existir.
     pub fn store(&self) -> MutexGuard<'_, ResultStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// O buffer compartilhado (para exportar fora da thread da interface).
+    pub fn shared_store(&self) -> Arc<Mutex<ResultStore>> {
+        self.store.clone()
     }
 
     /// O buffer e o estado da grade, para desenhar.
@@ -293,6 +304,9 @@ pub struct Execution {
     /// O servidor mandou `Finished`: um erro muda o resultado antes disso,
     /// mas o lote só acaba aqui.
     finished: bool,
+    /// Results to File: os resultados vão para este arquivo, não para a
+    /// grade.
+    file: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Execution {
@@ -397,7 +411,122 @@ impl Execution {
             plans: Vec::new(),
             rolled_back: false,
             finished: false,
+            file: None,
         }
+    }
+
+    /// Results to File: roda `sql` escrevendo cada resultado em `path`
+    /// (no formato da extensão), direto da thread do banco, sem guardar as
+    /// linhas. Resultados seguidos ficam separados por uma linha em branco.
+    pub fn start_to_file(
+        session: Arc<dyn QuerySession>,
+        sql: String,
+        offset: usize,
+        path: &Path,
+        ctx: &egui::Context,
+    ) -> std::io::Result<Self> {
+        let file = std::fs::File::create(path)?;
+        let format = Format::from_path(path);
+        let batch = Batch::plain(&sql);
+        let (tx, events) = mpsc::channel();
+        let ctx = ctx.clone();
+        let shown = path.display().to_string();
+        let mut idle: Option<BufWriter<std::fs::File>> = Some(BufWriter::new(file));
+        let mut writer: Option<Writer<BufWriter<std::fs::File>>> = None;
+        let mut results = 0;
+        let mut failed: Option<String> = None;
+        session.execute(
+            batch.sent.clone(),
+            Box::new(move |e| match e {
+                QueryEvent::Columns(columns) => {
+                    let Some(mut out) = idle.take() else {
+                        return;
+                    };
+                    let started = if results > 0 {
+                        writeln!(out).and_then(|_| Writer::new(out, format, columns, INSERT_TABLE))
+                    } else {
+                        Writer::new(out, format, columns, INSERT_TABLE)
+                    };
+                    results += 1;
+                    match started {
+                        Ok(w) => writer = Some(w),
+                        Err(e) => failed = Some(e.to_string()),
+                    }
+                }
+                QueryEvent::Row(row) => {
+                    if let Some(w) = &mut writer
+                        && let Err(e) = w.row(&row)
+                    {
+                        failed = Some(e.to_string());
+                        writer = None;
+                    }
+                }
+                QueryEvent::Finished { canceled } => {
+                    if let Some(w) = writer.take() {
+                        match w.finish() {
+                            Ok(out) => idle = Some(out),
+                            Err(e) => failed = Some(e.to_string()),
+                        }
+                    }
+                    if let Some(out) = &mut idle
+                        && let Err(e) = out.flush()
+                    {
+                        failed = Some(e.to_string());
+                    }
+                    if let Some(e) = failed.take() {
+                        let message = format!("Could not write the results to {shown}: {e}");
+                        let _ = tx.send(Incoming::Event(QueryEvent::Error(ServerMessage::error(
+                            message,
+                        ))));
+                    }
+                    let _ = tx.send(Incoming::Event(QueryEvent::Finished { canceled }));
+                    ctx.request_repaint();
+                }
+                other => {
+                    if matches!(
+                        other,
+                        QueryEvent::CommandComplete { .. } | QueryEvent::Error(_)
+                    ) && let Some(w) = writer.take()
+                    {
+                        match w.finish() {
+                            Ok(out) => idle = Some(out),
+                            Err(e) => failed = Some(e.to_string()),
+                        }
+                    }
+                    // O fim de um resultado conta como resultado para o
+                    // "(n rows affected)".
+                    let _ = tx.send(Incoming::Event(other));
+                    ctx.request_repaint();
+                }
+            }),
+        );
+        Ok(Execution {
+            events,
+            database: session.database(),
+            session,
+            sql,
+            offset,
+            results: Vec::new(),
+            messages: Vec::new(),
+            open_result: false,
+            started: Instant::now(),
+            elapsed: None,
+            outcome: Outcome::Running,
+            pending_error: None,
+            tab: Tab::Messages,
+            mode: ResultsMode::File,
+            batch,
+            plan_mode: false,
+            plans: Vec::new(),
+            rolled_back: false,
+            finished: false,
+            file: Some(path.to_path_buf()),
+        })
+    }
+
+    /// Arquivo do Results to File, se for.
+    pub fn file(&self) -> Option<&Path> {
+        self.file.as_deref()
     }
 
     /// Ctrl+M ligado: roda cada comando com `EXPLAIN (ANALYZE, BUFFERS,
@@ -563,6 +692,12 @@ impl Execution {
                     if !self.messages.iter().any(|m| m.kind == MessageKind::Info) {
                         self.info("Commands completed successfully.".into());
                     }
+                }
+                if let Some(path) = &self.file
+                    && self.outcome != Outcome::Failed
+                {
+                    let text = format!("The results were saved to {}.", path.display());
+                    self.info(text);
                 }
                 self.info(String::new());
                 self.info(format!(

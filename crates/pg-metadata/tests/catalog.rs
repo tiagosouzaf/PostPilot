@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use pgstudio_core::connection::{ConnectionSettings, Connector, SslMode};
-use pgstudio_core::metadata::{MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction};
+use pgstudio_core::metadata::{
+    MetadataProvider, NodeId, NodeKind, ObjectNode, Property, ScriptAction,
+};
 use pgstudio_pg_client::{DbRuntime, Session};
 use pgstudio_pg_metadata::PgConnector;
 
@@ -59,6 +61,17 @@ CREATE PROCEDURE "sales/2024".noop() LANGUAGE sql AS 'SELECT 1';
 CREATE TABLE "sales/2024".events (at date NOT NULL) PARTITION BY RANGE (at);
 CREATE TABLE "sales/2024".events_2024 PARTITION OF "sales/2024".events
     FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TYPE "sales/2024".mood AS ENUM ('sad', 'ok', 'it''s great');
+CREATE DOMAIN "sales/2024".posint AS integer DEFAULT 1 NOT NULL
+    CONSTRAINT posint_check CHECK (VALUE > 0);
+CREATE TYPE "sales/2024".pair AS (a integer, "B" text);
+CREATE TYPE "sales/2024".floatrange AS RANGE (subtype = float8, subtype_diff = float8mi);
+CREATE EXTENSION citext;
+CREATE TRIGGER orders_touch BEFORE INSERT OR UPDATE ON "sales/2024".orders
+    FOR EACH ROW EXECUTE FUNCTION pg_catalog.suppress_redundant_updates_trigger();
+CREATE TRIGGER orders_audit AFTER DELETE ON "sales/2024".orders
+    FOR EACH STATEMENT EXECUTE FUNCTION pg_catalog.suppress_redundant_updates_trigger();
+ALTER TABLE "sales/2024".orders DISABLE TRIGGER orders_audit;
 "#;
 
 impl TestDb {
@@ -138,6 +151,19 @@ fn walks_the_catalog_like_ssms() {
 
     let databases = child(meta, &server, "Databases");
     let database = child(meta, &databases, &db.name);
+    assert_eq!(
+        names(meta, &database),
+        ["Database Diagrams", "Schemas", "Extensions"]
+    );
+    let extensions = names(meta, &child(meta, &database, "Extensions"));
+    assert!(
+        extensions.iter().any(|e| e.starts_with("citext (")),
+        "{extensions:?}"
+    );
+    assert!(
+        extensions.iter().any(|e| e.starts_with("plpgsql (")),
+        "{extensions:?}"
+    );
     let schemas = child(meta, &database, "Schemas");
     let schema_names = names(meta, &schemas);
     assert!(schema_names.contains(&"public".to_string()));
@@ -150,7 +176,15 @@ fn walks_the_catalog_like_ssms() {
     let schema = child(meta, &schemas, "sales/2024");
     assert_eq!(
         names(meta, &schema),
-        ["Tables", "Views", "Functions", "Sequences"]
+        [
+            "Tables",
+            "Views",
+            "Materialized Views",
+            "Functions",
+            "Procedures",
+            "Sequences",
+            "Types"
+        ]
     );
 
     let tables = child(meta, &schema, "Tables");
@@ -159,7 +193,15 @@ fn walks_the_catalog_like_ssms() {
         ["customer", "events (partitioned)", "orders"]
     );
     let orders = child(meta, &tables, "orders");
-    assert_eq!(names(meta, &orders), ["Columns", "Constraints", "Indexes"]);
+    assert_eq!(
+        names(meta, &orders),
+        ["Columns", "Constraints", "Indexes", "Triggers"]
+    );
+    // As triggers internas da FK ficam de fora.
+    assert_eq!(
+        names(meta, &child(meta, &orders, "Triggers")),
+        ["orders_audit (disabled)", "orders_touch"]
+    );
     let columns = child(meta, &orders, "Columns");
     assert_eq!(
         names(meta, &columns),
@@ -184,9 +226,15 @@ fn walks_the_catalog_like_ssms() {
     );
 
     let views = child(meta, &schema, "Views");
+    assert_eq!(names(meta, &views), ["big_orders"]);
+    let matviews = child(meta, &schema, "Materialized Views");
+    assert_eq!(names(meta, &matviews), ["order_count"]);
+    let order_count = child(meta, &matviews, "order_count");
+    assert_eq!(order_count.kind, NodeKind::MaterializedView);
+    assert_eq!(names(meta, &order_count), ["Columns", "Indexes"]);
     assert_eq!(
-        names(meta, &views),
-        ["big_orders", "order_count (materialized)"]
+        names(meta, &child(meta, &order_count, "Columns")),
+        ["n (bigint, null)"]
     );
     let view = child(meta, &views, "big_orders");
     let view_columns = child(meta, &view, "Columns");
@@ -196,10 +244,23 @@ fn walks_the_catalog_like_ssms() {
     );
 
     let functions = child(meta, &schema, "Functions");
+    assert_eq!(names(meta, &functions), ["add(a integer, b integer)"]);
+    let procedures = child(meta, &schema, "Procedures");
+    let noop = child(meta, &procedures, "noop()");
+    assert_eq!(noop.kind, NodeKind::Procedure);
+    assert_eq!(names(meta, &procedures), ["noop()"]);
     assert_eq!(
-        names(meta, &functions),
-        ["add(a integer, b integer)", "noop() (procedure)"]
+        names(meta, &child(meta, &schema, "Types")),
+        [
+            "floatrange (range)",
+            "mood (enum)",
+            "pair (composite)",
+            "posint (domain)"
+        ]
     );
+    // Os tipos do citext (de extensão) não aparecem.
+    let public = child(meta, &schemas, "public");
+    assert!(names(meta, &child(meta, &public, "Types")).is_empty());
     let sequences = names(meta, &child(meta, &schema, "Sequences"));
     assert!(
         sequences.contains(&"invoice_no".to_string()),
@@ -305,7 +366,11 @@ fn reads_the_whole_catalog_for_intellisense() {
             .kind,
         pgstudio_core::catalog::RelationKind::View
     );
-    assert_eq!(sales.functions, ["add", "noop"]);
+    // Os construtores do range são funções de verdade para o IntelliSense.
+    assert_eq!(
+        sales.functions,
+        ["add", "floatmultirange", "floatrange", "noop"]
+    );
     let builtins = cat.schema("pg_catalog").unwrap();
     assert!(builtins.functions.iter().any(|f| f == "now"));
     assert!(builtins.relations.is_empty());
@@ -332,6 +397,23 @@ fn scripts(meta: &dyn MetadataProvider, db: &str, action: ScriptAction) -> Vec<(
     let database = child(meta, &databases, db);
     let schema = child(meta, &child(meta, &database, "Schemas"), "sales/2024");
     let mut nodes = vec![schema.clone()];
+    let extensions = child(meta, &database, "Extensions");
+    let citext = meta
+        .children(&extensions.id)
+        .unwrap()
+        .into_iter()
+        .find(|n| n.name.starts_with("citext ("))
+        .expect("citext");
+    nodes.push(citext);
+    let types = child(meta, &schema, "Types");
+    for t in [
+        "floatrange (range)",
+        "mood (enum)",
+        "pair (composite)",
+        "posint (domain)",
+    ] {
+        nodes.push(child(meta, &types, t));
+    }
     let seqs = child(meta, &schema, "Sequences");
     nodes.push(child(meta, &seqs, "invoice_no"));
     let tables = child(meta, &schema, "Tables");
@@ -345,13 +427,17 @@ fn scripts(meta: &dyn MetadataProvider, db: &str, action: ScriptAction) -> Vec<(
         nodes.push(child(meta, &tables, t));
     }
     let functions = child(meta, &schema, "Functions");
-    for f in ["add(a integer, b integer)", "noop() (procedure)"] {
-        nodes.push(child(meta, &functions, f));
+    nodes.push(child(meta, &functions, "add(a integer, b integer)"));
+    let procedures = child(meta, &schema, "Procedures");
+    nodes.push(child(meta, &procedures, "noop()"));
+    let triggers = child(meta, &child(meta, &tables, "orders"), "Triggers");
+    for t in ["orders_audit (disabled)", "orders_touch"] {
+        nodes.push(child(meta, &triggers, t));
     }
     let views = child(meta, &schema, "Views");
-    for v in ["big_orders", "order_count (materialized)"] {
-        nodes.push(child(meta, &views, v));
-    }
+    nodes.push(child(meta, &views, "big_orders"));
+    let matviews = child(meta, &schema, "Materialized Views");
+    nodes.push(child(meta, &matviews, "order_count"));
     let mut out: Vec<(String, String)> = nodes
         .iter()
         .map(|n| (n.name.clone(), meta.script(&n.id, action).unwrap()))
@@ -405,6 +491,50 @@ fn create_scripts_rebuild_the_objects_in_a_clean_database() {
     );
     let scratch = &created.iter().find(|(n, _)| n == "scratch").unwrap().1;
     assert!(scratch.starts_with("CREATE UNLOGGED TABLE"), "{scratch}");
+    let script = |name: &str| &created.iter().find(|(n, _)| n == name).unwrap().1;
+    assert_eq!(
+        script("mood (enum)"),
+        "CREATE TYPE \"sales/2024\".mood AS ENUM (\n    'sad',\n    'ok',\n    'it''s great'\n);\n"
+    );
+    assert_eq!(
+        script("posint (domain)"),
+        "CREATE DOMAIN \"sales/2024\".posint\n    AS integer\n    DEFAULT 1\n    NOT NULL\n    \
+         CONSTRAINT posint_check CHECK (VALUE > 0);\n"
+    );
+    assert_eq!(
+        script("pair (composite)"),
+        "CREATE TYPE \"sales/2024\".pair AS (\n    a integer,\n    \"B\" text\n);\n"
+    );
+    assert_eq!(
+        script("floatrange (range)"),
+        "CREATE TYPE \"sales/2024\".floatrange AS RANGE (\n    SUBTYPE = double precision,\n    \
+         SUBTYPE_DIFF = float8mi\n);\n"
+    );
+    let audit = script("orders_audit (disabled)");
+    assert!(
+        audit.starts_with("CREATE TRIGGER orders_audit AFTER DELETE ON \"sales/2024\".orders"),
+        "{audit}"
+    );
+    assert!(
+        audit.ends_with("DISABLE TRIGGER orders_audit;\n"),
+        "{audit}"
+    );
+    let citext = created
+        .iter()
+        .find(|(n, _)| n.starts_with("citext ("))
+        .unwrap();
+    assert!(
+        citext
+            .1
+            .starts_with("CREATE EXTENSION IF NOT EXISTS citext\n    WITH SCHEMA public\n"),
+        "{}",
+        citext.1
+    );
+    assert!(
+        script("order_count").starts_with("CREATE MATERIALIZED VIEW"),
+        "{}",
+        script("order_count")
+    );
 
     // Rodar tudo num banco vazio e gerar de novo dá o mesmo texto.
     let target = ConnectionSettings {
@@ -439,6 +569,113 @@ fn create_scripts_rebuild_the_objects_in_a_clean_database() {
         ),
     );
     assert!(!schemas.contains(&"sales/2024".to_string()), "{schemas:?}");
+}
+
+fn property<'a>(props: &'a [Property], name: &str) -> &'a str {
+    props
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| p.value.as_str())
+        .unwrap_or_else(|| panic!("no {name:?} in {props:?}"))
+}
+
+#[test]
+fn properties_describe_each_kind_of_object() {
+    let Some((settings, password)) = server() else {
+        return;
+    };
+    let db = TestDb::create(&settings, &password, "props");
+    let connected = PgConnector::new(DbRuntime::new().unwrap())
+        .connect(&settings, &password)
+        .unwrap();
+    let meta = connected.metadata.as_ref();
+    let server = meta.roots().unwrap().remove(0);
+    let database = child(meta, &child(meta, &server, "Databases"), &db.name);
+    let schema = child(meta, &child(meta, &database, "Schemas"), "sales/2024");
+    let props = |n: &ObjectNode| meta.properties(&n.id).unwrap();
+
+    let p = props(&database);
+    assert_eq!(property(&p, "Owner"), settings.user);
+    assert_eq!(property(&p, "Encoding"), "UTF8");
+
+    let orders = child(meta, &child(meta, &schema, "Tables"), "orders");
+    let p = props(&orders);
+    assert_eq!(property(&p, "Schema"), "sales/2024");
+    assert_eq!(property(&p, "Kind"), "table");
+    assert!(!p.iter().any(|p| p.name == "Populated"), "{p:?}");
+
+    let triggers = child(meta, &orders, "Triggers");
+    let p = props(&child(meta, &triggers, "orders_touch"));
+    assert_eq!(property(&p, "Table"), "orders");
+    assert_eq!(property(&p, "Timing"), "BEFORE");
+    assert_eq!(property(&p, "Events"), "INSERT OR UPDATE");
+    assert_eq!(property(&p, "Level"), "row");
+    assert_eq!(property(&p, "Enabled"), "yes");
+    let p = props(&child(meta, &triggers, "orders_audit (disabled)"));
+    assert_eq!(property(&p, "Events"), "DELETE");
+    assert_eq!(property(&p, "Level"), "statement");
+    assert_eq!(property(&p, "Enabled"), "no");
+
+    let mv = child(
+        meta,
+        &child(meta, &schema, "Materialized Views"),
+        "order_count",
+    );
+    let p = props(&mv);
+    assert_eq!(property(&p, "Kind"), "materialized view");
+    assert_eq!(property(&p, "Populated"), "yes");
+
+    let noop = child(meta, &child(meta, &schema, "Procedures"), "noop()");
+    let p = props(&noop);
+    assert_eq!(property(&p, "Language"), "sql");
+    assert!(!p.iter().any(|p| p.name == "Returns"), "{p:?}");
+    let add = child(
+        meta,
+        &child(meta, &schema, "Functions"),
+        "add(a integer, b integer)",
+    );
+    let p = props(&add);
+    assert_eq!(property(&p, "Returns"), "integer");
+    assert_eq!(property(&p, "Arguments"), "a integer, b integer");
+
+    let types = child(meta, &schema, "Types");
+    let p = props(&child(meta, &types, "mood (enum)"));
+    assert_eq!(property(&p, "Kind"), "enum");
+    assert_eq!(property(&p, "Values"), "sad, ok, it's great");
+    let p = props(&child(meta, &types, "posint (domain)"));
+    assert_eq!(property(&p, "Base type"), "integer");
+    assert_eq!(property(&p, "Nullable"), "no");
+    assert_eq!(property(&p, "Default"), "1");
+    assert_eq!(property(&p, "Checks"), "CHECK (VALUE > 0)");
+    let p = props(&child(meta, &types, "pair (composite)"));
+    assert_eq!(property(&p, "Attributes"), "a integer, B text");
+    let p = props(&child(meta, &types, "floatrange (range)"));
+    assert_eq!(property(&p, "Base type"), "double precision");
+
+    let extensions = child(meta, &database, "Extensions");
+    let citext = meta
+        .children(&extensions.id)
+        .unwrap()
+        .into_iter()
+        .find(|n| n.name.starts_with("citext ("))
+        .unwrap();
+    assert_eq!(citext.kind, NodeKind::Extension);
+    let p = props(&citext);
+    assert_eq!(property(&p, "Schema"), "public");
+    assert!(citext.name.contains(property(&p, "Version")), "{p:?}");
+
+    let columns = child(meta, &orders, "Columns");
+    let p = props(&child(meta, &columns, "id (PK, bigint, not null)"));
+    assert_eq!(property(&p, "Identity"), "always");
+    assert_eq!(property(&p, "Nullable"), "no");
+
+    let roles = child(meta, &child(meta, &server, "Security"), "Roles");
+    let me = child(meta, &roles, &settings.user);
+    assert_eq!(property(&props(&me), "Login"), "yes");
+
+    // Pastas e o servidor não têm propriedades além do nome.
+    assert!(props(&types).is_empty());
+    assert!(props(&server).is_empty());
 }
 
 #[test]

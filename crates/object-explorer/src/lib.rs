@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
+    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property, ScriptAction,
 };
 
 /// Estado de carga dos filhos de um nó (ou das raízes).
@@ -34,6 +34,16 @@ struct Entry {
 /// Quem pediu a carga: as raízes ou um nó.
 type Target = Option<NodeId>;
 type Reply = (Target, Result<Vec<ObjectNode>, MetadataError>);
+type PropertiesReply = (NodeId, Result<Vec<Property>, MetadataError>);
+
+/// Propriedades de um nó para a janela Properties, lidas quando ele é
+/// mostrado.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Properties {
+    Loading,
+    Loaded(Vec<Property>),
+    Failed(String),
+}
 
 /// Algo que o usuário pediu pelo Object Explorer e que a casca trata.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,8 +65,9 @@ pub enum Event {
     NewDiagram(NodeId),
     /// "Activity Monitor" no servidor.
     ActivityMonitor(NodeId),
-    /// "Properties" (roles e objetos com permissões) ou "New Role..." na
-    /// pasta Roles.
+    /// "Properties" de um objeto (roles e objetos com permissões abrem a
+    /// janela de segurança; os outros, a janela Properties) ou "New
+    /// Role..." na pasta Roles.
     Properties(NodeId),
     /// Tasks > Back Up... num banco.
     BackUp(NodeId),
@@ -85,6 +96,9 @@ pub struct ObjectExplorer {
     selected: Option<NodeId>,
     tx: Sender<Reply>,
     rx: Receiver<Reply>,
+    properties: HashMap<NodeId, Properties>,
+    props_tx: Sender<PropertiesReply>,
+    props_rx: Receiver<PropertiesReply>,
     /// Contexto do egui, para pedir um novo frame quando uma carga termina.
     ctx: Option<egui::Context>,
 }
@@ -92,6 +106,7 @@ pub struct ObjectExplorer {
 impl Default for ObjectExplorer {
     fn default() -> Self {
         let (tx, rx) = channel();
+        let (props_tx, props_rx) = channel();
         ObjectExplorer {
             provider: None,
             roots: Load::NotLoaded,
@@ -99,6 +114,9 @@ impl Default for ObjectExplorer {
             selected: None,
             tx,
             rx,
+            properties: HashMap::new(),
+            props_tx,
+            props_rx,
             ctx: None,
         }
     }
@@ -122,6 +140,10 @@ impl ObjectExplorer {
         let (tx, rx) = channel();
         self.tx = tx;
         self.rx = rx;
+        let (props_tx, props_rx) = channel();
+        self.props_tx = props_tx;
+        self.props_rx = props_rx;
+        self.properties.clear();
         self.provider = None;
         self.roots = Load::NotLoaded;
         self.entries.clear();
@@ -160,9 +182,38 @@ impl ObjectExplorer {
         }
     }
 
-    /// Se algum pedido ainda não voltou.
+    /// Propriedades de um objeto, pedidas ao provedor na primeira vez (numa
+    /// thread, como os filhos). None para o servidor, pastas e nós
+    /// desconhecidos.
+    pub fn properties(&mut self, id: &NodeId) -> Option<&Properties> {
+        let kind = self.entries.get(id)?.node.kind;
+        if !kind.has_properties() {
+            return None;
+        }
+        if !self.properties.contains_key(id) {
+            let provider = self.provider.clone()?;
+            self.properties.insert(id.clone(), Properties::Loading);
+            let tx = self.props_tx.clone();
+            let id = id.clone();
+            // Sem repaint daqui: quem mostra as propriedades pede um frame
+            // adiado enquanto carregam (ver `properties_loading`).
+            std::thread::spawn(move || {
+                let result = provider.properties(&id);
+                let _ = tx.send((id, result));
+            });
+        }
+        self.properties.get(id)
+    }
+
+    /// Se alguma carga da árvore ainda não voltou.
     pub fn is_loading(&self) -> bool {
         self.roots == Load::Loading || self.entries.values().any(|e| e.children == Load::Loading)
+    }
+
+    /// Se alguma leitura de propriedades ainda não voltou. A thread que lê
+    /// não pede frame novo; quem mostra as propriedades pede um adiado.
+    pub fn properties_loading(&self) -> bool {
+        self.properties.values().any(|p| *p == Properties::Loading)
     }
 
     /// Expande um nó, pedindo os filhos se ainda não foram lidos.
@@ -200,6 +251,8 @@ impl ObjectExplorer {
             entry.children = Load::NotLoaded;
             entry.expanded = false;
         }
+        // As propriedades são relidas na próxima vez que aparecerem.
+        self.properties.clear();
         self.expand(id);
     }
 
@@ -248,6 +301,14 @@ impl ObjectExplorer {
     /// Aplica as respostas que já chegaram. Devolve quantas foram aplicadas.
     pub fn poll(&mut self) -> usize {
         let mut applied = 0;
+        while let Ok((id, result)) = self.props_rx.try_recv() {
+            applied += 1;
+            let props = match result {
+                Ok(p) => Properties::Loaded(p),
+                Err(e) => Properties::Failed(e.0),
+            };
+            self.properties.insert(id, props);
+        }
         while let Ok((target, result)) = self.rx.try_recv() {
             applied += 1;
             let load = match result {
@@ -279,10 +340,11 @@ impl ObjectExplorer {
         applied
     }
 
-    /// Espera as cargas em andamento terminarem (para testes).
+    /// Espera as cargas em andamento (árvore e propriedades) terminarem
+    /// (para testes).
     pub fn wait_idle(&mut self, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
-        while self.is_loading() {
+        while self.is_loading() || self.properties_loading() {
             if std::time::Instant::now() > deadline {
                 return false;
             }
@@ -459,19 +521,6 @@ impl ObjectExplorer {
                                         events.push(Event::NewQuery(node.id.clone()));
                                         ui.close();
                                     }
-                                    let securable = matches!(
-                                        node.kind,
-                                        NodeKind::Role
-                                            | NodeKind::Database
-                                            | NodeKind::Schema
-                                            | NodeKind::Table
-                                            | NodeKind::View
-                                            | NodeKind::Function
-                                    );
-                                    if securable && ui.button("Properties").clicked() {
-                                        events.push(Event::Properties(node.id.clone()));
-                                        ui.close();
-                                    }
                                     if node.kind.has_rows() {
                                         ui.separator();
                                         let top = format!("Select Top {SELECT_TOP_ROWS} Rows");
@@ -521,9 +570,16 @@ impl ObjectExplorer {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    ui.add_enabled_ui(false, |ui| {
-                                        let _ = ui.button("Properties");
-                                    });
+                                    if ui
+                                        .add_enabled(
+                                            node.kind.has_properties(),
+                                            egui::Button::new("Properties"),
+                                        )
+                                        .clicked()
+                                    {
+                                        events.push(Event::Properties(node.id.clone()));
+                                        ui.close();
+                                    }
                                 });
                             }
                             Row::Loading { .. } => {
@@ -541,6 +597,9 @@ impl ObjectExplorer {
             },
         );
         if let Some(id) = select {
+            // Já pede as propriedades, para a janela Properties não esperar
+            // um frame a mais.
+            let _ = self.properties(&id);
             self.selected = Some(id);
         }
         if let Some(id) = toggle {
@@ -597,7 +656,12 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
         NodeKind::Schema => icon::STACK,
         NodeKind::Table => icon::TABLE,
         NodeKind::View => icon::EYE,
+        NodeKind::MaterializedView => icon::CUBE,
         NodeKind::Function => icon::FUNCTION,
+        NodeKind::Procedure => icon::GEAR,
+        NodeKind::Trigger => icon::LIGHTNING_A,
+        NodeKind::Type => icon::SHAPES,
+        NodeKind::Extension => icon::PUZZLE_PIECE,
         NodeKind::Column => icon::COLUMNS,
         NodeKind::Index => icon::LIGHTNING,
         NodeKind::Sequence => icon::LIST_NUMBERS,
@@ -640,6 +704,32 @@ mod tests {
         assert_eq!(oe.visible_rows().len(), 2);
         // A pasta Databases ainda não foi lida.
         assert_eq!(oe.children(&id("srv/Databases")), Some(&Load::NotLoaded));
+    }
+
+    #[test]
+    fn properties_load_once_for_objects_only() {
+        let mut oe = connected();
+        expand(&mut oe, "srv");
+        expand(&mut oe, "srv/Databases");
+        // Servidor e pastas não têm propriedades para ler.
+        assert_eq!(oe.properties(&id("srv")), None);
+        assert_eq!(oe.properties(&id("srv/Databases")), None);
+        assert_eq!(oe.properties(&id("nope")), None);
+
+        let db = id("srv/Databases/postgres");
+        assert_eq!(oe.properties(&db), Some(&Properties::Loading));
+        assert!(oe.wait_idle(WAIT));
+        let owner = Property::new("Owner", fake::FAKE_OWNER);
+        assert_eq!(
+            oe.properties(&db),
+            Some(&Properties::Loaded(vec![owner.clone()]))
+        );
+        // Refresh esquece e lê de novo.
+        oe.refresh(&id("srv/Databases"));
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(oe.properties(&db), Some(&Properties::Loading));
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(oe.properties(&db), Some(&Properties::Loaded(vec![owner])));
     }
 
     #[test]

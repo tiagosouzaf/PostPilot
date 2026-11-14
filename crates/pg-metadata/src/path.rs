@@ -19,22 +19,29 @@ pub enum Path {
     Diagrams(String),
     /// Database > Schemas.
     Schemas(String),
+    /// Database > Extensions.
+    Extensions(String),
     Schema(String, String),
-    /// Schema > Tables, Views, Functions, Sequences.
+    /// Schema > Tables, Views, Materialized Views, Functions, Procedures,
+    /// Sequences, Types.
     SchemaFolder(String, String, Folder),
     Table(String, u32),
     View(String, u32),
-    /// Table ou View > Columns, Constraints, Indexes.
+    MaterializedView(String, u32),
+    /// Table, View ou Materialized View > Columns, Constraints, Indexes,
+    /// Triggers.
     RelationFolder(String, Relation, u32, Folder),
-    /// Coluna, índice, constraint, função, sequência, role: sem filhos.
+    /// Coluna, índice, constraint, trigger, função, procedure, sequência,
+    /// tipo, extensão, role: sem filhos.
     Leaf,
 }
 
-/// Tabela ou view, para as pastas embaixo delas.
+/// Tabela, view ou view materializada, para as pastas embaixo delas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relation {
     Table,
     View,
+    MaterializedView,
 }
 
 impl Relation {
@@ -42,7 +49,14 @@ impl Relation {
         match self {
             Relation::Table => "t",
             Relation::View => "v",
+            Relation::MaterializedView => "mv",
         }
+    }
+
+    fn from_tag(tag: &str) -> Option<Relation> {
+        [Relation::Table, Relation::View, Relation::MaterializedView]
+            .into_iter()
+            .find(|r| r.tag() == tag)
     }
 }
 
@@ -63,11 +77,16 @@ fn folder(label: &str) -> Option<Folder> {
         Schemas,
         Tables,
         Views,
+        MaterializedViews,
         Functions,
+        Procedures,
+        Types,
+        Extensions,
         Columns,
         Indexes,
         Sequences,
         Constraints,
+        Triggers,
         Security,
         Roles,
     ]
@@ -87,23 +106,20 @@ impl Path {
             ["db", db] => Path::Database(dec(db)),
             ["db", db, "Schemas"] => Path::Schemas(dec(db)),
             ["db", db, "Database Diagrams"] => Path::Diagrams(dec(db)),
+            ["db", db, "Extensions"] => Path::Extensions(dec(db)),
             ["db", db, "s", s] => Path::Schema(dec(db), dec(s)),
             ["db", db, "s", s, f] => {
                 folder(f).map_or(Path::Leaf, |f| Path::SchemaFolder(dec(db), dec(s), f))
             }
             ["db", db, "t", o] => oid(o).map_or(Path::Leaf, |o| Path::Table(dec(db), o)),
             ["db", db, "v", o] => oid(o).map_or(Path::Leaf, |o| Path::View(dec(db), o)),
-            ["db", db, tag @ ("t" | "v"), o, f] => {
-                let rel = if *tag == "t" {
-                    Relation::Table
-                } else {
-                    Relation::View
-                };
-                match (oid(o), folder(f)) {
-                    (Some(o), Some(f)) => Path::RelationFolder(dec(db), rel, o, f),
-                    _ => Path::Leaf,
-                }
+            ["db", db, "mv", o] => {
+                oid(o).map_or(Path::Leaf, |o| Path::MaterializedView(dec(db), o))
             }
+            ["db", db, tag, o, f] => match (Relation::from_tag(tag), oid(o), folder(f)) {
+                (Some(rel), Some(o), Some(f)) => Path::RelationFolder(dec(db), rel, o, f),
+                _ => Path::Leaf,
+            },
             _ => Path::Leaf,
         }
     }
@@ -117,10 +133,12 @@ impl Path {
             Path::Database(db) => format!("db/{}", enc(db)),
             Path::Schemas(db) => format!("db/{}/Schemas", enc(db)),
             Path::Diagrams(db) => format!("db/{}/Database Diagrams", enc(db)),
+            Path::Extensions(db) => format!("db/{}/Extensions", enc(db)),
             Path::Schema(db, s) => format!("db/{}/s/{}", enc(db), enc(s)),
             Path::SchemaFolder(db, s, f) => format!("db/{}/s/{}/{}", enc(db), enc(s), f.label()),
             Path::Table(db, o) => format!("db/{}/t/{o}", enc(db)),
             Path::View(db, o) => format!("db/{}/v/{o}", enc(db)),
+            Path::MaterializedView(db, o) => format!("db/{}/mv/{o}", enc(db)),
             Path::RelationFolder(db, rel, o, f) => {
                 format!("db/{}/{}/{o}/{}", enc(db), rel.tag(), f.label())
             }
@@ -155,11 +173,18 @@ mod tests {
             Path::Database(db.clone()),
             Path::Schemas(db.clone()),
             Path::Diagrams(db.clone()),
+            Path::Extensions(db.clone()),
             Path::Schema(db.clone(), s.clone()),
             Path::SchemaFolder(db.clone(), s.clone(), Folder::Tables),
             Path::SchemaFolder(db.clone(), s.clone(), Folder::Sequences),
             Path::Table(db.clone(), 16384),
             Path::View(db.clone(), 1),
+            Path::MaterializedView(db.clone(), 2),
+            Path::SchemaFolder(db.clone(), s.clone(), Folder::MaterializedViews),
+            Path::SchemaFolder(db.clone(), s.clone(), Folder::Procedures),
+            Path::SchemaFolder(db.clone(), s.clone(), Folder::Types),
+            Path::RelationFolder(db.clone(), Relation::Table, 16384, Folder::Triggers),
+            Path::RelationFolder(db.clone(), Relation::MaterializedView, 9, Folder::Indexes),
             Path::RelationFolder(db.clone(), Relation::Table, 16384, Folder::Columns),
             Path::RelationFolder(db.clone(), Relation::View, 7, Folder::Columns),
         ] {

@@ -163,13 +163,27 @@ impl GridState {
         let cols = s.cols(store.columns().len());
         Some(text::copy(store, rows, cols, headers))
     }
+
+    /// A seleção como comandos INSERT (uma tabela `table_name` para trocar
+    /// depois de colar).
+    pub fn copy_insert(&self, store: &mut ResultStore) -> Option<String> {
+        let s = self.selection?;
+        let rows = s.rows(store.len());
+        let cols = s.cols(store.columns().len());
+        Some(crate::export::insert_text(store, rows, cols, INSERT_TABLE))
+    }
 }
+
+/// Tabela dos INSERTs copiados ou salvos da grade.
+pub const INSERT_TABLE: &str = "table_name";
 
 /// O que aconteceu na grade neste frame.
 pub struct GridOutput {
     pub response: egui::Response,
     /// Texto copiado neste frame (já mandado para a área de transferência).
     pub copied: Option<String>,
+    /// Pediu "Save Results As..." pelo menu de contexto.
+    pub save_as: bool,
 }
 
 /// Largura máxima inicial de uma coluna, em caracteres.
@@ -387,6 +401,7 @@ pub fn show(
 
     // Teclado.
     let mut copied = None;
+    let mut save_as = false;
     if response.has_focus() {
         let keys = ui.input(|i| {
             let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy))
@@ -454,7 +469,15 @@ pub fn show(
             copied = state.copy(store, true);
             ui.close();
         }
+        if ui.button("Copy as INSERT").clicked() {
+            copied = state.copy_insert(store);
+            ui.close();
+        }
         ui.separator();
+        if ui.button("Save Results As...").clicked() {
+            save_as = true;
+            ui.close();
+        }
         if ui.button("Select All").clicked() {
             state.select_all(store);
             ui.close();
@@ -487,7 +510,11 @@ pub fn show(
     paint_scrollbars(
         ui, vtrack, htrack, vthumb_h, hthumb_w, state, max_top, max_left,
     );
-    GridOutput { response, copied }
+    GridOutput {
+        response,
+        copied,
+        save_as,
+    }
 }
 
 /// Rola para a célula ficar visível.
