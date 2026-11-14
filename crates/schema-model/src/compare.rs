@@ -40,9 +40,9 @@ pub enum Status {
 impl Status {
     pub fn label(self) -> &'static str {
         match self {
-            Status::OnlyInSource => "Only in source",
-            Status::OnlyInTarget => "Only in target",
-            Status::Different => "Different",
+            Status::OnlyInSource => pgstudio_i18n::tr("Only in source"),
+            Status::OnlyInTarget => pgstudio_i18n::tr("Only in target"),
+            Status::Different => pgstudio_i18n::tr("Different"),
         }
     }
 }

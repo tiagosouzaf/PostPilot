@@ -26,7 +26,7 @@ pub enum Kind {
 
 impl Kind {
     pub fn label(self) -> &'static str {
-        match self {
+        pgstudio_i18n::tr(match self {
             Kind::Table => "Table",
             Kind::View => "View",
             Kind::Function => "Function",
@@ -34,7 +34,7 @@ impl Kind {
             Kind::Trigger => "Trigger",
             Kind::Sequence => "Sequence",
             Kind::Type => "Type",
-        }
+        })
     }
 }
 
