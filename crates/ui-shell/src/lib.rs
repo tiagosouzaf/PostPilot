@@ -31,6 +31,7 @@ pub mod secrets;
 pub mod security;
 pub mod servers;
 pub mod theme;
+pub mod update;
 
 /// Ações do menu de contexto do Object Explorer.
 pub use pgstudio_object_explorer::Event as ExplorerEvent;
@@ -63,6 +64,8 @@ pub struct ShellApp {
     about_open: bool,
     /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
     renderer: Option<String>,
+    /// Versão nova: checagem, janela "Check for Updates" e instalação.
+    updater: update::Updater,
     keymap: Keymap,
     chords: ChordMatcher,
     status: String,
@@ -229,6 +232,7 @@ impl Default for ShellApp {
             theme: Theme::default(),
             about_open: false,
             renderer: None,
+            updater: update::Updater::default(),
             keymap: Keymap::ssms(),
             chords: ChordMatcher::default(),
             status: READY.to_string(),
@@ -583,6 +587,18 @@ impl ShellApp {
     pub fn with_renderer(mut self, renderer: impl Into<String>) -> Self {
         self.renderer = Some(renderer.into());
         self
+    }
+
+    /// Liga a checagem de versão nova (e já checa, se estiver na hora).
+    pub fn with_updater(mut self, ctx: &egui::Context, mut updater: update::Updater) -> Self {
+        updater.check_if_due(ctx);
+        self.updater = updater;
+        self
+    }
+
+    /// A atualização do app, para testes.
+    pub fn updater_mut(&mut self) -> &mut update::Updater {
+        &mut self.updater
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -1246,6 +1262,7 @@ impl ShellApp {
                 | ThemeDark
                 | FullScreen
                 | About
+                | CheckForUpdates
                 | ObjectExplorer
                 | PropertiesWindow
                 | Output
@@ -1321,6 +1338,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
             }
             CommandId::About => self.about_open = true,
+            CommandId::CheckForUpdates => self.updater.check_now(ctx),
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
@@ -2239,6 +2257,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             } else if self.allow_close || dirty.is_empty() {
                 self.save_layout();
+                self.updater.on_close();
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 if self.confirm.is_none() {
@@ -2358,9 +2377,11 @@ impl ShellApp {
                     }
                     ui.label("PostgreSQL management studio.");
                     ui.label("Licensed under MIT or Apache-2.0.");
+                    self.updater.about_line(ui, &ctx);
                 });
             self.about_open = open;
         }
+        commands.extend(self.updater.window(&ctx));
 
         for cmd in commands {
             self.execute(&ctx, cmd);
@@ -3001,7 +3022,7 @@ impl ShellApp {
         });
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
         let color = theme::palette(self.theme).on_accent;
         let connection = self.connection_label();
         let cursor = self
@@ -3013,6 +3034,7 @@ impl ShellApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
+                self.updater.status_badge(ui, color);
                 ui.label(RichText::new(connection).color(color));
                 if let Some((line, col)) = cursor {
                     ui.separator();

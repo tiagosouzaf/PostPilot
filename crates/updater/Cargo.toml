@@ -1,0 +1,24 @@
+[package]
+name = "pgstudio-updater"
+description = "Versão nova do app: consulta os Releases do GitHub, baixa, confere o SHA-256 e instala onde o app pode se atualizar sozinho."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+semver = "1"
+sha2 = "0.10"
+rustls.workspace = true
+rustls-native-certs.workspace = true
+# Cliente HTTP bloqueante (a checagem roda numa thread própria). Sem as
+# raízes embutidas: usa as do sistema, como a conexão TLS com o PostgreSQL.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "gzip"] }
+# Só para o .zip do Windows (cópia portátil).
+zip = { version = "7", default-features = false, features = ["deflate-flate2"] }
+
+[lints]
+workspace = true

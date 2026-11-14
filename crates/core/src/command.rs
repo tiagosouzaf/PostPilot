@@ -107,6 +107,7 @@ commands! {
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";
     // Help
     ViewHelp => "Help.ViewHelp", "View Help";
+    CheckForUpdates => "Help.CheckForUpdates", "Check for Updates…";
     About => "Help.About", "About PGStudio";
 }
 
