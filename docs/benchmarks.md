@@ -2,8 +2,9 @@
 
 Números do `pgstudio` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
-vezes e mede oito cenários
-(`--scenario startup|grid|intellisense|diagram|diagram2000|designer|plan|activity|all`):
+vezes e mede dez cenários
+(`--scenario startup|grid|intellisense|diagram|diagram2000|designer|plan|activity|edit|export|all`,
+que pode se repetir para escolher vários):
 
 - **startup, até o primeiro frame:** do início do processo até o primeiro
   frame exibido (o app avisa pela saída padrão no modo `PGSTUDIO_BENCH=1`).
@@ -51,6 +52,17 @@ vezes e mede oito cenários
   atualizado a cada segundo por 10 s. Mede a primeira leitura, o intervalo
   entre frames, a CPU da interface e quanto cada atualização leva do pedido
   até estar na tela.
+- **edit:** com `PGSTUDIO_BENCH=edit`, o app abre o Edit Top 200 Rows de
+  uma tabela sintética de 12 colunas com chave primária e passa 10 s
+  editando: muda uma célula e desce para a próxima linha, o que grava a
+  anterior com um `UPDATE ... RETURNING` (a sessão sintética responde em
+  2 ms). Mede o tempo até as linhas abrirem, o intervalo entre frames, a CPU
+  da interface e quanto cada linha leva da mudança até voltar gravada.
+- **export:** com `PGSTUDIO_BENCH=export`, o app executa uma consulta
+  sintética de 1 milhão de linhas em modo Results to File, para um CSV
+  temporário. Mede o tempo até o arquivo terminar, o intervalo entre frames
+  enquanto ele é escrito e a memória (as linhas não ficam no app), e confere
+  que o arquivo tem todas as linhas.
 
 Os cenários rodam no app de verdade, com a janela, a GPU (ou o renderizador
 por software) e o servidor de demonstração, sem PostgreSQL. Ao terminar, o
@@ -84,6 +96,8 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 | Table Designer: editar num banco de 2.000 tabelas | 60 FPS: intervalo entre frames (p95) < 20 ms |
 | Plano de 2.000 nós com zoom e rolagem | 60 FPS: intervalo entre frames (p95) < 20 ms |
 | Activity Monitor: 5.000 sessões, atualizando a cada 1 s | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Edição na grade: gravando uma linha por vez | 60 FPS: intervalo entre frames (p95) < 20 ms |
+| Exportação: 1 milhão de linhas para arquivo | 60 FPS (p95 < 20 ms) e < 32 MB a mais que o repouso |
 
 - **60 FPS como p95 < 20 ms:** um frame a 60 Hz dura 16,7 ms. Com vsync, o
   intervalo medido oscila em volta disso mesmo sem nenhum frame perdido, e um
@@ -278,6 +292,48 @@ sem GPU), 3 execuções de cada cenário (`cargo xtask bench --scenario plan`,
   de 11,6 ms para 1,1 ms por frame e o p95 de 30,6 ms para 18,3 ms.
 - **Windows não foi medido**, pelo mesmo motivo do marco 3.7: os cenários
   `plan` e `activity` numa máquina Windows completam a tabela.
+
+### Marco 5.8 (Fase 5)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
+sem GPU), 3 execuções de cada cenário (`cargo xtask bench --runs 3 --idle 10
+--scenario startup --scenario edit --scenario export`):
+
+| Cenário | Meta | Mediana | Pior | Situação |
+| --- | --- | --- | --- | --- |
+| Até o primeiro frame | < 1 s | 108 ms | 109 ms | ✅ dentro |
+| RAM em repouso | < 100 MB | 129.4 MB | 129.7 MB | ❌ acima |
+| Edição na grade: 200 linhas de 12 colunas abertas | — | 35.3 ms | 35.3 ms | — |
+| Edição na grade: frame editando e gravando (p95) | < 20 ms (60 FPS) | 15.8 ms | 23.9 ms | ❌ acima |
+| Edição na grade: CPU da interface por frame (p95) | — | 0.7 ms | 0.8 ms | — |
+| Edição na grade: linha gravada, ida e volta (p95) | — | 15.8 ms | 23.8 ms | — |
+| Edição na grade: linhas gravadas em 10 s | — | 771 | 795 | — |
+| Exportação: 1 milhão de linhas para CSV (Results to File) | — | 501 ms | 517 ms | — |
+| Exportação: frame enquanto o arquivo é escrito (p95) | < 20 ms (60 FPS) | 22.5 ms | 22.6 ms | ❌ acima |
+| Exportação: CPU da interface por frame (p95) | — | 0.7 ms | 0.7 ms | — |
+| Exportação: RAM a mais que o repouso | < 32 MB | 1.7 MB | 2.1 MB | ✅ dentro |
+
+- **Edição:** a interface gasta menos de 1 ms por frame e cada linha volta
+  gravada em cerca de um frame (a gravação espera o `UPDATE` e a próxima
+  pintura). A pior execução foi a primeira: 15,4 e 15,8 ms nas outras duas,
+  23,9 ms nela, com um frame de 48 ms logo no começo. Como nos marcos
+  anteriores, conta o pior caso, e fica como "medir com GPU".
+- **Exportação:** 1 milhão de linhas (83,4 MB de CSV) em cerca de meio
+  segundo, sem guardar as linhas: a memória fica a 2 MB do repouso. O
+  arquivo é conferido linha a linha no fim de cada execução, e o teste
+  `crates/ui-shell/tests/export.rs` confere o conteúdo com `COPY` num
+  PostgreSQL de verdade.
+- **O frame da exportação passa de 20 ms por disputa de CPU, não pela
+  interface:** durante o meio segundo de escrita, a geração das linhas e a
+  escrita do arquivo ocupam núcleos que o llvmpipe usa para desenhar, e a
+  interface continua em 0,7 ms por frame. São só cerca de 34 frames por
+  execução, então o p95 é praticamente o segundo pior frame. Com uma GPU o
+  desenho sai da CPU; fica como "precisa de medição com GPU", junto com o
+  diagrama de 2.000 tabelas e o plano.
+- **RAM em repouso** segue acima da meta neste container (129 MB, como nos
+  marcos anteriores com llvmpipe).
+- **Windows não foi medido:** os cenários `edit` e `export` numa máquina
+  Windows completam a tabela.
 
 ## Como ler
 
