@@ -10,6 +10,7 @@ use eframe::egui;
 use egui_phosphor::regular as icon;
 
 use super::git::{Done, Git, GitError, Job};
+use super::passwords::{Passwords, SharedVault};
 use super::source_control::SourceControl;
 use super::{Folder, Workspace};
 use crate::registered::{self, RegisteredPanel};
@@ -38,6 +39,7 @@ struct Opened {
     collapsed: HashSet<PathBuf>,
     selected: Option<PathBuf>,
     git: SourceControl,
+    passwords: Passwords,
 }
 
 /// "Clone Workspace" esperando a URL.
@@ -63,6 +65,9 @@ pub struct WorkspacePanel {
     clone_job: Option<Job>,
     /// URL confirmada no "Clone Workspace", esperando a pasta.
     pending_clone: Option<String>,
+    /// Cofre de senhas do workspace aberto, dividido com o "Remember
+    /// password".
+    vault: SharedVault,
 }
 
 impl WorkspacePanel {
@@ -71,6 +76,7 @@ impl WorkspacePanel {
         let servers = RegisteredPanel::new(workspace.servers());
         let queries = workspace.queries();
         let git = SourceControl::new(workspace.root());
+        let passwords = Passwords::new(workspace.root(), self.vault.clone());
         self.opened = Some(Opened {
             workspace,
             servers,
@@ -78,6 +84,7 @@ impl WorkspacePanel {
             collapsed: HashSet::new(),
             selected: None,
             git,
+            passwords,
         });
         self.new_folder = None;
     }
@@ -85,6 +92,10 @@ impl WorkspacePanel {
     /// Fecha o workspace.
     pub fn close(&mut self) {
         self.opened = None;
+        let mut slot = self.vault.lock().expect("vault lock");
+        slot.vault = None;
+        slot.keys.clear();
+        drop(slot);
         self.new_folder = None;
     }
 
@@ -120,6 +131,21 @@ impl WorkspacePanel {
                 o.servers.current = current;
             }
         }
+    }
+
+    /// O cofre do workspace, dividido com o "Remember password".
+    pub fn vault_slot(&self) -> SharedVault {
+        self.vault.clone()
+    }
+
+    /// As senhas do workspace.
+    pub fn passwords(&self) -> Option<&Passwords> {
+        self.opened.as_ref().map(|o| &o.passwords)
+    }
+
+    /// As senhas do workspace, mutável.
+    pub fn passwords_mut(&mut self) -> Option<&mut Passwords> {
+        self.opened.as_mut().map(|o| &mut o.passwords)
     }
 
     /// O git do workspace.
@@ -277,6 +303,7 @@ impl WorkspacePanel {
             });
         });
         o.git.show(ui);
+        o.passwords.show(ui);
         ui.separator();
 
         // Servidores em cima, num retângulo próprio: a árvore do Registered
@@ -324,7 +351,11 @@ impl WorkspacePanel {
 
     /// Desenha os diálogos (os do Registered Servers e o "New Folder").
     /// Devolve uma mensagem para a status bar quando algo mudou.
-    pub fn show_windows(&mut self, ctx: &egui::Context) -> Option<String> {
+    pub fn show_windows(
+        &mut self,
+        ctx: &egui::Context,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) -> Option<String> {
         let mut status = self.message.take();
         if let Some(o) = &mut self.opened
             && let Some(s) = o.servers.show_windows(ctx)
@@ -335,6 +366,19 @@ impl WorkspacePanel {
             if let Some(s) = o.git.show_windows(ctx) {
                 status = Some(s);
             }
+            if let Some(s) = o.passwords.show_windows(ctx, store) {
+                status = Some(s);
+            }
+            // Chaves dos servidores do workspace: o "Remember password"
+            // deles vai para o cofre do workspace.
+            let keys = o
+                .servers
+                .servers()
+                .all_servers()
+                .into_iter()
+                .map(|s| crate::secrets::password_key(&s.settings))
+                .collect();
+            self.vault.lock().expect("vault lock").keys = keys;
             if o.git.take_files_changed() {
                 o.queries = o.workspace.queries();
                 if !o.servers.has_dialog() {

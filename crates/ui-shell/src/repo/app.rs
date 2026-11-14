@@ -26,6 +26,7 @@ impl ShellApp {
             let root = PathBuf::from(root);
             if let Ok(ws) = Workspace::open(&root) {
                 self.workspace_panel.open(ws);
+                self.after_workspace_opened();
             }
         }
         self
@@ -52,6 +53,7 @@ impl ShellApp {
             Ok(ws) => {
                 self.status = format!("Opened workspace {}.", ws.name());
                 self.workspace_panel.open(ws);
+                self.after_workspace_opened();
                 self.workspace.open(Panel::WorkspaceExplorer);
                 self.remember_workspace();
                 true
@@ -73,6 +75,7 @@ impl ShellApp {
             Ok(ws) => {
                 self.status = format!("Created workspace {} in {}.", ws.name(), root.display());
                 self.workspace_panel.open(ws);
+                self.after_workspace_opened();
                 self.workspace.open(Panel::WorkspaceExplorer);
                 self.remember_workspace();
                 true
@@ -81,6 +84,20 @@ impl ShellApp {
                 self.status = e;
                 false
             }
+        }
+    }
+
+    /// Depois de abrir um workspace: o "Remember password" passa a usar o
+    /// cofre dele e a senha mestra é pedida (ou vem do cofre do sistema).
+    fn after_workspace_opened(&mut self) {
+        if self.secrets.is_none() {
+            self.secrets = Some(std::sync::Arc::new(
+                super::passwords::WorkspaceSecrets::new(None, self.workspace_panel.vault_slot()),
+            ));
+        }
+        let store = self.secrets.clone();
+        if let Some(p) = self.workspace_panel.passwords_mut() {
+            p.auto_unlock(store.as_ref());
         }
     }
 
@@ -330,7 +347,10 @@ impl ShellApp {
                 }
             }
         }
-        if let Some(status) = self.workspace_panel.show_windows(ctx) {
+        if let Some(status) = self
+            .workspace_panel
+            .show_windows(ctx, self.secrets.as_ref())
+        {
             self.status = status;
         }
         if let Some(url) = self.workspace_panel.take_clone_request()
