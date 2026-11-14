@@ -81,6 +81,9 @@ pub enum Event {
     Restore(NodeId),
     /// Tasks > Compare Schema... num banco (ele é a origem).
     CompareSchema(NodeId),
+    /// "Ask Claude" numa tabela ou view: abre o painel do Claude com a
+    /// pergunta sobre ela.
+    AskClaude(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -546,6 +549,15 @@ impl ObjectExplorer {
                                         let edit = trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS);
                                         if ui.button(edit).clicked() {
                                             events.push(Event::EditTop(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        let ask = format!(
+                                            "{} {}",
+                                            egui_phosphor::regular::SPARKLE,
+                                            tr("Ask Claude")
+                                        );
+                                        if ui.button(ask).clicked() {
+                                            events.push(Event::AskClaude(node.id.clone()));
                                             ui.close();
                                         }
                                     }

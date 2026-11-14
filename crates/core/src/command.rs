@@ -107,6 +107,9 @@ commands! {
     ResultsToFile => "Query.ResultsToFile", "Results to File";
     ObjectInfo => "Query.ObjectInfo", "Object Information";
     QueryOptions => "Query.Options", "Query Options…";
+    ClaudeExplain => "Query.ClaudeExplain", "Explain with Claude";
+    ClaudeOptimize => "Query.ClaudeOptimize", "Optimize with Claude";
+    ClaudeFix => "Query.ClaudeFix", "Fix Error with Claude";
     // Tools
     SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
     ClaudeCodeAccess => "Tools.ClaudeCodeAccess", "Allow Claude Code (MCP)";

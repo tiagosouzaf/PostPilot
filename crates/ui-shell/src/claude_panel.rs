@@ -18,6 +18,7 @@ use eframe::egui;
 use pgstudio_automation::agent::{self, Agent, AgentEvent};
 use pgstudio_automation::endpoint::{self, Listener};
 use pgstudio_automation::{EditMode, Origin};
+use pgstudio_core::CommandId;
 use pgstudio_i18n::{tr, tr_noop, trf};
 use serde_json::Value;
 
@@ -329,8 +330,19 @@ fn show_item(ui: &mut egui::Ui, item: &Item, actions: &mut Vec<PanelAction>) {
                 ),
                 Some((true, _)) => (egui_phosphor::regular::WARNING, ui.visuals().warn_fg_color),
             };
-            let header =
-                egui::RichText::new(format!("{icon} {}", tool_label(name, input))).color(color); // i18n-ignore
+            // O cabeçalho não quebra a linha: corta para caber no painel.
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let char_width = ui.fonts_mut(|f| f.glyph_width(&font, 'n')).max(1.0);
+            let fits = ((ui.available_width() - 40.0) / char_width).max(8.0) as usize;
+            let label = format!("{icon} {}", tool_label(name, input)); // i18n-ignore
+            let label = if label.chars().count() > fits {
+                let mut cut: String = label.chars().take(fits.saturating_sub(1)).collect();
+                cut.push('…');
+                cut
+            } else {
+                label
+            };
+            let header = egui::RichText::new(label).color(color);
             egui::CollapsingHeader::new(header)
                 .id_salt("tool")
                 .default_open(false)
@@ -556,7 +568,11 @@ impl crate::ShellApp {
                     panel.stderr.clear();
                     panel.focus();
                 }
-                PanelAction::InsertSql(sql) => match self.claude_window(None) {
+                PanelAction::InsertSql(sql) => match self.claude_window(None).or_else(|_| {
+                    // Sem janela aberta: abre uma, como Nova Consulta.
+                    self.execute(ctx, CommandId::NewQuery);
+                    self.claude_window(None)
+                }) {
                     Ok(id) => {
                         self.claude_edit_window(ctx, id, &sql, EditMode::ReplaceSelection);
                     }
@@ -570,6 +586,12 @@ impl crate::ShellApp {
 
     /// Manda a mensagem, abrindo o `claude` se preciso.
     pub fn claude_panel_send(&mut self, ctx: &egui::Context, text: &str) {
+        self.claude_panel_send_with(ctx, text, "");
+    }
+
+    /// Manda `text` (o que a conversa mostra) com `instructions` a mais só
+    /// para o Claude (as ações rápidas).
+    fn claude_panel_send_with(&mut self, ctx: &egui::Context, text: &str, instructions: &str) {
         let context = self.claude_panel_context(ctx);
         self.claude_panel.items.push(Item::User(text.to_string()));
         self.claude_panel.stderr.clear();
@@ -579,7 +601,11 @@ impl crate::ShellApp {
             self.claude_panel.note(e);
             return;
         }
-        let message = format!("{context}\n\n{text}");
+        let message = if instructions.is_empty() {
+            format!("{context}\n\n{text}")
+        } else {
+            format!("{context}\n\n{text}\n\n{instructions}")
+        };
         let sent = self
             .claude_panel
             .agent
@@ -594,6 +620,120 @@ impl crate::ShellApp {
                     .note(trf!("Could not talk to Claude Code: {error}", error = e));
             }
         }
+    }
+
+    /// Abre o painel e pergunta, se o Claude não estiver ocupado.
+    fn claude_ask(&mut self, ctx: &egui::Context, text: &str, instructions: &str) {
+        self.workspace.open(crate::panels::Panel::Claude);
+        if self.claude_panel.busy {
+            self.claude_panel
+                .note(tr("Claude is still answering. Wait for it, or press Stop."));
+            return;
+        }
+        self.claude_panel_send_with(ctx, text, instructions);
+    }
+
+    /// Explicar, Otimizar e Corrigir, do menu de contexto do editor e do
+    /// menu Query.
+    pub(crate) fn claude_quick_action(&mut self, ctx: &egui::Context, cmd: CommandId) {
+        let Some(id) = self
+            .active_doc
+            .filter(|id| self.documents.get(*id).is_some())
+        else {
+            self.status = tr("Open a query window first.").to_string();
+            return;
+        };
+        let selected = pgstudio_sql_editor::selection(ctx, crate::panels::editor_id(id))
+            .is_some_and(|(a, b)| a != b);
+        let target = if selected {
+            format!("the selected text of query window {id}")
+        } else {
+            format!("the query in query window {id}")
+        };
+        let mode = if selected {
+            "replace_selection"
+        } else {
+            "replace_all"
+        };
+        let (text, instructions) = match cmd {
+            CommandId::ClaudeExplain => (
+                if selected {
+                    tr("Explain the selected SQL.")
+                } else {
+                    tr("Explain this query.")
+                },
+                format!(
+                    "Read {target} with get_query_window and explain what it does, step by \
+                     step, in plain words. Look at the tables it uses if that helps. Do not \
+                     change the editor and do not run it."
+                ),
+            ),
+            CommandId::ClaudeOptimize => (
+                if selected {
+                    tr("Optimize the selected SQL.")
+                } else {
+                    tr("Optimize this query.")
+                },
+                format!(
+                    "Read {target} with get_query_window. Look at the tables, indexes and row \
+                     counts it touches (describe_table, and EXPLAIN without ANALYZE through \
+                     run_query if useful). Write the improved version into the editor with \
+                     edit_query_window, mode {mode}, keeping the same results. Then say briefly \
+                     what changed and why. If it is already fine, say so and leave the editor \
+                     alone. Suggest indexes in your answer, do not create them."
+                ),
+            ),
+            _ => {
+                let errors = self
+                    .documents
+                    .get(id)
+                    .and_then(|d| d.execution.as_ref())
+                    .map(|e| {
+                        e.messages
+                            .iter()
+                            .filter(|m| m.kind == crate::execution::MessageKind::Error)
+                            .map(|m| m.text.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let error = if errors.is_empty() {
+                    "The last execution reported no error; ask the user which error they mean."
+                        .to_string()
+                } else {
+                    format!("The last execution failed with: {}", errors.join(" | "))
+                };
+                (
+                    tr("Fix the error in this query."),
+                    format!(
+                        "{error} Read {target} with get_query_window, find the cause (check \
+                         names with describe_table or list_objects), and write the corrected \
+                         SQL into the editor with edit_query_window, mode {mode}. Do not run \
+                         it. Say in one or two sentences what was wrong."
+                    ),
+                )
+            }
+        };
+        self.claude_ask(ctx, text, &instructions);
+    }
+
+    /// "Ask Claude" numa tabela ou view do Object Explorer.
+    pub(crate) fn claude_ask_about(
+        &mut self,
+        ctx: &egui::Context,
+        object: &pgstudio_core::metadata::ObjectNode,
+        database: Option<String>,
+    ) {
+        let text = trf!("Tell me about {name}.", name = object.name);
+        let database = database.unwrap_or_else(|| "the current database".into());
+        let instructions = format!(
+            "{name} is a {kind} in database {database} (selected in Object Explorer). Use \
+             describe_table on it, and run_query for its row count and a few sample rows. \
+             Explain what it holds, its keys and how it relates to other tables, and suggest \
+             two or three useful queries in ```sql blocks. Do not change anything.",
+            name = object.name,
+            kind = object.kind.english_label().to_lowercase(),
+        );
+        self.claude_ask(ctx, &text, &instructions);
     }
 
     fn claude_panel_start(&mut self, ctx: &egui::Context) -> Result<(), String> {

@@ -41,6 +41,10 @@ pub const EDITOR_CONTEXT: &[Entry] = &[
     SEP,
     I(DesignQuery),
     I(Execute),
+    SEP,
+    I(ClaudeExplain),
+    I(ClaudeOptimize),
+    I(ClaudeFix),
 ];
 
 /// Os menus da barra principal, na ordem do SSMS.
@@ -147,6 +151,11 @@ pub const MENUS: &[Menu] = &[
             sub(
                 "Results To",
                 &[I(ResultsToText), I(ResultsToGrid), I(ResultsToFile)],
+            ),
+            SEP,
+            sub(
+                "Claude",
+                &[I(ClaudeExplain), I(ClaudeOptimize), I(ClaudeFix)],
             ),
             SEP,
             I(QueryOptions),

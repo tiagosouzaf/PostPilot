@@ -2241,9 +2241,6 @@ msgstr "Enviar"
 msgid "Uses your Claude Code sign-in. What Claude reads is sent to Anthropic."
 msgstr "Usa o login do seu Claude Code. O que o Claude lê é enviado à Anthropic."
 
-msgid "Insert"
-msgstr "Inserir"
-
 msgid "Insert into the active query window"
 msgstr "Inserir na janela de consulta ativa"
 
@@ -2309,3 +2306,37 @@ msgstr "Executou a janela de consulta"
 
 msgid "Read results"
 msgstr "Leu os resultados"
+
+# Ações rápidas do Claude (marco 7.5)
+msgid "Explain with Claude"
+msgstr "Explicar com o Claude"
+
+msgid "Optimize with Claude"
+msgstr "Otimizar com o Claude"
+
+msgid "Fix Error with Claude"
+msgstr "Corrigir o Erro com o Claude"
+
+msgid "Ask Claude"
+msgstr "Perguntar ao Claude"
+
+msgid "Explain the selected SQL."
+msgstr "Explique o SQL selecionado."
+
+msgid "Explain this query."
+msgstr "Explique esta consulta."
+
+msgid "Optimize the selected SQL."
+msgstr "Otimize o SQL selecionado."
+
+msgid "Optimize this query."
+msgstr "Otimize esta consulta."
+
+msgid "Fix the error in this query."
+msgstr "Corrija o erro desta consulta."
+
+msgid "Tell me about {name}."
+msgstr "Me fale sobre {name}."
+
+msgid "Claude is still answering. Wait for it, or press Stop."
+msgstr "O Claude ainda está respondendo. Espere ou clique em Parar."
