@@ -100,7 +100,10 @@ fn conversation_insert_and_panel_channel() {
         content.starts_with("[PostPilot context] Active query window"),
         "{content}"
     );
-    assert!(content.contains("Selected text (chars 0-8): select 1"), "{content}");
+    assert!(
+        content.contains("Selected text (chars 0-8): select 1"),
+        "{content}"
+    );
     assert!(content.ends_with("quanto é 6 x 7?"), "{content}");
     let args = std::fs::read_to_string(dir.join("args")).unwrap();
     assert!(args.contains("--strict-mcp-config"), "{args}");
@@ -112,8 +115,7 @@ fn conversation_insert_and_panel_channel() {
     assert!(endpoint.is_file());
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let reply =
-            pgstudio_automation::endpoint::call(&endpoint, "list_query_windows", json!({}));
+        let reply = pgstudio_automation::endpoint::call(&endpoint, "list_query_windows", json!({}));
         let _ = tx.send(reply);
     });
     let start = Instant::now();
@@ -130,8 +132,11 @@ fn conversation_insert_and_panel_channel() {
     assert_eq!(windows["windows"][0]["window"], doc, "{windows}");
 
     // Insert troca a seleção pelo SQL da resposta.
-    h.get_by_label(&format!("{} Insert", egui_phosphor::regular::ARROW_SQUARE_IN))
-        .click();
+    h.get_by_label(&format!(
+        "{} Insert",
+        egui_phosphor::regular::ARROW_SQUARE_IN
+    ))
+    .click();
     h.run();
     let text = h.state().documents().get(doc).unwrap().text.clone();
     assert_eq!(text, "select 42 as resposta;");

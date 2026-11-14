@@ -37,7 +37,11 @@ pub enum AgentEvent {
     /// Bloco de texto completo da resposta (fecha os pedaços).
     Text(String),
     /// O Claude chamou uma ferramenta.
-    ToolUse { id: String, name: String, input: Value },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
     /// Resposta da ferramenta.
     ToolResult {
         id: String,
@@ -235,14 +239,21 @@ pub struct Agent {
 
 impl std::fmt::Debug for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Agent").field("pid", &self.child.id()).finish()
+        f.debug_struct("Agent")
+            .field("pid", &self.child.id())
+            .finish()
     }
 }
 
 impl Agent {
     /// Abre `program args` em `cwd`. Os eventos chegam por
     /// [`Agent::try_recv`]; `waker` é chamado a cada um.
-    pub fn start(program: &Path, args: &[String], cwd: &Path, waker: Waker) -> std::io::Result<Agent> {
+    pub fn start(
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        waker: Waker,
+    ) -> std::io::Result<Agent> {
         std::fs::create_dir_all(cwd)?;
         let mut command = Command::new(program);
         command
@@ -333,17 +344,23 @@ mod tests {
     #[test]
     fn stream_json_lines() {
         assert_eq!(
-            parse_line(r#"{"type":"system","subtype":"init","session_id":"s1","model":"claude-x","tools":[]}"#),
+            parse_line(
+                r#"{"type":"system","subtype":"init","session_id":"s1","model":"claude-x","tools":[]}"#
+            ),
             vec![AgentEvent::Started {
                 session_id: "s1".into(),
                 model: "claude-x".into()
             }]
         );
         assert_eq!(
-            parse_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Olá"}}}"#),
+            parse_line(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Olá"}}}"#
+            ),
             vec![AgentEvent::TextDelta("Olá".into())]
         );
-        assert!(parse_line(r#"{"type":"stream_event","event":{"type":"message_start"}}"#).is_empty());
+        assert!(
+            parse_line(r#"{"type":"stream_event","event":{"type":"message_start"}}"#).is_empty()
+        );
         let e = parse_line(
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Vou ver."},{"type":"tool_use","id":"t1","name":"mcp__postpilot__describe_table","input":{"table":"pedido"}}]}}"#,
         );
@@ -357,7 +374,9 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_line(r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"declined"}]}]}}"#),
+            parse_line(
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"declined"}]}]}}"#
+            ),
             vec![AgentEvent::ToolResult {
                 id: "t1".into(),
                 is_error: true,
@@ -365,7 +384,9 @@ mod tests {
             }]
         );
         assert_eq!(
-            parse_line(r#"{"type":"result","subtype":"success","is_error":false,"result":"pronto","total_cost_usd":0.01,"session_id":"s1"}"#),
+            parse_line(
+                r#"{"type":"result","subtype":"success","is_error":false,"result":"pronto","total_cost_usd":0.01,"session_id":"s1"}"#
+            ),
             vec![AgentEvent::TurnDone {
                 is_error: false,
                 text: "pronto".into(),
@@ -384,9 +405,16 @@ mod tests {
         let i = a.iter().position(|x| x == "--tools").unwrap();
         assert_eq!(a[i + 1], "");
         assert!(a.ends_with(&["--resume".into(), "abc".into()]));
-        let c: Value = serde_json::from_str(&mcp_config(Path::new("/x/postpilot"), Path::new("/t/e.json"))).unwrap();
+        let c: Value = serde_json::from_str(&mcp_config(
+            Path::new("/x/postpilot"),
+            Path::new("/t/e.json"),
+        ))
+        .unwrap();
         assert_eq!(c["mcpServers"]["postpilot"]["args"], json!(["mcp"]));
-        assert_eq!(c["mcpServers"]["postpilot"]["env"][crate::endpoint::ENV], "/t/e.json");
+        assert_eq!(
+            c["mcpServers"]["postpilot"]["env"][crate::endpoint::ENV],
+            "/t/e.json"
+        );
         let m: Value = serde_json::from_str(&user_message("oi \"x\"")).unwrap();
         assert_eq!(m["message"]["content"], "oi \"x\"");
     }

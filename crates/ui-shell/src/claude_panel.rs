@@ -18,6 +18,7 @@ use eframe::egui;
 use pgstudio_automation::agent::{self, Agent, AgentEvent};
 use pgstudio_automation::endpoint::{self, Listener};
 use pgstudio_automation::{EditMode, Origin};
+use pgstudio_i18n::{tr, tr_noop, trf};
 use serde_json::Value;
 
 /// Linhas de stderr guardadas para explicar uma falha.
@@ -103,10 +104,7 @@ impl ClaudePanel {
     /// Recebe os eventos do processo. Devolve `true` se algo mudou.
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = false;
-        loop {
-            let Some(event) = self.agent.as_ref().and_then(Agent::try_recv) else {
-                break;
-            };
+        while let Some(event) = self.agent.as_ref().and_then(Agent::try_recv) {
             changed = true;
             self.apply(event);
         }
@@ -144,7 +142,9 @@ impl ClaudePanel {
             }
             AgentEvent::ToolResult { id, is_error, text } => {
                 for item in self.items.iter_mut().rev() {
-                    if let Item::Tool { id: tid, result, .. } = item
+                    if let Item::Tool {
+                        id: tid, result, ..
+                    } = item
                         && *tid == id
                     {
                         *result = Some((is_error, text));
@@ -164,7 +164,7 @@ impl ClaudePanel {
                     self.session = Some(session_id);
                 }
                 if is_error {
-                    self.note(format!("Claude Code reported an error: {text}"));
+                    self.note(trf!("Claude Code reported an error: {text}", text = text));
                 }
             }
             AgentEvent::Stderr(line) => {
@@ -182,9 +182,12 @@ impl ClaudePanel {
                     } else {
                         format!("\n{}", self.stderr.join("\n"))
                     };
-                    self.note(format!(
-                        "Claude Code stopped before answering. If it asks you to sign in, run `claude` in a terminal once.{detail}"
-                    ));
+                    let mut note = tr(
+                        "Claude Code stopped before answering. If it asks you to sign in, run `claude` in a terminal once.",
+                    )
+                    .to_string();
+                    note.push_str(&detail);
+                    self.note(note);
                 }
             }
         }
@@ -197,21 +200,26 @@ impl ClaudePanel {
         let width = ui.available_width();
         ui.set_max_width(width);
         ui.horizontal(|ui| {
+            // i18n-ignore
             let title = ui.strong(format!("{} Claude", egui_phosphor::regular::SPARKLE));
             if !self.model.is_empty() {
-                title.on_hover_text(format!("Model: {}", self.model));
+                title.on_hover_text(trf!("Model: {model}", model = self.model));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(format!("{} New chat", egui_phosphor::regular::PLUS))
-                    .on_hover_text("Start a new conversation")
+                    .button(format!(
+                        "{} {}",
+                        egui_phosphor::regular::PLUS,
+                        tr("New chat")
+                    ))
+                    .on_hover_text(tr("Start a new conversation"))
                     .clicked()
                 {
                     actions.push(PanelAction::NewChat);
                 }
                 if self.busy
                     && ui
-                        .button(format!("{} Stop", egui_phosphor::regular::STOP))
+                        .button(format!("{} {}", egui_phosphor::regular::STOP, tr("Stop")))
                         .clicked()
                 {
                     actions.push(PanelAction::Stop);
@@ -230,11 +238,9 @@ impl ClaudePanel {
             .show(ui, |ui| {
                 if self.items.is_empty() {
                     ui.add_space(8.0);
-                    ui.weak(
-                        "Ask about your databases, or ask for a query. Claude sees your \
-                         servers, schema and query windows through PostPilot, and asks \
-                         before changing anything.",
-                    );
+                    ui.weak(tr(
+                        "Ask about your databases, or ask for a query. Claude sees your servers, schema and query windows through PostPilot, and asks before changing anything.",
+                    ));
                 }
                 for (i, item) in self.items.iter().enumerate() {
                     ui.push_id(i, |ui| show_item(ui, item, &mut actions));
@@ -243,19 +249,19 @@ impl ClaudePanel {
                 if self.busy {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.weak("Claude is working…");
+                        ui.weak(tr("Claude is working…"));
                     });
                 }
             });
         ui.separator();
         let edit = egui::TextEdit::multiline(&mut self.input)
             .id(egui::Id::new("claude_input"))
-            .hint_text("Message Claude")
+            .hint_text(tr("Message Claude"))
             .desired_rows(3)
             .desired_width(f32::INFINITY);
         let response = ui
             .add(edit)
-            .on_hover_text("Enter sends; Shift+Enter starts a new line");
+            .on_hover_text(tr("Enter sends; Shift+Enter starts a new line"));
         if std::mem::take(&mut self.focus_input) {
             response.request_focus();
         }
@@ -265,7 +271,11 @@ impl ClaudePanel {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             let send = ui.add_enabled(
                 !self.busy && !self.input.trim().is_empty(),
-                egui::Button::new(format!("{} Send", egui_phosphor::regular::PAPER_PLANE_RIGHT)),
+                egui::Button::new(format!(
+                    "{} {}",
+                    egui_phosphor::regular::PAPER_PLANE_RIGHT,
+                    tr("Send")
+                )),
             );
             if (send.clicked() || enter) && !self.busy && !self.input.trim().is_empty() {
                 let text = std::mem::take(&mut self.input).trim().to_string();
@@ -275,9 +285,9 @@ impl ClaudePanel {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(
+                        egui::RichText::new(tr(
                             "Uses your Claude Code sign-in. What Claude reads is sent to Anthropic.",
-                        )
+                        ))
                         .small()
                         .weak(),
                     )
@@ -309,12 +319,18 @@ fn show_item(ui: &mut egui::Ui, item: &Item, actions: &mut Vec<PanelAction>) {
             ..
         } => {
             let (icon, color) = match result {
-                None => (egui_phosphor::regular::CIRCLE_NOTCH, ui.visuals().weak_text_color()),
-                Some((false, _)) => (egui_phosphor::regular::CHECK, ui.visuals().weak_text_color()),
+                None => (
+                    egui_phosphor::regular::CIRCLE_NOTCH,
+                    ui.visuals().weak_text_color(),
+                ),
+                Some((false, _)) => (
+                    egui_phosphor::regular::CHECK,
+                    ui.visuals().weak_text_color(),
+                ),
                 Some((true, _)) => (egui_phosphor::regular::WARNING, ui.visuals().warn_fg_color),
             };
             let header =
-                egui::RichText::new(format!("{icon} {}", tool_label(name, input))).color(color);
+                egui::RichText::new(format!("{icon} {}", tool_label(name, input))).color(color); // i18n-ignore
             egui::CollapsingHeader::new(header)
                 .id_salt("tool")
                 .default_open(false)
@@ -349,6 +365,22 @@ fn show_item(ui: &mut egui::Ui, item: &Item, actions: &mut Vec<PanelAction>) {
     }
 }
 
+/// Nome amigável de cada ferramenta nos cartões.
+const TOOL_LABELS: &[(&str, &str)] = &[
+    ("list_servers", tr_noop("Listed servers")),
+    ("list_databases", tr_noop("Listed databases")),
+    ("list_objects", tr_noop("Listed objects")),
+    ("describe_table", tr_noop("Read table")),
+    ("describe_function", tr_noop("Read function")),
+    ("run_query", tr_noop("Ran query")),
+    ("list_query_windows", tr_noop("Listed query windows")),
+    ("get_query_window", tr_noop("Read query window")),
+    ("edit_query_window", tr_noop("Edited query window")),
+    ("open_query_window", tr_noop("Opened query window")),
+    ("execute_query_window", tr_noop("Executed query window")),
+    ("get_query_results", tr_noop("Read results")),
+];
+
 /// Texto curto do cartão de uma ferramenta: o nome e o argumento principal.
 pub fn tool_label(name: &str, input: &Value) -> String {
     let arg = |k: &str| input.get(k).and_then(Value::as_str).map(str::to_string);
@@ -362,21 +394,10 @@ pub fn tool_label(name: &str, input: &Value) -> String {
         "open_query_window" => arg("database"),
         _ => None,
     };
-    let friendly = match name {
-        "list_servers" => "Listed servers",
-        "list_databases" => "Listed databases",
-        "list_objects" => "Listed objects",
-        "describe_table" => "Read table",
-        "describe_function" => "Read function",
-        "run_query" => "Ran query",
-        "list_query_windows" => "Listed query windows",
-        "get_query_window" => "Read query window",
-        "edit_query_window" => "Edited query window",
-        "open_query_window" => "Opened query window",
-        "execute_query_window" => "Executed query window",
-        "get_query_results" => "Read results",
-        other => other,
-    };
+    let friendly = TOOL_LABELS
+        .iter()
+        .find(|(tool, _)| *tool == name)
+        .map_or(name, |(_, label)| tr(label));
     match detail {
         Some(d) if !d.is_empty() => format!("{friendly}: {d}"),
         _ => friendly.to_string(),
@@ -463,14 +484,18 @@ fn show_code(ui: &mut egui::Ui, lang: &str, body: &str, actions: &mut Vec<PanelA
             ui.horizontal(|ui| {
                 if (lang.is_empty() || lang == "sql" || lang == "postgresql" || lang == "pgsql")
                     && ui
-                        .small_button(format!("{} Insert", egui_phosphor::regular::ARROW_SQUARE_IN))
-                        .on_hover_text("Insert into the active query window")
+                        .small_button(format!(
+                            "{} {}",
+                            egui_phosphor::regular::ARROW_SQUARE_IN,
+                            tr("Insert")
+                        ))
+                        .on_hover_text(tr("Insert into the active query window"))
                         .clicked()
                 {
                     actions.push(PanelAction::InsertSql(body.to_string()));
                 }
                 if ui
-                    .small_button(format!("{} Copy", egui_phosphor::regular::COPY))
+                    .small_button(format!("{} {}", egui_phosphor::regular::COPY, tr("Copy")))
                     .clicked()
                 {
                     ui.ctx().copy_text(body.to_string());
@@ -480,9 +505,9 @@ fn show_code(ui: &mut egui::Ui, lang: &str, body: &str, actions: &mut Vec<PanelA
 }
 
 /// O que dizer quando o `claude` não é encontrado.
-pub const NOT_INSTALLED: &str = "Claude Code was not found. Install it (https://claude.com/claude-code), \
-run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, \
-set PGSTUDIO_CLAUDE to its path.";
+pub const NOT_INSTALLED: &str = tr_noop(
+    "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path.",
+);
 
 /// Quanto da seleção vai na linha de contexto.
 const CONTEXT_SELECTION: usize = 600;
@@ -518,7 +543,7 @@ impl crate::ShellApp {
                         agent.stop();
                     }
                     self.claude_panel.busy = false;
-                    self.claude_panel.note("Stopped.");
+                    self.claude_panel.note(tr("Stopped."));
                 }
                 PanelAction::NewChat => {
                     if let Some(mut agent) = self.claude_panel.agent.take() {
@@ -537,7 +562,7 @@ impl crate::ShellApp {
                     }
                     Err(_) => self
                         .claude_panel
-                        .note("Open a query window first, then press Insert again."),
+                        .note(tr("Open a query window first, then press Insert again.")),
                 },
             }
         }
@@ -566,7 +591,7 @@ impl crate::ShellApp {
             Err(e) => {
                 self.claude_panel.agent = None;
                 self.claude_panel
-                    .note(format!("Could not talk to Claude Code: {e}"));
+                    .note(trf!("Could not talk to Claude Code: {error}", error = e));
             }
         }
     }
@@ -577,7 +602,7 @@ impl crate::ShellApp {
             .program
             .clone()
             .or_else(agent::find_program)
-            .ok_or_else(|| NOT_INSTALLED.to_string())?;
+            .ok_or_else(|| tr(NOT_INSTALLED).to_string())?;
         let dir = self
             .claude_panel
             .dir
@@ -587,8 +612,12 @@ impl crate::ShellApp {
         if self.claude_panel.listener.is_none() {
             let client = self.automation(ctx);
             let path = dir.join(format!("panel-endpoint-{}.json", std::process::id()));
-            let listener = Listener::start_as(client, path, Origin::Panel)
-                .map_err(|e| format!("Could not open the local channel for Claude: {e}"))?;
+            let listener = Listener::start_as(client, path, Origin::Panel).map_err(|e| {
+                trf!(
+                    "Could not open the local channel for Claude: {error}",
+                    error = e
+                )
+            })?;
             self.claude_panel.listener = Some(listener);
         }
         let endpoint_path = self
@@ -600,7 +629,7 @@ impl crate::ShellApp {
         let exe = match self.claude_panel.exe.clone() {
             Some(e) => e,
             None => std::env::current_exe()
-                .map_err(|e| format!("Could not find the PostPilot program: {e}"))?,
+                .map_err(|e| trf!("Could not find the PostPilot program: {error}", error = e))?,
         };
         let config = agent::mcp_config(&exe, &endpoint_path);
         let args = agent::panel_args(&config, self.claude_panel.session.as_deref(), None);
@@ -616,17 +645,23 @@ impl crate::ShellApp {
                 self.claude_panel.agent = Some(a);
                 Ok(())
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(NOT_INSTALLED.to_string()),
-            Err(e) => Err(format!(
-                "Could not start Claude Code ({}): {e}",
-                program.display()
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(tr(NOT_INSTALLED).to_string())
+            }
+            Err(e) => Err(trf!(
+                "Could not start Claude Code ({program}): {error}",
+                program = program.display(),
+                error = e
             )),
         }
     }
 
     /// A linha `[PostPilot context]` de cada mensagem.
     fn claude_panel_context(&self, ctx: &egui::Context) -> String {
-        let Some(id) = self.active_doc.filter(|id| self.documents.get(*id).is_some()) else {
+        let Some(id) = self
+            .active_doc
+            .filter(|id| self.documents.get(*id).is_some())
+        else {
             let server = if self.connection.is_some() {
                 format!("connected to {}", self.connection_label())
             } else {
@@ -640,9 +675,7 @@ impl crate::ShellApp {
             .get(&id)
             .cloned()
             .unwrap_or_else(|| "no server".into());
-        let database = self
-            .document_database(id)
-            .unwrap_or_else(|| "none".into());
+        let database = self.document_database(id).unwrap_or_else(|| "none".into());
         let selection = pgstudio_sql_editor::selection(ctx, crate::panels::editor_id(id))
             .map(|(a, b)| (a.min(b), a.max(b)))
             .filter(|(a, b)| a != b)
@@ -699,7 +732,13 @@ mod tests {
         });
         assert_eq!(p.items.len(), 3);
         assert_eq!(p.items[0], Item::Assistant("Vou ver.".into()));
-        assert!(matches!(&p.items[1], Item::Tool { result: Some((false, _)), .. }));
+        assert!(matches!(
+            &p.items[1],
+            Item::Tool {
+                result: Some((false, _)),
+                ..
+            }
+        ));
         assert_eq!(p.items[2], Item::Assistant("Pronto".into()));
         assert!(!p.busy);
         assert_eq!(p.session.as_deref(), Some("s"));
@@ -711,13 +750,35 @@ mod tests {
             busy: true,
             ..Default::default()
         };
-        p.apply(AgentEvent::Stderr("Invalid API key · Please run /login".into()));
+        p.apply(AgentEvent::Stderr(
+            "Invalid API key · Please run /login".into(),
+        ));
         p.apply(AgentEvent::Exited(Some(1)));
         assert!(!p.busy);
         let Some(Item::Note(n)) = p.items.last() else {
             panic!()
         };
         assert!(n.contains("/login"));
+    }
+
+    #[test]
+    fn every_tool_has_a_translated_label() {
+        use pgstudio_i18n::{Language, has_translation};
+        for tool in pgstudio_automation::tools::all() {
+            let (_, label) = TOOL_LABELS
+                .iter()
+                .find(|(t, _)| *t == tool.name)
+                .unwrap_or_else(|| panic!("sem rótulo: {}", tool.name));
+            assert!(
+                has_translation(Language::PortugueseBrazil, None, label),
+                "{label}"
+            );
+        }
+        assert!(has_translation(
+            Language::PortugueseBrazil,
+            None,
+            NOT_INSTALLED
+        ));
     }
 
     #[test]
