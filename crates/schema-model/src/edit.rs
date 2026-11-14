@@ -229,10 +229,14 @@ impl Document {
     /// Cria uma tabela com uma coluna `id` identity e chave primária, como o
     /// SSMS sugere, e devolve o id dela.
     pub fn add_table(&mut self, schema: &str, name: &str) -> Result<Id, EditError> {
-        self.change(format!("Add Table {name}"), |m| {
+        self.change(pgstudio_i18n::trf!("Add Table {name}", name = name), |m| {
             check_name(name)?;
             if m.find(schema, name).is_some() {
-                return err(format!("A table named {schema}.{name} already exists."));
+                return err(pgstudio_i18n::trf!(
+                    "A table named {schema}.{name} already exists.",
+                    schema = schema,
+                    name = name
+                ));
             }
             let id = m.new_id();
             let column = m.new_id();
@@ -261,112 +265,134 @@ impl Document {
     /// Renomeia ou muda o schema de uma tabela; as FKs que apontam para ela
     /// acompanham.
     pub fn rename_table(&mut self, table: Id, schema: &str, name: &str) -> Result<(), EditError> {
-        self.change(format!("Rename Table {name}"), |m| {
-            check_name(name)?;
-            let t = get(m, table)?;
-            let (old_schema, old_name) = (t.schema.clone(), t.name.clone());
-            if (old_schema.as_str(), old_name.as_str()) == (schema, name) {
-                return Ok(());
-            }
-            if m.find(schema, name).is_some() {
-                return err(format!("A table named {schema}.{name} already exists."));
-            }
-            for t in referencing(m, &old_schema, &old_name) {
-                for fk in &mut t.foreign_keys {
-                    if fk.ref_schema == old_schema && fk.ref_table == old_name {
-                        fk.ref_schema = schema.into();
-                        fk.ref_table = name.into();
+        self.change(
+            pgstudio_i18n::trf!("Rename Table {name}", name = name),
+            |m| {
+                check_name(name)?;
+                let t = get(m, table)?;
+                let (old_schema, old_name) = (t.schema.clone(), t.name.clone());
+                if (old_schema.as_str(), old_name.as_str()) == (schema, name) {
+                    return Ok(());
+                }
+                if m.find(schema, name).is_some() {
+                    return err(pgstudio_i18n::trf!(
+                        "A table named {schema}.{name} already exists.",
+                        schema = schema,
+                        name = name
+                    ));
+                }
+                for t in referencing(m, &old_schema, &old_name) {
+                    for fk in &mut t.foreign_keys {
+                        if fk.ref_schema == old_schema && fk.ref_table == old_name {
+                            fk.ref_schema = schema.into();
+                            fk.ref_table = name.into();
+                        }
                     }
                 }
-            }
-            let t = get_mut(m, table)?;
-            t.schema = schema.into();
-            t.name = name.into();
-            Ok(())
-        })
+                let t = get_mut(m, table)?;
+                t.schema = schema.into();
+                t.name = name.into();
+                Ok(())
+            },
+        )
     }
 
     /// Apaga uma tabela e as FKs de outras tabelas que apontam para ela.
     pub fn drop_table(&mut self, table: Id) -> Result<(), EditError> {
         let name = get(&self.model, table)?.name.clone();
-        self.change(format!("Delete Table {name}"), |m| {
-            let t = get(m, table)?;
-            let (schema, name) = (t.schema.clone(), t.name.clone());
-            m.tables.retain(|t| t.id != table);
-            for t in referencing(m, &schema, &name) {
-                t.foreign_keys
-                    .retain(|fk| !(fk.ref_schema == schema && fk.ref_table == name));
-            }
-            Ok(())
-        })
+        self.change(
+            pgstudio_i18n::trf!("Delete Table {name}", name = name),
+            |m| {
+                let t = get(m, table)?;
+                let (schema, name) = (t.schema.clone(), t.name.clone());
+                m.tables.retain(|t| t.id != table);
+                for t in referencing(m, &schema, &name) {
+                    t.foreign_keys
+                        .retain(|fk| !(fk.ref_schema == schema && fk.ref_table == name));
+                }
+                Ok(())
+            },
+        )
     }
 
     /// Acrescenta uma coluna no fim da tabela e devolve o id dela.
     pub fn add_column(&mut self, table: Id, column: Column) -> Result<Id, EditError> {
-        self.change(format!("Add Column {}", column.name), |m| {
-            check_name(&column.name)?;
-            check_type(&column.ty)?;
-            let id = m.new_id();
-            let t = get_mut(m, table)?;
-            if t.column(&column.name).is_some() {
-                return err(format!("Column {} already exists.", column.name));
-            }
-            t.columns.push(Column { id, ..column });
-            Ok(id)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Add Column {name}", name = column.name),
+            |m| {
+                check_name(&column.name)?;
+                check_type(&column.ty)?;
+                let id = m.new_id();
+                let t = get_mut(m, table)?;
+                if t.column(&column.name).is_some() {
+                    return err(pgstudio_i18n::trf!(
+                        "Column {name} already exists.",
+                        name = column.name
+                    ));
+                }
+                t.columns.push(Column { id, ..column });
+                Ok(id)
+            },
+        )
     }
 
     /// Renomeia uma coluna nas chaves, índices e FKs (desta tabela e das que
     /// apontam para ela).
     pub fn rename_column(&mut self, table: Id, column: Id, name: &str) -> Result<(), EditError> {
-        self.change(format!("Rename Column {name}"), |m| {
-            check_name(name)?;
-            let t = get(m, table)?;
-            let old = column_of(t, column)?.name.clone();
-            if old == name {
-                return Ok(());
-            }
-            if t.column(name).is_some() {
-                return err(format!("Column {name} already exists."));
-            }
-            let (schema, tname) = (t.schema.clone(), t.name.clone());
-            let rename = |cols: &mut Vec<String>| {
-                for c in cols.iter_mut().filter(|c| **c == old) {
-                    *c = name.to_string();
+        self.change(
+            pgstudio_i18n::trf!("Rename Column {name}", name = name),
+            |m| {
+                check_name(name)?;
+                let t = get(m, table)?;
+                let old = column_of(t, column)?.name.clone();
+                if old == name {
+                    return Ok(());
                 }
-            };
-            for other in referencing(m, &schema, &tname) {
-                for fk in &mut other.foreign_keys {
-                    if fk.ref_schema == schema && fk.ref_table == tname {
-                        rename(&mut fk.ref_columns);
-                    }
+                if t.column(name).is_some() {
+                    return err(pgstudio_i18n::trf!(
+                        "Column {name} already exists.",
+                        name = name
+                    ));
                 }
-            }
-            let t = get_mut(m, table)?;
-            for key in t.primary_key.iter_mut().chain(t.uniques.iter_mut()) {
-                rename(&mut key.columns);
-            }
-            for fk in &mut t.foreign_keys {
-                rename(&mut fk.columns);
-            }
-            let expr = |e: &mut String| *e = rename_in_expr(e, &old, name);
-            for index in &mut t.indexes {
-                for c in &mut index.columns {
-                    if *c == old {
+                let (schema, tname) = (t.schema.clone(), t.name.clone());
+                let rename = |cols: &mut Vec<String>| {
+                    for c in cols.iter_mut().filter(|c| **c == old) {
                         *c = name.to_string();
-                    } else if c.contains(['(', ' ', '"']) {
-                        expr(c);
+                    }
+                };
+                for other in referencing(m, &schema, &tname) {
+                    for fk in &mut other.foreign_keys {
+                        if fk.ref_schema == schema && fk.ref_table == tname {
+                            rename(&mut fk.ref_columns);
+                        }
                     }
                 }
-                index.predicate.iter_mut().for_each(expr);
-            }
-            t.checks.iter_mut().for_each(|k| expr(&mut k.expr));
-            for c in &mut t.columns {
-                c.generated.iter_mut().for_each(expr);
-            }
-            column_of_mut(t, column)?.name = name.into();
-            Ok(())
-        })
+                let t = get_mut(m, table)?;
+                for key in t.primary_key.iter_mut().chain(t.uniques.iter_mut()) {
+                    rename(&mut key.columns);
+                }
+                for fk in &mut t.foreign_keys {
+                    rename(&mut fk.columns);
+                }
+                let expr = |e: &mut String| *e = rename_in_expr(e, &old, name);
+                for index in &mut t.indexes {
+                    for c in &mut index.columns {
+                        if *c == old {
+                            *c = name.to_string();
+                        } else if c.contains(['(', ' ', '"']) {
+                            expr(c);
+                        }
+                    }
+                    index.predicate.iter_mut().for_each(expr);
+                }
+                t.checks.iter_mut().for_each(|k| expr(&mut k.expr));
+                for c in &mut t.columns {
+                    c.generated.iter_mut().for_each(expr);
+                }
+                column_of_mut(t, column)?.name = name.into();
+                Ok(())
+            },
+        )
     }
 
     /// Muda tipo, nulo, default, identity ou expressão gerada de uma coluna
@@ -378,63 +404,70 @@ impl Document {
         update: impl FnOnce(&mut Column),
     ) -> Result<(), EditError> {
         let name = column_of(get(&self.model, table)?, column)?.name.clone();
-        self.change(format!("Change Column {name}"), |m| {
-            let t = get_mut(m, table)?;
-            let in_pk = t
-                .primary_key
-                .as_ref()
-                .is_some_and(|k| k.columns.contains(&name));
-            let c = column_of_mut(t, column)?;
-            update(c);
-            if c.name != name {
-                return err("Use rename to change a column's name.");
-            }
-            check_type(&c.ty)?;
-            if in_pk && c.nullable {
-                return err(format!(
-                    "Column {name} is in the primary key and cannot allow nulls."
-                ));
-            }
-            Ok(())
-        })
+        self.change(
+            pgstudio_i18n::trf!("Change Column {name}", name = name),
+            |m| {
+                let t = get_mut(m, table)?;
+                let in_pk = t
+                    .primary_key
+                    .as_ref()
+                    .is_some_and(|k| k.columns.contains(&name));
+                let c = column_of_mut(t, column)?;
+                update(c);
+                if c.name != name {
+                    return err(pgstudio_i18n::tr("Use rename to change a column's name."));
+                }
+                check_type(&c.ty)?;
+                if in_pk && c.nullable {
+                    return err(pgstudio_i18n::trf!(
+                        "Column {name} is in the primary key and cannot allow nulls.",
+                        name = name
+                    ));
+                }
+                Ok(())
+            },
+        )
     }
 
     /// Apaga uma coluna e o que depende dela: chaves, índices e FKs (desta
     /// tabela e das que apontam para ela).
     pub fn drop_column(&mut self, table: Id, column: Id) -> Result<(), EditError> {
         let name = column_of(get(&self.model, table)?, column)?.name.clone();
-        self.change(format!("Delete Column {name}"), |m| {
-            let t = get(m, table)?;
-            if t.columns.len() == 1 {
-                return err("A table needs at least one column.");
-            }
-            let (schema, tname) = (t.schema.clone(), t.name.clone());
-            for other in referencing(m, &schema, &tname) {
-                other.foreign_keys.retain(|fk| {
-                    !(fk.ref_schema == schema
-                        && fk.ref_table == tname
-                        && fk.ref_columns.contains(&name))
-                });
-            }
-            let t = get_mut(m, table)?;
-            t.columns.retain(|c| c.id != column);
-            if t.primary_key
-                .as_ref()
-                .is_some_and(|k| k.columns.contains(&name))
-            {
-                t.primary_key = None;
-            }
-            t.uniques.retain(|k| !k.columns.contains(&name));
-            t.foreign_keys.retain(|fk| !fk.columns.contains(&name));
-            t.indexes.retain(|i| !i.columns.contains(&name));
-            Ok(())
-        })
+        self.change(
+            pgstudio_i18n::trf!("Delete Column {name}", name = name),
+            |m| {
+                let t = get(m, table)?;
+                if t.columns.len() == 1 {
+                    return err(pgstudio_i18n::tr("A table needs at least one column."));
+                }
+                let (schema, tname) = (t.schema.clone(), t.name.clone());
+                for other in referencing(m, &schema, &tname) {
+                    other.foreign_keys.retain(|fk| {
+                        !(fk.ref_schema == schema
+                            && fk.ref_table == tname
+                            && fk.ref_columns.contains(&name))
+                    });
+                }
+                let t = get_mut(m, table)?;
+                t.columns.retain(|c| c.id != column);
+                if t.primary_key
+                    .as_ref()
+                    .is_some_and(|k| k.columns.contains(&name))
+                {
+                    t.primary_key = None;
+                }
+                t.uniques.retain(|k| !k.columns.contains(&name));
+                t.foreign_keys.retain(|fk| !fk.columns.contains(&name));
+                t.indexes.retain(|i| !i.columns.contains(&name));
+                Ok(())
+            },
+        )
     }
 
     /// Define (ou tira, com uma lista vazia) a chave primária. As colunas
     /// dela passam a não aceitar nulos, como o PostgreSQL faz.
     pub fn set_primary_key(&mut self, table: Id, columns: Vec<String>) -> Result<(), EditError> {
-        self.change("Set Primary Key", |m| {
+        self.change(pgstudio_i18n::tr("Set Primary Key"), |m| {
             let t = get_mut(m, table)?;
             if columns.is_empty() {
                 t.primary_key = None;
@@ -458,33 +491,45 @@ impl Document {
 
     /// Acrescenta uma constraint unique (nome padrão se vier vazio).
     pub fn add_unique(&mut self, table: Id, key: Key) -> Result<(), EditError> {
-        self.change("Add Unique Key", |m| insert_unique(m, table, key))
-    }
-
-    /// Acrescenta uma constraint check (nome padrão se vier vazio).
-    pub fn add_check(&mut self, table: Id, check: Check) -> Result<(), EditError> {
-        self.change("Add Check Constraint", |m| insert_check(m, table, check))
-    }
-
-    /// Acrescenta uma chave estrangeira (nome padrão se vier vazio).
-    pub fn add_foreign_key(&mut self, table: Id, fk: ForeignKey) -> Result<(), EditError> {
-        self.change("Add Relationship", |m| insert_fk(m, table, fk))
-    }
-
-    /// Troca a unique `name` por `key` (nome, colunas), numa edição só.
-    pub fn update_unique(&mut self, table: Id, name: &str, key: Key) -> Result<(), EditError> {
-        self.change(format!("Change Unique Key {name}"), |m| {
-            remove_constraint(m, table, name)?;
+        self.change(pgstudio_i18n::tr("Add Unique Key"), |m| {
             insert_unique(m, table, key)
         })
     }
 
-    /// Troca a check `name` por `check`, numa edição só.
-    pub fn update_check(&mut self, table: Id, name: &str, check: Check) -> Result<(), EditError> {
-        self.change(format!("Change Check Constraint {name}"), |m| {
-            remove_constraint(m, table, name)?;
+    /// Acrescenta uma constraint check (nome padrão se vier vazio).
+    pub fn add_check(&mut self, table: Id, check: Check) -> Result<(), EditError> {
+        self.change(pgstudio_i18n::tr("Add Check Constraint"), |m| {
             insert_check(m, table, check)
         })
+    }
+
+    /// Acrescenta uma chave estrangeira (nome padrão se vier vazio).
+    pub fn add_foreign_key(&mut self, table: Id, fk: ForeignKey) -> Result<(), EditError> {
+        self.change(pgstudio_i18n::tr("Add Relationship"), |m| {
+            insert_fk(m, table, fk)
+        })
+    }
+
+    /// Troca a unique `name` por `key` (nome, colunas), numa edição só.
+    pub fn update_unique(&mut self, table: Id, name: &str, key: Key) -> Result<(), EditError> {
+        self.change(
+            pgstudio_i18n::trf!("Change Unique Key {name}", name = name),
+            |m| {
+                remove_constraint(m, table, name)?;
+                insert_unique(m, table, key)
+            },
+        )
+    }
+
+    /// Troca a check `name` por `check`, numa edição só.
+    pub fn update_check(&mut self, table: Id, name: &str, check: Check) -> Result<(), EditError> {
+        self.change(
+            pgstudio_i18n::trf!("Change Check Constraint {name}", name = name),
+            |m| {
+                remove_constraint(m, table, name)?;
+                insert_check(m, table, check)
+            },
+        )
     }
 
     /// Troca a FK `name` por `fk`, numa edição só.
@@ -494,39 +539,48 @@ impl Document {
         name: &str,
         fk: ForeignKey,
     ) -> Result<(), EditError> {
-        self.change(format!("Change Relationship {name}"), |m| {
-            remove_constraint(m, table, name)?;
-            insert_fk(m, table, fk)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Change Relationship {name}", name = name),
+            |m| {
+                remove_constraint(m, table, name)?;
+                insert_fk(m, table, fk)
+            },
+        )
     }
 
     /// Troca o índice `name` por `index`, numa edição só.
     pub fn update_index(&mut self, table: Id, name: &str, index: Index) -> Result<(), EditError> {
-        self.change(format!("Change Index {name}"), |m| {
-            remove_index(m, table, name)?;
-            insert_index(m, table, index)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Change Index {name}", name = name),
+            |m| {
+                remove_index(m, table, name)?;
+                insert_index(m, table, index)
+            },
+        )
     }
 
     /// Apaga uma constraint pelo nome (PK, unique, check ou FK).
     pub fn drop_constraint(&mut self, table: Id, name: &str) -> Result<(), EditError> {
-        self.change(format!("Delete Constraint {name}"), |m| {
-            remove_constraint(m, table, name)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Delete Constraint {name}", name = name),
+            |m| remove_constraint(m, table, name),
+        )
     }
 
     /// Acrescenta um índice.
     pub fn add_index(&mut self, table: Id, index: Index) -> Result<(), EditError> {
-        self.change(format!("Add Index {}", index.name), |m| {
-            insert_index(m, table, index)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Add Index {name}", name = index.name),
+            |m| insert_index(m, table, index),
+        )
     }
 
     /// Apaga um índice pelo nome.
     pub fn drop_index(&mut self, table: Id, name: &str) -> Result<(), EditError> {
-        self.change(format!("Delete Index {name}"), |m| {
-            remove_index(m, table, name)
-        })
+        self.change(
+            pgstudio_i18n::trf!("Delete Index {name}", name = name),
+            |m| remove_index(m, table, name),
+        )
     }
 }
 
@@ -544,7 +598,7 @@ fn insert_unique(m: &mut Model, table: Id, mut key: Key) -> Result<(), EditError
 
 fn insert_check(m: &mut Model, table: Id, mut check: Check) -> Result<(), EditError> {
     if check.expr.trim().is_empty() {
-        return err("The check expression is empty.");
+        return err(pgstudio_i18n::tr("The check expression is empty."));
     }
     let t = get_mut(m, table)?;
     if check.name.is_empty() {
@@ -558,16 +612,19 @@ fn insert_check(m: &mut Model, table: Id, mut check: Check) -> Result<(), EditEr
 
 fn insert_fk(m: &mut Model, table: Id, mut fk: ForeignKey) -> Result<(), EditError> {
     let target = m.find(&fk.ref_schema, &fk.ref_table).ok_or_else(|| {
-        EditError(format!(
-            "Table {}.{} does not exist.",
-            fk.ref_schema, fk.ref_table
+        EditError(pgstudio_i18n::trf!(
+            "Table {schema}.{table} does not exist.",
+            schema = fk.ref_schema,
+            table = fk.ref_table
         ))
     })?;
     check_columns(target, &fk.ref_columns)?;
     let t = get_mut(m, table)?;
     check_columns(t, &fk.columns)?;
     if fk.columns.len() != fk.ref_columns.len() || fk.columns.is_empty() {
-        return err("A relationship needs the same number of columns on both sides.");
+        return err(pgstudio_i18n::tr(
+            "A relationship needs the same number of columns on both sides.",
+        ));
     }
     if fk.name.is_empty() {
         fk.name = default_constraint_name(&t.name, &fk.columns, "fkey");
@@ -581,7 +638,7 @@ fn insert_fk(m: &mut Model, table: Id, mut fk: ForeignKey) -> Result<(), EditErr
 fn insert_index(m: &mut Model, table: Id, index: Index) -> Result<(), EditError> {
     check_name(&index.name)?;
     if index.columns.is_empty() {
-        return err("An index needs at least one column.");
+        return err(pgstudio_i18n::tr("An index needs at least one column."));
     }
     let schema = get(m, table)?.schema.clone();
     let taken = m.tables.iter().filter(|t| t.schema == schema).any(|t| {
@@ -592,9 +649,10 @@ fn insert_index(m: &mut Model, table: Id, index: Index) -> Result<(), EditError>
                 .any(|k| k.name == index.name)
     });
     if taken {
-        return err(format!(
-            "An index named {} already exists in {schema}.",
-            index.name
+        return err(pgstudio_i18n::trf!(
+            "An index named {name} already exists in {schema}.",
+            name = index.name,
+            schema = schema
         ));
     }
     get_mut(m, table)?.indexes.push(index);
@@ -611,7 +669,10 @@ fn remove_constraint(m: &mut Model, table: Id, name: &str) -> Result<(), EditErr
     t.checks.retain(|c| c.name != name);
     t.foreign_keys.retain(|fk| fk.name != name);
     if constraint_names(t).len() == before {
-        return err(format!("Constraint {name} does not exist."));
+        return err(pgstudio_i18n::trf!(
+            "Constraint {name} does not exist.",
+            name = name
+        ));
     }
     Ok(())
 }
@@ -621,56 +682,66 @@ fn remove_index(m: &mut Model, table: Id, name: &str) -> Result<(), EditError> {
     let before = t.indexes.len();
     t.indexes.retain(|i| i.name != name);
     if t.indexes.len() == before {
-        return err(format!("Index {name} does not exist."));
+        return err(pgstudio_i18n::trf!(
+            "Index {name} does not exist.",
+            name = name
+        ));
     }
     Ok(())
 }
 
 fn get(m: &Model, id: Id) -> Result<&Table, EditError> {
     m.table(id)
-        .ok_or_else(|| EditError("The table no longer exists.".into()))
+        .ok_or_else(|| EditError(pgstudio_i18n::tr("The table no longer exists.").into()))
 }
 
 fn get_mut(m: &mut Model, id: Id) -> Result<&mut Table, EditError> {
     m.table_mut(id)
-        .ok_or_else(|| EditError("The table no longer exists.".into()))
+        .ok_or_else(|| EditError(pgstudio_i18n::tr("The table no longer exists.").into()))
 }
 
 fn column_of(t: &Table, id: Id) -> Result<&Column, EditError> {
     t.column_by_id(id)
-        .ok_or_else(|| EditError("The column no longer exists.".into()))
+        .ok_or_else(|| EditError(pgstudio_i18n::tr("The column no longer exists.").into()))
 }
 
 fn column_of_mut(t: &mut Table, id: Id) -> Result<&mut Column, EditError> {
     t.columns
         .iter_mut()
         .find(|c| c.id == id)
-        .ok_or_else(|| EditError("The column no longer exists.".into()))
+        .ok_or_else(|| EditError(pgstudio_i18n::tr("The column no longer exists.").into()))
 }
 
 fn check_name(name: &str) -> Result<(), EditError> {
     if name.trim().is_empty() {
-        return err("The name is empty.");
+        return err(pgstudio_i18n::tr("The name is empty."));
     }
     if name.len() > 63 {
-        return err(format!("{name} is longer than 63 bytes."));
+        return err(pgstudio_i18n::trf!(
+            "{name} is longer than 63 bytes.",
+            name = name
+        ));
     }
     Ok(())
 }
 
 fn check_type(ty: &str) -> Result<(), EditError> {
     if ty.trim().is_empty() {
-        return err("The data type is empty.");
+        return err(pgstudio_i18n::tr("The data type is empty."));
     }
     Ok(())
 }
 
 fn check_columns(t: &Table, columns: &[String]) -> Result<(), EditError> {
     if columns.is_empty() {
-        return err("Choose at least one column.");
+        return err(pgstudio_i18n::tr("Choose at least one column."));
     }
     match columns.iter().find(|c| t.column(c).is_none()) {
-        Some(c) => err(format!("Column {c} does not exist in {}.", t.name)),
+        Some(c) => err(pgstudio_i18n::trf!(
+            "Column {c} does not exist in {table}.",
+            c = c,
+            table = t.name
+        )),
         None => Ok(()),
     }
 }
@@ -688,7 +759,10 @@ fn constraint_names(t: &Table) -> Vec<&str> {
 fn check_constraint_name(t: &Table, name: &str) -> Result<(), EditError> {
     check_name(name)?;
     if constraint_names(t).contains(&name) {
-        return err(format!("A constraint named {name} already exists."));
+        return err(pgstudio_i18n::trf!(
+            "A constraint named {name} already exists.",
+            name = name
+        ));
     }
     Ok(())
 }

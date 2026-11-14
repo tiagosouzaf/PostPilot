@@ -6,6 +6,7 @@
 //! com [`diff`] entre o modelo carregado e o editado. "Generate Change Script" mostra exatamente o DDL que "Save"
 //! aplica.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -265,7 +266,7 @@ impl TableDesigner {
                 Ok(Err(e)) => self.state = State::Failed(e.to_string()),
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
-                    self.state = State::Failed("The table could not be loaded.".into());
+                    self.state = State::Failed(tr("The table could not be loaded.").into());
                 }
             }
         }
@@ -284,7 +285,7 @@ impl TableDesigner {
                 Ok(r) => r,
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => {
-                    Err(MetadataError("The changes could not be saved.".into()))
+                    Err(MetadataError(tr("The changes could not be saved.").into()))
                 }
             };
             let (_, saved, ddl) = self.saving.take().expect("checado acima");
@@ -302,7 +303,7 @@ impl TableDesigner {
                     self.target.schema = t.schema.clone();
                     self.table = Some(id);
                 }
-                None => self.state = State::Failed("The table no longer exists.".into()),
+                None => self.state = State::Failed(tr("The table no longer exists.").into()),
             },
             None => {
                 let n = self.new_number.unwrap_or(1);
@@ -331,7 +332,8 @@ impl TableDesigner {
         let name = self.qualified_name();
         match result {
             Ok(()) => {
-                self.log.push(format!("Table Designer: saved {name}."));
+                self.log
+                    .push(trf!("Table Designer: saved {name}.", name = name));
                 self.log.extend(ddl.iter().cloned());
                 self.base = saved;
                 self.doc.history.clear();
@@ -343,10 +345,14 @@ impl TableDesigner {
                 }
             }
             Err(e) => {
-                self.log
-                    .push(format!("Table Designer: {name} was not saved: {e}"));
-                self.notice = Some(Notice::Error(format!(
-                    "Nothing was saved (the changes were rolled back): {e}"
+                self.log.push(trf!(
+                    "Table Designer: {name} was not saved: {e}",
+                    name = name,
+                    e = e
+                ));
+                self.notice = Some(Notice::Error(trf!(
+                    "Nothing was saved (the changes were rolled back): {e}",
+                    e = e
                 )));
                 self.close_after_save = false;
             }
@@ -363,7 +369,7 @@ impl TableDesigner {
         self.table
             .and_then(|t| self.doc.model.table(t))
             .map(|t| format!("{}.{}", t.schema, t.name))
-            .unwrap_or_else(|| "Table Designer".to_string())
+            .unwrap_or_else(|| tr("Table Designer").to_string())
     }
 
     /// Texto da aba: `banco - schema.tabela`, com `*` se há alterações.
@@ -423,8 +429,8 @@ impl TableDesigner {
 
     pub fn undo(&mut self) {
         match self.doc.undo() {
-            Some(label) => self.notice = Some(Notice::Info(format!("Undo {label}"))),
-            None => self.notice = Some(Notice::Info("Nothing to undo.".into())),
+            Some(label) => self.notice = Some(Notice::Info(trf!("Undo {label}", label = label))),
+            None => self.notice = Some(Notice::Info(tr("Nothing to undo.").into())),
         }
         self.buffers.clear();
         self.fix_selection();
@@ -432,8 +438,8 @@ impl TableDesigner {
 
     pub fn redo(&mut self) {
         match self.doc.redo() {
-            Some(label) => self.notice = Some(Notice::Info(format!("Redo {label}"))),
-            None => self.notice = Some(Notice::Info("Nothing to redo.".into())),
+            Some(label) => self.notice = Some(Notice::Info(trf!("Redo {label}", label = label))),
+            None => self.notice = Some(Notice::Info(tr("Nothing to redo.").into())),
         }
         self.buffers.clear();
         self.fix_selection();
@@ -474,7 +480,7 @@ impl TableDesigner {
             self.save_now(ctx);
         } else {
             self.close_after_save = false;
-            self.notice = Some(Notice::Info("Nothing was saved.".into()));
+            self.notice = Some(Notice::Info(tr("Nothing was saved.").into()));
         }
     }
 
@@ -483,7 +489,7 @@ impl TableDesigner {
         let ddl = self.change_script();
         if ddl.is_empty() {
             self.new_number = None;
-            self.notice = Some(Notice::Info("There are no changes to save.".into()));
+            self.notice = Some(Notice::Info(tr("There are no changes to save.").into()));
             if self.close_after_save {
                 self.closed = true;
             }
@@ -498,7 +504,7 @@ impl TableDesigner {
             let _ = tx.send(provider.apply_ddl(&db, &statements));
             repaint.request_repaint();
         });
-        self.notice = Some(Notice::Info("Saving...".into()));
+        self.notice = Some(Notice::Info(tr("Saving...").into()));
         self.saving = Some((rx, self.doc.model.clone(), ddl));
     }
 
@@ -579,7 +585,7 @@ impl TableDesigner {
     }
 
     /// "Set Primary Key" na coluna: ela passa a ser a chave primária; se já
-    /// era, a chave sai (como "Remove Primary Key" no SSMS).
+    /// era, a chave sai (como tr("Remove Primary Key") no SSMS).
     pub fn toggle_primary_key(&mut self, column: Id) {
         let Some(t) = self.table.and_then(|t| self.doc.model.table(t)) else {
             return;
@@ -609,7 +615,7 @@ impl TableDesigner {
             State::Loading(_) => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Loading table...");
+                    ui.label(tr("Loading table..."));
                 });
                 return;
             }
@@ -647,7 +653,7 @@ impl TableDesigner {
         let (schema, name) = (table.schema.clone(), table.name.clone());
         let mut rename = None;
         ui.horizontal(|ui| {
-            ui.label("Table:");
+            ui.label(tr("Table:"));
             if let Some(s) = self.text(ui, (0, Field::Schema), &schema, 90.0) {
                 rename = Some((s, name.clone()));
             }
@@ -661,7 +667,7 @@ impl TableDesigner {
             if ui
                 .add_enabled(
                     selected.is_some(),
-                    egui::Button::new(format!("{} Set Primary Key", icon::KEY)),
+                    egui::Button::new(format!("{} {}", icon::KEY, tr("Set Primary Key"))),
                 )
                 .clicked()
                 && let Some(c) = selected
@@ -671,7 +677,7 @@ impl TableDesigner {
             if ui
                 .add_enabled(
                     selected.is_some(),
-                    egui::Button::new(format!("{} Delete Column", icon::TRASH)),
+                    egui::Button::new(format!("{} {}", icon::TRASH, tr("Delete Column"))),
                 )
                 .clicked()
                 && let Some(c) = selected
@@ -686,31 +692,48 @@ impl TableDesigner {
                     undo.is_some(),
                     egui::Button::new(icon::ARROW_COUNTER_CLOCKWISE),
                 )
-                .on_hover_text(undo.map_or("Undo".to_string(), |l| format!("Undo {l}")))
+                .on_hover_text(
+                    undo.map_or(tr("Undo").to_string(), |l| trf!("Undo {label}", label = l)),
+                )
                 .clicked()
             {
                 self.undo();
             }
             if ui
                 .add_enabled(redo.is_some(), egui::Button::new(icon::ARROW_CLOCKWISE))
-                .on_hover_text(redo.map_or("Redo".to_string(), |l| format!("Redo {l}")))
+                .on_hover_text(
+                    redo.map_or(tr("Redo").to_string(), |l| trf!("Redo {label}", label = l)),
+                )
                 .clicked()
             {
                 self.redo();
             }
             ui.separator();
             for (kind, glyph, label) in [
-                (DialogKind::Relationships, icon::FLOW_ARROW, "Relationships"),
-                (DialogKind::IndexesKeys, icon::LIST_NUMBERS, "Indexes/Keys"),
-                (DialogKind::Checks, icon::CHECK_SQUARE, "Check Constraints"),
+                (
+                    DialogKind::Relationships,
+                    icon::FLOW_ARROW,
+                    tr("Relationships"),
+                ),
+                (
+                    DialogKind::IndexesKeys,
+                    icon::LIST_NUMBERS,
+                    tr("Indexes/Keys"),
+                ),
+                (
+                    DialogKind::Checks,
+                    icon::CHECK_SQUARE,
+                    tr("Check Constraints"),
+                ),
             ] {
-                if ui.button(format!("{glyph} {label}")).clicked() {
+                let text = format!("{glyph} {label}"); // i18n-ignore
+                if ui.button(text).clicked() {
                     self.open_dialog(kind);
                 }
             }
             ui.separator();
             if ui
-                .button(format!("{} Generate Change Script", icon::SCROLL))
+                .button(format!("{} {}", icon::SCROLL, tr("Generate Change Script")))
                 .clicked()
             {
                 self.generate_change_script();
@@ -719,7 +742,7 @@ impl TableDesigner {
             if ui
                 .add_enabled(
                     !saving && self.is_dirty(),
-                    egui::Button::new(format!("{} Save", icon::FLOPPY_DISK)),
+                    egui::Button::new(format!("{} {}", icon::FLOPPY_DISK, tr("Save"))),
                 )
                 .clicked()
             {
@@ -797,10 +820,10 @@ impl TableDesigner {
                     .min_row_height(ROW_HEIGHT)
                     .show(ui, |ui| {
                         ui.label("");
-                        ui.strong("Column Name");
-                        ui.strong("Data Type");
+                        ui.strong(tr("Column Name"));
+                        ui.strong(tr("Data Type"));
                         ui.label("");
-                        ui.strong("Allow Nulls");
+                        ui.strong(tr("Allow Nulls"));
                         ui.end_row();
                         for (i, c) in columns.iter().enumerate() {
                             let selected = self.selected == Some(c.id);
@@ -831,15 +854,15 @@ impl TableDesigner {
                             }
                             r.context_menu(|ui| {
                                 let label = if pk.contains(&c.name) {
-                                    "Remove Primary Key"
+                                    tr("Remove Primary Key")
                                 } else {
-                                    "Set Primary Key"
+                                    tr("Set Primary Key")
                                 };
                                 if ui.button(label).clicked() {
                                     actions.push(RowAction::PrimaryKey(c.id));
                                     ui.close();
                                 }
-                                if ui.button("Delete Column").clicked() {
+                                if ui.button(tr("Delete Column")).clicked() {
                                     actions.push(RowAction::Delete(c.id));
                                     ui.close();
                                 }
@@ -865,7 +888,7 @@ impl TableDesigner {
                                     });
                             })
                             .response
-                            .on_hover_text("Data types");
+                            .on_hover_text(tr("Data types"));
                             let mut nullable = c.nullable;
                             if ui.checkbox(&mut nullable, "").changed() {
                                 actions.push(RowAction::Nulls(c.id, nullable));
@@ -885,7 +908,7 @@ impl TableDesigner {
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut self.new_column)
                                 .id(egui::Id::new("designer_new_column"))
-                                .hint_text("new column")
+                                .hint_text(tr("new column"))
                                 .desired_width(name_w),
                         );
                         if r.lost_focus() && !self.new_column.trim().is_empty() {
@@ -919,14 +942,14 @@ impl TableDesigner {
     }
 
     fn column_properties(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Column Properties");
+        ui.strong(tr("Column Properties"));
         let column = self
             .table
             .and_then(|t| self.doc.model.table(t))
             .and_then(|t| self.selected.and_then(|c| t.column_by_id(c)))
             .cloned();
         let Some(c) = column else {
-            ui.weak("Select a column.");
+            ui.weak(tr("Select a column."));
             return;
         };
         let mut change: Option<ColumnChange> = None;
@@ -938,25 +961,25 @@ impl TableDesigner {
                     .num_columns(2)
                     .striped(true)
                     .show(ui, |ui| {
-                        ui.label("(Name)");
+                        ui.label(tr("(Name)"));
                         if let Some(n) = self.text(ui, (c.id, Field::PropertyName), &c.name, 220.0)
                         {
                             rename = Some(n);
                         }
                         ui.end_row();
-                        ui.label("Allow Nulls");
+                        ui.label(tr("Allow Nulls"));
                         let mut nullable = c.nullable;
                         if ui.checkbox(&mut nullable, "").changed() {
                             change = Some(Box::new(move |col| col.nullable = nullable));
                         }
                         ui.end_row();
-                        ui.label("Data Type");
+                        ui.label(tr("Data Type"));
                         if let Some(ty) = self.text(ui, (c.id, Field::PropertyType), &c.ty, 220.0) {
                             let ty = ty.trim().to_string();
                             change = Some(Box::new(move |col| col.ty = ty));
                         }
                         ui.end_row();
-                        ui.label("Default Value or Binding");
+                        ui.label(tr("Default Value or Binding"));
                         let default = c.default.clone().unwrap_or_default();
                         if let Some(d) = self.text(ui, (c.id, Field::Default), &default, 220.0) {
                             let d = d.trim().to_string();
@@ -965,7 +988,7 @@ impl TableDesigner {
                             }));
                         }
                         ui.end_row();
-                        ui.label("Identity Specification");
+                        ui.label(tr("Identity Specification"));
                         let mut identity = c.identity;
                         egui::ComboBox::from_id_salt(("identity", c.id))
                             .selected_text(identity_label(identity))
@@ -990,7 +1013,7 @@ impl TableDesigner {
                             }));
                         }
                         ui.end_row();
-                        ui.label("Computed Column Specification");
+                        ui.label(tr("Computed Column Specification"));
                         let generated = c.generated.clone().unwrap_or_default();
                         if let Some(g) = self.text(ui, (c.id, Field::Generated), &generated, 220.0)
                         {
@@ -1017,16 +1040,16 @@ impl TableDesigner {
         let mut open = true;
         let mut close = false;
         let mut text = if script.is_empty() {
-            "-- There are no changes to save.".to_string()
+            format!("-- {}", tr("There are no changes to save."))
         } else {
             script.clone()
         };
         let modal = crate::theme::modal(egui::Id::new(("change_script", id))).show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.heading("Save Change Script");
-            ui.label(format!(
-                "These statements run in one transaction when {} is saved:",
-                self.qualified_name()
+            ui.heading(tr("Save Change Script"));
+            ui.label(trf!(
+                "These statements run in one transaction when {name} is saved:",
+                name = self.qualified_name()
             ));
             egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
                 ui.add(
@@ -1037,10 +1060,13 @@ impl TableDesigner {
                 );
             });
             ui.horizontal(|ui| {
-                if ui.button(format!("{} Copy", icon::COPY)).clicked() {
+                if ui
+                    .button(format!("{} {}", icon::COPY, tr("Copy")))
+                    .clicked()
+                {
                     ui.ctx().copy_text(text.clone());
                 }
-                if ui.button("Close").clicked() {
+                if ui.button(tr("Close")).clicked() {
                     close = true;
                 }
             });
@@ -1060,21 +1086,21 @@ impl TableDesigner {
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new(("designer_warnings", id))).show(ctx, |ui| {
             ui.set_width(460.0);
-            ui.heading("Validation Warnings");
-            ui.label("Saving these changes might lose data:");
+            ui.heading(tr("Validation Warnings"));
+            ui.label(tr("Saving these changes might lose data:"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 for w in warnings {
                     ui.label(format!("{} {w}", icon::WARNING));
                 }
             });
-            ui.label("Do you want to save anyway?");
+            ui.label(tr("Do you want to save anyway?"));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -1096,20 +1122,20 @@ impl TableDesigner {
         let modal = crate::theme::modal(egui::Id::new(("designer_close", id))).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(pgstudio_core::APP_NAME);
-            ui.label("Save changes to the following items?");
+            ui.label(tr("Save changes to the following items?"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(&name);
             });
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(crate::Answer::Cancel);
                 }
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     answer = Some(crate::Answer::No);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(crate::Answer::Yes);
                 }
             });
@@ -1135,7 +1161,7 @@ enum RowAction {
 
 fn identity_label(identity: Option<Identity>) -> &'static str {
     match identity {
-        None => "(none)",
+        None => tr("(none)"),
         Some(Identity::Always) => "GENERATED ALWAYS",
         Some(Identity::ByDefault) => "GENERATED BY DEFAULT",
     }

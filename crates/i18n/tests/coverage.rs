@@ -24,10 +24,6 @@ const PENDING: &[&str] = &[
     "crates/ui-shell/src/repo/app.rs",
     "crates/ui-shell/src/repo/panel.rs",
     "crates/ui-shell/src/backup.rs",
-    "crates/ui-shell/src/designer/dialogs.rs",
-    "crates/ui-shell/src/designer/mod.rs",
-    "crates/ui-shell/src/diagrams.rs",
-    "crates/ui-shell/src/query_designer.rs",
     "crates/ui-shell/src/restore.rs",
     "crates/ui-shell/src/schema_compare.rs",
 ];
@@ -42,6 +38,7 @@ const UI_DIRS: &[&str] = &[
     "crates/execution-plan/src",
     "crates/docking/src",
     "crates/diagram-engine/src",
+    "crates/schema-model/src",
 ];
 
 /// Arquivos que não são interface (medição, dados de demonstração).
