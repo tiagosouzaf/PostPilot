@@ -11,6 +11,7 @@
 //!
 //! [`Connector`]: pgstudio_core::connection::Connector
 
+use pgstudio_i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -260,7 +261,7 @@ impl ConnectDialog {
         };
         s.set_server_name(&self.server)?;
         if s.user.is_empty() {
-            return Err("Enter a login.".into());
+            return Err(tr("Enter a login.").into());
         }
         if s.database.is_empty() {
             s.database = pgstudio_core::connection::DEFAULT_DATABASE.into();
@@ -308,7 +309,7 @@ impl ConnectDialog {
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 self.pending = None;
-                self.error = Some("The connection attempt stopped unexpectedly.".into());
+                self.error = Some(tr("The connection attempt stopped unexpectedly.").into());
                 None
             }
         }
@@ -329,7 +330,7 @@ impl ConnectDialog {
         let connecting = self.pending.is_some() || action != DialogAction::None;
         let modal = crate::theme::modal(egui::Id::new("connect_to_server")).show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.heading("Connect to Server");
+            ui.heading(tr("Connect to Server"));
             ui.add_space(4.0);
             ui.add_enabled_ui(!connecting, |ui| {
                 egui::Grid::new("connect_fields")
@@ -345,21 +346,21 @@ impl ConnectDialog {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(format!("Connecting to {}…", p.server));
+                    ui.label(trf!("Connecting to {server}…", server = p.server));
                 });
             } else if self.auto_connect {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Looking for the saved password…");
+                    ui.label(tr("Looking for the saved password…"));
                 });
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     action = DialogAction::Cancel;
                 }
-                let connect = ui.add_enabled(!connecting, egui::Button::new("Connect"));
+                let connect = ui.add_enabled(!connecting, egui::Button::new(tr("Connect")));
                 let enter = !connecting && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if (connect.clicked() || enter) && action == DialogAction::None {
                     match self.settings() {
@@ -379,17 +380,17 @@ impl ConnectDialog {
     }
 
     fn fields(&mut self, ui: &mut egui::Ui, recent: &[ConnectionSettings]) {
-        let label = ui.label("Server type:");
-        ui.label("PostgreSQL").labelled_by(label.id);
+        let label = ui.label(tr("Server type:"));
+        ui.label(tr("PostgreSQL")).labelled_by(label.id);
         ui.end_row();
 
-        let label = ui.label("Server name:");
+        let label = ui.label(tr("Server name:"));
         ui.horizontal(|ui| {
             let edit = ui
                 .add(
                     egui::TextEdit::singleline(&mut self.server)
                         .desired_width(270.0)
-                        .hint_text("host or host,port"),
+                        .hint_text(tr("host or host,port")),
                 )
                 .labelled_by(label.id);
             // O primeiro frame do modal só mede o tamanho; insiste até o
@@ -413,7 +414,7 @@ impl ConnectDialog {
                     }
                 })
                 .response
-                .on_hover_text("Recent servers");
+                .on_hover_text(tr("Recent servers"));
             });
             if let Some(s) = chosen {
                 self.fill(&s);
@@ -421,16 +422,16 @@ impl ConnectDialog {
         });
         ui.end_row();
 
-        let label = ui.label("Authentication:");
-        ui.label("Password").labelled_by(label.id);
+        let label = ui.label(tr("Authentication:"));
+        ui.label(tr("Password")).labelled_by(label.id);
         ui.end_row();
 
-        let label = ui.label("Login:");
+        let label = ui.label(tr("Login:"));
         ui.add(egui::TextEdit::singleline(&mut self.user).desired_width(300.0))
             .labelled_by(label.id);
         ui.end_row();
 
-        let label = ui.label("Password:");
+        let label = ui.label(tr("Password:"));
         ui.add(
             egui::TextEdit::singleline(&mut self.password)
                 .password(true)
@@ -440,10 +441,10 @@ impl ConnectDialog {
         ui.end_row();
 
         ui.label("");
-        ui.checkbox(&mut self.remember, "Remember password");
+        ui.checkbox(&mut self.remember, tr("Remember password"));
         ui.end_row();
 
-        let label = ui.label("Database:");
+        let label = ui.label(tr("Database:"));
         ui.add(
             egui::TextEdit::singleline(&mut self.database)
                 .desired_width(300.0)
@@ -452,7 +453,7 @@ impl ConnectDialog {
         .labelled_by(label.id);
         ui.end_row();
 
-        let label = ui.label("Encryption:");
+        let label = ui.label(tr("Encryption:"));
         egui::ComboBox::from_id_salt("connect_ssl")
             .selected_text(self.ssl.label())
             .width(300.0)

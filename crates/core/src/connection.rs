@@ -45,12 +45,12 @@ impl SslMode {
 
     /// Nome exibido no diálogo.
     pub fn label(self) -> &'static str {
-        match self {
+        pgstudio_i18n::tr(match self {
             SslMode::Disable => "Disable",
             SslMode::Prefer => "Prefer",
             SslMode::Require => "Require",
             SslMode::VerifyFull => "Verify full",
-        }
+        })
     }
 }
 
@@ -108,23 +108,31 @@ impl ConnectionSettings {
 pub fn parse_server_name(text: &str) -> Result<(String, u16), String> {
     let text = text.trim();
     if text.is_empty() {
-        return Err("Enter a server name.".into());
+        return Err(pgstudio_i18n::tr("Enter a server name.").into());
     }
     let port = |p: &str| -> Result<u16, String> {
         match p.trim().parse::<u16>() {
-            Ok(0) | Err(_) => Err(format!("\"{}\" is not a valid port.", p.trim())),
+            Ok(0) | Err(_) => Err(pgstudio_i18n::trf!(
+                "\"{port}\" is not a valid port.",
+                port = p.trim()
+            )),
             Ok(n) => Ok(n),
         }
     };
     if let Some(rest) = text.strip_prefix('[') {
         let Some((host, after)) = rest.split_once(']') else {
-            return Err("Missing \"]\" after the IPv6 address.".into());
+            return Err(pgstudio_i18n::tr("Missing \"]\" after the IPv6 address.").into());
         };
         let after = after.trim();
         let p = match after.strip_prefix([':', ',']) {
             Some(p) => port(p)?,
             None if after.is_empty() => DEFAULT_PORT,
-            None => return Err(format!("Unexpected \"{after}\" after the address.")),
+            None => {
+                return Err(pgstudio_i18n::trf!(
+                    "Unexpected \"{after}\" after the address.",
+                    after = after
+                ));
+            }
         };
         return Ok((host.to_string(), p));
     }
@@ -212,6 +220,24 @@ pub trait Connector: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssl_labels_have_translations() {
+        use pgstudio_i18n::{Language, has_translation, language};
+        assert_eq!(language(), Language::English);
+        for mode in [
+            SslMode::Disable,
+            SslMode::Prefer,
+            SslMode::Require,
+            SslMode::VerifyFull,
+        ] {
+            assert!(has_translation(
+                Language::PortugueseBrazil,
+                None,
+                mode.label()
+            ));
+        }
+    }
 
     #[test]
     fn parses_server_names() {
