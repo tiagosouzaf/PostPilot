@@ -8,6 +8,10 @@ Não precisa instalar nada. As configurações ficam em
 Para criar um atalho no menu Iniciar, clique com o botão direito em
 pgstudio.exe > Mostrar mais opções > Fixar no Menu Iniciar.
 
+Prefere instalar? Use o PGStudio-{version}-x86_64.msi: ele põe o PGStudio
+em Arquivos de Programas, cria o atalho no menu Iniciar e aparece em
+Configurações > Aplicativos para desinstalar.
+
 O Windows SmartScreen pode avisar que o app é de um editor desconhecido,
 porque o exe não é assinado. Clique em "Mais informações" e em
 "Executar assim mesmo".
