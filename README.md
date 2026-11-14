@@ -347,6 +347,11 @@ cargo fmt --all
 O CI roda formatação, clippy e testes em Linux e Windows, e o `cargo-deny` para
 licenças e vulnerabilidades.
 
+O repositório é público. `cargo test --workspace` inclui uma checagem de segredos
+(`xtask/tests/sem_segredos.rs`) que falha se algum arquivo versionado tiver chave
+privada, token, senha real numa connection string, `.env` ou e-mail pessoal.
+Senhas de teste do PostgreSQL local (`postgres`, `secret`) são aceitas.
+
 Os testes de `pg-client` e `pg-metadata` que precisam de servidor usam `PGSTUDIO_TEST_HOST`,
 `PGSTUDIO_TEST_PORT`, `PGSTUDIO_TEST_USER` e `PGSTUDIO_TEST_PASSWORD`; sem
 `PGSTUDIO_TEST_HOST` eles só avisam. No CI eles rodam contra o PostgreSQL 13 e 17
