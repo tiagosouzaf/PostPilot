@@ -210,6 +210,10 @@ pub trait FileDialogs {
     fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
         self.save_path(name, None)
     }
+    /// Pede uma pasta (New/Open Workspace).
+    fn folder_path(&mut self, _title: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Sem diálogos: toda pergunta é cancelada.

@@ -24,6 +24,7 @@ pub mod pgtools;
 pub mod properties;
 pub mod query_designer;
 pub mod registered;
+pub mod repo;
 pub mod restore;
 pub mod results;
 pub mod schema_compare;
@@ -147,6 +148,10 @@ pub struct ShellApp {
     secrets: Option<Arc<dyn secrets::SecretStore>>,
     /// Janela Registered Servers.
     registered: registered::RegisteredPanel,
+    /// Workspace Explorer e o workspace aberto.
+    workspace_panel: repo::panel::WorkspacePanel,
+    /// Arquivo onde fica o caminho do último workspace aberto.
+    workspace_memory: Option<PathBuf>,
     /// Outros servidores conectados no Object Explorer.
     servers: servers::Servers,
     /// Servidor de cada janela de consulta (pela chave do servidor).
@@ -278,6 +283,8 @@ impl Default for ShellApp {
             bench_run: None,
             secrets: None,
             registered: Default::default(),
+            workspace_panel: Default::default(),
+            workspace_memory: None,
             servers: Default::default(),
             doc_servers: Default::default(),
             last_active_doc: None,
@@ -549,6 +556,7 @@ impl ShellApp {
         }
         match self.documents.open(path) {
             Ok(id) => {
+                self.connect_linked_query(id);
                 self.activate_document(id);
                 true
             }
@@ -1253,6 +1261,10 @@ impl ShellApp {
                 | ConnectObjectExplorer
                 | DisconnectObjectExplorer
                 | RegisteredServers
+                | WorkspaceExplorer
+                | NewWorkspace
+                | OpenWorkspace
+                | CloseWorkspace
                 | NewQuery
                 | OpenFile
                 | CloseDocument
@@ -1483,6 +1495,10 @@ impl ShellApp {
                 self.promote_next_server();
             }
             CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
+            CommandId::WorkspaceExplorer => self.workspace.open(Panel::WorkspaceExplorer),
+            CommandId::NewWorkspace => self.ask_new_workspace(),
+            CommandId::OpenWorkspace => self.ask_open_workspace(),
+            CommandId::CloseWorkspace => self.close_workspace(),
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
@@ -2107,12 +2123,14 @@ impl ShellApp {
                 None => return false,
             },
         };
+        let link = self.link_before_save(id, &path);
         let Some(doc) = self.documents.get_mut(id) else {
             return false;
         };
         match doc.save_to(&path) {
             Ok(()) => {
                 self.status = "Item(s) Saved".to_string();
+                self.after_save(&path, link);
                 true
             }
             Err(e) => {
@@ -2273,6 +2291,7 @@ impl ShellApp {
         let doc_servers = self.document_servers();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
+        let mut workspace_actions = Vec::new();
         let mut activate = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
@@ -2303,10 +2322,13 @@ impl ShellApp {
                     secrets: self.secrets.as_ref(),
                     activate_server: None,
                     registered_actions: Vec::new(),
+                    workspace_panel: &mut self.workspace_panel,
+                    workspace_actions: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
                 activate = viewer.activate_server;
                 registered_actions = viewer.registered_actions;
+                workspace_actions = viewer.workspace_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 let save_results = viewer.save_results;
@@ -2324,6 +2346,7 @@ impl ShellApp {
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
+        self.workspace_step(&ctx, workspace_actions);
         self.export_step();
         self.designer_step();
         self.diagram_step();

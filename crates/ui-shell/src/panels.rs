@@ -27,6 +27,8 @@ pub enum Panel {
     EditRows(u32),
     /// Registered Servers (Ctrl+Alt+G).
     RegisteredServers,
+    /// Workspace Explorer (Ctrl+Alt+L), como o Solution Explorer.
+    WorkspaceExplorer,
 }
 
 impl Panel {
@@ -42,6 +44,7 @@ impl Panel {
             Panel::ActivityMonitor => "Activity Monitor",
             Panel::EditRows(_) => "Edit Rows",
             Panel::RegisteredServers => "Registered Servers",
+            Panel::WorkspaceExplorer => "Workspace Explorer",
         }
     }
 }
@@ -49,7 +52,9 @@ impl Panel {
 impl Pane for Panel {
     fn area(&self) -> Area {
         match self {
-            Panel::ObjectExplorer | Panel::RegisteredServers => Area::Left,
+            Panel::ObjectExplorer | Panel::RegisteredServers | Panel::WorkspaceExplorer => {
+                Area::Left
+            }
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
@@ -118,6 +123,10 @@ pub struct Viewer<'a> {
     pub activate_server: Option<usize>,
     /// Pedidos de conexão da janela Registered Servers.
     pub registered_actions: Vec<crate::registered::Action>,
+    /// Workspace Explorer.
+    pub workspace_panel: &'a mut crate::repo::panel::WorkspacePanel,
+    /// Pedidos do Workspace Explorer.
+    pub workspace_actions: Vec<crate::repo::panel::Action>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -212,6 +221,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::RegisteredServers => {
                 let actions = self.registered.show(ui, self.secrets);
                 self.registered_actions.extend(actions);
+            }
+            Panel::WorkspaceExplorer => {
+                let actions = self.workspace_panel.show(ui, self.secrets);
+                self.workspace_actions.extend(actions);
             }
             Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
