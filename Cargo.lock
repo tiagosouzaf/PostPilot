@@ -2634,6 +2634,7 @@ version = "0.1.0"
 dependencies = [
  "pgstudio-core",
  "pgstudio-pg-client",
+ "pgstudio-schema-model",
  "tokio-postgres",
 ]
 
@@ -2643,6 +2644,13 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_kittest",
+]
+
+[[package]]
+name = "pgstudio-schema-model"
+version = "0.1.0"
+dependencies = [
+ "pgstudio-core",
 ]
 
 [[package]]
