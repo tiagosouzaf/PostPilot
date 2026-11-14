@@ -139,7 +139,7 @@ pub enum ScriptAction {
     Create,
     /// Script as > DROP To.
     Drop,
-    /// Select Top N Rows (e Edit Top N Rows, só leitura por enquanto).
+    /// Select Top N Rows (e Edit Top N Rows de uma view, só leitura).
     SelectTop(u32),
 }
 

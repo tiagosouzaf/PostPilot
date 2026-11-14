@@ -12,6 +12,7 @@ pub mod connect;
 pub mod designer;
 pub mod diagrams;
 pub mod documents;
+pub mod edit_rows;
 pub mod execution;
 pub mod intellisense;
 pub mod keys;
@@ -75,6 +76,9 @@ pub struct ShellApp {
     diagram_all_tables: bool,
     /// Activity Monitor aberto.
     activity: Option<activity::ActivityMonitor>,
+    /// Janelas Edit Top N Rows, pelo número.
+    edit_rows: std::collections::BTreeMap<u32, edit_rows::EditRows>,
+    next_edit_rows: u32,
     /// Janela de propriedades de segurança aberta.
     security: Option<properties::SecurityDialog>,
     /// "Back Up Database" aberta.
@@ -219,6 +223,8 @@ impl Default for ShellApp {
             diagram_all_tables: false,
             password: String::new(),
             activity: None,
+            edit_rows: std::collections::BTreeMap::new(),
+            next_edit_rows: 0,
             security: None,
             backup: None,
             restore: None,
@@ -440,6 +446,7 @@ impl ShellApp {
                         | Panel::TableDesigner(_)
                         | Panel::Diagram(_)
                         | Panel::ActivityMonitor
+                        | Panel::EditRows(_)
                 )
             }),
         }
@@ -1161,6 +1168,9 @@ impl ShellApp {
                 for id in self.diagrams.ids() {
                     self.workspace.open(Panel::Diagram(id));
                 }
+                for id in self.edit_rows.keys() {
+                    self.workspace.open(Panel::EditRows(*id));
+                }
                 if let Some(id) = self.active_doc {
                     self.workspace.open(Panel::Query(id));
                 }
@@ -1179,6 +1189,7 @@ impl ShellApp {
                                 | Panel::TableDesigner(_)
                                 | Panel::Diagram(_)
                                 | Panel::ActivityMonitor
+                                | Panel::EditRows(_)
                         ) =>
                     {
                         self.workspace.auto_hide(&p);
@@ -1652,7 +1663,19 @@ impl ShellApp {
                 return;
             }
             Event::SelectTop(node) => (node, ScriptAction::SelectTop(SELECT_TOP_ROWS), true, false),
-            Event::EditTop(node) => (node, ScriptAction::SelectTop(EDIT_TOP_ROWS), true, true),
+            Event::EditTop(node) => {
+                // Tabela com conexão de verdade: a grade editável. View (ou
+                // o servidor de demonstração): o SELECT, só leitura.
+                let table = provider
+                    .design_target(&node)
+                    .and_then(|t| Some((t.database, u32::try_from(t.table?).ok()?)));
+                if let (Some((db, oid)), Some(c)) = (table, &self.connection) {
+                    let session = c.queries.open(&db);
+                    self.open_edit_rows(session, oid, ctx);
+                    return;
+                }
+                (node, ScriptAction::SelectTop(EDIT_TOP_ROWS), true, true)
+            }
             Event::Script(node, action) => (node, action, false, false),
         };
         let database = provider.database_of(&node);
@@ -1696,7 +1719,7 @@ impl ShellApp {
                     }
                     if pending.read_only {
                         self.output.push(
-                            "Edit Top Rows: editing in the grid is not available yet; \
+                            "Edit Top Rows: only tables can be edited in the grid; \
                              the rows are read-only."
                                 .to_string(),
                         );
@@ -1980,6 +2003,7 @@ impl ShellApp {
                     designers: &mut self.designers,
                     diagrams: &mut self.diagrams,
                     activity: &mut self.activity,
+                    edit_rows: &mut self.edit_rows,
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
                     explorer_events: Vec::new(),
@@ -2005,6 +2029,7 @@ impl ShellApp {
         self.designer_step();
         self.diagram_step();
         self.activity_step(&ctx);
+        self.edit_rows_step(&ctx);
         self.query_designer_step(&ctx);
         if self.diagrams.is_loading() {
             // Um diagrama aberto de arquivo não tem quem acorde a janela
@@ -2424,6 +2449,59 @@ impl ShellApp {
         self.activity.as_mut()
     }
 
+    /// Abre uma janela Edit Top N Rows da tabela `oid` em `session`.
+    pub fn open_edit_rows(
+        &mut self,
+        session: Arc<dyn pgstudio_core::query::QuerySession>,
+        oid: u32,
+        ctx: &egui::Context,
+    ) -> u32 {
+        let id = self.next_edit_rows;
+        self.next_edit_rows += 1;
+        let limit = pgstudio_object_explorer::EDIT_TOP_ROWS;
+        self.edit_rows
+            .insert(id, edit_rows::EditRows::new(session, oid, limit, ctx));
+        self.workspace.open(Panel::EditRows(id));
+        id
+    }
+
+    /// Janela Edit Top N Rows aberta, para testes.
+    pub fn edit_rows(&self, id: u32) -> Option<&edit_rows::EditRows> {
+        self.edit_rows.get(&id)
+    }
+
+    /// Janela Edit Top N Rows aberta, mutável (testes).
+    pub fn edit_rows_mut(&mut self, id: u32) -> Option<&mut edit_rows::EditRows> {
+        self.edit_rows.get_mut(&id)
+    }
+
+    /// Números das janelas Edit Top N Rows abertas.
+    pub fn edit_rows_ids(&self) -> Vec<u32> {
+        self.edit_rows.keys().copied().collect()
+    }
+
+    /// Recebe as leituras e gravações das janelas Edit Rows, leva o log ao
+    /// Output e esquece as que fecharam.
+    fn edit_rows_step(&mut self, ctx: &egui::Context) {
+        let mut closed = Vec::new();
+        for (id, e) in &mut self.edit_rows {
+            e.step(ctx);
+            self.output.extend(e.take_log());
+            if e.take_closed() {
+                closed.push(*id);
+            }
+        }
+        for id in closed {
+            self.workspace.close(&Panel::EditRows(id));
+        }
+        let open: Vec<u32> = self.edit_rows.keys().copied().collect();
+        for id in open {
+            if !self.workspace.is_open(&Panel::EditRows(id)) {
+                self.edit_rows.remove(&id);
+            }
+        }
+    }
+
     /// Atualiza o Activity Monitor; fechado o painel, ele some.
     fn activity_step(&mut self, ctx: &egui::Context) {
         if self.activity.is_some() && !self.workspace.is_open(&Panel::ActivityMonitor) {
@@ -2652,6 +2730,10 @@ impl ShellApp {
             || !self.scripts.is_empty()
             || self.designers.is_loading()
             || self.diagrams.is_loading()
+            || self
+                .edit_rows
+                .values()
+                .any(|e| e.is_loading() || e.is_saving())
             || self.query_designer.as_ref().is_some_and(|q| q.is_loading());
         // Conta os frames parados: o que acabou de aparecer (um diálogo
         // modal entra com fade) precisa de alguns frames para assentar.
