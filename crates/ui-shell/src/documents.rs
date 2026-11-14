@@ -25,6 +25,9 @@ pub struct Document {
     pub execution: Option<crate::execution::Execution>,
     /// Grade ou texto nas próximas execuções (Ctrl+D, Ctrl+T).
     pub results_mode: crate::execution::ResultsMode,
+    /// "Include Actual Execution Plan" (Ctrl+M) ligado: o F5 roda os
+    /// comandos com `EXPLAIN ANALYZE` e mostra os planos reais.
+    pub actual_plan: bool,
 }
 
 /// A conexão de uma janela de consulta.
@@ -102,6 +105,7 @@ impl Documents {
             database: None,
             execution: None,
             results_mode: Default::default(),
+            actual_plan: false,
         })
     }
 
@@ -137,6 +141,7 @@ impl Documents {
             database: None,
             execution: None,
             results_mode: Default::default(),
+            actual_plan: false,
         }))
     }
 

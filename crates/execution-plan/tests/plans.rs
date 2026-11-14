@@ -114,3 +114,22 @@ fn plans_from_the_server_are_read() {
     assert_eq!(scan.kind, "Function Scan");
     assert_eq!(scan.actual_total_rows(), Some(1000.0));
 }
+
+#[test]
+fn a_bad_estimate_from_the_server_is_flagged() {
+    if service().is_none() {
+        return;
+    }
+    // Com o limite vindo de uma subconsulta o planejador chuta 1000 linhas.
+    let outputs =
+        explain("EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM generate_series(1, (SELECT 20000))");
+    let plan = &parse(&outputs[0], "").unwrap()[0];
+    let scan = plan
+        .nodes
+        .iter()
+        .position(|n| n.kind == "Function Scan")
+        .unwrap();
+    assert_eq!(plan.nodes[scan].plan_rows, 1000.0);
+    assert_eq!(plan.nodes[scan].actual_total_rows(), Some(20000.0));
+    assert_eq!(plan.misestimate(scan), Some(20.0));
+}

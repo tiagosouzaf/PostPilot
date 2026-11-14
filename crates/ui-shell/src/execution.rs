@@ -208,6 +208,18 @@ impl Batch {
         })
     }
 
+    /// Põe o lote entre `BEGIN` e `ROLLBACK`, para o `EXPLAIN ANALYZE` de
+    /// comandos que alteram dados não deixar rastro.
+    pub fn in_rolled_back_transaction(mut self) -> Self {
+        const BEGIN: &str = "BEGIN;\n";
+        let shift = BEGIN.chars().count();
+        self.sent = format!("{BEGIN}{};\nROLLBACK", self.sent);
+        for s in &mut self.segments {
+            s.sent += shift;
+        }
+        self
+    }
+
     /// Posição (em caracteres, a partir de 0) no texto escolhido para uma
     /// posição no texto enviado. Uma posição dentro do que foi acrescentado
     /// vai para o começo do comando seguinte.
@@ -222,6 +234,20 @@ impl Batch {
             _ => next.map_or(0, |n| n.original),
         }
     }
+}
+
+/// Se algum comando de `sql` altera dados (`INSERT`, `UPDATE`, `DELETE`
+/// ou `MERGE`, também dentro de um `WITH`), o que pede confirmação antes
+/// do `EXPLAIN ANALYZE`, que executa o comando.
+pub fn changes_data(sql: &str) -> bool {
+    use pgstudio_sql_editor::lexer::{TokenKind, tokenize};
+    tokenize(sql).iter().any(|t| {
+        t.kind == TokenKind::Keyword
+            && matches!(
+                sql[t.range.clone()].to_ascii_lowercase().as_str(),
+                "insert" | "update" | "delete" | "merge"
+            )
+    })
 }
 
 /// Uma execução, do F5 até o fim.
@@ -252,6 +278,11 @@ pub struct Execution {
     /// Execution plan em vez da grade.
     plan_mode: bool,
     pub plans: Vec<(Plan, PlanView)>,
+    /// O lote roda entre `BEGIN` e `ROLLBACK` (plano real de DML).
+    rolled_back: bool,
+    /// O servidor mandou `Finished`: um erro muda o resultado antes disso,
+    /// mas o lote só acaba aqui.
+    finished: bool,
 }
 
 impl std::fmt::Debug for Execution {
@@ -354,7 +385,30 @@ impl Execution {
             batch,
             plan_mode: false,
             plans: Vec::new(),
+            rolled_back: false,
+            finished: false,
         }
+    }
+
+    /// Ctrl+M ligado: roda cada comando com `EXPLAIN (ANALYZE, BUFFERS,
+    /// FORMAT JSON)` e mostra os planos reais. Com `roll_back`, tudo roda
+    /// numa transação desfeita no fim. `None` quando não há comando.
+    pub fn start_actual_plan(
+        session: Arc<dyn QuerySession>,
+        sql: String,
+        offset: usize,
+        roll_back: bool,
+        ctx: &egui::Context,
+    ) -> Option<Self> {
+        let mut batch = Batch::explain(&sql, "ANALYZE, BUFFERS, FORMAT JSON")?;
+        if roll_back {
+            batch = batch.in_rolled_back_transaction();
+        }
+        let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
+        exec.plan_mode = true;
+        exec.rolled_back = roll_back;
+        exec.tab = Tab::Plan;
+        Some(exec)
     }
 
     /// Se a execução é de plano (Ctrl+L).
@@ -370,7 +424,7 @@ impl Execution {
     }
 
     pub fn is_running(&self) -> bool {
-        self.outcome == Outcome::Running
+        !self.finished
     }
 
     pub fn outcome(&self) -> Outcome {
@@ -468,7 +522,17 @@ impl Execution {
                 self.outcome = Outcome::Failed;
             }
             QueryEvent::Finished { canceled } => {
+                self.finished = true;
                 self.elapsed = Some(self.started.elapsed());
+                if self.rolled_back {
+                    // Um erro ou o cancelamento param o lote antes do
+                    // ROLLBACK, com a transação ainda aberta.
+                    if canceled || self.outcome == Outcome::Failed {
+                        self.session.execute("ROLLBACK".into(), Box::new(|_| {}));
+                    }
+                    self.info("The changes made by the statements were rolled back.".into());
+                }
+
                 if canceled {
                     self.outcome = Outcome::Canceled;
                     self.info("Query was cancelled by user.".into());
@@ -597,6 +661,33 @@ mod tests {
         assert!(Batch::explain(" -- nada", "FORMAT JSON").is_none());
         let plain = Batch::plain("SELECT 1");
         assert_eq!(plain.original_position(7), 7);
+    }
+
+    #[test]
+    fn rolled_back_batches_keep_positions() {
+        let sql = "UPDATE t SET bad = 1";
+        let b = Batch::explain(sql, "ANALYZE, FORMAT JSON")
+            .unwrap()
+            .in_rolled_back_transaction();
+        assert_eq!(
+            b.sent,
+            "BEGIN;\nEXPLAIN (ANALYZE, FORMAT JSON) UPDATE t SET bad = 1;\nROLLBACK"
+        );
+        let bad = b.sent.find("bad").unwrap();
+        assert_eq!(b.original_position(bad), sql.find("bad").unwrap());
+    }
+
+    #[test]
+    fn data_changes_are_detected_by_keyword() {
+        assert!(changes_data("update t set a = 1"));
+        assert!(changes_data(
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x"
+        ));
+        assert!(changes_data(
+            "select 1; merge into t using s on true when matched then do nothing"
+        ));
+        assert!(!changes_data("select 'update' as \"delete\" -- insert"));
+        assert!(!changes_data("select * from updates"));
     }
 
     #[test]

@@ -76,6 +76,8 @@ pub struct ShellApp {
     focus_editor: Option<u32>,
     dialogs: Box<dyn FileDialogs>,
     confirm: Option<Confirm>,
+    /// Pergunta do plano real de comandos que alteram dados.
+    actual_confirm: Option<PendingActual>,
     /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
     allow_close: bool,
     /// Onde o layout é salvo ao sair.
@@ -130,6 +132,21 @@ struct Confirm {
     exit: bool,
 }
 
+/// O que o F5 (ou o Ctrl+L) faz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Run {
+    Results,
+    EstimatedPlan,
+    ActualPlan { roll_back: bool },
+}
+
+/// Plano real de um lote que altera dados, esperando a resposta.
+struct PendingActual {
+    doc: u32,
+    sql: String,
+    offset: usize,
+}
+
 /// Resposta à pergunta de salvar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -169,6 +186,7 @@ impl Default for ShellApp {
             focus_editor: None,
             dialogs: Box::new(NoDialogs),
             confirm: None,
+            actual_confirm: None,
             allow_close: false,
             layout_store: None,
             window: None,
@@ -917,6 +935,7 @@ impl ShellApp {
                 | RefreshLocalCache
                 | Execute
                 | EstimatedPlan
+                | ActualPlan
                 | CancelQuery
                 | ResultsToText
                 | ResultsToGrid
@@ -1074,6 +1093,19 @@ impl ShellApp {
             CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx, false),
             CommandId::EstimatedPlan => self.execute_query(ctx, true),
+            CommandId::ActualPlan => {
+                match self.active_doc.and_then(|id| self.documents.get_mut(id)) {
+                    Some(doc) => {
+                        doc.actual_plan = !doc.actual_plan;
+                        self.status = if doc.actual_plan {
+                            "The actual execution plan will be included (the next run uses EXPLAIN ANALYZE).".to_string()
+                        } else {
+                            "The actual execution plan will not be included.".to_string()
+                        };
+                    }
+                    None => self.status = "No query window is open.".to_string(),
+                }
+            }
             CommandId::CancelQuery => self.cancel_query(),
             CommandId::ResultsToText | CommandId::ResultsToGrid => {
                 let mode = if cmd == CommandId::ResultsToText {
@@ -1160,29 +1192,98 @@ impl ShellApp {
             }
             _ => (doc.text.clone(), 0),
         };
-        let session = doc
-            .session
-            .get_or_insert_with(|| {
-                let db = doc.database.clone().unwrap_or(queries.1);
-                documents::Session(queries.0.open(&db))
-            })
-            .0
-            .clone();
-        let mut exec = if plan {
-            match execution::Execution::start_plan(session, sql, offset, ctx) {
-                Some(exec) => exec,
-                None => {
-                    self.status = "There is no statement to show a plan for.".to_string();
-                    return;
-                }
+        doc.session.get_or_insert_with(|| {
+            let db = doc.database.clone().unwrap_or(queries.1);
+            documents::Session(queries.0.open(&db))
+        });
+        let kind = if plan {
+            Run::EstimatedPlan
+        } else if doc.actual_plan {
+            if execution::changes_data(&sql) {
+                // O EXPLAIN ANALYZE executa o comando: pergunta antes.
+                self.actual_confirm = Some(PendingActual {
+                    doc: id,
+                    sql,
+                    offset,
+                });
+                return;
             }
+            Run::ActualPlan { roll_back: false }
         } else {
-            execution::Execution::start(session, sql, offset, ctx)
+            Run::Results
+        };
+        self.launch(ctx, id, sql, offset, kind);
+    }
+
+    /// Começa a execução na sessão (já aberta) da janela `id`.
+    fn launch(&mut self, ctx: &egui::Context, id: u32, sql: String, offset: usize, kind: Run) {
+        let Some(doc) = self.documents.get_mut(id) else {
+            return;
+        };
+        let Some(session) = doc.session.as_ref().map(|s| s.0.clone()) else {
+            return;
+        };
+        let exec = match kind {
+            Run::Results => Some(execution::Execution::start(session, sql, offset, ctx)),
+            Run::EstimatedPlan => execution::Execution::start_plan(session, sql, offset, ctx),
+            Run::ActualPlan { roll_back } => {
+                execution::Execution::start_actual_plan(session, sql, offset, roll_back, ctx)
+            }
+        };
+        let Some(mut exec) = exec else {
+            self.status = "There is no statement to show a plan for.".to_string();
+            return;
         };
         exec.mode = doc.results_mode;
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
+    }
+
+    /// Pergunta antes do plano real de comandos que alteram dados, com a
+    /// opção (padrão) de desfazer tudo no fim.
+    fn actual_confirm_window(&mut self, ctx: &egui::Context) {
+        if self.actual_confirm.is_none() {
+            return;
+        }
+        let mut answer: Option<Option<bool>> = None;
+        let modal = egui::Modal::new(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading("Include Actual Execution Plan");
+            ui.label(
+                "The actual plan is collected with EXPLAIN ANALYZE, which runs the statements. \
+                 This batch changes data (INSERT, UPDATE, DELETE or MERGE).",
+            );
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Cancel").clicked() {
+                    answer = Some(None);
+                }
+                if ui.button("Run and Keep Changes").clicked() {
+                    answer = Some(Some(false));
+                }
+                if ui.button("Run and Roll Back").clicked() {
+                    answer = Some(Some(true));
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(None);
+        }
+        let Some(answer) = answer else { return };
+        let Some(pending) = self.actual_confirm.take() else {
+            return;
+        };
+        match answer {
+            Some(roll_back) => self.launch(
+                ctx,
+                pending.doc,
+                pending.sql,
+                pending.offset,
+                Run::ActualPlan { roll_back },
+            ),
+            None => self.status = "The query was not executed.".to_string(),
+        }
     }
 
     /// Alt+Break: cancela a execução da janela ativa.
@@ -1293,8 +1394,16 @@ impl ShellApp {
                 if std::mem::take(&mut self.design_query_on_open) {
                     self.open_query_designer(ctx);
                 }
-                if let Some((_, cmd)) = pending {
-                    self.execute(ctx, cmd);
+                match pending {
+                    // Liga o plano real e roda (F5), como Ctrl+M e F5.
+                    Some((_, CommandId::ActualPlan)) => {
+                        if let Some(doc) = self.documents.get_mut(id) {
+                            doc.actual_plan = true;
+                        }
+                        self.execute(ctx, CommandId::Execute);
+                    }
+                    Some((_, cmd)) => self.execute(ctx, cmd),
+                    None => {}
                 }
                 return;
             }
@@ -1586,7 +1695,10 @@ impl ShellApp {
         self.execution_step(&ctx);
         self.intellisense_step(&ctx);
         self.script_step(&ctx);
-        let mut commands = if self.confirm.is_some() || self.connect_dialog.is_some() {
+        let mut commands = if self.confirm.is_some()
+            || self.connect_dialog.is_some()
+            || self.actual_confirm.is_some()
+        {
             Vec::new()
         } else {
             self.keyboard(&ctx)
@@ -1670,6 +1782,7 @@ impl ShellApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
         self.confirm_window(&ctx);
+        self.actual_confirm_window(&ctx);
         self.connect_window(&ctx);
 
         if self.about_open {
@@ -1916,14 +2029,21 @@ impl ShellApp {
                         .active_doc
                         .and_then(|id| self.documents.get(id))
                         .map(|d| d.results_mode);
-                    let selected = matches!(
-                        (cmd, self.theme),
-                        (CommandId::ThemeLight, Theme::Light) | (CommandId::ThemeDark, Theme::Dark)
-                    ) || matches!(
-                        (cmd, mode),
-                        (CommandId::ResultsToText, Some(execution::ResultsMode::Text))
-                            | (CommandId::ResultsToGrid, Some(execution::ResultsMode::Grid))
-                    );
+                    let actual = self
+                        .active_doc
+                        .and_then(|id| self.documents.get(id))
+                        .is_some_and(|d| d.actual_plan);
+                    let selected = (cmd == CommandId::ActualPlan && actual)
+                        || matches!(
+                            (cmd, self.theme),
+                            (CommandId::ThemeLight, Theme::Light)
+                                | (CommandId::ThemeDark, Theme::Dark)
+                        )
+                        || matches!(
+                            (cmd, mode),
+                            (CommandId::ResultsToText, Some(execution::ResultsMode::Text))
+                                | (CommandId::ResultsToGrid, Some(execution::ResultsMode::Grid))
+                        );
                     let mut button = egui::Button::new(cmd.label()).selected(selected);
                     if let Some(s) = self.keymap.shortcut_for(cmd) {
                         button = button.shortcut_text(s.to_string());
@@ -1966,7 +2086,12 @@ impl ShellApp {
                             Some(s) => format!("{} ({s})", command.label()),
                             None => command.label().to_string(),
                         };
-                        let button = egui::Button::new(caption);
+                        let pressed = command == CommandId::ActualPlan
+                            && self
+                                .active_doc
+                                .and_then(|id| self.documents.get(id))
+                                .is_some_and(|d| d.actual_plan);
+                        let button = egui::Button::new(caption).selected(pressed);
                         let response = ui
                             .add_enabled(Self::is_available(command), button)
                             .on_hover_text(&tip)
