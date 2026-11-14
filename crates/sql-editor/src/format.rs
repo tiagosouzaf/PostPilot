@@ -16,6 +16,7 @@
 use crate::diagnostics;
 use crate::edit::{self, Edited};
 use crate::lexer::{TokenKind, tokenize};
+use pgstudio_i18n::tr;
 
 /// Caixa das palavras-chave no resultado.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -215,7 +216,7 @@ fn check_supported(items: &[Item<'_>]) -> Result<(), FormatError> {
     for (i, it) in items.iter().enumerate() {
         if it.kind == TokenKind::Other && it.text.starts_with('\\') {
             return Err(FormatError {
-                message: "psql meta-commands (\\...) can't be formatted.".to_string(),
+                message: tr("psql meta-commands (\\...) can't be formatted.").to_string(),
                 at: Some(it.start),
             });
         }
@@ -224,7 +225,7 @@ fn check_supported(items: &[Item<'_>]) -> Result<(), FormatError> {
             && items[i - 1].text.eq_ignore_ascii_case("from")
         {
             return Err(FormatError {
-                message: "COPY ... FROM STDIN with inline data can't be formatted.".to_string(),
+                message: tr("COPY ... FROM STDIN with inline data can't be formatted.").to_string(),
                 at: Some(it.start),
             });
         }
@@ -238,7 +239,7 @@ fn verify(old: &str, new: &str) -> Result<(), FormatError> {
     let b = items(new);
     let fail = |at: Option<usize>| {
         Err(FormatError {
-            message: "The SQL couldn't be formatted without changing it.".to_string(),
+            message: tr("The SQL couldn't be formatted without changing it.").to_string(),
             at,
         })
     };

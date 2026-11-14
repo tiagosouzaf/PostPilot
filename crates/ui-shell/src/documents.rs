@@ -127,7 +127,7 @@ impl Documents {
         let text = String::from_utf8(bytes).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "the file is not valid UTF-8 text",
+                pgstudio_i18n::tr("the file is not valid UTF-8 text"),
             )
         })?;
         Ok(self.insert(Document {

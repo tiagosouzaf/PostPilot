@@ -2,6 +2,7 @@
 //! na primeira vez que uma janela de consulta precisa dele e de novo com
 //! Ctrl+Shift+R ("Refresh Local Cache", como no SSMS).
 
+use pgstudio_i18n::tr;
 use std::collections::HashMap;
 use std::sync::{Arc, mpsc};
 
@@ -85,7 +86,7 @@ impl Catalogs {
                 Ok(r) => r,
                 Err(mpsc::TryRecvError::Empty) => continue,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    Err(MetadataError("The catalog read stopped.".into()))
+                    Err(MetadataError(tr("The catalog read stopped.").into()))
                 }
             };
             match result {

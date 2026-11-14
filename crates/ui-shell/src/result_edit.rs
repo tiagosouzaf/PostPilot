@@ -9,6 +9,7 @@
 //! quais colunas o banco calcula. JOIN, agregação, expressões, views e
 //! tabelas sem chave ficam só leitura, com o motivo.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
@@ -193,11 +194,12 @@ pub fn build_target(
     let text = |r: &Vec<Option<String>>, i: usize| r.get(i).cloned().flatten().unwrap_or_default();
     let first = catalog
         .first()
-        .ok_or_else(|| "The results are read-only: the table no longer exists.".to_string())?;
+        .ok_or_else(|| tr("The results are read-only: the table no longer exists.").to_string())?;
     let display = text(first, 5);
     if !matches!(text(first, 6).as_str(), "r" | "p") {
-        return Err(format!(
-            "The results are read-only: {display} is not a table."
+        return Err(trf!(
+            "The results are read-only: {display} is not a table.",
+            display = display
         ));
     }
     if text(first, 7) != "t" {
@@ -420,8 +422,9 @@ impl ResultEditor {
                     Err(reason) => self.status = Status::ReadOnly(reason),
                 },
                 Reply::Sources(Err(e)) => {
-                    self.status = Status::ReadOnly(format!(
-                        "The results are read-only: the query could not be described ({e})."
+                    self.status = Status::ReadOnly(trf!(
+                        "The results are read-only: the query could not be described ({error}).",
+                        error = e
                     ));
                 }
                 Reply::Catalog(Ok(rows)) => match build_target(&rows, &self.sources, self.table) {
@@ -432,7 +435,8 @@ impl ResultEditor {
                     Err(reason) => self.status = Status::ReadOnly(reason),
                 },
                 Reply::Catalog(Err(e)) => {
-                    self.status = Status::ReadOnly(format!("The results are read-only: {e}"));
+                    self.status =
+                        Status::ReadOnly(trf!("The results are read-only: {error}", error = e));
                 }
                 Reply::Updated { cell, text, result } => {
                     self.busy = false;
@@ -445,12 +449,14 @@ impl ResultEditor {
                             for c in cols {
                                 store.set_cell(cell.row, c, value.clone());
                             }
-                            self.message = Some("1 row updated.".into());
-                            self.log.push("(1 row affected)".into());
+                            self.message = Some(tr("1 row updated.").into());
+                            self.log.push(crate::execution::rows_affected(1));
                         }
                         Err(e) => {
-                            self.log.push(format!("The value was not saved. {e}"));
-                            self.message = Some(format!("The value was not saved: {e}"));
+                            self.log
+                                .push(trf!("The value was not saved. {error}", error = e));
+                            self.message =
+                                Some(trf!("The value was not saved: {error}", error = e));
                             // Volta a editar com o que foi digitado, para
                             // corrigir (Esc desiste).
                             if let Some(text) = text {
@@ -475,12 +481,13 @@ impl ResultEditor {
                             }
                             let asked = keys.len();
                             let text = if removed == asked {
-                                plural_rows(removed, "deleted")
+                                rows_deleted(removed)
                             } else {
-                                format!(
-                                    "{} of {asked}: the others were not found; they may have \
-                                     been changed or deleted by another user.",
-                                    plural_rows(removed, "deleted").trim_end_matches('.')
+                                trf!(
+                                    "{deleted} of {asked} rows deleted: the others were not found; \
+                                     they may have been changed or deleted by another user.",
+                                    deleted = removed,
+                                    asked = asked
                                 )
                             };
                             self.log
@@ -489,8 +496,10 @@ impl ResultEditor {
                             grid.selection = None;
                         }
                         Err(e) => {
-                            self.log.push(format!("The rows were not deleted. {e}"));
-                            self.message = Some(format!("The rows were not deleted: {e}"));
+                            self.log
+                                .push(trf!("The rows were not deleted. {error}", error = e));
+                            self.message =
+                                Some(trf!("The rows were not deleted: {error}", error = e));
                         }
                     }
                 }
@@ -514,7 +523,7 @@ impl ResultEditor {
             }
             Status::Checking => {
                 grid.read_only_reason =
-                    Some("Checking whether the results can be edited...".into());
+                    Some(tr("Checking whether the results can be edited...").into());
             }
         }
     }
@@ -545,12 +554,12 @@ impl ResultEditor {
             return;
         };
         self.busy = true;
-        self.message = Some("Saving...".into());
+        self.message = Some(tr("Saving...").into());
         let tx = self.tx.clone();
         run(&self.session, sql, &self.ctx, move |result, count| {
             let result = match result {
                 Err(e) => Err(e),
-                Ok(_) if count == 0 => Err(GONE.to_string()),
+                Ok(_) if count == 0 => Err(tr(GONE).to_string()),
                 Ok(rows) => Ok(rows
                     .into_iter()
                     .next()
@@ -615,7 +624,7 @@ impl ResultEditor {
         let keys: Vec<Vec<Option<String>>> = rows.iter().map(|r| target.key_of(r)).collect();
         let sql = target.delete_sql(&rows);
         self.busy = true;
-        self.message = Some("Deleting...".into());
+        self.message = Some(tr("Deleting...").into());
         let tx = self.tx.clone();
         let range = confirm.rows;
         run(&self.session, sql, &self.ctx, move |result, _| {
@@ -638,37 +647,41 @@ impl ResultEditor {
         let modal = crate::theme::modal(id.with("delete_rows")).show(ctx, |ui| {
             ui.set_width(420.0);
             ui.heading(if count == 1 {
-                "Delete Row"
+                tr("Delete Row")
             } else {
-                "Delete Rows"
+                tr("Delete Rows")
             });
-            ui.label(format!(
-                "You are about to delete {} from {table}. Are you sure?",
-                if count == 1 {
-                    "1 row".to_string()
-                } else {
-                    format!("{count} rows")
-                }
-            ));
+            ui.label(if count == 1 {
+                trf!(
+                    "You are about to delete 1 row from {table}. Are you sure?",
+                    table = table
+                )
+            } else {
+                trf!(
+                    "You are about to delete {count} rows from {table}. Are you sure?",
+                    count = count,
+                    table = table
+                )
+            });
             ui.add_space(4.0);
             for line in &confirm.preview {
                 ui.label(RichText::new(line).monospace());
             }
             if count > confirm.preview.len() as u64 {
-                ui.weak(format!(
-                    "... and {} more",
-                    count - confirm.preview.len() as u64
+                ui.weak(trf!(
+                    "... and {n} more",
+                    n = count - confirm.preview.len() as u64
                 ));
             }
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // "No" primeiro (à direita) e com o foco: Enter não exclui
                 // sem querer.
-                let no = ui.button("No");
+                let no = ui.button(tr("No"));
                 if no.clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(true);
                 }
                 if !ui.ctx().memory(|m| m.focused().is_some()) {
@@ -685,16 +698,17 @@ impl ResultEditor {
     }
 }
 
-fn plural_rows(n: usize, what: &str) -> String {
+fn rows_deleted(n: usize) -> String {
     if n == 1 {
-        format!("1 row {what}.")
+        tr("1 row deleted.").to_string()
     } else {
-        format!("{n} rows {what}.")
+        trf!("{n} rows deleted.", n = n)
     }
 }
 
 /// A linha não estava mais lá.
-const GONE: &str = "The row was not found; it may have been changed or deleted by another user.";
+const GONE: &str =
+    tr_noop("The row was not found; it may have been changed or deleted by another user.");
 
 #[cfg(test)]
 mod tests {

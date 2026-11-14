@@ -16,6 +16,7 @@
 //! - INSERT: um `INSERT INTO` por linha, valores como literais que o banco
 //!   converte para o tipo da coluna.
 
+use pgstudio_i18n::tr;
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::Path;

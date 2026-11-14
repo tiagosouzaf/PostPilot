@@ -24,6 +24,7 @@ pub mod lexer;
 mod widget;
 
 use eframe::egui::{self, FontId, Id, Key, TextEdit, Ui};
+use pgstudio_i18n::{tr, trf};
 
 pub use highlight::Colors;
 
@@ -276,7 +277,7 @@ fn find_bar(ui: &mut Ui, id: Id, text: &str, state: &mut EditorState) {
     let mut close = false;
     let mut search = false;
     ui.horizontal(|ui| {
-        ui.label("Find:");
+        ui.label(tr("Find:"));
         let field = ui.add(
             TextEdit::singleline(&mut find.needle)
                 .id(id.with("find"))
@@ -292,14 +293,14 @@ fn find_bar(ui: &mut Ui, id: Id, text: &str, state: &mut EditorState) {
         if field.changed() {
             find.not_found = false;
         }
-        ui.checkbox(&mut find.match_case, "Match case");
-        if ui.button("Find Next").clicked() {
+        ui.checkbox(&mut find.match_case, tr("Match case"));
+        if ui.button(tr("Find Next")).clicked() {
             search = true;
         }
         if find.not_found {
-            ui.colored_label(ui.visuals().warn_fg_color, "The text was not found.");
+            ui.colored_label(ui.visuals().warn_fg_color, tr("The text was not found."));
         }
-        if ui.button("✕").on_hover_text("Close (Esc)").clicked() {
+        if ui.button("✕").on_hover_text(tr("Close (Esc)")).clicked() {
             close = true;
         }
         if field.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
@@ -331,7 +332,7 @@ fn goto_bar(ui: &mut Ui, id: Id, text: &str, state: &mut EditorState) {
     let mut close = false;
     let mut go = None;
     ui.horizontal(|ui| {
-        ui.label(format!("Line number (1 - {lines}):"));
+        ui.label(trf!("Line number (1 - {lines}):", lines = lines));
         let field = ui.add(
             TextEdit::singleline(&mut goto.line)
                 .id(id.with("goto"))
@@ -342,11 +343,14 @@ fn goto_bar(ui: &mut Ui, id: Id, text: &str, state: &mut EditorState) {
             goto.focus = false;
         }
         let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-        if ui.button("OK").clicked() || enter {
+        if ui.button(tr("OK")).clicked() || enter {
             match goto.line.trim().parse::<usize>() {
                 Ok(n) if (1..=lines).contains(&n) => go = Some(n),
                 _ => {
-                    goto.error = Some(format!("Enter a line number between 1 and {lines}."));
+                    goto.error = Some(trf!(
+                        "Enter a line number between 1 and {lines}.",
+                        lines = lines
+                    ));
                     goto.focus = true;
                 }
             }
@@ -354,7 +358,7 @@ fn goto_bar(ui: &mut Ui, id: Id, text: &str, state: &mut EditorState) {
         if let Some(e) = &goto.error {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
-        if ui.button("Cancel").clicked()
+        if ui.button(tr("Cancel")).clicked()
             || (field.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)))
         {
             close = true;
