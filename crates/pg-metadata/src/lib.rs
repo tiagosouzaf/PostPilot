@@ -9,12 +9,17 @@
 //! servidor
 //! ├── Databases
 //! │   └── banco
-//! │       └── Schemas
-//! │           └── schema
-//! │               ├── Tables > tabela > Columns, Constraints, Indexes
-//! │               ├── Views > view > Columns
-//! │               ├── Functions
-//! │               └── Sequences
+//! │       ├── Database Diagrams
+//! │       ├── Schemas
+//! │       │   └── schema
+//! │       │       ├── Tables > tabela > Columns, Constraints, Indexes, Triggers
+//! │       │       ├── Views > view > Columns
+//! │       │       ├── Materialized Views > view > Columns, Indexes
+//! │       │       ├── Functions
+//! │       │       ├── Procedures
+//! │       │       ├── Sequences
+//! │       │       └── Types (enums, domínios, compostos, ranges)
+//! │       └── Extensions
 //! └── Security
 //!     └── Roles
 //! ```
@@ -25,6 +30,7 @@
 
 mod model;
 mod path;
+mod props;
 mod script;
 
 use std::collections::HashMap;
@@ -34,7 +40,7 @@ use pgstudio_core::catalog::{self, Catalog, Column, RelationKind, Schema};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::metadata::{
     DesignTarget, Folder, MetadataError, MetadataProvider, Model, NodeId, NodeKind, ObjectNode,
-    ScriptAction, Securable,
+    Property, ScriptAction, Securable,
 };
 use pgstudio_pg_client::{DbRuntime, PgQueryService, Session, describe};
 use tokio_postgres::Row;
@@ -61,24 +67,45 @@ mod sql {
         WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'f') AND NOT c.relispartition \
         ORDER BY c.relname";
 
-    pub const VIEWS: &str = "SELECT c.oid, c.relname::text, c.relkind::text \
+    /// Views (`$2 = 'v'`) ou views materializadas (`$2 = 'm'`).
+    pub const VIEWS: &str = "SELECT c.oid, c.relname::text \
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-        WHERE n.nspname = $1 AND c.relkind IN ('v', 'm') ORDER BY c.relname";
+        WHERE n.nspname = $1 AND c.relkind = $2::text::\"char\" ORDER BY c.relname";
 
     pub const SEQUENCES: &str = "SELECT c.oid, c.relname::text \
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
         WHERE n.nspname = $1 AND c.relkind = 'S' ORDER BY c.relname";
 
-    /// Funções e procedures, com os argumentos como o `\df` mostra. As que
-    /// vêm de extensões ficam de fora.
+    /// Funções (`$2 = 'f'`) ou procedures (`$2 = 'p'`), com os argumentos
+    /// como o `\df` mostra. As que vêm de extensões e as internas (os
+    /// construtores de um range) ficam de fora.
     pub const FUNCTIONS: &str = "SELECT p.oid, p.proname::text, \
-        pg_catalog.pg_get_function_identity_arguments(p.oid), p.prokind::text \
+        pg_catalog.pg_get_function_identity_arguments(p.oid) \
         FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-        WHERE n.nspname = $1 AND p.prokind IN ('f', 'p') \
+        WHERE n.nspname = $1 AND p.prokind = $2::text::\"char\" \
         AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
             WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid \
-            AND d.deptype = 'e') \
+            AND d.deptype IN ('e', 'i')) \
         ORDER BY p.proname, 3";
+
+    /// Enums, domínios, tipos compostos (os criados com `CREATE TYPE`, não
+    /// os das tabelas) e ranges. Os de extensões ficam de fora.
+    pub const TYPES: &str = "SELECT t.oid, t.typname::text, t.typtype::text \
+        FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+        WHERE n.nspname = $1 AND (t.typtype IN ('e', 'd', 'r') OR (t.typtype = 'c' \
+            AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c \
+                WHERE c.oid = t.typrelid AND c.relkind = 'c'))) \
+        AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
+            WHERE d.classid = 'pg_catalog.pg_type'::regclass AND d.objid = t.oid \
+            AND d.deptype = 'e') \
+        ORDER BY t.typname";
+
+    pub const EXTENSIONS: &str = "SELECT oid, extname::text, extversion \
+        FROM pg_catalog.pg_extension ORDER BY extname";
+
+    /// Triggers de usuário (as internas, das FKs, ficam de fora).
+    pub const TRIGGERS: &str = "SELECT oid, tgname::text, tgenabled::text \
+        FROM pg_catalog.pg_trigger WHERE tgrelid = $1 AND NOT tgisinternal ORDER BY tgname";
 
     pub const COLUMNS: &str = "SELECT a.attnum, a.attname::text, \
         pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull, \
@@ -306,13 +333,8 @@ impl CatalogExplorer {
     ) -> Result<Vec<ObjectNode>, MetadataError> {
         let params: [&(dyn ToSql + Sync); 1] = [&schema];
         match folder {
-            Folder::Tables | Folder::Views => {
-                let sql = if folder == Folder::Tables {
-                    sql::TABLES
-                } else {
-                    sql::VIEWS
-                };
-                let rows = self.query(db, sql, &params)?;
+            Folder::Tables => {
+                let rows = self.query(db, sql::TABLES, &params)?;
                 Ok(rows
                     .iter()
                     .map(|r| {
@@ -322,40 +344,79 @@ impl CatalogExplorer {
                         let label = match kind.as_str() {
                             "p" => format!("{name} (partitioned)"),
                             "f" => format!("{name} (foreign)"),
-                            "m" => format!("{name} (materialized)"),
                             _ => name,
                         };
-                        if folder == Folder::Tables {
+                        node(
+                            Path::Table(db.into(), oid).id(),
+                            label,
+                            NodeKind::Table,
+                            true,
+                        )
+                    })
+                    .collect())
+            }
+            Folder::Views | Folder::MaterializedViews => {
+                let views = folder == Folder::Views;
+                let relkind = if views { "v" } else { "m" };
+                let rows = self.query(db, sql::VIEWS, &[&schema, &relkind])?;
+                Ok(rows
+                    .iter()
+                    .map(|r| {
+                        let oid: u32 = r.get(0);
+                        let name: String = r.get(1);
+                        if views {
+                            node(Path::View(db.into(), oid).id(), name, NodeKind::View, true)
+                        } else {
                             node(
-                                Path::Table(db.into(), oid).id(),
-                                label,
-                                NodeKind::Table,
+                                Path::MaterializedView(db.into(), oid).id(),
+                                name,
+                                NodeKind::MaterializedView,
                                 true,
                             )
-                        } else {
-                            node(Path::View(db.into(), oid).id(), label, NodeKind::View, true)
                         }
                     })
                     .collect())
             }
-            Folder::Functions => {
-                let rows = self.query(db, sql::FUNCTIONS, &params)?;
+            Folder::Functions | Folder::Procedures => {
+                let (prokind, tag, kind) = if folder == Folder::Functions {
+                    ("f", "fn", NodeKind::Function)
+                } else {
+                    ("p", "proc", NodeKind::Procedure)
+                };
+                let rows = self.query(db, sql::FUNCTIONS, &[&schema, &prokind])?;
                 Ok(rows
                     .iter()
                     .map(|r| {
                         let oid: u32 = r.get(0);
                         let name: String = r.get(1);
                         let args: String = r.get(2);
-                        let kind: String = r.get(3);
-                        let label = if kind == "p" {
-                            format!("{name}({args}) (procedure)")
-                        } else {
-                            format!("{name}({args})")
+                        node(
+                            path::leaf(db, tag, &[&oid]),
+                            format!("{name}({args})"),
+                            kind,
+                            false,
+                        )
+                    })
+                    .collect())
+            }
+            Folder::Types => {
+                let rows = self.query(db, sql::TYPES, &params)?;
+                Ok(rows
+                    .iter()
+                    .map(|r| {
+                        let oid: u32 = r.get(0);
+                        let name: String = r.get(1);
+                        let kind: String = r.get(2);
+                        let what = match kind.as_str() {
+                            "e" => "enum",
+                            "d" => "domain",
+                            "r" => "range",
+                            _ => "composite",
                         };
                         node(
-                            path::leaf(db, "fn", &[&oid]),
-                            label,
-                            NodeKind::Function,
+                            path::leaf(db, "typ", &[&oid]),
+                            format!("{name} ({what})"),
+                            NodeKind::Type,
                             false,
                         )
                     })
@@ -379,6 +440,24 @@ impl CatalogExplorer {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    fn extensions(&self, db: &str) -> Result<Vec<ObjectNode>, MetadataError> {
+        let rows = self.query(db, sql::EXTENSIONS, &[])?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let oid: u32 = r.get(0);
+                let name: String = r.get(1);
+                let version: String = r.get(2);
+                node(
+                    path::leaf(db, "ext", &[&oid]),
+                    format!("{name} ({version})"),
+                    NodeKind::Extension,
+                    false,
+                )
+            })
+            .collect())
     }
 
     fn relation_folder(
@@ -460,6 +539,28 @@ impl CatalogExplorer {
                     })
                     .collect())
             }
+            Folder::Triggers => {
+                let rows = self.query(db, sql::TRIGGERS, &params)?;
+                Ok(rows
+                    .iter()
+                    .map(|r| {
+                        let oid: u32 = r.get(0);
+                        let name: String = r.get(1);
+                        let enabled: String = r.get(2);
+                        let label = if enabled == "D" {
+                            format!("{name} (disabled)")
+                        } else {
+                            name
+                        };
+                        node(
+                            path::leaf(db, "trg", &[&oid]),
+                            label,
+                            NodeKind::Trigger,
+                            false,
+                        )
+                    })
+                    .collect())
+            }
             _ => Ok(Vec::new()),
         }
     }
@@ -515,22 +616,39 @@ impl MetadataProvider for CatalogExplorer {
             Path::Roles => self.roles(),
             Path::Database(db) => Ok(vec![
                 folder_node(Path::Diagrams(db.clone()), Folder::Diagrams),
-                folder_node(Path::Schemas(db), Folder::Schemas),
+                folder_node(Path::Schemas(db.clone()), Folder::Schemas),
+                folder_node(Path::Extensions(db), Folder::Extensions),
             ]),
             Path::Schemas(db) => self.schemas(&db),
+            Path::Extensions(db) => self.extensions(&db),
             Path::Schema(db, s) => Ok([
                 Folder::Tables,
                 Folder::Views,
+                Folder::MaterializedViews,
                 Folder::Functions,
+                Folder::Procedures,
                 Folder::Sequences,
+                Folder::Types,
             ]
             .into_iter()
             .map(|f| folder_node(Path::SchemaFolder(db.clone(), s.clone(), f), f))
             .collect()),
             Path::SchemaFolder(db, s, f) => self.schema_folder(&db, &s, f),
-            Path::Table(db, oid) => Ok([Folder::Columns, Folder::Constraints, Folder::Indexes]
+            Path::Table(db, oid) => Ok([
+                Folder::Columns,
+                Folder::Constraints,
+                Folder::Indexes,
+                Folder::Triggers,
+            ]
+            .into_iter()
+            .map(|f| folder_node(Path::RelationFolder(db.clone(), Relation::Table, oid, f), f))
+            .collect()),
+            Path::MaterializedView(db, oid) => Ok([Folder::Columns, Folder::Indexes]
                 .into_iter()
-                .map(|f| folder_node(Path::RelationFolder(db.clone(), Relation::Table, oid, f), f))
+                .map(|f| {
+                    let rel = Relation::MaterializedView;
+                    folder_node(Path::RelationFolder(db.clone(), rel, oid, f), f)
+                })
                 .collect()),
             Path::View(db, oid) => Ok(vec![folder_node(
                 Path::RelationFolder(db, Relation::View, oid, Folder::Columns),
@@ -551,6 +669,10 @@ impl MetadataProvider for CatalogExplorer {
 
     fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
         self.script_for(node, action)
+    }
+
+    fn properties(&self, node: &NodeId) -> Result<Vec<Property>, MetadataError> {
+        self.properties_for(node)
     }
 
     fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {

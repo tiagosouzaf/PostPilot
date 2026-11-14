@@ -5,7 +5,7 @@
 use eframe::egui;
 use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
-use pgstudio_object_explorer::{Event, ObjectExplorer};
+use pgstudio_object_explorer::{Event, ObjectExplorer, Properties};
 
 use crate::documents::Documents;
 
@@ -23,6 +23,8 @@ pub enum Panel {
     Diagram(u32),
     /// Activity Monitor (um só, do servidor conectado).
     ActivityMonitor,
+    /// Edit Top N Rows de uma tabela, pelo número da janela.
+    EditRows(u32),
     /// Registered Servers (Ctrl+Alt+G).
     RegisteredServers,
 }
@@ -38,6 +40,7 @@ impl Panel {
             Panel::TableDesigner(_) => "Table Designer",
             Panel::Diagram(_) => "Database Diagram",
             Panel::ActivityMonitor => "Activity Monitor",
+            Panel::EditRows(_) => "Edit Rows",
             Panel::RegisteredServers => "Registered Servers",
         }
     }
@@ -52,7 +55,8 @@ impl Pane for Panel {
             Panel::Query(_)
             | Panel::TableDesigner(_)
             | Panel::Diagram(_)
-            | Panel::ActivityMonitor => Area::Document,
+            | Panel::ActivityMonitor
+            | Panel::EditRows(_) => Area::Document,
         }
     }
 }
@@ -81,6 +85,8 @@ pub struct Viewer<'a> {
     pub diagrams: &'a mut crate::diagrams::Diagrams,
     /// Activity Monitor, se aberto.
     pub activity: &'a mut Option<crate::activity::ActivityMonitor>,
+    /// Janelas Edit Top N Rows.
+    pub edit_rows: &'a mut std::collections::BTreeMap<u32, crate::edit_rows::EditRows>,
     /// Documento cujo editor deve receber o foco neste frame.
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
@@ -132,6 +138,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .as_ref()
                 .map(|a| a.title())
                 .unwrap_or_else(|| pane.title().to_string()),
+            Panel::EditRows(id) => self
+                .edit_rows
+                .get(id)
+                .map(|e| e.title())
+                .unwrap_or_else(|| pane.title().to_string()),
             _ => pane.title().to_string(),
         }
     }
@@ -154,6 +165,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 *self.activity = None;
                 true
             }
+            Panel::EditRows(id) => self
+                .edit_rows
+                .get_mut(id)
+                .is_none_or(crate::edit_rows::EditRows::request_close),
             _ => true,
         }
     }
@@ -193,22 +208,42 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let actions = self.registered.show(ui, self.secrets);
                 self.registered_actions.extend(actions);
             }
-            Panel::Properties => match self.explorer.selected() {
+            Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
-                    egui::Grid::new("properties")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.strong("Name");
-                            ui.label(&node.name);
-                            ui.end_row();
-                            ui.strong("Type");
-                            ui.label(node.kind.label());
-                            ui.end_row();
-                            ui.strong("Path");
-                            ui.label(node.id.to_string());
-                            ui.end_row();
-                        });
+                    let props = self.explorer.properties(&node.id).cloned();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::Grid::new("properties")
+                            .num_columns(2)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                let row = |ui: &mut egui::Ui, name: &str, value: &str| {
+                                    ui.strong(name);
+                                    ui.add(egui::Label::new(value).wrap());
+                                    ui.end_row();
+                                };
+                                row(ui, "Name", &node.name);
+                                row(ui, "Type", node.kind.label());
+                                if let Some(Properties::Loaded(props)) = &props {
+                                    for p in props {
+                                        row(ui, &p.name, &p.value);
+                                    }
+                                }
+                                row(ui, "Path", &node.id.to_string());
+                            });
+                        match props {
+                            Some(Properties::Loading) => {
+                                ui.weak("Loading...");
+                                // A leitura não acorda a interface: olha de
+                                // novo daqui a pouco.
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(30));
+                            }
+                            Some(Properties::Failed(e)) => {
+                                ui.colored_label(ui.visuals().error_fg_color, e);
+                            }
+                            _ => {}
+                        }
+                    });
                 }
                 None => {
                     ui.weak("No object selected.");
@@ -259,6 +294,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::Diagram(id) => {
                 if let Some(d) = self.diagrams.get_mut(*id) {
                     d.show(ui, *id);
+                }
+            }
+            Panel::EditRows(id) => {
+                if let Some(e) = self.edit_rows.get_mut(id) {
+                    e.show(ui, *id);
                 }
             }
             Panel::ActivityMonitor => match self.activity {
