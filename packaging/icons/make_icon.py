@@ -1,4 +1,4 @@
-"""Gera o ícone do PGStudio: pgstudio-<N>.png (16 a 512 px) e pgstudio.ico.
+"""Gera o ícone do PostPilot: postpilot-<N>.png (16 a 512 px) e postpilot.ico.
 
 Uso: python3 packaging/icons/make_icon.py  (precisa do Pillow)
 
@@ -72,9 +72,9 @@ def draw() -> Image.Image:
 def main():
     big = draw()
     for n in SIZES:
-        big.resize((n, n), Image.LANCZOS).save(HERE / f"pgstudio-{n}.png", optimize=True)
+        big.resize((n, n), Image.LANCZOS).save(HERE / f"postpilot-{n}.png", optimize=True)
     big.resize((256, 256), Image.LANCZOS).save(
-        HERE / "pgstudio.ico",
+        HERE / "postpilot.ico",
         sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
     )
 

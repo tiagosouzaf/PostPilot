@@ -29,7 +29,7 @@ pub use query::{PgQueryService, PgQuerySession};
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Nome que o servidor mostra em `pg_stat_activity.application_name`.
-pub const APPLICATION_NAME: &str = "PGStudio";
+pub const APPLICATION_NAME: &str = "PostPilot";
 
 /// Uma conexão aberta com o servidor.
 pub struct Session {

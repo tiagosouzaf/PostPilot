@@ -15,6 +15,8 @@ use pgstudio_updater::{
     InstallKind, Installed, Progress, REPOSITORY, Release, UpdateSettings, aur_helper,
 };
 
+pub use pgstudio_updater::cleanup_old_binary;
+
 /// Em que pé está a atualização.
 #[derive(Debug)]
 pub enum State {
