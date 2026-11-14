@@ -29,6 +29,8 @@ pub const MIN_NODE_WIDTH: f32 = 120.0;
 /// Distância (em pixels da tela) da borda direita que pega o
 /// redimensionamento.
 const RESIZE_GRIP: f32 = 6.0;
+/// Faixa à esquerda da coluna com a caixinha de marcar.
+const CHECKBOX_WIDTH: f32 = 18.0;
 /// Altura do título da caixa.
 pub const HEADER_HEIGHT: f32 = 24.0;
 /// Altura de cada coluna na caixa.
@@ -53,6 +55,9 @@ pub struct NodeColumn {
     pub primary_key: bool,
     pub foreign_key: bool,
     pub nullable: bool,
+    /// Caixinha de marcar ao lado da coluna (Query Designer): None não
+    /// mostra.
+    pub checked: Option<bool>,
 }
 
 /// Uma tabela no diagrama.
@@ -67,6 +72,8 @@ pub struct Node {
     pub pos: Pos2,
     /// Largura da caixa.
     pub width: f32,
+    /// Apelido mostrado no título (Query Designer).
+    pub alias: Option<String>,
 }
 
 impl Node {
@@ -82,9 +89,12 @@ impl Node {
         Rect::from_min_size(self.pos, self.size())
     }
 
-    /// `schema.tabela`.
+    /// `schema.tabela`, com o apelido entre parênteses se houver.
     pub fn title(&self) -> String {
-        format!("{}.{}", self.schema, self.name)
+        match &self.alias {
+            Some(a) => format!("{}.{} ({a})", self.schema, self.name),
+            None => format!("{}.{}", self.schema, self.name),
+        }
     }
 
     /// Coluna na posição `p` do diagrama, se `p` cair numa linha dela.
@@ -107,6 +117,8 @@ impl Node {
 pub enum DiagramEvent {
     /// Uma tabela mudou de lugar ou de largura.
     Moved(Id),
+    /// Clicou na caixinha da coluna (Query Designer).
+    Toggle { table: Id, column: String },
     /// Arrastou a coluna `from_column` de `from` (a chave) até a coluna
     /// `to_column` de `to` (quem vai referenciar).
     Link {
@@ -218,6 +230,7 @@ impl Diagram {
                     primary_key: pk.contains(&c.name),
                     foreign_key: t.foreign_keys.iter().any(|fk| fk.columns.contains(&c.name)),
                     nullable: c.nullable,
+                    checked: None,
                 })
                 .collect();
             nodes.push(Node {
@@ -227,6 +240,7 @@ impl Diagram {
                 columns,
                 pos: Pos2::ZERO,
                 width: NODE_WIDTH,
+                alias: None,
             });
         }
         let edges = edges_between(model, &nodes);
@@ -516,7 +530,12 @@ impl Diagram {
             return Drag::Resize(i);
         }
         match n.column_at(w) {
-            Some(c) if self.camera.zoom >= DETAIL_ZOOM => Drag::Link(i, c, w),
+            Some(c)
+                if self.camera.zoom >= DETAIL_ZOOM
+                    && !(n.columns[c].checked.is_some() && w.x - n.pos.x < CHECKBOX_WIDTH) =>
+            {
+                Drag::Link(i, c, w)
+            }
             _ => Drag::Move(i, w - n.pos),
         }
     }
@@ -590,6 +609,17 @@ impl Diagram {
             }
         }
         if response.clicked() {
+            if let Some(w) = pointer.map(|p| self.camera.to_world(origin, p))
+                && let Some(i) = self.node_at(w)
+                && let Some(c) = self.nodes[i].column_at(w)
+                && self.nodes[i].columns[c].checked.is_some()
+                && w.x - self.nodes[i].pos.x < CHECKBOX_WIDTH
+            {
+                self.events.push(DiagramEvent::Toggle {
+                    table: self.nodes[i].table,
+                    column: self.nodes[i].columns[c].name.clone(),
+                });
+            }
             self.selected = response
                 .interact_pointer_pos()
                 .and_then(|p| self.node_at(self.camera.to_world(origin, p)));
@@ -643,6 +673,26 @@ impl Diagram {
         );
         for (i, col) in n.columns.iter().enumerate() {
             let y = r.min.y + (HEADER_HEIGHT + 3.0 + ROW_HEIGHT * (i as f32 + 0.5)) * zoom;
+            let x = r.min.x
+                + if let Some(on) = col.checked {
+                    let b = Rect::from_center_size(
+                        pos2(r.min.x + 10.0 * zoom, y),
+                        Vec2::splat(11.0 * zoom),
+                    );
+                    painter.rect_stroke(b, 1.0, Stroke::new(1.0, c.text), StrokeKind::Inside);
+                    if on {
+                        // Um "✓" em traços (a cor de seleção do tema pode
+                        // ser clara demais sobre o fundo da caixa).
+                        let p = |x: f32, y: f32| b.min + b.size() * vec2(x, y);
+                        painter.line(
+                            vec![p(0.2, 0.5), p(0.42, 0.75), p(0.8, 0.25)],
+                            Stroke::new((1.6 * zoom).max(1.0), c.text),
+                        );
+                    }
+                    CHECKBOX_WIDTH * zoom
+                } else {
+                    0.0
+                };
             let mark = if col.primary_key {
                 "🔑"
             } else if col.foreign_key {
@@ -652,7 +702,7 @@ impl Diagram {
             };
             if !mark.is_empty() {
                 clip.text(
-                    pos2(r.min.x + 10.0 * zoom, y),
+                    pos2(x + 10.0 * zoom, y),
                     Align2::CENTER_CENTER,
                     mark,
                     font(11.0 * zoom),
@@ -660,7 +710,7 @@ impl Diagram {
                 );
             }
             clip.text(
-                pos2(r.min.x + 20.0 * zoom, y),
+                pos2(x + 20.0 * zoom, y),
                 Align2::LEFT_CENTER,
                 &col.name,
                 text_font.clone(),
@@ -889,11 +939,13 @@ mod tests {
                             primary_key: true,
                             foreign_key: false,
                             nullable: false,
+                            checked: None,
                         };
                         5
                     ],
                     pos: Pos2::ZERO,
                     width: NODE_WIDTH,
+                    alias: None,
                 })
                 .collect(),
             edges: vec![

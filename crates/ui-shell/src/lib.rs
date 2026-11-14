@@ -16,6 +16,7 @@ pub mod keys;
 pub mod layout;
 pub mod menus;
 pub mod panels;
+pub mod query_designer;
 pub mod results;
 pub mod theme;
 
@@ -64,6 +65,10 @@ pub struct ShellApp {
     diagrams: diagrams::Diagrams,
     /// Novos diagramas já com todas as tabelas (screenshots).
     diagram_all_tables: bool,
+    /// Query Designer aberto (Ctrl+Shift+Q).
+    query_designer: Option<query_designer::QueryDesigner>,
+    /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
+    design_query_on_open: bool,
     /// Janela de consulta ativa (a última que teve foco).
     active_doc: Option<u32>,
     focus_editor: Option<u32>,
@@ -155,6 +160,8 @@ impl Default for ShellApp {
             designers: Default::default(),
             diagrams: Default::default(),
             diagram_all_tables: false,
+            query_designer: None,
+            design_query_on_open: false,
             active_doc: None,
             focus_editor: None,
             dialogs: Box::new(NoDialogs),
@@ -858,6 +865,7 @@ impl ShellApp {
                 | CancelQuery
                 | ResultsToText
                 | ResultsToGrid
+                | DesignQuery
         )
     }
 
@@ -1008,6 +1016,7 @@ impl ShellApp {
                 Some(id) => self.editor_command(ctx, id, cmd),
                 None => self.status = "No query window is open.".to_string(),
             },
+            CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx),
             CommandId::CancelQuery => self.cancel_query(),
             CommandId::ResultsToText | CommandId::ResultsToGrid => {
@@ -1212,6 +1221,9 @@ impl ShellApp {
                 let db = provider.database_of(&node);
                 let id = self.documents.new_script(String::new(), db);
                 self.activate_document(id);
+                if std::mem::take(&mut self.design_query_on_open) {
+                    self.open_query_designer(ctx);
+                }
                 return;
             }
             Event::NewTable(node) | Event::Design(node) => {
@@ -1579,6 +1591,7 @@ impl ShellApp {
         self.sync_documents();
         self.designer_step();
         self.diagram_step();
+        self.query_designer_step(&ctx);
         if self.diagrams.is_loading() {
             // Um diagrama aberto de arquivo não tem quem acorde a janela
             // quando o modelo chegar.
@@ -1655,6 +1668,69 @@ impl ShellApp {
     /// Table Designers, mutável.
     pub fn designers_mut(&mut self) -> &mut designer::Designers {
         &mut self.designers
+    }
+
+    /// Abre o Query Designer para a janela de consulta ativa.
+    fn open_query_designer(&mut self, ctx: &egui::Context) {
+        let Some(doc) = self.active_doc else {
+            self.status = "Open a query window to design a query.".to_string();
+            return;
+        };
+        let Some(provider) = self.explorer.provider() else {
+            self.status = "Connect to a server to design a query.".to_string();
+            return;
+        };
+        let Some(db) = self.document_database(doc) else {
+            self.status = "Choose a database for the query window first.".to_string();
+            return;
+        };
+        let qd = query_designer::QueryDesigner::open(provider, db, doc, ctx);
+        self.query_designer = Some(if self.diagram_all_tables {
+            qd.with_all_tables()
+        } else {
+            qd
+        });
+    }
+
+    /// A próxima janela aberta por "New Query" já abre o Query Designer
+    /// (screenshots).
+    pub fn with_design_query_on_open(mut self) -> Self {
+        self.design_query_on_open = true;
+        self
+    }
+
+    /// Query Designer aberto.
+    pub fn query_designer(&self) -> Option<&query_designer::QueryDesigner> {
+        self.query_designer.as_ref()
+    }
+
+    pub fn query_designer_mut(&mut self) -> Option<&mut query_designer::QueryDesigner> {
+        self.query_designer.as_mut()
+    }
+
+    /// Desenha o Query Designer e, no OK, põe o SQL no lugar da seleção da
+    /// janela de consulta.
+    fn query_designer_step(&mut self, ctx: &egui::Context) {
+        let Some(qd) = &mut self.query_designer else {
+            return;
+        };
+        qd.show(ctx);
+        let Some(result) = qd.take_result() else {
+            return;
+        };
+        let doc = qd.doc;
+        self.query_designer = None;
+        let Some(sql) = result else {
+            return;
+        };
+        let editor = panels::editor_id(doc);
+        if let Some(d) = self.documents.get_mut(doc) {
+            let selection = pgstudio_sql_editor::selection(ctx, editor).unwrap_or((0, 0));
+            let inserted = query_designer::insert(&mut d.text, selection, &sql);
+            pgstudio_sql_editor::set_selection(ctx, editor, inserted);
+            d.editor.focus_editor();
+        }
+        self.activate_document(doc);
     }
 
     /// Database Diagrams abertos.
@@ -1878,8 +1954,17 @@ impl ShellApp {
             || self.selected_action.is_some()
             || !self.scripts.is_empty()
             || self.designers.is_loading()
-            || self.diagrams.is_loading();
-        if !shot.requested && shot.frames >= 5 && !busy {
+            || self.diagrams.is_loading()
+            || self.query_designer.as_ref().is_some_and(|q| q.is_loading());
+        // Conta os frames parados: o que acabou de aparecer (um diálogo
+        // modal entra com fade) precisa de alguns frames para assentar.
+        if busy {
+            shot.frames = 0;
+        }
+        if !shot.requested {
+            ctx.request_repaint();
+        }
+        if !shot.requested && shot.frames >= 10 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }

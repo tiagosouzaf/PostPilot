@@ -84,6 +84,7 @@ commands! {
     ChangeConnection => "Query.ChangeConnection", "Change Connection…";
     Execute => "Query.Execute", "Execute";
     Parse => "Query.Parse", "Parse";
+    DesignQuery => "Query.DesignQuery", "Design Query in Editor…";
     CancelQuery => "Query.Cancel", "Cancel Executing Query";
     EstimatedPlan => "Query.EstimatedPlan", "Display Estimated Execution Plan";
     ActualPlan => "Query.ActualPlan", "Include Actual Execution Plan";
