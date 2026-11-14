@@ -94,9 +94,20 @@ fn token_char(c: char) -> bool {
 }
 
 fn scan_text(text: &str) -> Vec<String> {
+    scan(text, false)
+}
+
+/// `test_file`: arquivo de teste (em `tests/`). Em código de teste, e depois
+/// de um `#[cfg(test)]`, senhas em connection strings são exemplos dos
+/// testes do parser e não são acusadas; chaves, tokens e e-mails continuam.
+fn scan(text: &str, test_file: bool) -> Vec<String> {
     let mut found = Vec::new();
+    let mut in_tests = test_file;
     for (n, line) in text.lines().enumerate() {
         let n = n + 1;
+        if line.trim_start().starts_with("#[cfg(test)]") {
+            in_tests = true;
+        }
         if line.contains("-----BEGIN") && line.contains("PRIVATE KEY") {
             found.push(format!("linha {n}: chave privada"));
         }
@@ -115,7 +126,10 @@ fn scan_text(text: &str) -> Vec<String> {
                 }
             }
         }
-        for scheme in ["postgres://", "postgresql://"] {
+        for scheme in ["postgres://", "postgresql://"]
+            .into_iter()
+            .filter(|_| !in_tests)
+        {
             for (i, _) in line.match_indices(scheme) {
                 let rest = &line[i + scheme.len()..];
                 let end = rest
@@ -172,7 +186,12 @@ fn repositorio_sem_segredos() {
         let Ok(text) = std::str::from_utf8(&bytes) else {
             continue; // binário (ícones)
         };
-        problems.extend(scan_text(text).into_iter().map(|p| format!("{file}: {p}")));
+        let test_file = file.split('/').any(|part| part == "tests");
+        problems.extend(
+            scan(text, test_file)
+                .into_iter()
+                .map(|p| format!("{file}: {p}")),
+        );
     }
     assert!(
         problems.is_empty(),
@@ -203,4 +222,11 @@ fn checagem_acusa_os_padroes() {
     assert!(scan_text("postgres://{user}:{password}@{host}").is_empty());
     assert!(scan_text("git@github.com:tiagosouzaf/postpilot.git").is_empty());
     assert!(scan_text("tokio_postgres::Config::new()").is_empty());
+
+    // Exemplos nos testes do parser de connection string passam; tokens não.
+    let uri = "postgresql://app:p%40ss%3Aw0rd@db.vendas.com:6432/vendas";
+    assert!(scan(uri, true).is_empty());
+    assert!(scan(&format!("#[cfg(test)]\nmod tests {{\n\"{uri}\"\n}}"), false).is_empty());
+    assert_eq!(scan(&format!("\"{uri}\"\n#[cfg(test)]"), false).len(), 1);
+    assert_eq!(scan(&token, true).len(), 1);
 }

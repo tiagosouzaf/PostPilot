@@ -83,6 +83,7 @@ commands! {
     ObjectExplorerDetails => "View.ObjectExplorerDetails", "Object Explorer Details";
     RegisteredServers => "View.RegisteredServers", "Registered Servers";
     WorkspaceExplorer => "View.WorkspaceExplorer", "Workspace Explorer";
+    ClaudePanel => "View.Claude", "Claude";
     TemplateExplorer => "View.TemplateExplorer", "Template Explorer";
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";

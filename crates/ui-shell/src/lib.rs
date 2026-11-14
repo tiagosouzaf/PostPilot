@@ -9,6 +9,7 @@ pub mod activity;
 pub mod backup;
 pub mod bench;
 pub mod claude;
+pub mod claude_panel;
 pub mod connect;
 pub mod databases;
 pub mod designer;
@@ -196,6 +197,7 @@ pub struct ShellApp {
     selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
     /// Ponte com o Claude (MCP e painel): pedidos e confirmações.
     claude: claude::Bridge,
+    claude_panel: claude_panel::ClaudePanel,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -355,6 +357,7 @@ impl Default for ShellApp {
             last_active_doc: None,
             new_query_on_connect: None,
             claude: Default::default(),
+            claude_panel: Default::default(),
         }
     }
 }
@@ -1423,6 +1426,7 @@ impl ShellApp {
                 | DisconnectObjectExplorer
                 | RegisteredServers
                 | WorkspaceExplorer
+                | ClaudePanel
                 | NewWorkspace
                 | OpenWorkspace
                 | CloneWorkspace
@@ -1698,6 +1702,10 @@ impl ShellApp {
             }
             CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
             CommandId::WorkspaceExplorer => self.workspace.open(Panel::WorkspaceExplorer),
+            CommandId::ClaudePanel => {
+                self.workspace.open(Panel::Claude);
+                self.claude_panel.focus();
+            }
             CommandId::NewWorkspace => self.ask_new_workspace(),
             CommandId::OpenWorkspace => self.ask_open_workspace(),
             CommandId::CloseWorkspace => self.close_workspace(),
@@ -2675,6 +2683,7 @@ impl ShellApp {
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut workspace_actions = Vec::new();
+        let mut claude_actions = Vec::new();
         let mut activate = None;
         let mut open_json = Vec::new();
         egui::CentralPanel::default()
@@ -2710,11 +2719,14 @@ impl ShellApp {
                     registered_actions: Vec::new(),
                     workspace_panel: &mut self.workspace_panel,
                     workspace_actions: Vec::new(),
+                    claude_panel: &mut self.claude_panel,
+                    claude_actions: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
                 activate = viewer.activate_server;
                 registered_actions = viewer.registered_actions;
                 workspace_actions = viewer.workspace_actions;
+                claude_actions = viewer.claude_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 let save_results = viewer.save_results;
@@ -2737,6 +2749,7 @@ impl ShellApp {
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
         self.workspace_step(&ctx, workspace_actions);
+        self.claude_panel_step(&ctx, claude_actions);
         self.export_step();
         self.designer_step();
         self.diagram_step();

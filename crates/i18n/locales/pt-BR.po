@@ -2720,3 +2720,102 @@ msgstr "Outra coluna de critérios: cada coluna é combinada com AND, e as colun
 
 msgid "e.g. > 10"
 msgstr "ex.: > 10"
+# Painel do Claude (marco 7.4)
+msgid "Claude"
+msgstr "Claude"
+
+msgid "Model: {model}"
+msgstr "Modelo: {model}"
+
+msgid "New chat"
+msgstr "Nova conversa"
+
+msgid "Start a new conversation"
+msgstr "Começar uma conversa nova"
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Ask about your databases, or ask for a query. Claude sees your servers, schema and query windows through PostPilot, and asks before changing anything."
+msgstr "Pergunte sobre seus bancos ou peça uma consulta. O Claude vê seus servidores, o esquema e as janelas de consulta pelo PostPilot, e pergunta antes de alterar qualquer coisa."
+
+msgid "Claude is working…"
+msgstr "O Claude está trabalhando…"
+
+msgid "Message Claude"
+msgstr "Mensagem para o Claude"
+
+msgid "Enter sends; Shift+Enter starts a new line"
+msgstr "Enter envia; Shift+Enter quebra a linha"
+
+msgid "Send"
+msgstr "Enviar"
+
+msgid "Uses your Claude Code sign-in. What Claude reads is sent to Anthropic."
+msgstr "Usa o login do seu Claude Code. O que o Claude lê é enviado à Anthropic."
+
+msgid "Insert into the active query window"
+msgstr "Inserir na janela de consulta ativa"
+
+msgid "Claude Code reported an error: {text}"
+msgstr "O Claude Code informou um erro: {text}"
+
+msgid "Claude Code stopped before answering. If it asks you to sign in, run `claude` in a terminal once."
+msgstr "O Claude Code parou antes de responder. Se ele pedir login, rode `claude` uma vez num terminal."
+
+msgid "Stopped."
+msgstr "Parado."
+
+msgid "Open a query window first, then press Insert again."
+msgstr "Abra uma janela de consulta e clique em Inserir de novo."
+
+msgid "Could not talk to Claude Code: {error}"
+msgstr "Não foi possível falar com o Claude Code: {error}"
+
+msgid "Could not open the local channel for Claude: {error}"
+msgstr "Não foi possível abrir o canal local para o Claude: {error}"
+
+msgid "Could not find the PostPilot program: {error}"
+msgstr "Não foi possível encontrar o programa do PostPilot: {error}"
+
+msgid "Could not start Claude Code ({program}): {error}"
+msgstr "Não foi possível iniciar o Claude Code ({program}): {error}"
+
+msgid "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path."
+msgstr "O Claude Code não foi encontrado. Instale-o (https://claude.com/claude-code), rode `claude` uma vez num terminal para fazer login e tente de novo. Se ele está instalado em outro lugar, ponha o caminho em PGSTUDIO_CLAUDE."
+
+msgid "Listed servers"
+msgstr "Listou os servidores"
+
+msgid "Listed databases"
+msgstr "Listou os bancos"
+
+msgid "Listed objects"
+msgstr "Listou os objetos"
+
+msgid "Read table"
+msgstr "Leu a tabela"
+
+msgid "Read function"
+msgstr "Leu a função"
+
+msgid "Ran query"
+msgstr "Rodou a consulta"
+
+msgid "Listed query windows"
+msgstr "Listou as janelas de consulta"
+
+msgid "Read query window"
+msgstr "Leu a janela de consulta"
+
+msgid "Edited query window"
+msgstr "Editou a janela de consulta"
+
+msgid "Opened query window"
+msgstr "Abriu uma janela de consulta"
+
+msgid "Executed query window"
+msgstr "Executou a janela de consulta"
+
+msgid "Read results"
+msgstr "Leu os resultados"
