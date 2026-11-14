@@ -474,6 +474,7 @@ impl JsonViewer {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
+            .frame(crate::theme::dialog_frame(&ctx.global_style()))
             .default_size([820.0, 680.0])
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
