@@ -4,6 +4,7 @@
 //! o canal a cada frame. Veja `pgstudio_updater` para o que é enviado e como
 //! cada tipo de instalação se atualiza.
 
+use pgstudio_i18n::{tr, trf};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
@@ -124,7 +125,7 @@ impl Updater {
     fn check(&mut self, ctx: &egui::Context, manual: bool) {
         self.manual = manual;
         if !self.network {
-            self.state = State::Failed("Update checks are off in this mode.".into());
+            self.state = State::Failed(tr("Update checks are off in this mode.").into());
             return;
         }
         self.state = State::Checking;
@@ -209,13 +210,17 @@ impl Updater {
     /// O aviso na status bar, à direita da versão. Clicar abre a janela.
     pub fn status_badge(&mut self, ui: &mut egui::Ui, color: egui::Color32) {
         let text = match &self.state {
-            State::Available(r) => format!("Update available: {}", r.version),
-            State::Downloading(_) => "Downloading update…".to_string(),
-            State::Installed(..) => "Restart to update".to_string(),
+            State::Available(r) => trf!("Update available: {version}", version = r.version),
+            State::Downloading(_) => tr("Downloading update…").to_string(),
+            State::Installed(..) => tr("Restart to update").to_string(),
             _ => return,
         };
         let badge = egui::Button::new(RichText::new(text).color(color).strong()).frame(false);
-        if ui.add(badge).on_hover_text("Check for Updates").clicked() {
+        if ui
+            .add(badge)
+            .on_hover_text(tr("Check for Updates"))
+            .clicked()
+        {
             self.open = true;
         }
         ui.separator();
@@ -226,14 +231,14 @@ impl Updater {
         ui.horizontal(|ui| {
             match &self.state {
                 State::Available(r) => {
-                    ui.label(format!("Version {} is available.", r.version));
+                    ui.label(trf!("Version {version} is available.", version = r.version));
                 }
                 State::UpToDate => {
-                    ui.label("This is the latest version.");
+                    ui.label(tr("This is the latest version."));
                 }
                 _ => {}
             }
-            if ui.link("Check for Updates…").clicked() {
+            if ui.link(tr("Check for Updates…")).clicked() {
                 self.check_now(ctx);
             }
         });
@@ -262,24 +267,25 @@ impl Updater {
         }
         let mut open = true;
         let mut command = None;
-        egui::Window::new("Check for Updates")
+        egui::Window::new(tr("Check for Updates"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .default_width(460.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(format!("{APP_NAME} {VERSION} ({})", self.kind.describe()));
+                ui.label(format!("{APP_NAME} {VERSION} ({})", self.kind.describe())); // i18n-ignore
                 ui.add_space(6.0);
                 command = self.window_body(ui, ctx);
                 ui.add_space(6.0);
                 ui.separator();
                 let mut on = self.settings.check_on_startup;
                 if ui
-                    .checkbox(&mut on, "Check for updates when the app starts")
-                    .on_hover_text(format!(
-                        "Asks api.github.com for the latest release of {REPOSITORY}. \
-                         Only the app name and version are sent."
+                    .checkbox(&mut on, tr("Check for updates when the app starts"))
+                    .on_hover_text(trf!(
+                        "Asks api.github.com for the latest release of {repository}. \
+                         Only the app name and version are sent.",
+                        repository = REPOSITORY
                     ))
                     .changed()
                 {
@@ -297,75 +303,82 @@ impl Updater {
         let mut skip = None;
         match &self.state {
             State::Idle => {
-                if ui.button("Check now").clicked() {
+                if ui.button(tr("Check now")).clicked() {
                     self.check(ctx, true);
                 }
             }
             State::Checking => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Checking GitHub for a new version…");
+                    ui.label(tr("Checking GitHub for a new version…"));
                 });
             }
             State::UpToDate => {
-                ui.label("You have the latest version.");
+                ui.label(tr("You have the latest version."));
             }
             State::NoRelease => {
-                ui.label("No release has been published yet.");
-                if ui.link("Open the releases page").clicked() {
+                ui.label(tr("No release has been published yet."));
+                if ui.link(tr("Open the releases page")).clicked() {
                     ctx.open_url(egui::OpenUrl::new_tab(pgstudio_updater::releases_page()));
                 }
             }
             State::Failed(e) => {
                 ui.colored_label(ui.visuals().error_fg_color, e);
-                if ui.button("Try again").clicked() {
+                if ui.button(tr("Try again")).clicked() {
                     self.check(ctx, true);
                 }
             }
             State::Available(r) => {
-                ui.label(RichText::new(format!("Version {} is available.", r.version)).strong());
+                ui.label(
+                    RichText::new(trf!("Version {version} is available.", version = r.version))
+                        .strong(),
+                );
                 notes(ui, r);
-                if ui.link("Release page").clicked() {
+                if ui.link(tr("Release page")).clicked() {
                     ctx.open_url(egui::OpenUrl::new_tab(&r.page));
                 }
                 ui.add_space(6.0);
                 if self.kind.can_self_update() {
                     if self.kind.asset(r).is_some() {
                         ui.horizontal(|ui| {
-                            if ui.button("Download and install").clicked() {
+                            if ui.button(tr("Download and install")).clicked() {
                                 install = Some(r.clone());
                             }
-                            if ui.button("Skip this version").clicked() {
+                            if ui.button(tr("Skip this version")).clicked() {
                                 skip = Some(r.version.to_string());
                             }
                         });
-                        ui.small("The download is checked against the release's SHA256SUMS.");
+                        ui.small(tr(
+                            "The download is checked against the release's SHA256SUMS.",
+                        ));
                     } else {
-                        ui.label("This release has no package for this installation.");
+                        ui.label(tr("This release has no package for this installation."));
                     }
                 } else if let Some(cmd) = self.kind.update_command(r, self.helper) {
-                    ui.label("This copy is managed by your package manager. Update it with:");
+                    ui.label(tr(
+                        "This copy is managed by your package manager. Update it with:",
+                    ));
                     ui.horizontal(|ui| {
                         ui.code(&cmd);
-                        if ui.small_button("Copy").clicked() {
+                        if ui.small_button(tr("Copy")).clicked() {
                             ctx.copy_text(cmd.clone());
                         }
                     });
                     if matches!(self.kind, InstallKind::Dpkg) {
-                        ui.small("Download the .deb from the release page first.");
+                        ui.small(tr("Download the .deb from the release page first."));
                     }
-                    if ui.button("Skip this version").clicked() {
+                    if ui.button(tr("Skip this version")).clicked() {
                         skip = Some(r.version.to_string());
                     }
                 } else {
-                    ui.label("Download the new version from the release page.");
-                    if ui.button("Skip this version").clicked() {
+                    ui.label(tr("Download the new version from the release page."));
+                    if ui.button(tr("Skip this version")).clicked() {
                         skip = Some(r.version.to_string());
                     }
                 }
             }
             State::Downloading(r) => {
-                ui.label(format!("Downloading {}…", r.version));
+                ui.label(trf!("Downloading {version}…", version = r.version));
                 let bar = match self.progress.fraction() {
                     Some(f) => egui::ProgressBar::new(f).show_percentage(),
                     None => egui::ProgressBar::new(0.0).animate(true),
@@ -373,18 +386,19 @@ impl Updater {
                 ui.add(bar);
             }
             State::Installed(r, Installed::Restart(program)) => {
-                ui.label(format!("Version {} is installed.", r.version));
-                if ui.button("Restart now").clicked() {
+                ui.label(trf!("Version {version} is installed.", version = r.version));
+                if ui.button(tr("Restart now")).clicked() {
                     self.restart = Some(program.clone());
                     command = Some(CommandId::Exit);
                 }
             }
             State::Installed(r, Installed::InstallerStarted) => {
-                ui.label(format!(
-                    "The installer for {} is running. Close {APP_NAME} so it can replace the files.",
-                    r.version
+                ui.label(trf!(
+                    "The installer for {version} is running. Close {app} so it can replace the files.",
+                    version = r.version,
+                    app = APP_NAME
                 ));
-                if ui.button(format!("Close {APP_NAME}")).clicked() {
+                if ui.button(trf!("Close {app}", app = APP_NAME)).clicked() {
                     command = Some(CommandId::Exit);
                 }
             }

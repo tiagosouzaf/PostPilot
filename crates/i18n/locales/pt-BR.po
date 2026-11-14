@@ -3143,3 +3143,386 @@ msgstr "{source} para {file}"
 
 msgid "{what} server: {e}"
 msgstr "Servidor {what}: {e}"
+
+# Workspace, controle de versão, Claude Code e atualização
+
+msgid "\"{name}\" already exists."
+msgstr "\"{name}\" já existe."
+
+msgid "(detached)"
+msgstr "(desanexado)"
+
+msgid "Added"
+msgstr "Adicionado"
+
+msgid "Deleted"
+msgstr "Excluído"
+
+msgid "Modified"
+msgstr "Modificado"
+
+msgid "Renamed"
+msgstr "Renomeado"
+
+msgid "Asks api.github.com for the latest release of {repository}. Only the app name and version are sent."
+msgstr "Consulta api.github.com pela versão mais recente de {repository}. Só o nome e a versão do app são enviados."
+
+msgid "Bring the changes from the remote"
+msgstr "Traz as alterações do remoto"
+
+msgid "Changes:"
+msgstr "Alterações:"
+
+msgid "Check for Updates"
+msgstr "Verificar Atualizações"
+
+msgid "Check for updates when the app starts"
+msgstr "Verificar atualizações ao iniciar o app"
+
+msgid "Check now"
+msgstr "Verificar agora"
+
+msgid "Checking GitHub for a new version…"
+msgstr "Procurando uma nova versão no GitHub…"
+
+msgid "Claude Code access is not available in this mode."
+msgstr "O acesso do Claude Code não está disponível neste modo."
+
+msgid "Claude Code can no longer reach PostPilot."
+msgstr "O Claude Code não consegue mais acessar o PostPilot."
+
+msgid "Claude Code can now use PostPilot."
+msgstr "O Claude Code já pode usar o PostPilot."
+
+msgid "Claude Code can use PostPilot through `postpilot mcp`. {calls} call(s) so far. Turn it off in Tools > Allow Claude Code (MCP)."
+msgstr "O Claude Code pode usar o PostPilot pelo `postpilot mcp`. {calls} chamada(s) até agora. Desligue em Ferramentas > Permitir Claude Code (MCP)."
+
+msgid "Claude Code: access on. Add it once with: claude mcp add postpilot -- postpilot mcp (channel {channel})"
+msgstr "Claude Code: acesso ligado. Adicione uma vez com: claude mcp add postpilot -- postpilot mcp (canal {channel})"
+
+msgid "Claude Code: access turned off."
+msgstr "Claude Code: acesso desligado."
+
+msgid "Claude Code: on"
+msgstr "Claude Code: ligado"
+
+msgid "Claude Code: working"
+msgstr "Claude Code: trabalhando"
+
+msgid "Clone"
+msgstr "Clonar"
+
+msgid "Clone Workspace"
+msgstr "Clonar Workspace"
+
+msgid "Clone Workspace into"
+msgstr "Clonar Workspace em"
+
+msgid "Clone Workspace..."
+msgstr "Clonar Workspace..."
+
+msgid "Clone failed: {e}"
+msgstr "Falha ao clonar: {e}"
+
+msgid "Cloning {url}..."
+msgstr "Clonando {url}..."
+
+msgid "Cloning..."
+msgstr "Clonando..."
+
+msgid "Close {app}"
+msgstr "Fechar o {app}"
+
+msgid "Commit"
+msgstr "Commit"
+
+msgid "Commit and Push"
+msgstr "Commit e Push"
+
+msgid "Commit..."
+msgstr "Commit..."
+
+msgid "Commits to push / to pull"
+msgstr "Commits para enviar / para receber"
+
+msgid "Committed: {m}"
+msgstr "Commit feito: {m}"
+
+msgid "Committing..."
+msgstr "Fazendo commit..."
+
+msgid "Conflicts: {files}"
+msgstr "Conflitos: {files}"
+
+msgid "Could not create the folder: {e}"
+msgstr "Não foi possível criar a pasta: {e}"
+
+msgid "Could not create {path}: {e}"
+msgstr "Não foi possível criar {path}: {e}"
+
+msgid "Could not turn on Claude Code access: {e}"
+msgstr "Não foi possível ligar o acesso do Claude Code: {e}"
+
+msgid "Created workspace {name} in {folder}."
+msgstr "Workspace {name} criado em {folder}."
+
+msgid "Created {path}."
+msgstr "{path} criado."
+
+msgid "Don't Run"
+msgstr "Não Executar"
+
+msgid "Download and install"
+msgstr "Baixar e instalar"
+
+msgid "Download the .deb from the release page first."
+msgstr "Baixe o .deb na página da versão primeiro."
+
+msgid "Download the new version from the release page."
+msgstr "Baixe a nova versão na página da versão."
+
+msgid "Downloading update…"
+msgstr "Baixando atualização…"
+
+msgid "Downloading {version}…"
+msgstr "Baixando {version}…"
+
+msgid "Enter a commit message."
+msgstr "Digite uma mensagem de commit."
+
+msgid "Enter a valid folder name."
+msgstr "Digite um nome de pasta válido."
+
+msgid "Enter the repository URL."
+msgstr "Digite a URL do repositório."
+
+msgid "Exported servers to {path} (passwords are not exported)."
+msgstr "Servidores exportados para {path} (as senhas não são exportadas)."
+
+msgid "Folder name:"
+msgstr "Nome da pasta:"
+
+msgid "Initialize Git"
+msgstr "Inicializar Git"
+
+msgid "Initialized the git repository."
+msgstr "Repositório git inicializado."
+
+msgid "Initializing..."
+msgstr "Inicializando..."
+
+msgid "Item(s) Saved. Linked to {server} / {db}."
+msgstr "Item(ns) Salvo(s). Vinculado a {server} / {db}."
+
+msgid "Item(s) Saved. Linked to {server}."
+msgstr "Item(ns) Salvo(s). Vinculado a {server}."
+
+msgid "Item(s) Saved. Register this server in the workspace to link the query to it."
+msgstr "Item(ns) Salvo(s). Registre este servidor no workspace para vincular a consulta a ele."
+
+msgid "Message:"
+msgstr "Mensagem:"
+
+msgid "New Folder"
+msgstr "Nova Pasta"
+
+msgid "New Folder is not open."
+msgstr "Nova Pasta não está aberta."
+
+msgid "New Folder..."
+msgstr "Nova Pasta..."
+
+msgid "New Workspace"
+msgstr "Novo Workspace"
+
+msgid "New Workspace..."
+msgstr "Novo Workspace..."
+
+msgid "Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper."
+msgstr "Em seguida você escolhe a pasta do clone. O Git usa suas chaves SSH e seu gerenciador de credenciais."
+
+msgid "No queries yet. Right-click \"Queries\" and choose \"New Query\", or save a query inside the queries folder."
+msgstr "Nenhuma consulta ainda. Clique com o botão direito em \"Consultas\" e escolha \"Nova Consulta\", ou salve uma consulta dentro da pasta de consultas."
+
+msgid "No release has been published yet."
+msgstr "Nenhuma versão foi publicada ainda."
+
+msgid "No remote"
+msgstr "Sem remoto"
+
+msgid "No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries."
+msgstr "Nenhum workspace aberto. Um workspace é uma pasta, normalmente um repositório git, com seus servidores e consultas."
+
+msgid "Not under source control."
+msgstr "Fora do controle de versão."
+
+msgid "Open Workspace"
+msgstr "Abrir Workspace"
+
+msgid "Open Workspace..."
+msgstr "Abrir Workspace..."
+
+msgid "Open the releases page"
+msgstr "Abrir a página de versões"
+
+msgid "Opened workspace {name}."
+msgstr "Workspace {name} aberto."
+
+msgid "Pull"
+msgstr "Pull"
+
+msgid "Pulled."
+msgstr "Pull feito."
+
+msgid "Pulled: {m}"
+msgstr "Pull feito: {m}"
+
+msgid "Pulling..."
+msgstr "Fazendo pull..."
+
+msgid "Push"
+msgstr "Push"
+
+msgid "Pushing..."
+msgstr "Fazendo push..."
+
+msgid "Queries"
+msgstr "Consultas"
+
+msgid "Reading status..."
+msgstr "Lendo o status..."
+
+msgid "Release page"
+msgstr "Página da versão"
+
+msgid "Remote"
+msgstr "Remoto"
+
+msgid "Remote set to {url}."
+msgstr "Remoto definido como {url}."
+
+msgid "Remote..."
+msgstr "Remoto..."
+
+msgid "Repository URL (origin), for example git@github.com:you/sql.git:"
+msgstr "URL do repositório (origin), por exemplo git@github.com:voce/sql.git:"
+
+msgid "Repository URL, for example git@github.com:you/sql.git:"
+msgstr "URL do repositório, por exemplo git@github.com:voce/sql.git:"
+
+msgid "Resolved  {c}"
+msgstr "Resolvido  {c}"
+
+msgid "Restart now"
+msgstr "Reiniciar agora"
+
+msgid "Restart to update"
+msgstr "Reinicie para atualizar"
+
+msgid "Run"
+msgstr "Executar"
+
+msgid "Send your commits to the remote"
+msgstr "Envia seus commits para o remoto"
+
+msgid "Servers"
+msgstr "Servidores"
+
+msgid "Setting remote..."
+msgstr "Definindo o remoto..."
+
+msgid "Skip this version"
+msgstr "Pular esta versão"
+
+msgid "The download is checked against the release's SHA256SUMS."
+msgstr "O download é conferido com o SHA256SUMS da versão."
+
+msgid "The installer for {version} is running. Close {app} so it can replace the files."
+msgstr "O instalador da versão {version} está em execução. Feche o {app} para que ele possa substituir os arquivos."
+
+msgid "The query is linked to \"{server}\", which is not a server of this workspace."
+msgstr "A consulta está vinculada a \"{server}\", que não é um servidor deste workspace."
+
+msgid "This copy is managed by your package manager. Update it with:"
+msgstr "Esta cópia é gerenciada pelo seu gerenciador de pacotes. Atualize com:"
+
+msgid "This is the latest version."
+msgstr "Esta é a versão mais recente."
+
+msgid "This release has no package for this installation."
+msgstr "Esta versão não tem pacote para esta instalação."
+
+msgid "Try again"
+msgstr "Tentar novamente"
+
+msgid "Update available: {version}"
+msgstr "Atualização disponível: {version}"
+
+msgid "Update checks are off in this mode."
+msgstr "A verificação de atualizações está desligada neste modo."
+
+msgid "Version {version} is available."
+msgstr "A versão {version} está disponível."
+
+msgid "Version {version} is installed."
+msgstr "A versão {version} está instalada."
+
+msgid "Wait for the current clone."
+msgstr "Aguarde o clone atual."
+
+msgid "Where: {target}"
+msgstr "Onde: {target}"
+
+msgid "Workspace"
+msgstr "Workspace"
+
+msgid "Workspace closed."
+msgstr "Workspace fechado."
+
+msgid "You have the latest version."
+msgstr "Você tem a versão mais recente."
+
+msgid "query window {title} ({server})"
+msgstr "janela de consulta {title} ({server})"
+
+msgid "{folder} already exists and is not empty."
+msgstr "{folder} já existe e não está vazia."
+
+msgid "{n} more request(s) waiting."
+msgstr "Mais {n} pedido(s) aguardando."
+
+msgid "{server}, database {database}"
+msgstr "{server}, banco de dados {database}"
+
+msgid "{who} wants to run SQL"
+msgstr "{who} quer executar SQL"
+
+msgid "{who}: edited {title} (Ctrl+Z undoes it)"
+msgstr "{who}: editou {title} (Ctrl+Z desfaz)"
+
+msgid "{who}: executing {title} (read only)"
+msgstr "{who}: executando {title} (somente leitura)"
+
+msgid "{who}: executing {title} needs your confirmation"
+msgstr "{who}: executar {title} precisa da sua confirmação"
+
+msgid "{who}: execution finished: {outcome}"
+msgstr "{who}: execução concluída: {outcome}"
+
+msgid "{who}: opened {title}"
+msgstr "{who}: abriu {title}"
+
+msgid "{who}: run_query (read only): {sql}"
+msgstr "{who}: run_query (somente leitura): {sql}"
+
+msgid "{who}: run_query needs your confirmation: {sql}"
+msgstr "{who}: run_query precisa da sua confirmação: {sql}"
+
+msgid "{who}: you allowed: {sql}"
+msgstr "{who}: você permitiu: {sql}"
+
+msgid "{who}: you declined to run the SQL."
+msgstr "{who}: você recusou executar o SQL."
+
+msgid "{who}: {tool} finished: {summary}"
+msgstr "{who}: {tool} concluído: {summary}"
