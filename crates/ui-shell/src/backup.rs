@@ -340,7 +340,7 @@ impl BackupDialog {
     /// Desenha a janela.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step();
-        let modal = egui::Modal::new(egui::Id::new("backup_dialog")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("backup_dialog")).show(ctx, |ui| {
             ui.set_width(640.0);
             ui.heading(format!("Back Up Database - {}", self.options.database));
             ui.separator();

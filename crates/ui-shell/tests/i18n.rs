@@ -107,6 +107,13 @@ fn switches_the_interface_to_portuguese_and_back() {
     harness.run();
     harness.get_by_label("File");
     assert_eq!(pgstudio_i18n::language(), Language::English);
+
+    // O tema escolhido pelo menu também fica gravado.
+    harness.state_mut().execute(&ctx, CommandId::ThemeLight);
+    harness.run();
+    let (_, saved) = PreferencesStore::open(&file);
+    assert_eq!(saved.theme(), pgstudio_core::Theme::Light);
+    assert_eq!(saved.language, LanguageSetting::Fixed(Language::English));
     let _ = std::fs::remove_dir_all(dir);
     set_language(Language::English);
 }

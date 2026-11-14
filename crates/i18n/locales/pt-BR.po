@@ -647,3 +647,18 @@ msgstr "Não é possível alterar o banco de dados enquanto uma consulta está e
 
 msgid "The database was not changed."
 msgstr "O banco de dados não foi alterado."
+
+# Tools > Options
+
+msgid "Color theme:"
+msgstr "Tema de cores:"
+
+# Formatador e troca de banco
+
+msgid "Available Databases"
+msgstr "Bancos de Dados Disponíveis"
+
+# Claude
+
+msgid "Allow Claude Code (MCP)"
+msgstr "Permitir o Claude Code (MCP)"

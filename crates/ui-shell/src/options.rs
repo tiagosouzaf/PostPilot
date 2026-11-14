@@ -7,22 +7,29 @@
 use eframe::egui;
 use pgstudio_i18n::{Language, tr};
 
-use crate::preferences::{LanguageSetting, Preferences};
+use crate::preferences::{LanguageSetting, Preferences, ThemeSetting};
+use pgstudio_core::Theme;
 
 /// Uma página da árvore.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// Environment > General (tema).
+    General,
     /// Environment > International Settings.
     International,
 }
 
 impl Page {
     /// As páginas, com a categoria da árvore, na ordem de exibição.
-    pub const ALL: &[(&'static str, Page)] = &[("Environment", Page::International)];
+    pub const ALL: &[(&'static str, Page)] = &[
+        ("Environment", Page::General),
+        ("Environment", Page::International),
+    ];
 
     /// Nome da página na árvore (em inglês; passa por `tr` ao exibir).
     pub fn title(self) -> &'static str {
         match self {
+            Page::General => "General",
             Page::International => "International Settings",
         }
     }
@@ -122,8 +129,29 @@ impl OptionsDialog {
         ui.heading(tr(self.page.title()));
         ui.add_space(6.0);
         match self.page {
+            Page::General => self.general(ui),
             Page::International => self.international(ui),
         }
+    }
+
+    fn general(&mut self, ui: &mut egui::Ui) {
+        let current = self.draft.theme();
+        ui.horizontal(|ui| {
+            ui.label(tr("Color theme:"));
+            egui::ComboBox::from_id_salt("options_theme")
+                .width(220.0)
+                .selected_text(current.label())
+                .show_ui(ui, |ui| {
+                    for theme in Theme::ALL {
+                        if ui
+                            .selectable_label(current == theme, theme.label())
+                            .clicked()
+                        {
+                            self.draft.theme = ThemeSetting(Some(theme));
+                        }
+                    }
+                });
+        });
     }
 
     fn international(&mut self, ui: &mut egui::Ui) {

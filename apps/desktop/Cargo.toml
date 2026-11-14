@@ -15,6 +15,7 @@ path = "src/main.rs"
 pgstudio-core.workspace = true
 pgstudio-i18n.workspace = true
 pgstudio-ui-shell.workspace = true
+pgstudio-automation.workspace = true
 pgstudio-pg-metadata.workspace = true
 # glow (OpenGL) junto com o wgpu padrão: `--renderer glow` e a reserva
 # quando o wgpu não abre (marco 6.6).

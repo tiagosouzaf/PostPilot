@@ -692,18 +692,34 @@ impl ShellApp {
             options::Action::Apply(prefs) => {
                 self.options = None;
                 prefs.apply();
-                if let Some(store) = &self.preferences_store
-                    && let Err(e) = store.save(&prefs)
-                {
-                    self.status = trf!(
-                        "Could not save the options to {path}: {error}",
-                        path = store.path().display(),
-                        error = e
-                    );
+                if prefs.theme() != self.theme {
+                    self.set_theme(ctx, prefs.theme());
                 }
-                self.preferences = prefs;
+                self.save_preferences(prefs);
             }
         }
+    }
+
+    /// Guarda as preferências e grava no arquivo, se houver.
+    fn save_preferences(&mut self, prefs: preferences::Preferences) {
+        if let Some(store) = &self.preferences_store
+            && let Err(e) = store.save(&prefs)
+        {
+            self.status = trf!(
+                "Could not save the options to {path}: {error}",
+                path = store.path().display(),
+                error = e
+            );
+        }
+        self.preferences = prefs;
+    }
+
+    /// Troca o tema pelo menu ou pela toolbar e lembra a escolha.
+    fn choose_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        self.set_theme(ctx, theme);
+        let mut prefs = self.preferences.clone();
+        prefs.theme = preferences::ThemeSetting(Some(theme));
+        self.save_preferences(prefs);
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -1364,6 +1380,7 @@ impl ShellApp {
         matches!(
             cmd,
             Exit | ThemeLight
+                | ClaudeCodeAccess
                 | ThemeDark
                 | FullScreen
                 | About
@@ -1443,8 +1460,8 @@ impl ShellApp {
                     });
                 }
             }
-            CommandId::ThemeLight => self.set_theme(ctx, Theme::Light),
-            CommandId::ThemeDark => self.set_theme(ctx, Theme::Dark),
+            CommandId::ThemeLight => self.choose_theme(ctx, Theme::Light),
+            CommandId::ThemeDark => self.choose_theme(ctx, Theme::Dark),
             CommandId::FullScreen => {
                 let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
@@ -1457,6 +1474,10 @@ impl ShellApp {
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
             CommandId::SchemaCompare => self.open_compare(ctx, None),
+            CommandId::ClaudeCodeAccess => {
+                let on = !self.claude.is_listening();
+                self.set_claude_code_access(ctx, on);
+            }
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
@@ -1900,7 +1921,7 @@ impl ShellApp {
             return;
         }
         let mut answer: Option<Option<bool>> = None;
-        let modal = egui::Modal::new(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading(tr("Include Actual Execution Plan"));
             ui.label(tr(
@@ -2391,7 +2412,7 @@ impl ShellApp {
             })
             .collect();
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("save_changes")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("save_changes")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(APP_NAME);
             ui.label(tr("Save changes to the following items?"));
@@ -2473,6 +2494,9 @@ impl ShellApp {
                         self.menu_entries(ui, menu.entries, &mut commands);
                     });
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.theme_switch(ui, &mut commands);
+                });
             });
         });
         let mut picked = Picked::default();
@@ -2487,8 +2511,8 @@ impl ShellApp {
         egui::Panel::bottom("status_bar")
             .frame(
                 egui::Frame::new()
-                    .fill(theme::palette(self.theme).accent)
-                    .inner_margin(egui::Margin::symmetric(8, 3)),
+                    .fill(theme::palette(self.theme).status_bar)
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
             )
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
@@ -2581,6 +2605,7 @@ impl ShellApp {
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
+                .frame(theme::dialog_frame(&ctx.global_style()))
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
@@ -3156,6 +3181,7 @@ impl ShellApp {
                         .and_then(|id| self.documents.get(id))
                         .is_some_and(|d| d.actual_plan);
                     let selected = (cmd == CommandId::ActualPlan && actual)
+                        || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.theme),
                             (CommandId::ThemeLight, Theme::Light)
@@ -3183,6 +3209,28 @@ impl ShellApp {
                     ui.separator();
                 }
             }
+        }
+    }
+
+    /// Botão de trocar entre os temas claro e escuro, no canto da barra de
+    /// menus (o mesmo que View > Color Theme).
+    fn theme_switch(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>) {
+        use egui_phosphor::regular as icon;
+        let (glyph, command) = match self.theme {
+            Theme::Dark => (icon::SUN, CommandId::ThemeLight),
+            Theme::Light => (icon::MOON, CommandId::ThemeDark),
+        };
+        let tip = format!(
+            "Color Theme: {} (click for {})",
+            self.theme.label(),
+            theme::toggled(self.theme).label()
+        );
+        if ui
+            .add(egui::Button::new(glyph).frame(false))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            clicked.push(command);
         }
     }
 
@@ -3222,11 +3270,11 @@ impl ShellApp {
                     }
                     Tool::Database => {
                         let tip = match self.keymap.shortcut_for(CommandId::ChangeDatabase) {
-                            Some(s) => format!("Available Databases ({s})"),
+                            Some(s) => format!("{} ({s})", tr("Available Databases")),
                             None => tr("Available Databases").to_string(),
                         };
                         let shown = if picker.current.is_empty() {
-                            "(no database)"
+                            tr("(no database)")
                         } else {
                             picker.current.as_str()
                         };
@@ -3274,7 +3322,7 @@ impl ShellApp {
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
-        let color = theme::palette(self.theme).on_accent;
+        let color = theme::palette(self.theme).on_status_bar;
         let connection = self.connection_label();
         let cursor = self
             .active_doc
@@ -3287,6 +3335,7 @@ impl ShellApp {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
                 ui.label(RichText::new(connection).color(color));
+                self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {
                     ui.separator();
                     ui.label(

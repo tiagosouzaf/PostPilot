@@ -108,6 +108,7 @@ commands! {
     QueryOptions => "Query.Options", "Query Options…";
     // Tools
     SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
+    ClaudeCodeAccess => "Tools.ClaudeCodeAccess", "Allow Claude Code (MCP)";
     Options => "Tools.Options", "Options…";
     // Window
     NewHorizontalTabGroup => "Window.NewHorizontalTabGroup", "New Horizontal Tab Group";

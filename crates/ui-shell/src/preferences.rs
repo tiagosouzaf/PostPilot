@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use pgstudio_core::Theme;
 use pgstudio_i18n::Language;
 use serde::{Deserialize, Serialize};
 
@@ -49,15 +50,49 @@ impl From<LanguageSetting> for String {
     }
 }
 
+/// Tema salvo: `"light"` ou `"dark"`; sem valor (ou outro valor), o padrão
+/// do app.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub struct ThemeSetting(pub Option<Theme>);
+
+impl From<String> for ThemeSetting {
+    fn from(s: String) -> Self {
+        ThemeSetting(match s.as_str() {
+            "light" => Some(Theme::Light),
+            "dark" => Some(Theme::Dark),
+            _ => None,
+        })
+    }
+}
+
+impl From<ThemeSetting> for String {
+    fn from(t: ThemeSetting) -> Self {
+        match t.0 {
+            Some(Theme::Light) => "light",
+            Some(Theme::Dark) => "dark",
+            None => "default",
+        }
+        .to_string()
+    }
+}
+
 /// As preferências.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     /// Idioma da interface.
     pub language: LanguageSetting,
+    /// Tema de cores (View > Color Theme ou Environment > General).
+    pub theme: ThemeSetting,
 }
 
 impl Preferences {
+    /// Tema efetivo.
+    pub fn theme(&self) -> Theme {
+        self.theme.0.unwrap_or_default()
+    }
+
     /// Aplica o que vale para o processo todo (hoje, o idioma).
     pub fn apply(&self) {
         pgstudio_i18n::set_language(self.language.resolve());
@@ -116,15 +151,23 @@ mod tests {
             LanguageSetting::Fixed(Language::English),
             LanguageSetting::Fixed(Language::PortugueseBrazil),
         ] {
-            let prefs = Preferences { language: setting };
+            let prefs = Preferences {
+                language: setting,
+                ..Preferences::default()
+            };
             let json = serde_json::to_string(&prefs).unwrap();
             assert_eq!(serde_json::from_str::<Preferences>(&json).unwrap(), prefs);
         }
         let json = serde_json::to_string(&Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
+            theme: ThemeSetting(Some(Theme::Light)),
         })
         .unwrap();
-        assert_eq!(json, r#"{"language":"pt-BR"}"#);
+        assert_eq!(json, r#"{"language":"pt-BR","theme":"light"}"#);
+        let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(p.theme(), Theme::Dark);
+        let p: Preferences = serde_json::from_str(r#"{"theme":"pink"}"#).unwrap();
+        assert_eq!(p.theme(), Theme::default());
     }
 
     #[test]
@@ -144,6 +187,7 @@ mod tests {
         assert!(store.error.is_none());
         let prefs = Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
+            theme: ThemeSetting(Some(Theme::Light)),
         };
         store.save(&prefs).unwrap();
         assert_eq!(PreferencesStore::open(&file).1, prefs);
