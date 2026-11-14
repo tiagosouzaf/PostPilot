@@ -55,6 +55,9 @@
 //! - `PGSTUDIO_REGISTERED=arquivo.json`: usa outra árvore de Registered
 //!   Servers no lugar de `<config>/PostPilot/registered_servers.json` e já
 //!   abre a janela (para screenshots).
+//! - `PGSTUDIO_WORKSPACE=pasta`: abre este workspace (veja
+//!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
+//!   lembrado em `<config>/PGStudio/workspace.txt`.
 //!
 //! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
 //! servidores registrados em `<config>/PostPilot/registered_servers.json`,
@@ -228,6 +231,14 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     app = app.with_registered_servers(RegisteredServers::open(file));
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
+            if let Some(root) = std::env::var_os("PGSTUDIO_WORKSPACE").map(PathBuf::from) {
+                app.open_workspace(&root);
+            } else if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                app = app.with_workspace_memory(dir.join("PGStudio").join("workspace.txt"));
             }
             if !demo {
                 match DbRuntime::new() {
@@ -481,5 +492,17 @@ impl FileDialogs for NativeDialogs {
             .add_filter("SQL INSERT statements", &["sql"])
             .save_file();
         self.remember(path)
+    }
+
+    fn folder_path(&mut self, title: &str) -> Option<PathBuf> {
+        let mut dialog = rfd::FileDialog::new().set_title(title);
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let path = dialog.pick_folder();
+        if let Some(p) = &path {
+            self.last_dir = Some(p.clone());
+        }
+        path
     }
 }
