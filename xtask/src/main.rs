@@ -5,6 +5,10 @@
 //!   uma grade de 1 milhão de linhas, IntelliSense num catálogo de 10 mil
 //!   tabelas, diagramas, Table Designer, um plano de 2.000 nós e o Activity
 //!   Monitor com 5.000 sessões.
+//! - `dist`: pacotes de instalação (.deb, AppImage e .zip do Windows); veja
+//!   [`dist`].
+
+mod dist;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -86,8 +90,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("bench") => parse_bench(&args[1..]).and_then(bench),
+        Some("dist") => dist::parse(&args[1..]).and_then(|a| dist::run(a, &workspace_root())),
         Some("-h" | "--help") | None => {
-            println!("{USAGE}");
+            println!("{USAGE}\n\n{}", dist::USAGE);
             return ExitCode::SUCCESS;
         }
         Some(other) => Err(format!("tarefa desconhecida: {other}\n\n{USAGE}")),
