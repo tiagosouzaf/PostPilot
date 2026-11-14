@@ -327,7 +327,7 @@ impl ConnectDialog {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
         }
         let connecting = self.pending.is_some() || action != DialogAction::None;
-        let modal = egui::Modal::new(egui::Id::new("connect_to_server")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("connect_to_server")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading("Connect to Server");
             ui.add_space(4.0);

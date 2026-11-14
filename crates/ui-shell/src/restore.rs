@@ -515,7 +515,7 @@ impl RestoreDialog {
     /// Desenha a janela.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
-        let modal = egui::Modal::new(egui::Id::new("restore_dialog")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("restore_dialog")).show(ctx, |ui| {
             ui.set_width(680.0);
             ui.heading("Restore Database");
             ui.separator();

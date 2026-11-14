@@ -37,10 +37,10 @@ pub fn window_title() -> String {
 /// Tema de cores da interface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Theme {
-    /// Tema claro, o padrão do SSMS.
-    #[default]
+    /// Tema claro, o do SSMS.
     Light,
-    /// Tema escuro.
+    /// Tema escuro, o padrão.
+    #[default]
     Dark,
 }
 
@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_is_light() {
-        assert_eq!(Theme::default(), Theme::Light);
+    fn default_theme_is_dark() {
+        assert_eq!(Theme::default(), Theme::Dark);
     }
 }

@@ -960,7 +960,7 @@ impl RegisteredPanel {
                 "server group and everything in it"
             };
             let mut answer = None;
-            let modal = egui::Modal::new(egui::Id::new("registered_delete")).show(ctx, |ui| {
+            let modal = crate::theme::modal(egui::Id::new("registered_delete")).show(ctx, |ui| {
                 ui.set_width(360.0);
                 ui.heading("Delete");
                 ui.add_space(4.0);
@@ -1175,7 +1175,7 @@ impl ServerDialog {
         } else {
             "New Server Registration"
         };
-        let modal = egui::Modal::new(egui::Id::new("registered_server")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("registered_server")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading(title);
             ui.add_space(4.0);
@@ -1294,7 +1294,7 @@ impl GroupDialog {
         } else {
             "New Server Group Properties"
         };
-        let modal = egui::Modal::new(egui::Id::new("registered_group")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("registered_group")).show(ctx, |ui| {
             ui.set_width(400.0);
             ui.heading(title);
             ui.add_space(4.0);

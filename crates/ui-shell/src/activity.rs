@@ -1147,7 +1147,7 @@ impl ActivityMonitor {
             ),
         };
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("activity_confirm")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("activity_confirm")).show(ctx, |ui| {
             ui.set_width(400.0);
             ui.heading(title);
             ui.label(text);
