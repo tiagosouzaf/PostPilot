@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
 keyring.workspace = true
+pgstudio-updater.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true

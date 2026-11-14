@@ -635,7 +635,7 @@ impl ResultEditor {
         let count = confirm.rows.end - confirm.rows.start;
         let table = self.target.as_ref().map_or("", |t| t.display.as_str());
         let mut answer = None;
-        let modal = egui::Modal::new(id.with("delete_rows")).show(ctx, |ui| {
+        let modal = crate::theme::modal(id.with("delete_rows")).show(ctx, |ui| {
             ui.set_width(420.0);
             ui.heading(if count == 1 {
                 "Delete Row"

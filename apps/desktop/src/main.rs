@@ -19,7 +19,7 @@
 //!   quando o primeiro frame aparece e ignora o layout salvo. Com `grid` ou
 //!   `intellisense`, roda também esse cenário e escreve os números (veja
 //!   `pgstudio_ui_shell::bench`).
-//! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
+//! - `PGSTUDIO_THEME=light|dark`: abre com esse tema (sem ela, o escuro).
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
@@ -70,6 +70,11 @@
 //! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
 //! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
 //! de medição não usam o cofre.
+//!
+//! Ao abrir, o app procura versão nova nos Releases do GitHub (no máximo a
+//! cada 6 horas; desligável em Help > Check for Updates, guardado em
+//! `<config>/PostPilot/update.json`). Os modos de screenshot e de medição não
+//! consultam a rede.
 
 // Sem console no Windows nos builds de release (os pacotes de `cargo xtask
 // dist`); em debug o console fica, para ver os logs.
@@ -91,6 +96,7 @@ use pgstudio_ui_shell::documents::FileDialogs;
 use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
+use pgstudio_ui_shell::update::Updater;
 
 mod migrate;
 mod renderer;
@@ -101,6 +107,8 @@ const APP_ID: &str = "postpilot";
 const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/postpilot-256.png");
 
 fn main() -> std::process::ExitCode {
+    // O .exe antigo que uma atualização da cópia portátil deixou para trás.
+    pgstudio_ui_shell::update::cleanup_old_binary();
     if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
         return pgstudio_automation::mcp::serve_stdio();
     }
@@ -191,8 +199,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         ..Default::default()
     };
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
+        Ok("light") => Theme::Light,
         Ok("dark") => Theme::Dark,
-        _ => Theme::Light,
+        _ => Theme::default(),
     };
     let (keymap, keymap_status) = load_keymap();
     let files = launch.files.clone();
@@ -240,6 +249,13 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     app = app.with_registered_servers(RegisteredServers::open(file));
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
+            if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                let file = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("update.json");
+                app = app.with_updater(&cc.egui_ctx, Updater::detect(file));
             }
             // Claude Code pelo MCP (Tools > Allow Claude Code), fora dos
             // modos de screenshot e medição, a menos que o canal seja dado.

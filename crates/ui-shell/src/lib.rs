@@ -35,6 +35,7 @@ pub mod secrets;
 pub mod security;
 pub mod servers;
 pub mod theme;
+pub mod update;
 
 /// Ações do menu de contexto do Object Explorer.
 pub use pgstudio_object_explorer::Event as ExplorerEvent;
@@ -67,6 +68,8 @@ pub struct ShellApp {
     about_open: bool,
     /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
     renderer: Option<String>,
+    /// Versão nova: checagem, janela "Check for Updates" e instalação.
+    updater: update::Updater,
     keymap: Keymap,
     chords: ChordMatcher,
     status: String,
@@ -267,6 +270,7 @@ impl Default for ShellApp {
             theme: Theme::default(),
             about_open: false,
             renderer: None,
+            updater: update::Updater::default(),
             keymap: Keymap::ssms(),
             chords: ChordMatcher::default(),
             status: READY.to_string(),
@@ -629,6 +633,18 @@ impl ShellApp {
     pub fn with_renderer(mut self, renderer: impl Into<String>) -> Self {
         self.renderer = Some(renderer.into());
         self
+    }
+
+    /// Liga a checagem de versão nova (e já checa, se estiver na hora).
+    pub fn with_updater(mut self, ctx: &egui::Context, mut updater: update::Updater) -> Self {
+        updater.check_if_due(ctx);
+        self.updater = updater;
+        self
+    }
+
+    /// A atualização do app, para testes.
+    pub fn updater_mut(&mut self) -> &mut update::Updater {
+        &mut self.updater
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -1293,6 +1309,7 @@ impl ShellApp {
                 | ThemeDark
                 | FullScreen
                 | About
+                | CheckForUpdates
                 | ObjectExplorer
                 | PropertiesWindow
                 | Output
@@ -1375,6 +1392,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
             }
             CommandId::About => self.about_open = true,
+            CommandId::CheckForUpdates => self.updater.check_now(ctx),
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
@@ -1813,7 +1831,7 @@ impl ShellApp {
             return;
         }
         let mut answer: Option<Option<bool>> = None;
-        let modal = egui::Modal::new(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading("Include Actual Execution Plan");
             ui.label(
@@ -2296,7 +2314,7 @@ impl ShellApp {
             })
             .collect();
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("save_changes")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("save_changes")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(APP_NAME);
             ui.label("Save changes to the following items?");
@@ -2359,6 +2377,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             } else if self.allow_close || dirty.is_empty() {
                 self.save_layout();
+                self.updater.on_close();
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 if self.confirm.is_none() {
@@ -2378,6 +2397,9 @@ impl ShellApp {
                         self.menu_entries(ui, menu.entries, &mut commands);
                     });
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.theme_switch(ui, &mut commands);
+                });
             });
         });
         let mut picked = Picked::default();
@@ -2392,8 +2414,8 @@ impl ShellApp {
         egui::Panel::bottom("status_bar")
             .frame(
                 egui::Frame::new()
-                    .fill(theme::palette(self.theme).accent)
-                    .inner_margin(egui::Margin::symmetric(8, 3)),
+                    .fill(theme::palette(self.theme).status_bar)
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
             )
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
@@ -2485,6 +2507,7 @@ impl ShellApp {
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
+                .frame(theme::dialog_frame(&ctx.global_style()))
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
@@ -2494,9 +2517,11 @@ impl ShellApp {
                     }
                     ui.label("PostgreSQL management studio.");
                     ui.label("Licensed under MIT or Apache-2.0.");
+                    self.updater.about_line(ui, &ctx);
                 });
             self.about_open = open;
         }
+        commands.extend(self.updater.window(&ctx));
 
         for cmd in commands {
             self.execute(&ctx, cmd);
@@ -3085,6 +3110,28 @@ impl ShellApp {
         }
     }
 
+    /// Botão de trocar entre os temas claro e escuro, no canto da barra de
+    /// menus (o mesmo que View > Color Theme).
+    fn theme_switch(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>) {
+        use egui_phosphor::regular as icon;
+        let (glyph, command) = match self.theme {
+            Theme::Dark => (icon::SUN, CommandId::ThemeLight),
+            Theme::Light => (icon::MOON, CommandId::ThemeDark),
+        };
+        let tip = format!(
+            "Color Theme: {} (click for {})",
+            self.theme.label(),
+            theme::toggled(self.theme).label()
+        );
+        if ui
+            .add(egui::Button::new(glyph).frame(false))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            clicked.push(command);
+        }
+    }
+
     /// Toolbar padrão do SSMS.
     fn toolbar(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>, picked: &mut Picked) {
         let picker = self.database_picker();
@@ -3172,8 +3219,8 @@ impl ShellApp {
         });
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
-        let color = theme::palette(self.theme).on_accent;
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let color = theme::palette(self.theme).on_status_bar;
         let connection = self.connection_label();
         let cursor = self
             .active_doc
@@ -3184,6 +3231,7 @@ impl ShellApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
+                self.updater.status_badge(ui, color);
                 ui.label(RichText::new(connection).color(color));
                 self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {

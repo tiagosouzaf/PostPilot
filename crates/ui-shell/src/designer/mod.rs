@@ -1021,7 +1021,7 @@ impl TableDesigner {
         } else {
             script.clone()
         };
-        let modal = egui::Modal::new(egui::Id::new(("change_script", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("change_script", id))).show(ctx, |ui| {
             ui.set_width(560.0);
             ui.heading("Save Change Script");
             ui.label(format!(
@@ -1058,7 +1058,7 @@ impl TableDesigner {
             return;
         };
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new(("designer_warnings", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("designer_warnings", id))).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading("Validation Warnings");
             ui.label("Saving these changes might lose data:");
@@ -1093,7 +1093,7 @@ impl TableDesigner {
         }
         let name = self.qualified_name();
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new(("designer_close", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("designer_close", id))).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(pgstudio_core::APP_NAME);
             ui.label("Save changes to the following items?");

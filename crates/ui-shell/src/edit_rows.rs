@@ -1104,7 +1104,7 @@ impl EditRows {
         }
         let mut answer = None;
         let row = self.confirm_delete.and_then(|r| self.confirm_row_text(r));
-        let modal = egui::Modal::new(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading("Delete Row");
             ui.label("You are about to delete 1 row. Are you sure?");
