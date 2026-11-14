@@ -985,3 +985,37 @@ fn tasks_back_up_opens_the_backup_window() {
     harness.run_steps(3);
     assert!(harness.state().backup_dialog().is_none());
 }
+
+#[test]
+fn tasks_restore_opens_the_restore_window() {
+    use pgstudio_ui_shell::restore::Target;
+    let (mut harness, _) = harness_with_tables();
+    harness.get_by_label_contains(" app_01").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Tasks").hover();
+    harness.run();
+    harness.get_by_label("Restore...").click();
+    harness.run_steps(4);
+    harness.get_by_label("Restore Database");
+    let d = harness.state().restore_dialog().unwrap();
+    assert_eq!(d.options.target, Target::Existing("app_01".into()));
+    match d.tool() {
+        Ok(t) => assert!(t.version.0 >= 17),
+        Err(e) => assert!(e.contains("pg_restore"), "{e}"),
+    }
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(3);
+    assert!(harness.state().restore_dialog().is_none());
+
+    // Na pasta Databases, o destino é um banco novo.
+    harness
+        .query_all_by_label_contains("Databases")
+        .next()
+        .unwrap()
+        .click_secondary();
+    harness.run();
+    harness.get_by_label("Restore Database...").click();
+    harness.run_steps(4);
+    let d = harness.state().restore_dialog().unwrap();
+    assert_eq!(d.options.target, Target::New(String::new()));
+}
