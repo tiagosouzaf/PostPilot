@@ -2,6 +2,7 @@
 //! do arquivo (`pg_restore -l`) para escolher, banco novo ou existente e
 //! as opções clean e create.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -290,7 +291,7 @@ impl RestoreDialog {
         };
         let file = self.options.file.trim().to_string();
         if file.is_empty() {
-            self.error = Some("Choose the backup file.".into());
+            self.error = Some(tr("Choose the backup file.").into());
             return;
         }
         self.error = None;
@@ -298,7 +299,7 @@ impl RestoreDialog {
         self.listed = file.clone();
         match ToolRun::spawn(&tool.path, &["--list".into(), file], &[], true, ctx) {
             Ok(run) => self.phase = Phase::Listing(run),
-            Err(e) => self.error = Some(format!("pg_restore could not start: {e}")),
+            Err(e) => self.error = Some(trf!("pg_restore could not start: {e}", e = e)),
         }
     }
 
@@ -307,17 +308,19 @@ impl RestoreDialog {
             return Some(e.clone());
         }
         if self.options.file.trim().is_empty() {
-            return Some("Choose the backup file.".into());
+            return Some(tr("Choose the backup file.").into());
         }
         if self.entries.is_none() || self.listed != self.options.file.trim() {
-            return Some("List the contents of the file first.".into());
+            return Some(tr("List the contents of the file first.").into());
         }
         if self.chosen.is_empty() {
-            return Some("Select at least one item to restore.".into());
+            return Some(tr("Select at least one item to restore.").into());
         }
         match &self.options.target {
-            Target::New(n) if n.trim().is_empty() => Some("Name the new database.".into()),
-            Target::Existing(n) if n.is_empty() => Some("Choose the destination database.".into()),
+            Target::New(n) if n.trim().is_empty() => Some(tr("Name the new database.").into()),
+            Target::Existing(n) if n.is_empty() => {
+                Some(tr("Choose the destination database.").into())
+            }
             _ => None,
         }
     }
@@ -358,19 +361,19 @@ impl RestoreDialog {
                 entries.len()
             ));
             if let Err(e) = std::fs::write(&path, use_list(entries, &self.chosen)) {
-                self.error = Some(format!("The list of items could not be written: {e}"));
+                self.error = Some(trf!("The list of items could not be written: {e}", e = e));
                 return None;
             }
             self.options.list_file = Some(path);
         } else {
             self.options.list_file = None;
         }
-        let mut log = vec![format!(
-            "Restore: {} to {}",
-            self.options.file.trim(),
-            match &self.options.target {
+        let mut log = vec![trf!(
+            "Restore: {file} to {database}",
+            file = self.options.file.trim(),
+            database = match &self.options.target {
                 Target::Existing(db) | Target::New(db) => db.clone(),
-                Target::FromArchive => "the database named in the file".into(),
+                Target::FromArchive => tr("the database named in the file").into(),
             }
         )];
         if let Target::New(name) = &self.options.target {
@@ -414,9 +417,9 @@ impl RestoreDialog {
                 vec![format!("  {line}")]
             }
             Err(e) => {
-                let e = format!("pg_restore could not start: {e}");
+                let e = trf!("pg_restore could not start: {e}", e = e);
                 self.phase = Phase::Done(Err(e.clone()));
-                vec![format!("Restore: {e}")]
+                vec![trf!("Restore: {e}", e = e)]
             }
         }
     }
@@ -457,7 +460,7 @@ impl RestoreDialog {
                         ToolEvent::Exit(Err(e)) => {
                             let detail = errors.join(" ");
                             self.error = Some(if detail.is_empty() {
-                                format!("The file could not be read ({e}).")
+                                trf!("The file could not be read ({e}).", e = e)
                             } else {
                                 detail
                             });
@@ -472,7 +475,7 @@ impl RestoreDialog {
                     log.extend(self.run(ctx));
                 }
                 Ok(Err(e)) => {
-                    log.push(format!("Restore: failed ({e})."));
+                    log.push(trf!("Restore: failed ({e}).", e = e));
                     next = Some(Phase::Done(Err(e)));
                 }
                 Err(_) => {}
@@ -486,8 +489,8 @@ impl RestoreDialog {
                         }
                         ToolEvent::Exit(r) => {
                             log.push(match &r {
-                                Ok(()) => "Restore: completed.".to_string(),
-                                Err(e) => format!("Restore: failed ({e})."),
+                                Ok(()) => tr("Restore: completed.").to_string(),
+                                Err(e) => trf!("Restore: failed ({e}).", e = e),
                             });
                             next = Some(Phase::Done(r));
                         }
@@ -517,7 +520,7 @@ impl RestoreDialog {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("restore_dialog")).show(ctx, |ui| {
             ui.set_width(680.0);
-            ui.heading("Restore Database");
+            ui.heading(tr("Restore Database"));
             ui.separator();
             let editing = matches!(self.phase, Phase::Editing);
             ui.add_enabled_ui(editing, |ui| self.form(ui, ctx));
@@ -527,25 +530,26 @@ impl RestoreDialog {
                 Phase::Listing(_) => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Reading the backup file...");
+                        ui.label(tr("Reading the backup file..."));
                     });
                 }
                 Phase::Creating(_) | Phase::Running(_) => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Restoring...");
+                        ui.label(tr("Restoring..."));
                     });
                 }
                 Phase::Done(Ok(())) => {
                     ui.label(format!(
-                        "{} The restore completed.",
-                        egui_phosphor::regular::CHECK_CIRCLE
+                        "{} {}",
+                        egui_phosphor::regular::CHECK_CIRCLE,
+                        tr("The restore completed.")
                     ));
                 }
                 Phase::Done(Err(e)) => {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        format!("The restore failed: {e}"),
+                        trf!("The restore failed: {e}", e = e),
                     );
                 }
             }
@@ -568,17 +572,21 @@ impl RestoreDialog {
                 .phase
             {
                 Phase::Editing => {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         request = Some(Request::Closed);
                     }
                     let ok = self.tool.is_ok();
-                    if ui.add_enabled(ok, egui::Button::new("OK")).clicked() {
+                    if ui.add_enabled(ok, egui::Button::new(tr("OK"))).clicked() {
                         request = self.start(ctx).or(request.take());
                     }
                     if ui
                         .add_enabled(
                             ok,
-                            egui::Button::new(format!("{} Script", egui_phosphor::regular::SCROLL)),
+                            egui::Button::new(format!(
+                                "{} {}",
+                                egui_phosphor::regular::SCROLL,
+                                tr("Script")
+                            )),
                         )
                         .clicked()
                         && let Some(line) = self.command_line()
@@ -586,18 +594,18 @@ impl RestoreDialog {
                         ui.ctx().copy_text(line.clone());
                         self.progress = vec![line];
                         request = Some(Request::Log(vec![
-                            "Restore: command line copied to the clipboard.".into(),
+                            tr("Restore: command line copied to the clipboard.").into(),
                         ]));
                     }
                 }
                 Phase::Listing(_) | Phase::Running(_) => {
-                    if ui.button("Stop").clicked() {
+                    if ui.button(tr("Stop")).clicked() {
                         self.cancel();
                     }
                 }
                 Phase::Creating(_) => {}
                 Phase::Done(_) => {
-                    if ui.button("Close").clicked() {
+                    if ui.button(tr("Close")).clicked() {
                         request = Some(Request::Closed);
                     }
                 }
@@ -614,30 +622,30 @@ impl RestoreDialog {
             .num_columns(2)
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
-                ui.label("pg_restore:");
+                ui.label(tr("pg_restore:"));
                 match &self.tool {
                     Ok(t) => ui.label(format!("{} ({})", t.path.display(), t.version_text())),
                     Err(e) => ui.colored_label(ui.visuals().warn_fg_color, e),
                 };
                 ui.end_row();
-                ui.label("Backup file:");
+                ui.label(tr("Backup file:"));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.options.file)
-                            .hint_text("custom or directory backup")
+                            .hint_text(tr("custom or directory backup"))
                             .desired_width(420.0),
                     );
-                    if ui.button("List Contents").clicked() {
+                    if ui.button(tr("List Contents")).clicked() {
                         self.list(ctx);
                     }
                 });
                 ui.end_row();
-                ui.label("Destination:");
+                ui.label(tr("Destination:"));
                 ui.vertical(|ui| {
                     let existing = matches!(self.options.target, Target::Existing(_));
                     let new = matches!(self.options.target, Target::New(_));
                     ui.horizontal(|ui| {
-                        if ui.radio(existing, "Existing database").clicked() && !existing {
+                        if ui.radio(existing, tr("Existing database")).clicked() && !existing {
                             let first = self
                                 .databases
                                 .as_ref()
@@ -656,7 +664,7 @@ impl RestoreDialog {
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.radio(new, "New database").clicked() && !new {
+                        if ui.radio(new, tr("New database")).clicked() && !new {
                             self.options.target = Target::New(self.new_name.clone());
                         }
                         if let Target::New(name) = &mut self.options.target {
@@ -666,26 +674,26 @@ impl RestoreDialog {
                     });
                     let from = self.options.target == Target::FromArchive;
                     if ui
-                        .radio(from, "Database named in the file (--create)")
+                        .radio(from, tr("Database named in the file (--create)"))
                         .clicked()
                     {
                         self.options.target = Target::FromArchive;
                     }
                 });
                 ui.end_row();
-                ui.label("Options:");
+                ui.label(tr("Options:"));
                 ui.vertical(|ui| {
                     ui.checkbox(
                         &mut self.options.clean,
-                        "Drop the objects before recreating them (--clean)",
+                        tr("Drop the objects before recreating them (--clean)"),
                     );
                     ui.checkbox(
                         &mut self.options.no_owner,
-                        "Do not restore the owners (--no-owner)",
+                        tr("Do not restore the owners (--no-owner)"),
                     );
                     ui.checkbox(
                         &mut self.options.single_transaction,
-                        "Restore in a single transaction",
+                        tr("Restore in a single transaction"),
                     );
                 });
                 ui.end_row();
@@ -693,15 +701,15 @@ impl RestoreDialog {
         if let Some(entries) = &self.entries {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.strong(format!(
-                    "Contents: {} of {} items selected",
-                    self.chosen.len(),
-                    entries.len()
+                ui.strong(trf!(
+                    "Contents: {chosen} of {total} items selected",
+                    chosen = self.chosen.len(),
+                    total = entries.len()
                 ));
-                if ui.small_button("All").clicked() {
+                if ui.small_button(tr("All")).clicked() {
                     self.chosen = entries.iter().map(|e| e.id).collect();
                 }
-                if ui.small_button("None").clicked() {
+                if ui.small_button(tr("None")).clicked() {
                     self.chosen.clear();
                 }
             });
@@ -719,7 +727,7 @@ impl RestoreDialog {
                             format!("{}.{}", e.schema, e.name)
                         };
                         if ui
-                            .checkbox(&mut on, format!("{}  {what}", e.kind))
+                            .checkbox(&mut on, format!("{}  {what}", e.kind)) // i18n-ignore
                             .changed()
                         {
                             if on {

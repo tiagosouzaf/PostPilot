@@ -8,6 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::schema::{Action, Check, ForeignKey, Index, Key, Table};
+use pgstudio_i18n::tr;
 
 use super::{Notice, TableDesigner};
 
@@ -21,11 +22,11 @@ pub enum DialogKind {
 
 impl DialogKind {
     pub fn title(self) -> &'static str {
-        match self {
+        tr(match self {
             DialogKind::Relationships => "Foreign Key Relationships",
             DialogKind::IndexesKeys => "Indexes/Keys",
             DialogKind::Checks => "Check Constraints",
-        }
+        })
     }
 }
 
@@ -39,11 +40,11 @@ pub enum KeyKind {
 
 impl KeyKind {
     fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             KeyKind::PrimaryKey => "Primary Key",
             KeyKind::UniqueKey => "Unique Key",
             KeyKind::Index => "Index",
-        }
+        })
     }
 }
 
@@ -396,7 +397,7 @@ impl TableDesigner {
             pgstudio_core::schema::Id,
         ) -> Result<(), pgstudio_core::schema::edit::EditError>,
     ) -> Result<(), String> {
-        let table = self.table.ok_or("The table is not loaded.")?;
+        let table = self.table.ok_or(tr("The table is not loaded."))?;
         f(&mut self.doc, table).map_err(|e| e.0)?;
         self.notice = None;
         Ok(())
@@ -429,7 +430,7 @@ impl TableDesigner {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(200.0);
-                    ui.label("Selected:");
+                    ui.label(tr("Selected:"));
                     egui::ScrollArea::vertical()
                         .id_salt("dialog_list")
                         .max_height(250.0)
@@ -447,17 +448,17 @@ impl TableDesigner {
                                 }
                             }
                             if d.selected.is_none() && d.draft.is_some() {
-                                let _ = ui.selectable_label(true, "(new)");
+                                let _ = ui.selectable_label(true, tr("(new)"));
                             }
                         });
                     ui.horizontal(|ui| {
-                        if ui.button(format!("{} Add", icon::PLUS)).clicked() {
+                        if ui.button(format!("{} {}", icon::PLUS, tr("Add"))).clicked() {
                             action = Some(DialogAction::Add);
                         }
                         if ui
                             .add_enabled(
                                 d.draft.is_some(),
-                                egui::Button::new(format!("{} Delete", icon::TRASH)),
+                                egui::Button::new(format!("{} {}", icon::TRASH, tr("Delete"))),
                             )
                             .clicked()
                         {
@@ -468,7 +469,7 @@ impl TableDesigner {
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
                     let Some(draft) = &mut d.draft else {
-                        ui.weak("Choose Add to create one.");
+                        ui.weak(tr("Choose Add to create one."));
                         return;
                     };
                     match draft {
@@ -485,13 +486,13 @@ impl TableDesigner {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
+                    if ui.button(tr("Close")).clicked() {
                         action = Some(DialogAction::Close);
                     }
                     let changed =
                         d.draft.is_some() && (d.selected.is_none() || d.original != d.draft);
                     if ui
-                        .add_enabled(changed, egui::Button::new("Apply"))
+                        .add_enabled(changed, egui::Button::new(tr("Apply")))
                         .clicked()
                     {
                         action = Some(DialogAction::Apply);
@@ -541,10 +542,10 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
         .num_columns(2)
         .striped(true)
         .show(ui, |ui| {
-            ui.label("(Name)");
-            ui.add(egui::TextEdit::singleline(&mut fk.name).hint_text("(default name)"));
+            ui.label(tr("(Name)"));
+            ui.add(egui::TextEdit::singleline(&mut fk.name).hint_text(tr("(default name)")));
             ui.end_row();
-            ui.label("Primary Key Table");
+            ui.label(tr("Primary Key Table"));
             egui::ComboBox::from_id_salt("fk_ref_table")
                 .selected_text(format!("{}.{}", fk.ref_schema, fk.ref_table))
                 .show_ui(ui, |ui| {
@@ -557,17 +558,17 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
                     }
                 });
             ui.end_row();
-            ui.label("Foreign Key Table");
+            ui.label(tr("Foreign Key Table"));
             ui.label(format!("{}.{}", t.schema, t.name));
             ui.end_row();
-            ui.label("On Update");
+            ui.label(tr("On Update"));
             action_combo(ui, "fk_on_update", &mut fk.on_update);
             ui.end_row();
-            ui.label("On Delete");
+            ui.label(tr("On Delete"));
             action_combo(ui, "fk_on_delete", &mut fk.on_delete);
             ui.end_row();
         });
-    ui.label("Columns (foreign key → primary key):");
+    ui.label(tr("Columns (foreign key → primary key):"));
     let mut remove = None;
     let n = fk.columns.len().max(fk.ref_columns.len());
     fk.columns.resize(n, String::new());
@@ -577,7 +578,11 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
             column_combo(ui, ("fk_col", i), &mut fk.columns[i], t);
             ui.label(icon::ARROW_RIGHT);
             ui.add(egui::TextEdit::singleline(&mut fk.ref_columns[i]).desired_width(140.0));
-            if ui.small_button(icon::X).on_hover_text("Remove").clicked() {
+            if ui
+                .small_button(icon::X)
+                .on_hover_text(tr("Remove"))
+                .clicked()
+            {
                 remove = Some(i);
             }
         });
@@ -587,7 +592,7 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
         fk.ref_columns.remove(i);
     }
     if ui
-        .small_button(format!("{} Add column", icon::PLUS))
+        .small_button(format!("{} {}", icon::PLUS, tr("Add column")))
         .clicked()
     {
         fk.columns.push(String::new());
@@ -626,7 +631,7 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
         .num_columns(2)
         .striped(true)
         .show(ui, |ui| {
-            ui.label("Type");
+            ui.label(tr("Type"));
             egui::ComboBox::from_id_salt("index_kind")
                 .selected_text(k.kind.label())
                 .show_ui(ui, |ui| {
@@ -635,17 +640,17 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
                     }
                 });
             ui.end_row();
-            ui.label("(Name)");
+            ui.label(tr("(Name)"));
             ui.add_enabled(
                 k.kind != KeyKind::PrimaryKey,
                 egui::TextEdit::singleline(&mut k.name),
             );
             ui.end_row();
             if k.kind == KeyKind::Index {
-                ui.label("Is Unique");
+                ui.label(tr("Is Unique"));
                 ui.checkbox(&mut k.unique, "");
                 ui.end_row();
-                ui.label("Method");
+                ui.label(tr("Method"));
                 egui::ComboBox::from_id_salt("index_method")
                     .selected_text(k.method.as_str())
                     .show_ui(ui, |ui| {
@@ -654,15 +659,15 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
                         }
                     });
                 ui.end_row();
-                ui.label("Filter (WHERE)");
+                ui.label(tr("Filter (WHERE)"));
                 ui.add(egui::TextEdit::singleline(&mut k.filter));
                 ui.end_row();
             }
         });
     ui.label(if k.kind == KeyKind::Index {
-        "Columns (names or expressions):"
+        tr("Columns (names or expressions):")
     } else {
-        "Columns:"
+        tr("Columns:")
     });
     let mut remove = None;
     for (i, c) in k.columns.iter_mut().enumerate() {
@@ -672,7 +677,11 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
             } else {
                 column_combo(ui, ("key_col", i), c, t);
             }
-            if ui.small_button(icon::X).on_hover_text("Remove").clicked() {
+            if ui
+                .small_button(icon::X)
+                .on_hover_text(tr("Remove"))
+                .clicked()
+            {
                 remove = Some(i);
             }
         });
@@ -680,7 +689,7 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
     if let Some(i) = remove {
         k.columns.remove(i);
     }
-    ui.menu_button(format!("{} Add column", icon::PLUS), |ui| {
+    ui.menu_button(format!("{} {}", icon::PLUS, tr("Add column")), |ui| {
         for c in &t.columns {
             if ui.button(&c.name).clicked() {
                 k.columns.push(c.name.clone());
@@ -695,15 +704,15 @@ fn check(ui: &mut egui::Ui, c: &mut Check) {
         .num_columns(2)
         .striped(true)
         .show(ui, |ui| {
-            ui.label("(Name)");
-            ui.add(egui::TextEdit::singleline(&mut c.name).hint_text("(default name)"));
+            ui.label(tr("(Name)"));
+            ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(tr("(default name)")));
             ui.end_row();
-            ui.label("Expression");
+            ui.label(tr("Expression"));
             ui.add(
                 egui::TextEdit::multiline(&mut c.expr)
                     .code_editor()
                     .desired_rows(3)
-                    .hint_text("price > 0"),
+                    .hint_text("price > 0"), // i18n-ignore
             );
             ui.end_row();
         });

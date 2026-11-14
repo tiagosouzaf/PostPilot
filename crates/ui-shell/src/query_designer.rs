@@ -18,6 +18,7 @@
 //! Top do SSMS), HAVING (filtro numa coluna agregada), OR (as colunas Or...
 //! da grade), expressões no lugar de colunas e `count(*)`.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
@@ -133,11 +134,11 @@ impl SortType {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             SortType::Unsorted => "Unsorted",
             SortType::Ascending => "Ascending",
             SortType::Descending => "Descending",
-        }
+        })
     }
 }
 
@@ -171,7 +172,7 @@ impl Aggregate {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Aggregate::GroupBy => "Group By",
             Aggregate::Count => "Count",
             Aggregate::Sum => "Sum",
@@ -180,7 +181,7 @@ impl Aggregate {
             Aggregate::Max => "Max",
             Aggregate::Where => "Where",
             Aggregate::Expression => "Expression",
-        }
+        })
     }
 
     fn function(self) -> Option<&'static str> {
@@ -772,7 +773,7 @@ impl QueryDesigner {
             Ok(Err(e)) => self.state = State::Failed(e.0),
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
-                self.state = State::Failed("The tables could not be loaded.".into());
+                self.state = State::Failed(tr("The tables could not be loaded.").into());
             }
         }
     }
@@ -874,12 +875,15 @@ impl QueryDesigner {
         let modal = crate::theme::modal(egui::Id::new("query_designer")).show(ctx, |ui| {
             let width = (ctx.content_rect().width() - 80.0).clamp(500.0, 1100.0);
             ui.set_width(width);
-            ui.heading("Query Designer");
+            ui.heading(tr("Query Designer"));
             match &self.state {
                 State::Loading(_) => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!("Loading tables of {}...", self.database));
+                        ui.label(trf!(
+                            "Loading tables of {database}...",
+                            database = self.database
+                        ));
                     });
                 }
                 State::Failed(e) => {
@@ -893,30 +897,33 @@ impl QueryDesigner {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
                             format!(
-                                "{} {notice} The selection stays in the editor; OK adds the \
-                                 designed query after it.",
-                                icon::WARNING
+                                "{} {notice} {}", // i18n-ignore
+                                icon::WARNING,
+                                tr("The selection stays in the editor; OK adds the designed query after it.")
                             ),
                         );
                     }
                     ui.horizontal(|ui| {
-                        if ui.button(format!("{} Add Table...", icon::PLUS)).clicked() {
+                        if ui
+                            .button(format!("{} {}", icon::PLUS, tr("Add Table...")))
+                            .clicked()
+                        {
                             open_picker = true;
                         }
                         let selected = self.diagram.selected;
                         if ui
                             .add_enabled(
                                 selected.is_some(),
-                                egui::Button::new(format!("{} Remove Table", icon::X)),
+                                egui::Button::new(format!("{} {}", icon::X, tr("Remove Table"))),
                             )
                             .clicked()
                         {
                             remove = selected;
                         }
-                        ui.checkbox(&mut self.query.group_by, "Group By");
-                        ui.checkbox(&mut self.query.distinct, "Distinct");
+                        ui.checkbox(&mut self.query.group_by, tr("Group By"));
+                        ui.checkbox(&mut self.query.distinct, tr("Distinct"));
                         let mut limited = self.query.limit.is_some();
-                        if ui.checkbox(&mut limited, "Limit").changed() {
+                        if ui.checkbox(&mut limited, tr("Limit")).changed() {
                             self.query.limit = limited.then_some(100);
                         }
                         if let Some(n) = &mut self.query.limit {
@@ -924,32 +931,34 @@ impl QueryDesigner {
                         }
                         ui.separator();
                         if ui
-                            .button(format!("{} Add Expression", icon::FUNCTION))
-                            .on_hover_text(
+                            .button(format!("{} {}", icon::FUNCTION, tr("Add Expression")))
+                            .on_hover_text(tr(
                                 "A column typed by hand: lower(name), price * 2, count(*)",
-                            )
+                            ))
                             .clicked()
                         {
                             self.query.add_expression("");
                         }
                         if ui
-                            .button(format!("{} Add Or Column", icon::PLUS))
-                            .on_hover_text(
+                            .button(format!("{} {}", icon::PLUS, tr("Add Or Column")))
+                            .on_hover_text(tr(
                                 "Another column of criteria: each column is ANDed, \
                                  and the columns are ORed",
-                            )
+                            ))
                             .clicked()
                         {
                             self.query.or_columns = self.query.criteria_columns();
                         }
                     });
-                    ui.weak("Check columns to select them; drag a column onto another to join.");
+                    ui.weak(tr(
+                        "Check columns to select them; drag a column onto another to join.",
+                    ));
                     let height = (ctx.content_rect().height() * 0.35).clamp(160.0, 320.0);
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
                             if self.diagram.nodes.is_empty() {
                                 ui.set_min_size(egui::vec2(ui.available_width(), height));
-                                ui.weak("Use Add Table to add tables to the query.");
+                                ui.weak(tr("Use Add Table to add tables to the query."));
                             } else {
                                 self.diagram.show(ui);
                             }
@@ -974,11 +983,11 @@ impl QueryDesigner {
             }
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     result = Some(None);
                 }
                 let ready = matches!(self.state, State::Ready);
-                if ui.add_enabled(ready, egui::Button::new("OK")).clicked() {
+                if ui.add_enabled(ready, egui::Button::new(tr("OK"))).clicked() {
                     result = Some(Some(self.sql()));
                 }
             });
@@ -1047,16 +1056,20 @@ impl QueryDesigner {
         }
         let mut change = None;
         ui.horizontal_wrapped(|ui| {
-            ui.strong("Joins:");
+            ui.strong(tr("Joins:"));
             for (j, join) in self.query.joins.iter().enumerate() {
                 let (first, second) = (join.left.min(join.right), join.left.max(join.right));
                 let a = &self.query.tables[first].alias;
                 let b = &self.query.tables[second].alias;
                 let label = |k: JoinKind| match k {
-                    JoinKind::Inner => format!("{a} \u{2194} {b}: matching rows"),
-                    JoinKind::Left => format!("{a} \u{2194} {b}: all rows from {a}"),
-                    JoinKind::Right => format!("{a} \u{2194} {b}: all rows from {b}"),
-                    JoinKind::Full => format!("{a} \u{2194} {b}: all rows from both"),
+                    JoinKind::Inner => format!("{a} \u{2194} {b}: {}", tr("matching rows")),
+                    JoinKind::Left => {
+                        format!("{a} \u{2194} {b}: {}", trf!("all rows from {a}", a = a))
+                    }
+                    JoinKind::Right => {
+                        format!("{a} \u{2194} {b}: {}", trf!("all rows from {b}", b = b))
+                    }
+                    JoinKind::Full => format!("{a} \u{2194} {b}: {}", tr("all rows from both")),
                 };
                 let current = join.kind();
                 egui::ComboBox::from_id_salt(("qd_join", j))
@@ -1097,21 +1110,21 @@ impl QueryDesigner {
                     .num_columns(8 + criteria)
                     .show(ui, |ui| {
                         for h in [
-                            "Column",
-                            "Alias",
-                            "Table",
-                            "Output",
-                            "Sort Type",
-                            "Sort Order",
-                            "Filter",
+                            tr_noop("Column"),
+                            tr_noop("Alias"),
+                            tr_noop("Table"),
+                            tr_noop("Output"),
+                            tr_noop("Sort Type"),
+                            tr_noop("Sort Order"),
+                            tr_noop("Filter"),
                         ] {
-                            ui.strong(h);
+                            ui.strong(tr(h));
                         }
                         for _ in 1..criteria {
-                            ui.strong("Or...");
+                            ui.strong(tr("Or..."));
                         }
                         if group_by {
-                            ui.strong("Group By");
+                            ui.strong(tr("Group By"));
                         }
                         ui.label("");
                         ui.end_row();
@@ -1122,7 +1135,7 @@ impl QueryDesigner {
                                     egui::TextEdit::singleline(&mut r.column)
                                         .id(egui::Id::new(("qd_expression", i)))
                                         .code_editor()
-                                        .hint_text("expression"),
+                                        .hint_text(tr("expression")),
                                 );
                             } else {
                                 ui.label(&r.column);
@@ -1157,7 +1170,7 @@ impl QueryDesigner {
                                 [140.0, 20.0],
                                 egui::TextEdit::singleline(&mut r.filter)
                                     .id(egui::Id::new(("qd_filter", i)))
-                                    .hint_text("e.g. > 10"),
+                                    .hint_text(tr("e.g. > 10")),
                             );
                             for k in 1..criteria {
                                 ui.add_sized(
@@ -1178,7 +1191,7 @@ impl QueryDesigner {
                             }
                             if ui
                                 .small_button(icon::TRASH)
-                                .on_hover_text("Remove from the grid")
+                                .on_hover_text(tr("Remove from the grid"))
                                 .clicked()
                             {
                                 delete = Some(i);
@@ -1187,7 +1200,7 @@ impl QueryDesigner {
                         }
                     });
                 if self.query.rows.is_empty() {
-                    ui.weak("No columns yet: check them in the tables above.");
+                    ui.weak(tr("No columns yet: check them in the tables above."));
                 }
             });
         if let Some(i) = delete {
