@@ -20,6 +20,8 @@ pub struct Action {
     pub jump_to: Option<usize>,
     /// "Save Results As..." no resultado com este índice.
     pub save_results: Option<usize>,
+    /// Abrir o JSON Viewer nesta célula do resultado com este índice.
+    pub open_json: Option<(usize, pgstudio_result_grid::Cell)>,
 }
 
 /// Desenha o painel de resultados. `server` é o texto da conexão.
@@ -57,7 +59,7 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
     match tab {
         Tab::Results => match exec.mode {
             ResultsMode::Grid | ResultsMode::File => {
-                action.save_results = grids(ui, doc, &mut exec.results);
+                (action.save_results, action.open_json) = grids(ui, doc, &mut exec.results);
             }
             ResultsMode::Text => text_results(ui, doc, &mut exec.results),
         },
@@ -181,9 +183,14 @@ pub fn grid_id(doc: u32, index: usize) -> egui::Id {
 
 /// Uma grade por resultado, dividindo a altura entre elas.
 /// As grades, uma embaixo da outra. Devolve o resultado em que o usuário
-/// pediu "Save Results As...".
-fn grids(ui: &mut egui::Ui, doc: u32, sets: &mut [ResultSet]) -> Option<usize> {
+/// pediu "Save Results As..." e a célula em que pediu o JSON Viewer.
+fn grids(
+    ui: &mut egui::Ui,
+    doc: u32,
+    sets: &mut [ResultSet],
+) -> (Option<usize>, Option<(usize, pgstudio_result_grid::Cell)>) {
     let mut save = None;
+    let mut json = None;
     let gap = ui.spacing().item_spacing.y;
     let n = sets.len() as f32;
     let each = ((ui.available_height() - gap * (n - 1.0)) / n).max(90.0);
@@ -197,13 +204,17 @@ fn grids(ui: &mut egui::Ui, doc: u32, sets: &mut [ResultSet]) -> Option<usize> {
                     ui.set_min_size(size);
                     let (store, state) = set.parts();
                     let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
-                    if grid::show(ui, grid_id(doc, i), &mut store, state).save_as {
+                    let out = grid::show(ui, grid_id(doc, i), &mut store, state);
+                    if out.save_as {
                         save = Some(i);
+                    }
+                    if let Some(cell) = out.open_json {
+                        json = Some((i, cell));
                     }
                 });
             }
         });
-    save
+    (save, json)
 }
 
 /// Linhas do modo texto de um resultado: cabeçalho, traços, linhas, uma

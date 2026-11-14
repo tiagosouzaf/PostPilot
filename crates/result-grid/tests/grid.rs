@@ -10,22 +10,32 @@ struct App {
     store: ResultStore,
     state: GridState,
     copied: Option<String>,
+    open_json: Option<Cell>,
 }
 
 fn harness(store: ResultStore) -> Harness<'static, App> {
-    Harness::builder().with_size([900.0, 500.0]).build_ui_state(
-        |ui, app: &mut App| {
-            let out = grid::show(ui, ui.id().with("grid"), &mut app.store, &mut app.state);
-            if out.copied.is_some() {
-                app.copied = out.copied;
-            }
-        },
-        App {
-            store,
-            state: GridState::default(),
-            copied: None,
-        },
-    )
+    Harness::builder()
+        .with_size([900.0, 500.0])
+        // Frames de 60 Hz: com o padrão (0,25 s) dois cliques seguidos
+        // passam do tempo de um duplo clique.
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut App| {
+                let out = grid::show(ui, ui.id().with("grid"), &mut app.store, &mut app.state);
+                if out.copied.is_some() {
+                    app.copied = out.copied;
+                }
+                if out.open_json.is_some() {
+                    app.open_json = out.open_json;
+                }
+            },
+            App {
+                store,
+                state: GridState::default(),
+                copied: None,
+                open_json: None,
+            },
+        )
 }
 
 fn small() -> ResultStore {
@@ -226,4 +236,74 @@ fn a_million_rows_scroll_within_a_frame() {
     );
     // Folgado para build de teste; em release fica abaixo de 16 ms.
     assert!(worst < Duration::from_millis(250), "{worst:?}");
+}
+
+fn json_store() -> ResultStore {
+    let mut s = ResultStore::new(vec!["id".into(), "data".into(), "tags".into()]);
+    for i in 0..3 {
+        s.push(&[
+            Some(i.to_string()),
+            Some(r#"{"a": [1, 2], "b": "x"}"#.into()),
+            Some("{a,b}".into()),
+        ]);
+    }
+    s
+}
+
+/// `count` cliques no mesmo frame, em `pos`.
+fn clicks(h: &mut Harness<'static, App>, pos: eframe::egui::Pos2, count: usize) {
+    h.run_steps(40);
+    h.hover_at(pos);
+    h.step();
+    for _ in 0..count {
+        for pressed in [true, false] {
+            h.event(eframe::egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.step();
+        }
+    }
+    h.run();
+}
+
+#[test]
+fn json_cells_open_by_double_click_button_and_enter() {
+    let mut h = harness(json_store());
+    h.run();
+    assert_eq!(h.state().state.json_columns, [false, true, false]);
+    // Fora das colunas JSON o duplo clique não pede nada.
+    let p = h
+        .state()
+        .state
+        .cell_center(Cell { row: 1, col: 2 })
+        .unwrap();
+    clicks(&mut h, p, 2);
+    assert_eq!(h.state().open_json, None);
+    let p = h
+        .state()
+        .state
+        .cell_center(Cell { row: 1, col: 1 })
+        .unwrap();
+    clicks(&mut h, p, 2);
+    assert_eq!(h.state().open_json, Some(Cell { row: 1, col: 1 }));
+
+    // O botão {…} da célula selecionada abre com um clique só.
+    h.state_mut().open_json = None;
+    let b = h
+        .state()
+        .state
+        .json_button(Cell { row: 1, col: 1 })
+        .unwrap();
+    clicks(&mut h, b.center(), 1);
+    assert_eq!(h.state().open_json, Some(Cell { row: 1, col: 1 }));
+
+    // Enter na célula com o cursor.
+    h.state_mut().open_json = None;
+    h.key_press(Key::ArrowDown);
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(h.state().open_json, Some(Cell { row: 2, col: 1 }));
 }

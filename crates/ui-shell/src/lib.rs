@@ -15,6 +15,8 @@ pub mod documents;
 pub mod edit_rows;
 pub mod execution;
 pub mod intellisense;
+pub mod json_guide;
+pub mod json_viewer;
 pub mod keys;
 pub mod layout;
 pub mod menus;
@@ -97,6 +99,10 @@ pub struct ShellApp {
     compare_target: Option<(String, String)>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
+    /// JSON Viewer aberto, com a janela de consulta de onde veio.
+    json_viewer: Option<(u32, json_viewer::JsonViewer)>,
+    /// JSON Query Guide.
+    json_guide: json_guide::JsonGuide,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
     design_query_on_open: bool,
     /// Arquivo que o "Restore Database" já abre listando (screenshots).
@@ -253,6 +259,8 @@ impl Default for ShellApp {
             compare: None,
             compare_target: None,
             query_designer: None,
+            json_viewer: None,
+            json_guide: json_guide::JsonGuide::default(),
             design_query_on_open: false,
             restore_file: None,
             query_on_open: None,
@@ -1280,6 +1288,7 @@ impl ShellApp {
                 | ActivityMonitor
                 | SchemaCompare
                 | ObjectInfo
+                | JsonGuide
         )
     }
 
@@ -1321,6 +1330,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
             }
             CommandId::About => self.about_open = true,
+            CommandId::JsonGuide => self.json_guide.open = true,
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
@@ -2274,6 +2284,7 @@ impl ShellApp {
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut activate = None;
+        let mut open_json = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -2290,6 +2301,7 @@ impl ShellApp {
                     explorer_events: Vec::new(),
                     close_requests: Vec::new(),
                     save_results: Vec::new(),
+                    open_json: Vec::new(),
                     editor_colors: match self.theme {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
@@ -2310,6 +2322,7 @@ impl ShellApp {
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 let save_results = viewer.save_results;
+                open_json = viewer.open_json;
                 for id in viewer.close_requests {
                     self.workspace.open(Panel::Query(id));
                     self.active_doc = Some(id);
@@ -2319,6 +2332,9 @@ impl ShellApp {
                     self.save_results_as(ui.ctx(), doc, i);
                 }
             });
+        for (doc, i, cell) in open_json {
+            self.open_json_viewer(doc, i, cell);
+        }
         if let Some(i) = activate {
             self.activate_parked(i);
         }
@@ -2330,6 +2346,7 @@ impl ShellApp {
         self.activity_step(&ctx);
         self.edit_rows_step(&ctx);
         self.query_designer_step(&ctx);
+        self.json_step(&ctx);
         if self.diagrams.is_loading() {
             // Um diagrama aberto de arquivo não tem quem acorde a janela
             // quando o modelo chegar.
@@ -2506,6 +2523,96 @@ impl ShellApp {
             pgstudio_sql_editor::set_selection(ctx, editor, inserted);
             d.editor.focus_editor();
         }
+        self.activate_document(doc);
+    }
+
+    /// Abre o JSON Viewer na célula `cell` do resultado `i` da janela
+    /// `doc`.
+    fn open_json_viewer(&mut self, doc: u32, i: usize, cell: pgstudio_result_grid::Cell) {
+        let Some(set) = self
+            .documents
+            .get(doc)
+            .and_then(|d| d.execution.as_ref())
+            .and_then(|e| e.results.get(i))
+        else {
+            return;
+        };
+        let mut store = set.store();
+        let column = store.columns().get(cell.col).cloned().unwrap_or_default();
+        let Some(value) = pgstudio_result_grid::GridState::json_at(&mut store, cell) else {
+            return;
+        };
+        let id = egui::Id::new("json_viewer");
+        self.json_viewer = Some((
+            doc,
+            json_viewer::JsonViewer::new(id, &column, cell.row, value),
+        ));
+    }
+
+    /// JSON Viewer aberto, se houver.
+    pub fn json_viewer(&self) -> Option<&json_viewer::JsonViewer> {
+        self.json_viewer.as_ref().map(|(_, v)| v)
+    }
+
+    pub fn json_viewer_mut(&mut self) -> Option<&mut json_viewer::JsonViewer> {
+        self.json_viewer.as_mut().map(|(_, v)| v)
+    }
+
+    /// JSON Query Guide.
+    pub fn json_guide_mut(&mut self) -> &mut json_guide::JsonGuide {
+        &mut self.json_guide
+    }
+
+    /// Desenha o JSON Viewer e o guia e põe o SQL pedido na janela de
+    /// consulta.
+    fn json_step(&mut self, ctx: &egui::Context) {
+        let colors = match self.theme {
+            Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
+            Theme::Dark => pgstudio_sql_editor::Colors::DARK,
+        };
+        let mut insert = None;
+        if let Some((doc, viewer)) = &mut self.json_viewer {
+            let doc = *doc;
+            match viewer.show(ctx, &colors) {
+                Some(json_viewer::ViewerAction::Insert(sql)) => insert = Some((doc, sql)),
+                Some(json_viewer::ViewerAction::Guide) => self.json_guide.open = true,
+                Some(json_viewer::ViewerAction::Close) => self.json_viewer = None,
+                Some(json_viewer::ViewerAction::Save(_)) | None => {}
+            }
+        }
+        let target = self
+            .active_doc
+            .filter(|id| self.documents.get(*id).is_some());
+        if let Some(sql) = self.json_guide.show(ctx, &colors, target.is_some())
+            && let Some(doc) = target
+        {
+            insert = Some((doc, sql));
+        }
+        if let Some((doc, sql)) = insert {
+            self.insert_sql(ctx, doc, &sql);
+        }
+    }
+
+    /// Põe `sql` numa linha nova depois da seleção da janela `doc` e
+    /// seleciona o que entrou.
+    pub fn insert_sql(&mut self, ctx: &egui::Context, doc: u32, sql: &str) {
+        let editor = panels::editor_id(doc);
+        let Some(d) = self.documents.get_mut(doc) else {
+            self.status = "The query window was closed.".to_string();
+            return;
+        };
+        let selection = pgstudio_sql_editor::selection(ctx, editor).unwrap_or_else(|| {
+            let end = d.text.chars().count();
+            (end, end)
+        });
+        let inserted = if d.text.trim().is_empty() {
+            let all = (0, d.text.chars().count());
+            query_designer::insert(&mut d.text, all, sql)
+        } else {
+            query_designer::insert_after(&mut d.text, selection, sql)
+        };
+        pgstudio_sql_editor::set_selection(ctx, editor, inserted);
+        d.editor.focus_editor();
         self.activate_document(doc);
     }
 
@@ -2800,6 +2907,9 @@ impl ShellApp {
         for (id, e) in &mut self.edit_rows {
             e.step(ctx);
             self.output.extend(e.take_log());
+            if e.take_guide_request() {
+                self.json_guide.open = true;
+            }
             if e.take_closed() {
                 closed.push(*id);
             }

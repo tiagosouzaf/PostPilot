@@ -97,6 +97,8 @@ pub struct Viewer<'a> {
     pub close_requests: Vec<u32>,
     /// "Save Results As...": janela e índice do resultado.
     pub save_results: Vec<(u32, usize)>,
+    /// JSON Viewer pedido: janela, índice do resultado e célula.
+    pub open_json: Vec<(u32, usize, pgstudio_result_grid::Cell)>,
     /// Cores do editor de SQL (seguem o tema).
     pub editor_colors: pgstudio_sql_editor::Colors,
     /// Servidor e usuário, para a faixa de status das janelas de consulta.
@@ -272,6 +274,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .inner;
                     if let Some(i) = action.save_results {
                         self.save_results.push((*id, i));
+                    }
+                    if let Some((i, cell)) = action.open_json {
+                        self.open_json.push((*id, i, cell));
                     }
                     if let Some(pos) = action.jump_to {
                         pgstudio_sql_editor::set_selection(ui.ctx(), editor_id(*id), (pos, pos));

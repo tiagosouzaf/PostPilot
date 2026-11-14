@@ -6,9 +6,11 @@
 //! - [`text`]: "Results to Text" e o texto copiado.
 //! - [`export`]: CSV, TSV, JSON e INSERT (Save Results As, Results to
 //!   File, Copy as INSERT).
+//! - [`json`]: reconhece e lê o JSON das células (para o JSON Viewer).
 
 pub mod export;
 pub mod grid;
+pub mod json;
 pub mod store;
 pub mod text;
 

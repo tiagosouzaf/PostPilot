@@ -107,6 +107,7 @@ commands! {
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";
     // Help
     ViewHelp => "Help.ViewHelp", "View Help";
+    JsonGuide => "Help.JsonGuide", "JSON Query Guide";
     About => "Help.About", "About PGStudio";
 }
 
