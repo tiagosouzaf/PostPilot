@@ -55,6 +55,9 @@ pub enum Event {
     NewDiagram(NodeId),
     /// "Activity Monitor" no servidor.
     ActivityMonitor(NodeId),
+    /// "Properties" (roles e objetos com permissões) ou "New Role..." na
+    /// pasta Roles.
+    Properties(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -389,6 +392,13 @@ impl ObjectExplorer {
                                         }
                                         ui.separator();
                                     }
+                                    if node.kind == NodeKind::Folder(Folder::Roles) {
+                                        if ui.button("New Role...").clicked() {
+                                            events.push(Event::Properties(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
                                     if node.kind == NodeKind::Server {
                                         if ui.button("Activity Monitor").clicked() {
                                             events.push(Event::ActivityMonitor(node.id.clone()));
@@ -415,6 +425,19 @@ impl ObjectExplorer {
                                         .clicked()
                                     {
                                         events.push(Event::NewQuery(node.id.clone()));
+                                        ui.close();
+                                    }
+                                    let securable = matches!(
+                                        node.kind,
+                                        NodeKind::Role
+                                            | NodeKind::Database
+                                            | NodeKind::Schema
+                                            | NodeKind::Table
+                                            | NodeKind::View
+                                            | NodeKind::Function
+                                    );
+                                    if securable && ui.button("Properties").clicked() {
+                                        events.push(Event::Properties(node.id.clone()));
                                         ui.close();
                                     }
                                     if node.kind.has_rows() {

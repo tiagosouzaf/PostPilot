@@ -18,8 +18,10 @@ pub mod layout;
 pub mod menus;
 pub mod object_info;
 pub mod panels;
+pub mod properties;
 pub mod query_designer;
 pub mod results;
+pub mod security;
 pub mod theme;
 
 /// Ações do menu de contexto do Object Explorer.
@@ -69,6 +71,8 @@ pub struct ShellApp {
     diagram_all_tables: bool,
     /// Activity Monitor aberto.
     activity: Option<activity::ActivityMonitor>,
+    /// Janela de propriedades de segurança aberta.
+    security: Option<properties::SecurityDialog>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
@@ -199,6 +203,7 @@ impl Default for ShellApp {
             diagrams: Default::default(),
             diagram_all_tables: false,
             activity: None,
+            security: None,
             query_designer: None,
             design_query_on_open: false,
             query_on_open: None,
@@ -1474,6 +1479,13 @@ impl ShellApp {
                 self.open_activity_monitor(ctx);
                 return;
             }
+            Event::Properties(node) => {
+                match provider.securable(&node) {
+                    Some(target) => self.open_security(ctx, target),
+                    None => self.status = "This object has no security properties.".to_string(),
+                }
+                return;
+            }
             Event::NewDiagram(node) => {
                 match provider.database_of(&node) {
                     Some(db) => {
@@ -1843,6 +1855,7 @@ impl ShellApp {
         }
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
+        self.security_window(&ctx);
         self.connect_window(&ctx);
 
         if self.about_open {
@@ -2023,6 +2036,63 @@ impl ShellApp {
             ));
         }
         self.workspace.open(Panel::ActivityMonitor);
+    }
+
+    /// Abre a janela de propriedades de segurança de `target`, numa
+    /// sessão no banco do objeto (ou no da conexão, para roles).
+    fn open_security(&mut self, ctx: &egui::Context, target: pgstudio_core::metadata::Securable) {
+        let Some(c) = &self.connection else {
+            self.status = "Connect to a PostgreSQL server to edit security.".to_string();
+            return;
+        };
+        let db = target
+            .database()
+            .map(str::to_string)
+            .unwrap_or_else(|| c.settings.database.clone());
+        let session = c.queries.open(&db);
+        self.security = Some(properties::SecurityDialog::open(target, session, ctx));
+    }
+
+    /// Janela de propriedades de segurança, para testes.
+    pub fn security_dialog(&self) -> Option<&properties::SecurityDialog> {
+        self.security.as_ref()
+    }
+
+    /// Janela de propriedades de segurança, mutável (testes).
+    pub fn security_dialog_mut(&mut self) -> Option<&mut properties::SecurityDialog> {
+        self.security.as_mut()
+    }
+
+    /// Desenha a janela de segurança e atende o que ela pedir.
+    fn security_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.security else {
+            return;
+        };
+        let roles = matches!(
+            dialog.securable(),
+            pgstudio_core::metadata::Securable::Role(_)
+                | pgstudio_core::metadata::Securable::NewRole
+        );
+        match dialog.show(ctx) {
+            None => {}
+            Some(properties::Request::Closed) => self.security = None,
+            Some(properties::Request::Script(sql, db)) => {
+                let id = self.documents.new_script(sql, db);
+                self.activate_document(id);
+                self.output
+                    .push("Security: the changes were scripted to a new query window.".into());
+            }
+            Some(properties::Request::Applied(log)) => {
+                self.security = None;
+                self.output.extend(log);
+                self.status = "The changes were applied.".to_string();
+                if roles {
+                    self.explorer.refresh(&pgstudio_core::metadata::NodeId(
+                        "server/Security/Roles".into(),
+                    ));
+                }
+            }
+        }
     }
 
     /// Activity Monitor aberto, para testes.

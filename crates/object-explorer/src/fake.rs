@@ -257,6 +257,20 @@ impl MetadataProvider for FakeProvider {
         Ok(out)
     }
 
+    fn securable(&self, node: &NodeId) -> Option<pgstudio_core::metadata::Securable> {
+        let parts: Vec<&str> = node.0.split('/').collect();
+        match parts.as_slice() {
+            ["srv", "Databases", db, "Schemas", schema, "Tables", i] => {
+                let s = schema_names(db).iter().position(|n| n == schema)?;
+                Some(pgstudio_core::metadata::Securable::Relation {
+                    database: (*db).to_string(),
+                    oid: u32::try_from(table_id(s, i.parse().ok()?)).ok()?,
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {
         let parts: Vec<&str> = node.0.split('/').collect();
         match parts.as_slice() {
