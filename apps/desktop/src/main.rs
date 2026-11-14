@@ -22,11 +22,14 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
-//! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram`: depois de
+//! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign`:
+//!   depois de
 //!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
 //!   Top 1000 Rows", "Edit Top 200 Rows", "Script as CREATE/DROP", "Design"
 //!   "New Table..." ou "New Database Diagram" (para screenshots; com
 //!   `PGSTUDIO_DIAGRAM_ALL=1`, o diagrama já abre com todas as tabelas).
+//!   `querydesign` abre uma janela de consulta no banco e o Query Designer
+//!   nela (com `PGSTUDIO_DIAGRAM_ALL=1`, com todas as tabelas).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -145,9 +148,13 @@ fn main() -> eframe::Result {
                     "design" => Event::Design,
                     "newtable" => Event::NewTable,
                     "diagram" => Event::NewDiagram,
+                    "querydesign" => Event::NewQuery,
                     _ => |n| Event::Script(n, ScriptAction::Drop),
                 };
                 app = app.with_selected_action(make);
+                if action == "querydesign" {
+                    app = app.with_design_query_on_open();
+                }
                 if std::env::var_os("PGSTUDIO_DIAGRAM_ALL").is_some() {
                     app = app.with_diagram_all_tables();
                 }

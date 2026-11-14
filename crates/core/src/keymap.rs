@@ -281,6 +281,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::Execute, "F5"),
     (CommandId::Execute, "Ctrl+E"),
     (CommandId::Parse, "Ctrl+F5"),
+    (CommandId::DesignQuery, "Ctrl+Shift+Q"),
     (CommandId::CancelQuery, "Alt+Break"),
     (CommandId::EstimatedPlan, "Ctrl+L"),
     (CommandId::ActualPlan, "Ctrl+M"),
@@ -486,6 +487,7 @@ mod tests {
             ("Ctrl+L", CommandId::EstimatedPlan),
             ("Ctrl+M", CommandId::ActualPlan),
             ("Alt+F1", CommandId::ObjectInfo),
+            ("Ctrl+Shift+Q", CommandId::DesignQuery),
             ("Ctrl+K, Ctrl+C", CommandId::CommentSelection),
             ("Ctrl+K, Ctrl+U", CommandId::UncommentSelection),
         ];

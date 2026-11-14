@@ -814,6 +814,7 @@ impl DiagramView {
         for event in self.diagram.take_events() {
             match event {
                 DiagramEvent::Moved(_) => self.layout_dirty = true,
+                DiagramEvent::Toggle { .. } => {}
                 DiagramEvent::Link {
                     from,
                     from_column,
@@ -924,70 +925,16 @@ impl DiagramView {
             return;
         }
         let candidates = self.candidates();
-        let mut add = false;
-        let mut close = false;
         let picker = self.picker.as_mut().expect("checado acima");
-        let modal = egui::Modal::new(egui::Id::new(("diagram_add_table", id))).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.heading("Add Table");
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                let filter = ui.add(
-                    egui::TextEdit::singleline(&mut picker.filter).desired_width(f32::INFINITY),
-                );
-                if !picker.focused {
-                    filter.request_focus();
-                    picker.focused = true;
-                }
-            });
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .max_height(280.0)
-                    .auto_shrink([false, true])
-                    .show_rows(ui, 20.0, candidates.len(), |ui, range| {
-                        for (table, name) in &candidates[range] {
-                            let mut on = picker.checked.contains(table);
-                            if ui.checkbox(&mut on, name).changed() {
-                                if on {
-                                    picker.checked.insert(*table);
-                                } else {
-                                    picker.checked.remove(table);
-                                }
-                            }
-                        }
-                    });
-                if candidates.is_empty() {
-                    ui.weak("No tables to add.");
-                }
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Select All").clicked() {
-                    picker.checked.extend(candidates.iter().map(|(t, _)| *t));
-                }
-                if ui.button("Clear").clicked() {
-                    picker.checked.clear();
-                }
-                ui.weak(format!("{} selected", picker.checked.len()));
-            });
-            ui.add_space(6.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() {
-                    close = true;
-                }
-                let n = picker.checked.len();
-                if ui.add_enabled(n > 0, egui::Button::new("Add")).clicked() {
-                    add = true;
-                }
-            });
-        });
-        if modal.should_close() {
-            close = true;
-        }
-        if add {
-            self.add_checked();
-        } else if close {
-            self.picker = None;
+        match table_picker(
+            ctx,
+            egui::Id::new(("diagram_add_table", id)),
+            picker,
+            &candidates,
+        ) {
+            Some(true) => self.add_checked(),
+            Some(false) => self.picker = None,
+            None => {}
         }
     }
 
@@ -1073,4 +1020,72 @@ impl DiagramView {
             self.answer_close(discard);
         }
     }
+}
+
+/// O "Add Table": filtro, lista de `candidates` com caixinhas, Select All,
+/// Add e Close. Devolve Some(true) para Add, Some(false) para fechar.
+pub(crate) fn table_picker(
+    ctx: &egui::Context,
+    id: egui::Id,
+    picker: &mut Picker,
+    candidates: &[(Id, String)],
+) -> Option<bool> {
+    let mut answer = None;
+    let modal = egui::Modal::new(id).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.heading("Add Table");
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            let filter =
+                ui.add(egui::TextEdit::singleline(&mut picker.filter).desired_width(f32::INFINITY));
+            if !picker.focused {
+                filter.request_focus();
+                picker.focused = true;
+            }
+        });
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical()
+                .max_height(280.0)
+                .auto_shrink([false, true])
+                .show_rows(ui, 20.0, candidates.len(), |ui, range| {
+                    for (table, name) in &candidates[range] {
+                        let mut on = picker.checked.contains(table);
+                        if ui.checkbox(&mut on, name).changed() {
+                            if on {
+                                picker.checked.insert(*table);
+                            } else {
+                                picker.checked.remove(table);
+                            }
+                        }
+                    }
+                });
+            if candidates.is_empty() {
+                ui.weak("No tables to add.");
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Select All").clicked() {
+                picker.checked.extend(candidates.iter().map(|(t, _)| *t));
+            }
+            if ui.button("Clear").clicked() {
+                picker.checked.clear();
+            }
+            ui.weak(format!("{} selected", picker.checked.len()));
+        });
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Close").clicked() {
+                answer = Some(false);
+            }
+            let n = picker.checked.len();
+            if ui.add_enabled(n > 0, egui::Button::new("Add")).clicked() {
+                answer = Some(true);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
 }
