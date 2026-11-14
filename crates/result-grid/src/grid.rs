@@ -6,6 +6,7 @@
 //! com milhões de linhas: só as linhas visíveis são lidas do
 //! [`ResultStore`] e desenhadas.
 
+use pgstudio_i18n::{tr, trf};
 use std::ops::Range;
 
 use eframe::egui::{self, Color32, CursorIcon, FontId, Key, Pos2, Rect, Sense, Stroke, vec2};
@@ -579,7 +580,7 @@ pub fn show(
             let cursor = state.selection.map(|s| s.cursor);
             let cell_editable = cursor.is_some_and(|c| state.is_editable(c.col));
             if ui
-                .add_enabled(cell_editable, egui::Button::new("Edit Cell"))
+                .add_enabled(cell_editable, egui::Button::new(tr("Edit Cell")))
                 .clicked()
                 && let Some(c) = cursor
             {
@@ -588,8 +589,8 @@ pub fn show(
             }
             let rows = state.rows_to_delete(store);
             let label = match &rows {
-                Some(r) if r.end - r.start > 1 => format!("Delete {} Rows", r.end - r.start),
-                _ => "Delete Row".to_string(),
+                Some(r) if r.end - r.start > 1 => trf!("Delete {n} Rows", n = r.end - r.start),
+                _ => tr("Delete Row").to_string(),
             };
             if ui
                 .add_enabled(rows.is_some(), egui::Button::new(label))
@@ -600,24 +601,24 @@ pub fn show(
             }
             ui.separator();
         }
-        if ui.button("Copy").clicked() {
+        if ui.button(tr("Copy")).clicked() {
             copied = state.copy(store, false);
             ui.close();
         }
-        if ui.button("Copy with Headers").clicked() {
+        if ui.button(tr("Copy with Headers")).clicked() {
             copied = state.copy(store, true);
             ui.close();
         }
-        if ui.button("Copy as INSERT").clicked() {
+        if ui.button(tr("Copy as INSERT")).clicked() {
             copied = state.copy_insert(store);
             ui.close();
         }
         ui.separator();
-        if ui.button("Save Results As...").clicked() {
+        if ui.button(tr("Save Results As...")).clicked() {
             save_as = true;
             ui.close();
         }
-        if ui.button("Select All").clicked() {
+        if ui.button(tr("Select All")).clicked() {
             state.select_all(store);
             ui.close();
         }

@@ -8,6 +8,7 @@
 //! interface, a cada N segundos; Cancel e Kill pedem confirmação e usam
 //! `pg_cancel_backend` e `pg_terminate_backend`.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
@@ -148,7 +149,7 @@ pub fn refresh_sql(with_statements: bool) -> String {
 /// Monta a leitura a partir dos resultados de [`refresh_sql`].
 pub fn parse_snapshot(results: &[Rows], at: Instant) -> Result<Snapshot, String> {
     if results.len() < 4 {
-        return Err("The server did not return the activity data.".into());
+        return Err(tr("The server did not return the activity data.").into());
     }
     let text = |r: &[Option<String>], i: usize| r.get(i).cloned().flatten().unwrap_or_default();
     let num = |r: &[Option<String>], i: usize| {
@@ -365,17 +366,17 @@ enum Column {
 }
 
 const PROCESS_COLUMNS: &[(Column, &str, f32)] = &[
-    (Column::Pid, "Process ID", 78.0),
-    (Column::User, "User", 70.0),
-    (Column::Database, "Database", 70.0),
-    (Column::Application, "Application", 90.0),
-    (Column::Client, "Client", 80.0),
-    (Column::State, "State", 110.0),
-    (Column::WaitType, "Wait Type", 70.0),
-    (Column::WaitEvent, "Wait Resource", 100.0),
-    (Column::BlockedBy, "Blocked By", 70.0),
-    (Column::Duration, "Duration", 64.0),
-    (Column::Query, "Command", 320.0),
+    (Column::Pid, tr_noop("Process ID"), 78.0),
+    (Column::User, tr_noop("User"), 70.0),
+    (Column::Database, tr_noop("Database"), 70.0),
+    (Column::Application, tr_noop("Application"), 90.0),
+    (Column::Client, tr_noop("Client"), 80.0),
+    (Column::State, tr_noop("State"), 110.0),
+    (Column::WaitType, tr_noop("Wait Type"), 70.0),
+    (Column::WaitEvent, tr_noop("Wait Resource"), 100.0),
+    (Column::BlockedBy, tr_noop("Blocked By"), 70.0),
+    (Column::Duration, tr_noop("Duration"), 64.0),
+    (Column::Query, tr_noop("Command"), 320.0),
 ];
 
 /// Resposta de uma atualização ou ação.
@@ -443,7 +444,7 @@ impl ActivityMonitor {
     }
 
     pub fn title(&self) -> String {
-        format!("Activity Monitor - {}", self.server)
+        format!("{} - {}", tr("Activity Monitor"), self.server)
     }
 
     pub fn snapshot(&self) -> Option<&Snapshot> {
@@ -580,13 +581,15 @@ impl ActivityMonitor {
                     let pid = action.pid();
                     let text = match (action, result) {
                         (Action::Cancel(_), Ok(true)) => {
-                            format!("The query of process {pid} was canceled.")
+                            trf!("The query of process {pid} was canceled.", pid = pid)
                         }
-                        (Action::Kill(_), Ok(true)) => format!("Process {pid} was killed."),
-                        (_, Ok(false)) => format!("Process {pid} was not found."),
-                        (_, Err(e)) => format!("Process {pid}: {e}"),
+                        (Action::Kill(_), Ok(true)) => {
+                            trf!("Process {pid} was killed.", pid = pid)
+                        }
+                        (_, Ok(false)) => trf!("Process {pid} was not found.", pid = pid),
+                        (_, Err(e)) => trf!("Process {pid}: {error}", pid = pid, error = e),
                     };
-                    log.push(format!("Activity Monitor: {text}"));
+                    log.push(trf!("Activity Monitor: {text}", text = text));
                     self.message = Some(text);
                     // Mostra logo o efeito.
                     self.last_refresh = None;
@@ -703,9 +706,17 @@ impl ActivityMonitor {
                     })
                     .unwrap_or_default();
                 let text = if depth == 0 {
-                    format!("{} Head blocker {pid}: {what}", icon::LOCK)
+                    format!(
+                        "{} {}",
+                        icon::LOCK,
+                        trf!("Head blocker {pid}: {what}", pid = pid, what = what)
+                    )
                 } else {
-                    format!("{} {pid} waits: {what}", icon::HOURGLASS)
+                    format!(
+                        "{} {}",
+                        icon::HOURGLASS,
+                        trf!("{pid} waits: {what}", pid = pid, what = what)
+                    )
                 };
                 (depth, pid, text)
             })
@@ -728,7 +739,7 @@ impl ActivityMonitor {
             if self.error.is_none() {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Reading the server activity...");
+                    ui.label(tr("Reading the server activity..."));
                 });
             }
             self.confirm_window(ui.ctx());
@@ -738,10 +749,10 @@ impl ActivityMonitor {
             .id_salt("activity_monitor")
             .auto_shrink(false)
             .show(ui, |ui| {
-                egui::CollapsingHeader::new("Overview")
+                egui::CollapsingHeader::new(tr("Overview"))
                     .default_open(true)
                     .show(ui, |ui| self.overview(ui));
-                egui::CollapsingHeader::new("Processes")
+                egui::CollapsingHeader::new(tr("Processes"))
                     .default_open(true)
                     .show(ui, |ui| self.processes(ui));
                 // Começa aberta quando já há alguém bloqueado.
@@ -749,17 +760,17 @@ impl ActivityMonitor {
                     .snapshot
                     .as_ref()
                     .is_some_and(|s| s.processes.iter().any(|p| !p.blocked_by.is_empty()));
-                egui::CollapsingHeader::new("Locks")
+                egui::CollapsingHeader::new(tr("Locks"))
                     .default_open(blocked)
                     .show(ui, |ui| self.locks(ui));
-                egui::CollapsingHeader::new("Resource Waits")
+                egui::CollapsingHeader::new(tr("Resource Waits"))
                     .default_open(false)
                     .show(ui, |ui| self.waits(ui));
-                egui::CollapsingHeader::new("Data File I/O")
+                egui::CollapsingHeader::new(tr("Data File I/O"))
                     .default_open(false)
                     .show(ui, |ui| self.data_io(ui));
                 if self.snapshot.as_ref().is_some_and(|s| s.has_statements) {
-                    egui::CollapsingHeader::new("Recent Expensive Queries")
+                    egui::CollapsingHeader::new(tr("Recent Expensive Queries"))
                         .default_open(false)
                         .show(ui, |ui| self.expensive(ui));
                 }
@@ -770,13 +781,13 @@ impl ActivityMonitor {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui
-                .button(format!("{} Refresh", icon::ARROWS_CLOCKWISE))
+                .button(format!("{} {}", icon::ARROWS_CLOCKWISE, tr("Refresh")))
                 .clicked()
             {
                 self.refresh(ui.ctx());
             }
-            ui.checkbox(&mut self.paused, "Pause");
-            ui.label("Refresh interval:");
+            ui.checkbox(&mut self.paused, tr("Pause"));
+            ui.label(tr("Refresh interval:"));
             egui::ComboBox::from_id_salt("activity_interval")
                 .selected_text(format!("{} s", self.interval))
                 .show_ui(ui, |ui| {
@@ -799,19 +810,23 @@ impl ActivityMonitor {
         let last = self.history.back().copied().unwrap_or_default();
         type Chart = (&'static str, String, fn(&Sample) -> f64);
         let charts: [Chart; 4] = [
-            ("Active Sessions", format!("{:.0}", last.active), |s| {
-                s.active
-            }),
-            ("Waiting Sessions", format!("{:.0}", last.waiting), |s| {
-                s.waiting
-            }),
             (
-                "Transactions/sec",
+                tr_noop("Active Sessions"),
+                format!("{:.0}", last.active),
+                |s| s.active,
+            ),
+            (
+                tr_noop("Waiting Sessions"),
+                format!("{:.0}", last.waiting),
+                |s| s.waiting,
+            ),
+            (
+                tr_noop("Transactions/sec"),
                 format!("{:.1}", last.transactions_per_second),
                 |s| s.transactions_per_second,
             ),
             (
-                "Database I/O (reads/sec)",
+                tr_noop("Database I/O (reads/sec)"),
                 format!("{:.1}", last.reads_per_second),
                 |s| s.reads_per_second,
             ),
@@ -827,23 +842,23 @@ impl ActivityMonitor {
 
     fn processes(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Filter:");
+            ui.label(tr("Filter:"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("pid, user, database, query...")
+                    .hint_text(tr("pid, user, database, query..."))
                     .desired_width(220.0),
             );
-            ui.checkbox(&mut self.show_system, "System processes");
+            ui.checkbox(&mut self.show_system, tr("System processes"));
             let selected = self.selected;
             if ui
-                .add_enabled(selected.is_some(), egui::Button::new("Cancel Query"))
+                .add_enabled(selected.is_some(), egui::Button::new(tr("Cancel Query")))
                 .clicked()
                 && let Some(pid) = selected
             {
                 self.request(Action::Cancel(pid));
             }
             if ui
-                .add_enabled(selected.is_some(), egui::Button::new("Kill Process"))
+                .add_enabled(selected.is_some(), egui::Button::new(tr("Kill Process")))
                 .clicked()
                 && let Some(pid) = selected
             {
@@ -872,7 +887,7 @@ impl ActivityMonitor {
                         (s, false) if s == c => format!(" {}", icon::CARET_DOWN),
                         _ => String::new(),
                     };
-                    (format!("{t}{arrow}"), w)
+                    (format!("{}{arrow}", tr(t)), w)
                 })
                 .collect(),
             visible.len(),
@@ -891,15 +906,15 @@ impl ActivityMonitor {
                 }
                 response.context_menu(|ui| {
                     select = Some(p.pid);
-                    if ui.button("Cancel Query").clicked() {
+                    if ui.button(tr("Cancel Query")).clicked() {
                         action = Some(Action::Cancel(p.pid));
                         ui.close();
                     }
-                    if ui.button("Kill Process").clicked() {
+                    if ui.button(tr("Kill Process")).clicked() {
                         action = Some(Action::Kill(p.pid));
                         ui.close();
                     }
-                    if ui.button("Copy Command").clicked() {
+                    if ui.button(tr("Copy Command")).clicked() {
                         ui.ctx().copy_text(p.query.clone());
                         ui.close();
                     }
@@ -945,9 +960,10 @@ impl ActivityMonitor {
             self.request(a);
         }
         let total = self.derived.total;
-        ui.weak(format!(
-            "{} of {total} sessions",
-            self.derived.visible.len()
+        ui.weak(trf!(
+            "{visible} of {total} sessions",
+            visible = self.derived.visible.len(),
+            total = total
         ));
     }
 
@@ -958,9 +974,9 @@ impl ActivityMonitor {
         };
         let chains = &self.derived.chains;
         if chains.is_empty() {
-            ui.weak("No session is blocked.");
+            ui.weak(tr("No session is blocked."));
         } else {
-            ui.strong("Blocking chains");
+            ui.strong(tr("Blocking chains"));
             let mut select = None;
             let row_h = ui.spacing().interact_size.y;
             egui::ScrollArea::vertical()
@@ -994,13 +1010,13 @@ impl ActivityMonitor {
             ui,
             "activity_locks",
             vec![
-                ("Process ID".into(), 78.0),
-                ("Lock Type".into(), 100.0),
-                ("Mode".into(), 150.0),
-                ("Status".into(), 80.0),
-                ("Object".into(), 180.0),
-                ("Transaction".into(), 100.0),
-                ("Database".into(), 90.0),
+                (tr("Process ID").into(), 78.0),
+                (tr("Lock Type").into(), 100.0),
+                (tr("Mode").into(), 150.0),
+                (tr("Status").into(), 80.0),
+                (tr("Object").into(), 180.0),
+                (tr("Transaction").into(), 100.0),
+                (tr("Database").into(), 90.0),
             ],
             locks.len(),
             220.0,
@@ -1011,9 +1027,9 @@ impl ActivityMonitor {
                 cell(ui, 100.0, egui::Label::new(l.lock_type.as_str()));
                 cell(ui, 150.0, egui::Label::new(l.mode.as_str()).truncate());
                 let status = if l.granted {
-                    egui::RichText::new("Granted")
+                    egui::RichText::new(tr("Granted"))
                 } else {
-                    egui::RichText::new("Waiting").color(ui.visuals().warn_fg_color)
+                    egui::RichText::new(tr("Waiting")).color(ui.visuals().warn_fg_color)
                 };
                 cell(ui, 80.0, egui::Label::new(status));
                 cell(ui, 180.0, egui::Label::new(l.relation.as_str()).truncate());
@@ -1030,16 +1046,16 @@ impl ActivityMonitor {
             .map(|s| resource_waits(&s.processes))
             .unwrap_or_default();
         if waits.is_empty() {
-            ui.weak("No session is waiting.");
+            ui.weak(tr("No session is waiting."));
             return;
         }
         table(
             ui,
             "activity_waits",
             vec![
-                ("Wait Category".into(), 140.0),
-                ("Wait Event".into(), 200.0),
-                ("Waiting Sessions".into(), 120.0),
+                (tr("Wait Category").into(), 140.0),
+                (tr("Wait Event").into(), 200.0),
+                (tr("Waiting Sessions").into(), 120.0),
             ],
             waits.len(),
             200.0,
@@ -1061,12 +1077,12 @@ impl ActivityMonitor {
             ui,
             "activity_io",
             vec![
-                ("Database".into(), 160.0),
-                ("Blocks Read".into(), 110.0),
-                ("Blocks Hit".into(), 110.0),
-                ("Cache Hit %".into(), 90.0),
-                ("Temp Files (MB)".into(), 110.0),
-                ("Transactions".into(), 110.0),
+                (tr("Database").into(), 160.0),
+                (tr("Blocks Read").into(), 110.0),
+                (tr("Blocks Hit").into(), 110.0),
+                (tr("Cache Hit %").into(), 90.0),
+                (tr("Temp Files (MB)").into(), 110.0),
+                (tr("Transactions").into(), 110.0),
             ],
             snap.databases.len(),
             200.0,
@@ -1103,11 +1119,11 @@ impl ActivityMonitor {
             ui,
             "activity_statements",
             vec![
-                ("Executions".into(), 90.0),
-                ("Total Time (ms)".into(), 120.0),
-                ("Average Time (ms)".into(), 120.0),
-                ("Rows".into(), 90.0),
-                ("Query".into(), 420.0),
+                (tr("Executions").into(), 90.0),
+                (tr("Total Time (ms)").into(), 120.0),
+                (tr("Average Time (ms)").into(), 120.0),
+                (tr("Rows").into(), 90.0),
+                (tr("Query").into(), 420.0),
             ],
             rows.len(),
             240.0,
@@ -1135,14 +1151,18 @@ impl ActivityMonitor {
         };
         let (title, text) = match action {
             Action::Cancel(pid) => (
-                "Cancel Query",
-                format!("Are you sure you want to cancel the query running in process {pid}?"),
+                tr("Cancel Query"),
+                trf!(
+                    "Are you sure you want to cancel the query running in process {pid}?",
+                    pid = pid
+                ),
             ),
             Action::Kill(pid) => (
-                "Kill Process",
-                format!(
+                tr("Kill Process"),
+                trf!(
                     "Are you sure you want to kill process {pid}? \
-                     Its open transaction, if any, will be rolled back."
+                     Its open transaction, if any, will be rolled back.",
+                    pid = pid
                 ),
             ),
         };
@@ -1153,10 +1173,10 @@ impl ActivityMonitor {
             ui.label(text);
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -1227,6 +1247,7 @@ fn table(
 
 /// Um gráfico de linha pequeno, como os do Overview do SSMS.
 fn chart(ui: &mut egui::Ui, title: &str, value: &str, values: &[f64], width: f32) {
+    let title = tr(title);
     let height = 110.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let label = format!("{title}: {value}");

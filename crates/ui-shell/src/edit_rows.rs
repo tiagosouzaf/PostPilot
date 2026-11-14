@@ -13,6 +13,7 @@
 //! fica só leitura e diz por quê. Colunas geradas e de identidade
 //! `ALWAYS` não são editáveis.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -181,7 +182,7 @@ fn columns_sql(oid: u32) -> String {
 fn parse_table(rows: &[Vec<Option<String>>]) -> Result<EditTable, String> {
     let first = rows
         .first()
-        .ok_or_else(|| "The table no longer exists.".to_string())?;
+        .ok_or_else(|| tr("The table no longer exists.").to_string())?;
     let text = |r: &Vec<Option<String>>, i: usize| r.get(i).cloned().flatten().unwrap_or_default();
     Ok(EditTable {
         name: text(first, 4),
@@ -333,7 +334,7 @@ impl EditRows {
     pub fn title(&self) -> String {
         match &self.table {
             Some(t) => format!("{} - {}", self.session.database(), t.display),
-            None => format!("{} - Edit Rows", self.session.database()),
+            None => format!("{} - {}", self.session.database(), tr("Edit Rows")),
         }
     }
 
@@ -362,10 +363,10 @@ impl EditRows {
     /// Por que a grade é só leitura, se for.
     pub fn read_only_reason(&self) -> Option<&'static str> {
         match &self.table {
-            Some(t) if !t.has_key() => Some(
+            Some(t) if !t.has_key() => Some(tr(
                 "The table has no primary key, so its rows cannot be identified; \
                  the grid is read-only.",
-            ),
+            )),
             _ => None,
         }
     }
@@ -567,7 +568,7 @@ impl EditRows {
         };
         if r.new {
             self.rows.remove(row);
-            self.message = Some("1 row deleted.".to_string());
+            self.message = Some(tr("1 row deleted.").to_string());
             return;
         }
         let Some(table) = &self.table else {
@@ -579,7 +580,7 @@ impl EditRows {
         run(&self.session, sql, ctx, move |result, count| {
             let result = match result {
                 Err(e) => Err(e),
-                Ok(_) if count == 0 => Err(GONE.to_string()),
+                Ok(_) if count == 0 => Err(tr(GONE).to_string()),
                 Ok(_) => Ok(()),
             };
             let _ = tx.send(Reply::Deleted { row, result });
@@ -641,7 +642,8 @@ impl EditRows {
         self.busy = Some(row);
         let tx = self.tx.clone();
         run(&self.session, sql, ctx, move |result, _| {
-            let result = result.and_then(|rows| rows.into_iter().next().ok_or(GONE.to_string()));
+            let result =
+                result.and_then(|rows| rows.into_iter().next().ok_or(tr(GONE).to_string()));
             let _ = tx.send(Reply::Saved { row, result });
         });
     }
@@ -655,7 +657,7 @@ impl EditRows {
                     self.load_rows(ctx);
                 }
                 Reply::Table(Err(e)) | Reply::Rows(Err(e)) => {
-                    self.log.push(format!("Edit Rows: {e}"));
+                    self.log.push(trf!("Edit Rows: {error}", error = e));
                     self.phase = Phase::Failed(e);
                 }
                 Reply::Rows(Ok(rows)) => {
@@ -667,7 +669,7 @@ impl EditRows {
                     self.phase = Phase::Ready;
                     self.selected = self.selected.filter(|(r, _)| *r < self.rows.len());
                     if let Some(reason) = self.read_only_reason() {
-                        self.log.push(format!("Edit Rows: {reason}"));
+                        self.log.push(trf!("Edit Rows: {error}", error = reason));
                     }
                 }
                 Reply::Saved { row, result } => {
@@ -684,17 +686,25 @@ impl EditRows {
                             if row == last {
                                 self.rows.push(Row::blank(columns));
                             }
-                            let what = if inserted { "inserted" } else { "updated" };
-                            self.message = Some(format!("1 row {what}."));
+                            self.message = Some(
+                                if inserted {
+                                    tr("1 row inserted.")
+                                } else {
+                                    tr("1 row updated.")
+                                }
+                                .to_string(),
+                            );
                         }
                         Err(e) => {
                             r.error = Some(e.clone());
                             self.close_after_save = false;
-                            self.log.push(format!(
-                                "Edit Rows: the row was not committed. {e} \
-                                 Correct the values or press Esc to cancel the changes."
+                            self.log.push(trf!(
+                                "Edit Rows: the row was not committed. {error} \
+                                 Correct the values or press Esc to cancel the changes.",
+                                error = e
                             ));
-                            self.message = Some(format!("The row was not committed: {e}"));
+                            self.message =
+                                Some(trf!("The row was not committed: {error}", error = e));
                             let col = self.selected.map_or(0, |(_, c)| c);
                             self.selected = Some((row, col));
                         }
@@ -707,15 +717,18 @@ impl EditRows {
                             if row < self.rows.len() {
                                 self.rows.remove(row);
                             }
-                            self.message = Some("1 row deleted.".to_string());
+                            self.message = Some(tr("1 row deleted.").to_string());
                             self.selected = self
                                 .selected
                                 .map(|(r, c)| (r.min(self.rows.len().saturating_sub(1)), c));
                         }
                         Err(e) => {
-                            self.log
-                                .push(format!("Edit Rows: the row was not deleted. {e}"));
-                            self.message = Some(format!("The row was not deleted: {e}"));
+                            self.log.push(trf!(
+                                "Edit Rows: the row was not deleted. {error}",
+                                error = e
+                            ));
+                            self.message =
+                                Some(trf!("The row was not deleted: {error}", error = e));
                         }
                     }
                 }
@@ -738,20 +751,21 @@ impl EditRows {
         let ctx = ui.ctx().clone();
         self.step(&ctx);
         ui.horizontal(|ui| {
-            let refresh = egui::Button::new(format!("{} Refresh", icon::ARROWS_CLOCKWISE));
+            let refresh =
+                egui::Button::new(format!("{} {}", icon::ARROWS_CLOCKWISE, tr("Refresh")));
             if ui
                 .add_enabled(!self.is_loading() && self.busy.is_none(), refresh)
-                .on_hover_text("Read the rows again; unsaved changes are lost")
+                .on_hover_text(tr("Read the rows again; unsaved changes are lost"))
                 .clicked()
             {
                 self.refresh(&ctx);
             }
             if self.is_loading() {
                 ui.spinner();
-                ui.weak("Loading...");
+                ui.weak(tr("Loading..."));
             } else if self.busy.is_some() {
                 ui.spinner();
-                ui.weak("Saving...");
+                ui.weak(tr("Saving..."));
             } else if let Some(m) = &self.message {
                 ui.label(m);
             }
@@ -771,15 +785,16 @@ impl EditRows {
             .resizable(false)
             .show(ui, |ui| {
                 let n = self.row_count();
-                ui.weak(format!(
-                    "{n} row{}{}",
-                    if n == 1 { "" } else { "s" },
-                    if self.has_changes() {
-                        " · pending changes"
-                    } else {
-                        ""
-                    }
-                ));
+                let rows = if n == 1 {
+                    tr("1 row").to_string()
+                } else {
+                    trf!("{rows} rows", rows = n)
+                };
+                ui.weak(if self.has_changes() {
+                    format!("{rows} · {}", tr("pending changes"))
+                } else {
+                    rows
+                });
             });
         self.keys(ui, &ctx);
         self.grid(ui, id, &ctx);
@@ -944,7 +959,7 @@ impl EditRows {
                                     if editable && !last_blank {
                                         m.context_menu(|ui| {
                                             if ui
-                                                .button(format!("{} Delete", icon::TRASH))
+                                                .button(format!("{} {}", icon::TRASH, tr("Delete")))
                                                 .clicked()
                                             {
                                                 delete = Some(r);
@@ -989,7 +1004,7 @@ impl EditRows {
                                         let text = match value {
                                             Some(v) => RichText::new(v.replace('\n', " ")),
                                             None if last_blank => RichText::new(""),
-                                            None => RichText::new("NULL").italics().weak(),
+                                            None => RichText::new(tr("NULL")).italics().weak(),
                                         };
                                         let text = if col.read_only { text.weak() } else { text };
                                         let (rect, resp) = ui.allocate_exact_size(
@@ -1106,18 +1121,18 @@ impl EditRows {
         let row = self.confirm_delete.and_then(|r| self.confirm_row_text(r));
         let modal = crate::theme::modal(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.heading("Delete Row");
-            ui.label("You are about to delete 1 row. Are you sure?");
+            ui.heading(tr("Delete Row"));
+            ui.label(tr("You are about to delete 1 row. Are you sure?"));
             if let Some(row) = &row {
                 ui.add_space(4.0);
                 ui.label(RichText::new(row).monospace());
             }
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -1143,7 +1158,8 @@ fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 
 /// A linha não estava mais lá (mudou a chave ou foi excluída por outra
 /// sessão).
-const GONE: &str = "The row was not found; it may have been changed or deleted by another user.";
+const GONE: &str =
+    tr_noop("The row was not found; it may have been changed or deleted by another user.");
 
 /// Roda `sql` e chama `done` uma vez com as linhas do último resultado
 /// (ou o erro) e o número de linhas que o último comando leu ou alterou.
@@ -1175,7 +1191,7 @@ pub(crate) fn run(
             QueryEvent::Finished { canceled } => {
                 let result = match error.take() {
                     Some(e) => Err(e),
-                    None if canceled => Err("The command was canceled.".to_string()),
+                    None if canceled => Err(tr("The command was canceled.").to_string()),
                     None => Ok(std::mem::take(&mut rows)),
                 };
                 if let Some(done) = done.take() {

@@ -5,6 +5,7 @@
 //! plana (o índice 0 é a raiz), o que deixa o desenho e as buscas simples
 //! mesmo com milhares de nós.
 
+use pgstudio_i18n::tr;
 use serde_json::Value;
 
 /// Um nó do plano (uma operação, como `Seq Scan` ou `Hash Join`).
@@ -181,8 +182,8 @@ fn push_node(v: &Value, parent: Option<usize>, nodes: &mut Vec<Node>) -> Result<
 fn display(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
-        Value::Bool(true) => "True".into(),
-        Value::Bool(false) => "False".into(),
+        Value::Bool(true) => tr("True").into(),
+        Value::Bool(false) => tr("False").into(),
         Value::Null => String::new(),
         Value::Array(items) => items.iter().map(display).collect::<Vec<_>>().join(", "),
         other => other.to_string(),

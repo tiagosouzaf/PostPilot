@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+pgstudio-i18n.workspace = true
 eframe.workspace = true
 egui_dock.workspace = true
 serde.workspace = true

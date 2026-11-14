@@ -7,6 +7,7 @@
 
 use eframe::egui::{self, Color32, RichText};
 use egui_phosphor::regular as icons;
+use pgstudio_i18n::{tr, trf};
 
 use crate::execution::{
     Execution, MessageKind, Outcome, ResultSet, ResultsMode, Tab, format_elapsed,
@@ -39,18 +40,18 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
         _ => Tab::Messages,
     };
     ui.horizontal(|ui| {
-        let results = format!("{} Results", icons::TABLE);
+        let results = format!("{} {}", icons::TABLE, tr("Results"));
         if !exec.results.is_empty() && ui.selectable_label(tab == Tab::Results, results).clicked() {
             exec.tab = Tab::Results;
         }
-        let messages = format!("{} Messages", icons::CHAT_TEXT);
+        let messages = format!("{} {}", icons::CHAT_TEXT, tr("Messages"));
         if ui
             .selectable_label(tab == Tab::Messages, messages)
             .clicked()
         {
             exec.tab = Tab::Messages;
         }
-        let plan = format!("{} Execution plan", icons::FLOW_ARROW);
+        let plan = format!("{} {}", icons::FLOW_ARROW, tr("Execution plan"));
         if !exec.plans.is_empty() && ui.selectable_label(tab == Tab::Plan, plan).clicked() {
             exec.tab = Tab::Plan;
         }
@@ -85,14 +86,16 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
         .show(ui, |ui| {
             for (i, (plan, view)) in exec.plans.iter_mut().enumerate() {
                 ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
-                    let mut header = format!(
-                        "Query {}: Query cost (relative to the batch): {:.0}%",
-                        i + 1,
-                        shares[i] * 100.0
+                    let mut header = trf!(
+                        "Query {n}: Query cost (relative to the batch): {cost}%",
+                        n = i + 1,
+                        cost = format!("{:.0}", shares[i] * 100.0)
                     );
                     if let (Some(p), Some(e)) = (plan.planning_ms, plan.execution_ms) {
-                        header.push_str(&format!(
-                            "   Planning time: {p:.3} ms   Execution time: {e:.3} ms"
+                        header.push_str(&trf!(
+                            "   Planning time: {planning} ms   Execution time: {execution} ms",
+                            planning = format!("{p:.3}"),
+                            execution = format!("{e:.3}")
                         ));
                     }
                     ui.label(header);
@@ -118,7 +121,7 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
 pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10)));
-        ui.label("Connected.");
+        ui.label(tr("Connected."));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(database);
             ui.separator();
@@ -141,9 +144,9 @@ fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let rows = exec.total_rows();
             ui.label(if rows == 1 {
-                "1 row".to_string()
+                tr("1 row").to_string()
             } else {
-                format!("{rows} rows")
+                trf!("{rows} rows", rows = rows)
             });
             ui.separator();
             ui.label(format_elapsed(exec.elapsed(), false));
@@ -169,7 +172,7 @@ fn messages(ui: &mut egui::Ui, doc: u32, exec: &Execution, action: &mut Action) 
                 if m.position.is_some() {
                     let r = ui
                         .add(egui::Label::new(text).sense(egui::Sense::click()))
-                        .on_hover_text("Click to go to the error in the editor.");
+                        .on_hover_text(tr("Click to go to the error in the editor."));
                     if r.clicked() {
                         action.jump_to = m.position;
                     }
@@ -244,11 +247,11 @@ fn edit_strip(ui: &mut egui::Ui, editor: &ResultEditor) {
     ui.horizontal(|ui| {
         if let Some(t) = editable {
             ui.label(RichText::new(icons::PENCIL_SIMPLE).weak())
-                .on_hover_text(
+                .on_hover_text(tr(
                     "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. \
                      Delete removes the selected rows after confirmation.",
-                );
-            ui.weak(format!("Editing {}", t.display));
+                ));
+            ui.weak(trf!("Editing {table}", table = t.display));
             if message.is_some() {
                 ui.separator();
             }
