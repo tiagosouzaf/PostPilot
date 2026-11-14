@@ -32,6 +32,17 @@ const fn sub(label: &'static str, entries: &'static [Entry]) -> Entry {
     Entry::Submenu { label, entries }
 }
 
+/// Menu de contexto do editor de SQL.
+pub const EDITOR_CONTEXT: &[Entry] = &[
+    I(FormatDocument),
+    SEP,
+    I(CommentSelection),
+    I(UncommentSelection),
+    SEP,
+    I(DesignQuery),
+    I(Execute),
+];
+
 /// Os menus da barra principal, na ordem do SSMS.
 pub const MENUS: &[Menu] = &[
     Menu {
@@ -44,7 +55,7 @@ pub const MENUS: &[Menu] = &[
                 "New",
                 &[I(NewQuery), I(NewDatabaseEngineQuery), SEP, I(NewWorkspace)],
             ),
-            sub("Open", &[I(OpenFile), I(OpenWorkspace)]),
+            sub("Open", &[I(OpenFile), I(OpenWorkspace), I(CloneWorkspace)]),
             SEP,
             I(CloseDocument),
             I(CloseWorkspace),
@@ -90,6 +101,8 @@ pub const MENUS: &[Menu] = &[
                     SEP,
                     I(MakeUppercase),
                     I(MakeLowercase),
+                    SEP,
+                    I(FormatDocument),
                 ],
             ),
         ],
@@ -119,6 +132,7 @@ pub const MENUS: &[Menu] = &[
                 "Connection",
                 &[I(Connect), I(Disconnect), I(ChangeConnection)],
             ),
+            I(ChangeDatabase),
             SEP,
             I(DesignQuery),
             SEP,

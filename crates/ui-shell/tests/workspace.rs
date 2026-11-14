@@ -156,7 +156,7 @@ fn new_workspace_creates_the_folder_and_opens_the_explorer() {
         harness
             .state()
             .status()
-            .contains("not a PGStudio workspace")
+            .contains("not a PostPilot workspace")
     );
 }
 
@@ -193,7 +193,7 @@ fn saved_query_is_linked_and_reconnects_after_a_restart() {
     let text = std::fs::read_to_string(&file).unwrap();
     assert_eq!(
         text,
-        "-- pgstudio: server=Produção; database=vendas\nselect 1;\n"
+        "-- postpilot: server=Produção; database=vendas\nselect 1;\n"
     );
     assert!(
         harness

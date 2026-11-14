@@ -10,6 +10,7 @@ pub mod backup;
 pub mod bench;
 pub mod claude;
 pub mod connect;
+pub mod databases;
 pub mod designer;
 pub mod diagrams;
 pub mod documents;
@@ -121,6 +122,15 @@ pub struct ShellApp {
     confirm: Option<Confirm>,
     /// Pergunta do plano real de comandos que alteram dados.
     actual_confirm: Option<PendingActual>,
+    /// Bancos de cada servidor, para o seletor da toolbar.
+    databases: databases::DatabaseLists,
+    /// Troca de banco de uma janela esperando a checagem de transação ou
+    /// a confirmação do usuário.
+    db_switch: Option<PendingSwitch>,
+    /// Ctrl+U: abrir a lista de bancos da toolbar no próximo frame.
+    open_database_list: bool,
+    /// Abrir a lista de bancos assim que houver janela pronta (screenshots).
+    database_list_on_load: bool,
     /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
     allow_close: bool,
     /// Onde o layout é salvo ao sair.
@@ -227,6 +237,24 @@ struct PendingActual {
     offset: usize,
 }
 
+/// O que o usuário fez no seletor de banco da toolbar.
+#[derive(Default)]
+struct Picked {
+    /// Abriu a lista (ela é lida de novo).
+    opened: bool,
+    /// Escolheu um banco.
+    database: Option<String>,
+}
+
+/// Troca do banco de uma janela de consulta, esperando resposta.
+struct PendingSwitch {
+    doc: u32,
+    database: String,
+    /// Checando se a conexão da janela tem transação aberta; `None`
+    /// quando já se sabe que tem e falta o usuário confirmar.
+    probe: Option<databases::TransactionProbe>,
+}
+
 /// Resposta à pergunta de salvar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -282,6 +310,10 @@ impl Default for ShellApp {
             dialogs: Box::new(NoDialogs),
             confirm: None,
             actual_confirm: None,
+            databases: Default::default(),
+            db_switch: None,
+            open_database_list: false,
+            database_list_on_load: false,
             allow_close: false,
             layout_store: None,
             window: None,
@@ -1281,8 +1313,10 @@ impl ShellApp {
                 | WorkspaceExplorer
                 | NewWorkspace
                 | OpenWorkspace
+                | CloneWorkspace
                 | CloseWorkspace
                 | NewQuery
+                | ChangeDatabase
                 | OpenFile
                 | CloseDocument
                 | CloseAllDocuments
@@ -1293,6 +1327,7 @@ impl ShellApp {
                 | AutoHideAll
                 | CommentSelection
                 | UncommentSelection
+                | FormatDocument
                 | QuickFind
                 | GoTo
                 | ListMembers
@@ -1399,8 +1434,32 @@ impl ShellApp {
             }
             CommandId::AutoHideAll => self.workspace.auto_hide_all(),
             CommandId::NewQuery => {
+                // Como no SSMS: no banco do que está selecionado no Object
+                // Explorer; senão, no da janela ativa do mesmo servidor.
+                let from_explorer = self.explorer.provider().and_then(|p| {
+                    let node = self.explorer.selected()?;
+                    p.database_of(&node.id)
+                });
+                let active_key = self
+                    .connection
+                    .as_ref()
+                    .map(|c| servers::server_key(&c.settings));
+                let from_window = self
+                    .active_doc
+                    .filter(|id| self.doc_servers.get(id) == active_key.as_ref())
+                    .and_then(|id| self.document_database(id));
                 let id = self.documents.new_query();
+                if let Some(doc) = self.documents.get_mut(id) {
+                    doc.database = from_explorer.or(from_window);
+                }
                 self.activate_document(id);
+            }
+            CommandId::ChangeDatabase => {
+                if self.database_picker().enabled {
+                    self.open_database_list = true;
+                } else if self.active_doc.is_none() {
+                    self.status = "No query window is open.".to_string();
+                }
             }
             CommandId::OpenFile => {
                 if let Some(path) = self.dialogs.open_path() {
@@ -1463,6 +1522,7 @@ impl ShellApp {
             CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
             CommandId::CommentSelection
             | CommandId::UncommentSelection
+            | CommandId::FormatDocument
             | CommandId::QuickFind
             | CommandId::ListMembers
             | CommandId::CompleteWord
@@ -1505,6 +1565,7 @@ impl ShellApp {
             }
             CommandId::DisconnectObjectExplorer => {
                 if let Some(c) = self.connection.take() {
+                    self.databases.forget(&servers::server_key(&c.settings));
                     self.output
                         .push(format!("Disconnected from {}.", c.settings.server_name()));
                 }
@@ -1518,6 +1579,10 @@ impl ShellApp {
             CommandId::NewWorkspace => self.ask_new_workspace(),
             CommandId::OpenWorkspace => self.ask_open_workspace(),
             CommandId::CloseWorkspace => self.close_workspace(),
+            CommandId::CloneWorkspace => {
+                self.workspace_panel.open_clone();
+                self.workspace.open(Panel::WorkspaceExplorer);
+            }
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
@@ -2216,6 +2281,13 @@ impl ShellApp {
         self
     }
 
+    /// Abre a lista de bancos da toolbar (Ctrl+U) assim que a janela de
+    /// consulta ativa estiver pronta (para screenshots).
+    pub fn with_database_list_on_load(mut self) -> Self {
+        self.database_list_on_load = true;
+        self
+    }
+
     /// Se algum catálogo do IntelliSense está sendo lido.
     pub fn is_loading_catalog(&self) -> bool {
         self.catalogs.is_loading()
@@ -2235,6 +2307,21 @@ impl ShellApp {
                     &mut doc.text,
                     cmd == CommandId::UncommentSelection,
                 );
+                doc.editor.focus_editor();
+            }
+            CommandId::FormatDocument => {
+                let options = pgstudio_sql_editor::format::FormatOptions::default();
+                match pgstudio_sql_editor::format_selection(ctx, editor, &mut doc.text, &options) {
+                    Ok(()) => self.status = "Formatted.".to_string(),
+                    Err(e) => {
+                        if let Some(at) = e.at {
+                            let at = pgstudio_sql_editor::edit::char_of(&doc.text, at);
+                            doc.editor.mark_error(at, e.message.clone());
+                        }
+                        self.status =
+                            format!("Couldn't format the SQL: {e} The text was not changed.");
+                    }
+                }
                 doc.editor.focus_editor();
             }
             CommandId::QuickFind => {
@@ -2375,10 +2462,12 @@ impl ShellApp {
         self.execution_step(&ctx);
         self.claude_step(&ctx);
         self.intellisense_step(&ctx);
+        self.databases_step();
         self.script_step(&ctx);
         let mut commands = if self.confirm.is_some()
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
+            || self.db_switch.as_ref().is_some_and(|p| p.probe.is_none())
             || self.claude.is_confirming()
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
             || self.security.is_some()
@@ -2418,7 +2507,15 @@ impl ShellApp {
                 }
             });
         });
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands));
+        let mut picked = Picked::default();
+        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands, &mut picked));
+        self.open_database_list = false;
+        if picked.opened {
+            self.refresh_database_list(&ctx);
+        }
+        if let (Some(database), Some(id)) = (picked.database, self.active_doc) {
+            self.request_database(&ctx, id, database);
+        }
         egui::Panel::bottom("status_bar")
             .frame(
                 egui::Frame::new()
@@ -2451,6 +2548,7 @@ impl ShellApp {
                     close_requests: Vec::new(),
                     save_results: Vec::new(),
                     open_json: Vec::new(),
+                    keymap: &self.keymap,
                     editor_colors: match self.theme {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
@@ -2507,6 +2605,7 @@ impl ShellApp {
         }
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
+        self.database_switch_window(&ctx);
         self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
         self.backup_window(&ctx);
@@ -3214,11 +3313,8 @@ impl ShellApp {
     }
 
     /// Toolbar padrão do SSMS.
-    fn toolbar(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>) {
-        let database = self
-            .active_doc
-            .and_then(|id| self.document_database(id))
-            .unwrap_or_else(|| "(no database)".to_string());
+    fn toolbar(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>, picked: &mut Picked) {
+        let picker = self.database_picker();
         ui.horizontal(|ui| {
             for tool in TOOLBAR {
                 match *tool {
@@ -3251,12 +3347,49 @@ impl ShellApp {
                         }
                     }
                     Tool::Database => {
-                        ui.add_enabled_ui(false, |ui| {
+                        let tip = match self.keymap.shortcut_for(CommandId::ChangeDatabase) {
+                            Some(s) => format!("Available Databases ({s})"),
+                            None => "Available Databases".to_string(),
+                        };
+                        let shown = if picker.current.is_empty() {
+                            "(no database)"
+                        } else {
+                            picker.current.as_str()
+                        };
+                        let inner = ui.add_enabled_ui(picker.enabled, |ui| {
                             egui::ComboBox::from_id_salt("database")
-                                .selected_text(&database)
+                                .selected_text(shown)
                                 .width(160.0)
-                                .show_ui(ui, |_| {});
+                                .height(320.0)
+                                .show_ui(ui, |ui| {
+                                    let mut names: Vec<&str> =
+                                        picker.list.iter().map(String::as_str).collect();
+                                    if !names.contains(&picker.current.as_str()) {
+                                        names.insert(0, &picker.current);
+                                    }
+                                    for name in names {
+                                        if ui
+                                            .selectable_label(name == picker.current, name)
+                                            .clicked()
+                                        {
+                                            picked.database = Some(name.to_string());
+                                        }
+                                    }
+                                    if picker.loading {
+                                        ui.weak("Loading...");
+                                    } else if let Some(e) = picker.error {
+                                        ui.weak(e);
+                                    }
+                                })
                         });
+                        let response = inner.inner.response.on_hover_text(&tip);
+                        if response.clicked() {
+                            picked.opened = true;
+                        }
+                        if self.open_database_list && picker.enabled {
+                            egui::Popup::open_id(ui.ctx(), response.id.with("popup"));
+                            picked.opened = true;
+                        }
                     }
                     Tool::Separator => {
                         ui.separator();
@@ -3305,6 +3438,8 @@ impl ShellApp {
             || executing
             || self.catalogs.is_loading()
             || self.list_members_on_load
+            || self.database_list_on_load
+            || self.databases.is_loading_any()
             || self.selected_action.is_some()
             || !self.scripts.is_empty()
             || self.designers.is_loading()
