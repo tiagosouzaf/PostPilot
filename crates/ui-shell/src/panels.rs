@@ -5,7 +5,7 @@
 use eframe::egui;
 use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
-use pgstudio_object_explorer::{Event, ObjectExplorer};
+use pgstudio_object_explorer::{Event, ObjectExplorer, Properties};
 
 use crate::documents::Documents;
 
@@ -174,22 +174,42 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let events = self.explorer.show(ui);
                 self.explorer_events.extend(events);
             }
-            Panel::Properties => match self.explorer.selected() {
+            Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
-                    egui::Grid::new("properties")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.strong("Name");
-                            ui.label(&node.name);
-                            ui.end_row();
-                            ui.strong("Type");
-                            ui.label(node.kind.label());
-                            ui.end_row();
-                            ui.strong("Path");
-                            ui.label(node.id.to_string());
-                            ui.end_row();
-                        });
+                    let props = self.explorer.properties(&node.id).cloned();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::Grid::new("properties")
+                            .num_columns(2)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                let row = |ui: &mut egui::Ui, name: &str, value: &str| {
+                                    ui.strong(name);
+                                    ui.add(egui::Label::new(value).wrap());
+                                    ui.end_row();
+                                };
+                                row(ui, "Name", &node.name);
+                                row(ui, "Type", node.kind.label());
+                                if let Some(Properties::Loaded(props)) = &props {
+                                    for p in props {
+                                        row(ui, &p.name, &p.value);
+                                    }
+                                }
+                                row(ui, "Path", &node.id.to_string());
+                            });
+                        match props {
+                            Some(Properties::Loading) => {
+                                ui.weak("Loading...");
+                                // A leitura não acorda a interface: olha de
+                                // novo daqui a pouco.
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(30));
+                            }
+                            Some(Properties::Failed(e)) => {
+                                ui.colored_label(ui.visuals().error_fg_color, e);
+                            }
+                            _ => {}
+                        }
+                    });
                 }
                 None => {
                     ui.weak("No object selected.");

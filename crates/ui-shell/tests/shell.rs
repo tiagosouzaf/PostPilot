@@ -250,7 +250,7 @@ fn output_logs_executed_commands() {
 }
 
 use pgstudio_core::metadata::NodeId;
-use pgstudio_object_explorer::fake::{FakeProvider, SERVER_NAME};
+use pgstudio_object_explorer::fake::{FAKE_OWNER, FakeProvider, SERVER_NAME};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -299,6 +299,23 @@ fn clicking_a_node_shows_it_in_properties() {
         Some(SERVER_NAME)
     );
     assert!(harness.query_all_by_value("Server").next().is_some());
+}
+
+#[test]
+fn properties_window_shows_what_the_provider_reads() {
+    let mut harness = connected(&["srv", "srv/Databases"]);
+    let db = NodeId("srv/Databases/postgres".into());
+    harness.state_mut().explorer_mut().select(&db);
+    harness.run();
+    assert!(
+        harness
+            .state_mut()
+            .explorer_mut()
+            .wait_idle(Duration::from_secs(5))
+    );
+    harness.run();
+    assert!(harness.query_all_by_value(FAKE_OWNER).next().is_some());
+    assert!(harness.query_all_by_value("Database").next().is_some());
 }
 
 #[test]
