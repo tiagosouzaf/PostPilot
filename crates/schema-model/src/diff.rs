@@ -213,24 +213,21 @@ pub fn data_loss_warnings(old: &Model, new: &Model) -> Vec<String> {
     let mut out = Vec::new();
     for o in &old.tables {
         let Some(n) = new.table(o.id) else {
-            out.push(format!("Table {} will be deleted.", o.qualified()));
+            out.push(pgstudio_i18n::trf!(
+                "Table {table} will be deleted.",
+                table = o.qualified()
+            ));
             continue;
         };
         for oc in &o.columns {
             match n.column_by_id(oc.id) {
-                None if oc.generated.is_none() => out.push(format!(
-                    "Column {} will be deleted from {}.",
-                    oc.name,
-                    n.qualified()
+                None if oc.generated.is_none() => out.push(pgstudio_i18n::trf!(
+                    "Column {column} will be deleted from {table}.",
+                    column = oc.name,
+                    table = n.qualified()
                 )),
                 Some(nc) if nc.generated.is_none() && !widens(&oc.ty, &nc.ty) => {
-                    out.push(format!(
-                        "Data might be lost converting column {} of {} from {} to {}.",
-                        nc.name,
-                        n.qualified(),
-                        oc.ty,
-                        nc.ty
-                    ));
+                    out.push(pgstudio_i18n::trf!("Data might be lost converting column {column} of {table} from {from} to {to}.", column = nc.name, table = n.qualified(), from = oc.ty, to = nc.ty));
                 }
                 _ => {}
             }

@@ -58,14 +58,15 @@ impl Snapshot {
             format: u32,
         }
         let header: Header = serde_json::from_str(text)
-            .map_err(|e| format!("This is not a schema snapshot ({e})."))?;
+            .map_err(|e| pgstudio_i18n::trf!("This is not a schema snapshot ({e}).", e = e))?;
         if header.format > FORMAT {
-            return Err(format!(
-                "The snapshot was saved by a newer PostPilot (format {}).",
-                header.format
+            return Err(pgstudio_i18n::trf!(
+                "The snapshot was saved by a newer PostPilot (format {format}).",
+                format = header.format
             ));
         }
-        serde_json::from_str(text).map_err(|e| format!("The snapshot is damaged ({e})."))
+        serde_json::from_str(text)
+            .map_err(|e| pgstudio_i18n::trf!("The snapshot is damaged ({e}).", e = e))
     }
 }
 
