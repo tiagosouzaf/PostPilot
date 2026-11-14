@@ -5,8 +5,8 @@
 //!   uma grade de 1 milhão de linhas, IntelliSense num catálogo de 10 mil
 //!   tabelas, diagramas, Table Designer, um plano de 2.000 nós e o Activity
 //!   Monitor com 5.000 sessões.
-//! - `dist`: pacotes de instalação (.deb, AppImage e .zip do Windows); veja
-//!   [`dist`].
+//! - `dist`: pacotes de instalação (.deb, AppImage, Arch, .zip e .msi do
+//!   Windows); veja [`dist`].
 
 mod dist;
 

@@ -7,7 +7,9 @@
 //!   `makepkg` faz; o `packaging/arch/PKGBUILD` gera o mesmo a partir do
 //!   código;
 //! - `.zip` para Windows, compilado de forma cruzada com o MinGW
-//!   (`x86_64-pc-windows-gnu`) quando o host não é Windows.
+//!   (`x86_64-pc-windows-gnu`) quando o host não é Windows;
+//! - `.msi` para Windows, com o mesmo `pgstudio.exe`, montado pelo `wixl` (do
+//!   msitools) a partir de `packaging/windows/pgstudio.wxs`.
 //!
 //! Tudo sai em `target/packages/`, com um `SHA256SUMS`. O binário é
 //! compilado no perfil `dist` (o `release` sem símbolos).
@@ -31,8 +33,12 @@ Gera os pacotes de instalação em target/packages/:
   zip       PGStudio-<versão>-windows-x86_64.zip (no Linux, compila para
             x86_64-pc-windows-gnu: rustup target add x86_64-pc-windows-gnu
             e o pacote mingw-w64)
+  msi       PGStudio-<versão>-x86_64.msi, instalador com atalho no menu
+            Iniciar e desinstalação pelo Windows (o mesmo exe do zip; precisa
+            do wixl, do pacote wixl no Ubuntu ou msitools no Arch)
 
-No Linux, o padrão são os quatro; no Windows, só o zip.
+No Linux, o padrão são os cinco; no Windows, só o zip (o msi também sai lá
+com --only msi se o wixl estiver no PATH).
 
 O binário Linux é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
 mais novos) com o cargo-zigbuild (cargo install cargo-zigbuild e
@@ -40,7 +46,8 @@ pip install ziglang). Sem ele, ou com --native, sai um build comum, que só
 roda com a glibc da máquina que compilou ou mais nova.
 
 Opções:
-  --only F    só estes formatos, separados por vírgula (deb,appimage,arch,zip)
+  --only F    só estes formatos, separados por vírgula
+              (deb,appimage,arch,zip,msi)
   --no-build  não recompila; usa os binários do perfil dist que já existem
   --native    compila o binário Linux sem o cargo-zigbuild";
 
@@ -102,10 +109,17 @@ pub enum Format {
     AppImage,
     Arch,
     Zip,
+    Msi,
 }
 
 impl Format {
-    const ALL: [Format; 4] = [Format::Deb, Format::AppImage, Format::Arch, Format::Zip];
+    const ALL: [Format; 5] = [
+        Format::Deb,
+        Format::AppImage,
+        Format::Arch,
+        Format::Zip,
+        Format::Msi,
+    ];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
@@ -113,12 +127,17 @@ impl Format {
             "appimage" => Some(Format::AppImage),
             "arch" => Some(Format::Arch),
             "zip" => Some(Format::Zip),
+            "msi" => Some(Format::Msi),
             _ => None,
         }
     }
 
     fn needs_linux_binary(self) -> bool {
         matches!(self, Format::Deb | Format::AppImage | Format::Arch)
+    }
+
+    fn needs_windows_binary(self) -> bool {
+        matches!(self, Format::Zip | Format::Msi)
     }
 }
 
@@ -224,7 +243,7 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
             made.push(build_arch(root, &out, &exe)?);
         }
     }
-    if args.formats.contains(&Format::Zip) {
+    if args.formats.iter().any(|f| f.needs_windows_binary()) {
         let target = (!cfg!(windows)).then_some(WINDOWS_TARGET);
         if args.build {
             cargo_build(root, target)?;
@@ -238,7 +257,12 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
         if !exe.exists() {
             return Err(format!("{} não existe; rode sem --no-build", exe.display()));
         }
-        made.push(build_zip(root, &out, &exe)?);
+        if args.formats.contains(&Format::Zip) {
+            made.push(build_zip(root, &out, &exe)?);
+        }
+        if args.formats.contains(&Format::Msi) {
+            made.push(build_msi(root, &out, &exe)?);
+        }
     }
 
     write_checksums(&out, &made);
@@ -687,16 +711,23 @@ fn symlink(_: &str, link: &Path) -> Result<(), String> {
     Err(format!("{}: links simbólicos só no Unix", link.display()))
 }
 
-fn build_zip(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
-    let name = format!("PGStudio-{}-windows-x86_64", version());
-    let stage = out.join("zip-root");
-    fresh_dir(&stage)?;
-    let dir = stage.join(&name);
+/// Copia o exe e as licenças (em .txt com CRLF) para `dir`: o que o zip e
+/// o msi instalam.
+fn stage_windows(root: &Path, dir: &Path, exe: &Path) -> Result<(), String> {
     copy(exe, &dir.join("pgstudio.exe"))?;
     for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
         let text = io(std::fs::read_to_string(root.join(file)), &root.join(file))?;
         write(&dir.join(format!("{file}.txt")), crlf(&text))?;
     }
+    Ok(())
+}
+
+fn build_zip(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
+    let name = format!("PGStudio-{}-windows-x86_64", version());
+    let stage = out.join("zip-root");
+    fresh_dir(&stage)?;
+    let dir = stage.join(&name);
+    stage_windows(root, &dir, exe)?;
     let readme = root.join("packaging/windows/LEIA-ME.txt");
     let text = io(std::fs::read_to_string(&readme), &readme)?.replace("{version}", version());
     write(&dir.join("LEIA-ME.txt"), crlf(&text))?;
@@ -728,6 +759,55 @@ fn build_zip(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
     }
     io(std::fs::remove_dir_all(&stage), &stage)?;
     Ok(zip)
+}
+
+/// Versão no formato do MSI: três números de 0 a 255, 255 e 65535 (o
+/// Windows Installer ignora um quarto). O que vier depois de `-` ou `+` (pré-
+/// lançamento, metadados de build) fica de fora, porque o MSI só aceita
+/// números.
+pub fn msi_version(version: &str) -> Result<String, String> {
+    let core = version.split(['-', '+']).next().unwrap_or_default();
+    let parts: Vec<&str> = core.split('.').collect();
+    let limits = [255u32, 255, 65535];
+    if parts.len() != 3 {
+        return Err(format!("versão {version}: o MSI precisa de X.Y.Z"));
+    }
+    for (part, max) in parts.iter().zip(limits) {
+        match part.parse::<u32>() {
+            Ok(n) if n <= max => {}
+            _ => {
+                return Err(format!(
+                    "versão {version}: {part} não cabe no MSI (máximo {max})"
+                ));
+            }
+        }
+    }
+    Ok(core.to_string())
+}
+
+fn build_msi(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
+    let product_version = msi_version(version())?;
+    let stage = out.join("msi-root");
+    fresh_dir(&stage)?;
+    stage_windows(root, &stage, exe)?;
+    copy(
+        &root.join("packaging/icons/pgstudio.ico"),
+        &stage.join("pgstudio.ico"),
+    )?;
+    let msi = out.join(format!("PGStudio-{}-x86_64.msi", version()));
+    run_tool(
+        Command::new("wixl")
+            .args(["--arch", "x64", "--define"])
+            .arg(format!("Version={product_version}"))
+            .arg("--define")
+            .arg(format!("SourceDir={}", stage.display()))
+            .arg("--output")
+            .arg(&msi)
+            .arg(root.join("packaging/windows/pgstudio.wxs")),
+        "instale o wixl (pacote wixl no Debian/Ubuntu, msitools no Arch)",
+    )?;
+    io(std::fs::remove_dir_all(&stage), &stage)?;
+    Ok(msi)
 }
 
 /// Fim de linha do Windows, para o Bloco de Notas antigo.
@@ -787,6 +867,7 @@ mod tests {
         assert!(args("--only").is_err());
         assert!(args("--only ,").is_err());
         assert!(args("--only rpm").is_err());
+        assert_eq!(args("--only msi").unwrap().formats, vec![Format::Msi]);
         assert_eq!(args("--only arch").unwrap().formats, vec![Format::Arch]);
         assert!(args("--fast").is_err());
     }
@@ -852,6 +933,36 @@ mod tests {
     }
 
     #[test]
+    fn msi_version_is_three_small_numbers() {
+        assert_eq!(msi_version("0.1.0").unwrap(), "0.1.0");
+        assert_eq!(msi_version("1.2.3-beta.1+abc").unwrap(), "1.2.3");
+        assert_eq!(msi_version("255.255.65535").unwrap(), "255.255.65535");
+        assert!(msi_version("256.0.0").is_err());
+        assert!(msi_version("1.2").is_err());
+        assert!(msi_version("1.2.3.4").is_err());
+        assert!(msi_version("1.x.3").is_err());
+    }
+
+    /// O .wxs usa as variáveis que o `build_msi` passa, e o UpgradeCode não
+    /// pode mudar (sem ele, a versão nova não substitui a velha).
+    #[test]
+    fn wxs_uses_the_xtask_variables_and_a_fixed_upgrade_code() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let wxs = std::fs::read_to_string(root.join("packaging/windows/pgstudio.wxs")).unwrap();
+        assert!(wxs.contains("Version=\"$(var.Version)\""));
+        for file in [
+            "pgstudio.exe",
+            "pgstudio.ico",
+            "LICENSE-MIT.txt",
+            "LICENSE-APACHE.txt",
+        ] {
+            assert!(wxs.contains(&format!("$(var.SourceDir)/{file}")), "{file}");
+        }
+        assert!(wxs.contains("UpgradeCode=\"6B0E9A3C-52F4-4C6D-9B1A-7E2D3F8C4A51\""));
+        assert!(wxs.contains("<MajorUpgrade "));
+    }
+
+    #[test]
     fn crlf_does_not_double_carriage_returns() {
         assert_eq!(crlf("a\nb\r\nc"), "a\r\nb\r\nc");
     }
@@ -868,6 +979,7 @@ mod tests {
         assert!(desktop.contains("Icon=pgstudio\n"));
         assert!(desktop.contains("StartupWMClass=pgstudio\n"));
         assert!(root.join("packaging/windows/LEIA-ME.txt").exists());
+        assert!(root.join("packaging/windows/pgstudio.wxs").exists());
         assert!(root.join("packaging/icons/pgstudio.ico").exists());
     }
 }

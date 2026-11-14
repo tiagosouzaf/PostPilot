@@ -44,9 +44,16 @@ Novas crates entram na fase do roteiro que as usa.
 - **Outras distribuições Linux:** `chmod +x PGStudio-<versão>-x86_64.AppImage`
   e execute. Sem FUSE (alguns containers), use
   `./PGStudio-<versão>-x86_64.AppImage --appimage-extract-and-run`.
-- **Windows 10 e 11 (64 bits):** extraia o `.zip` e abra `pgstudio.exe`. Não
-  há instalador; o SmartScreen pode avisar porque o exe não é assinado ("Mais
-  informações" > "Executar assim mesmo").
+- **Windows 10 e 11 (64 bits):** dê dois cliques em
+  `PGStudio-<versão>-x86_64.msi` (ou `msiexec /i PGStudio-<versão>-x86_64.msi`).
+  Ele instala para todos os usuários em `C:\Program Files\PGStudio`, pede
+  elevação, põe o atalho no menu Iniciar e o PGStudio no "Abrir com" dos
+  arquivos `.sql` (sem virar o programa padrão). Uma versão nova substitui a
+  anterior; para remover, Configurações > Aplicativos > PGStudio. Sem
+  instalar, extraia o `.zip` e abra `pgstudio.exe`. O exe e o msi não são
+  assinados, então o SmartScreen pode avisar ("Mais informações" > "Executar
+  assim mesmo"). O instalador só foi testado no Wine (`msiexec` do Wine 9), não
+  num Windows de verdade.
 
 No Linux, o binário é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
 posteriores) e precisa de Vulkan ou OpenGL ES (o Mesa de qualquer desktop
@@ -226,6 +233,7 @@ gera em `target/packages/`, com um `SHA256SUMS`:
 | `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
 | `pgstudio-<versão>-1-x86_64.pkg.tar.zst` | `bsdtar` (libarchive-tools no Ubuntu; no Arch já vem); `packaging/arch/PKGBUILD` gera o mesmo pacote com o `makepkg` |
 | `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
+| `PGStudio-<versão>-x86_64.msi` | o mesmo exe do zip e o `wixl` (pacote `wixl` no Ubuntu, `msitools` no Arch), que lê `packaging/windows/pgstudio.wxs` |
 
 O binário Linux sai ligado contra a glibc 2.31 quando há o
 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
@@ -233,12 +241,15 @@ O binário Linux sai ligado contra a glibc 2.31 quando há o
 `--native`, sai um build comum, que só roda com a glibc da máquina que
 compilou ou mais nova.
 
-`--only deb,appimage,arch,zip` escolhe os formatos e `--no-build` reaproveita os
+`--only deb,appimage,arch,zip,msi` escolhe os formatos e `--no-build` reaproveita os
 binários. No Ubuntu, as ferramentas vêm de
-`sudo apt install dpkg-dev squashfs-tools libarchive-tools zip mingw-w64`. O ícone fica em
+`sudo apt install dpkg-dev squashfs-tools libarchive-tools zip mingw-w64 wixl`. O ícone fica em
 `packaging/icons/` (gerado por `make_icon.py`); o exe do Windows o recebe pelo
-`windres` do MinGW. O `.msi` fica para quando houver uma máquina ou CI com
-Windows.
+`windres` do MinGW, e o msi o usa no menu Iniciar e em Aplicativos instalados.
+
+O `wixl` não tem as telas do WiX: o msi abre direto na barra de progresso, sem
+escolher pasta. O `UpgradeCode` do `.wxs` é fixo; é ele que faz a versão nova
+substituir a velha, então não o troque.
 
 ## Roteiro
 
