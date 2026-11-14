@@ -131,6 +131,8 @@ Medido no CI do [PR #8](https://github.com/tiagosouzaf/PostPilot/pull/8)
   egui da Fase 0 ficou entre 141 e 152 MB, e no Windows o mesmo app usa
   54 MB. Precisa ser medido num Linux com GPU antes de decidir se há trabalho
   a fazer (por exemplo, testar o renderizador `glow`).
+  Desde o marco 6.6 o app também traz o glow: `PGSTUDIO_RENDERER=glow cargo
+  xtask bench` mede com ele (o bench repassa o ambiente ao app).
 
 ### Marco 2.8 (fim da Fase 2)
 
