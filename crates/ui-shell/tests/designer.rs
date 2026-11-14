@@ -11,9 +11,10 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{Queryable, by};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::query::Offline;
+use pgstudio_core::schema::Action;
 use pgstudio_object_explorer::fake::{FAILING_DDL, FakeProvider};
 use pgstudio_ui_shell::ShellApp;
-use pgstudio_ui_shell::designer::{Notice, TableDesigner};
+use pgstudio_ui_shell::designer::{DialogKind, Draft, KeyKind, Notice, TableDesigner};
 use pgstudio_ui_shell::panels::Panel;
 
 struct FakeConnector(FakeProvider);
@@ -285,4 +286,163 @@ fn exit_asks_about_a_changed_designer() {
     harness.run();
     let d = designer(&harness).1;
     assert!(!d.is_confirming_close() && d.is_dirty());
+}
+
+fn open_dialog(harness: &mut Harness<'static, ShellApp>, label: &str) {
+    harness.get_by_label_contains(label).click();
+    harness.run();
+}
+
+fn apply(harness: &mut Harness<'static, ShellApp>) {
+    harness.get_by_label("Apply").click();
+    harness.run();
+}
+
+fn designer_mut<'a>(harness: &'a mut Harness<'static, ShellApp>) -> &'a mut TableDesigner {
+    let designers = harness.state_mut().designers_mut();
+    let id = *designers.ids().last().expect("no designer open");
+    designers.get_mut(id).unwrap()
+}
+
+#[test]
+fn relationships_indexes_and_checks_are_added_by_their_windows() {
+    let (mut harness, provider) = harness();
+    open(&mut harness, "public.table_00003", "Design");
+
+    open_dialog(&mut harness, "Relationships");
+    assert_eq!(
+        designer(&harness).1.dialog().map(|d| d.kind),
+        Some(DialogKind::Relationships)
+    );
+    harness
+        .get_by_label(&format!("{} Add", egui_phosphor::regular::PLUS))
+        .click();
+    harness.run();
+    match designer_mut(&mut harness).dialog_draft_mut() {
+        Some(Draft::Relationship(fk)) => {
+            assert_eq!(fk.ref_table, "table_00000");
+            assert_eq!(fk.columns, ["id"]);
+            fk.on_delete = Action::Cascade;
+        }
+        other => panic!("{other:?}"),
+    }
+    apply(&mut harness);
+    assert_eq!(designer(&harness).1.dialog_error(), None);
+    harness.get_by_label("Close").click();
+    harness.run();
+
+    open_dialog(&mut harness, "Indexes/Keys");
+    designer_mut(&mut harness).dialog_add();
+    match designer_mut(&mut harness).dialog_draft_mut() {
+        Some(Draft::IndexKey(k)) => {
+            assert_eq!(k.kind, KeyKind::Index);
+            k.name = "table_00003_name_idx".into();
+            k.columns = vec!["lower(name)".into()];
+            k.unique = true;
+            k.filter = "active".into();
+        }
+        other => panic!("{other:?}"),
+    }
+    harness.run();
+    apply(&mut harness);
+    harness.get_by_label("Close").click();
+    harness.run();
+
+    open_dialog(&mut harness, "Check Constraints");
+    designer_mut(&mut harness).dialog_add();
+    if let Some(Draft::Check(c)) = designer_mut(&mut harness).dialog_draft_mut() {
+        c.expr = "balance >= 0".into();
+    }
+    harness.run();
+    apply(&mut harness);
+
+    assert_eq!(
+        designer(&harness).1.change_script(),
+        [
+            "ALTER TABLE public.table_00003 ADD CONSTRAINT table_00003_check CHECK (balance >= 0);",
+            "CREATE UNIQUE INDEX table_00003_name_idx ON public.table_00003 (lower(name)) WHERE active;",
+            "ALTER TABLE public.table_00003 ADD CONSTRAINT table_00003_id_fkey FOREIGN KEY (id) REFERENCES public.table_00000 (id) ON DELETE CASCADE;",
+        ]
+    );
+    harness.get_by_label("Close").click();
+    harness.run();
+    assert!(designer(&harness).1.dialog().is_none());
+    save(&mut harness);
+    assert_eq!(provider.applied().len(), 1);
+    assert_eq!(provider.applied()[0].1.len(), 3);
+}
+
+#[test]
+fn a_bad_relationship_shows_the_error_and_changes_nothing() {
+    let (mut harness, _) = harness();
+    open(&mut harness, "public.table_00003", "Design");
+    open_dialog(&mut harness, "Relationships");
+    let d = designer_mut(&mut harness);
+    d.dialog_add();
+    if let Some(Draft::Relationship(fk)) = d.dialog_draft_mut() {
+        fk.ref_columns = vec!["nope".into()];
+    }
+    harness.run();
+    apply(&mut harness);
+    let d = designer(&harness).1;
+    assert!(
+        d.dialog_error().is_some_and(|e| e.contains("nope")),
+        "{:?}",
+        d.dialog_error()
+    );
+    assert!(!d.is_dirty());
+}
+
+#[test]
+fn changing_a_key_into_an_index_keeps_one_undo_per_step() {
+    let (mut harness, _) = harness();
+    open(&mut harness, "public.table_00003", "Design");
+    open_dialog(&mut harness, "Indexes/Keys");
+    // A primeira entrada é a chave primária; vira um unique.
+    match designer_mut(&mut harness).dialog_draft_mut() {
+        Some(Draft::IndexKey(k)) => {
+            assert_eq!(k.kind, KeyKind::PrimaryKey);
+            k.kind = KeyKind::UniqueKey;
+            k.name = "table_00003_id_key".into();
+        }
+        other => panic!("{other:?}"),
+    }
+    harness.run();
+    apply(&mut harness);
+    let script = designer(&harness).1.change_script();
+    assert_eq!(
+        script,
+        [
+            "ALTER TABLE public.table_00003 DROP CONSTRAINT table_00003_pkey;",
+            "ALTER TABLE public.table_00003 ADD CONSTRAINT table_00003_id_key UNIQUE (id);",
+        ]
+    );
+}
+
+#[test]
+fn changing_a_type_that_might_lose_data_asks_before_saving() {
+    let (mut harness, provider) = harness();
+    open(&mut harness, "public.table_00003", "Design");
+    retype(&mut harness, "text", "character varying(20)");
+    save(&mut harness);
+    let warnings = designer(&harness).1.pending_warnings().unwrap().to_vec();
+    assert_eq!(
+        warnings,
+        [
+            "Data might be lost converting column name of public.table_00003 from text to character varying(20)."
+        ]
+    );
+    harness.get_by_label("No").click();
+    harness.run();
+    assert!(provider.applied().is_empty());
+    assert!(designer(&harness).1.is_dirty());
+
+    save(&mut harness);
+    harness.get_by_label("Yes").click();
+    harness.step();
+    until(&mut harness, "save never finished", |h| {
+        !designer(h).1.is_saving()
+    });
+    assert_eq!(provider.applied().len(), 1);
+    assert!(!designer(&harness).1.is_dirty());
 }

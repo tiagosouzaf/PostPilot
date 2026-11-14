@@ -129,7 +129,17 @@ impl Action {
         }
     }
 
-    fn sql(self) -> &'static str {
+    /// Todas, na ordem do SSMS.
+    pub const ALL: [Action; 5] = [
+        Action::NoAction,
+        Action::Cascade,
+        Action::SetNull,
+        Action::SetDefault,
+        Action::Restrict,
+    ];
+
+    /// Como o SQL escreve (`NO ACTION`, `CASCADE`...).
+    pub fn sql(self) -> &'static str {
         match self {
             Action::NoAction => "NO ACTION",
             Action::Restrict => "RESTRICT",
