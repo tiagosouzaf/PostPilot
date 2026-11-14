@@ -5,6 +5,7 @@
 //! [`CommandId`] e passam por [`ShellApp::execute`]. A área central tem o
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
+pub mod bench;
 pub mod connect;
 pub mod documents;
 pub mod execution;
@@ -89,6 +90,8 @@ pub struct ShellApp {
     /// Ação do menu de contexto a fazer no nó selecionado depois das
     /// expansões (screenshots).
     pending_events: Vec<pgstudio_object_explorer::Event>,
+    /// Cenário de medição em andamento (`cargo xtask bench`).
+    bench_run: Option<bench::Run>,
     selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
 }
 
@@ -160,6 +163,7 @@ impl Default for ShellApp {
             scripts: Vec::new(),
             selected_action: None,
             pending_events: Vec::new(),
+            bench_run: None,
         }
     }
 }
@@ -489,6 +493,137 @@ impl ShellApp {
     pub fn with_bench(mut self) -> Self {
         self.bench_frames = Some(0);
         self
+    }
+
+    /// Roda um cenário de medição (grade ou IntelliSense) e escreve o
+    /// resultado na saída padrão. Veja o módulo [`mod@bench`].
+    pub fn with_bench_scenario(mut self, scenario: bench::Scenario) -> Self {
+        self.bench_run = Some(bench::Run::new(scenario));
+        self
+    }
+
+    /// Avança o cenário de medição depois de um frame que levou `ui_ms` em
+    /// [`Self::show`].
+    fn bench_scenario_step(&mut self, ctx: &egui::Context, ui_ms: f64) {
+        use bench::{Phase, Scenario};
+        let Some(mut run) = self.bench_run.take() else {
+            return;
+        };
+        match run.phase {
+            Phase::Start if self.explorer.is_connected() => {
+                let doc = match run.scenario {
+                    Scenario::Grid => {
+                        let id = self.documents.new_script(
+                            format!("-- {} synthetic rows\nselect *;\n", bench::GRID_ROWS),
+                            None,
+                        );
+                        if let Some(doc) = self.documents.get_mut(id) {
+                            doc.session = Some(documents::Session(Arc::new(
+                                bench::SyntheticSession::new(bench::GRID_ROWS),
+                            )));
+                        }
+                        self.activate_document(id);
+                        self.execute_query(ctx);
+                        id
+                    }
+                    Scenario::IntelliSense => {
+                        let db = Some(bench::INTELLISENSE_DATABASE.to_string());
+                        let id = self.documents.new_script(String::new(), db);
+                        self.activate_document(id);
+                        id
+                    }
+                };
+                run.phase = Phase::Loading {
+                    since: std::time::Instant::now(),
+                    doc,
+                };
+            }
+            Phase::Start => {}
+            Phase::Loading { since, doc } => {
+                let ready = match run.scenario {
+                    Scenario::Grid => self
+                        .documents
+                        .get(doc)
+                        .and_then(|d| d.execution.as_ref())
+                        .is_some_and(|e| !e.is_running()),
+                    Scenario::IntelliSense => {
+                        self.catalog_for(doc).is_some() && !self.catalogs.is_loading()
+                    }
+                };
+                if ready {
+                    run.load_ms = since.elapsed().as_secs_f64() * 1000.0;
+                    run.phase = Phase::Running { doc, step: 0 };
+                }
+            }
+            Phase::Running { doc, step } => match run.scenario {
+                Scenario::Grid => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let set = self
+                        .documents
+                        .get_mut(doc)
+                        .and_then(|d| d.execution.as_mut())
+                        .and_then(|e| e.results.first_mut());
+                    let rows = set.as_ref().map_or(0, |s| s.len());
+                    if step == bench::GRID_FRAMES || set.is_none() {
+                        let line = run.result_line(&[("rows", rows as f64)]);
+                        bench_print(&line);
+                        run.phase = Phase::Done;
+                    } else if let Some(set) = set {
+                        let last = rows.saturating_sub(40) as f64;
+                        set.grid.top = last * step as f64 / (bench::GRID_FRAMES - 1) as f64;
+                        run.phase = Phase::Running {
+                            doc,
+                            step: step + 1,
+                        };
+                    }
+                }
+                Scenario::IntelliSense => {
+                    // Espera o editor ganhar o foco antes da primeira tecla.
+                    if run.warmup < 10 {
+                        run.warmup += 1;
+                    } else {
+                        if step > 0 {
+                            run.record(ui_ms);
+                            if self
+                                .documents
+                                .get(doc)
+                                .is_some_and(|d| d.editor.is_completing())
+                            {
+                                run.popup_keys += 1;
+                            }
+                        }
+                        match bench::INTELLISENSE_SCRIPT.chars().nth(step) {
+                            Some(c) => {
+                                run.next_key = Some(c);
+                                run.phase = Phase::Running {
+                                    doc,
+                                    step: step + 1,
+                                };
+                            }
+                            None => {
+                                let tables = self.catalog_for(doc).map_or(0, |c| {
+                                    c.schemas.iter().map(|s| s.relations.len()).sum::<usize>()
+                                });
+                                let line = run.result_line(&[
+                                    ("keys", step as f64),
+                                    ("popup_keys", run.popup_keys as f64),
+                                    ("relations", tables as f64),
+                                ]);
+                                bench_print(&line);
+                                run.phase = Phase::Done;
+                            }
+                        }
+                    }
+                }
+            },
+            Phase::Done => {}
+        }
+        if !matches!(run.phase, Phase::Done) {
+            ctx.request_repaint();
+        }
+        self.bench_run = Some(run);
     }
 
     fn bench_step(&mut self) {
@@ -1483,15 +1618,32 @@ impl ShellApp {
 }
 
 impl eframe::App for ShellApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(c) = self.bench_run.as_mut().and_then(|r| r.next_key.take()) {
+            raw_input.events.push(egui::Event::Text(c.to_string()));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.bench_step();
+        let started = std::time::Instant::now();
         self.show(ui);
+        let ui_ms = started.elapsed().as_secs_f64() * 1000.0;
         let ctx = ui.ctx().clone();
+        self.bench_scenario_step(&ctx, ui_ms);
         if !self.pending_expand.is_empty() {
             ctx.request_repaint();
         }
         self.screenshot_step(&ctx);
     }
+}
+
+/// Escreve uma linha de medição na saída padrão, já descarregada.
+fn bench_print(line: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
 }
 
 /// Fontes padrão do egui mais os ícones Phosphor.

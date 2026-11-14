@@ -1,7 +1,9 @@
 //! Tarefas de desenvolvimento: `cargo xtask <tarefa>`.
 //!
-//! - `bench`: mede o tempo até o primeiro frame e a memória em repouso do
-//!   `pgstudio` compilado em release, contra as metas do projeto.
+//! - `bench`: mede o `pgstudio` compilado em release contra as metas do
+//!   projeto: tempo até o primeiro frame e memória em repouso, rolagem de
+//!   uma grade de 1 milhão de linhas e IntelliSense num catálogo de 10 mil
+//!   tabelas.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -17,16 +19,38 @@ const FIRST_FRAME: &str = "pgstudio-bench: first-frame";
 const STARTUP_TARGET_MS: f64 = 1000.0;
 /// Meta de memória em repouso, em MB.
 const IDLE_RAM_TARGET_MB: f64 = 100.0;
+/// Início da linha de resultado de um cenário. Igual a
+/// `pgstudio_ui_shell::bench::RESULT_PREFIX`.
+const RESULT: &str = "pgstudio-bench: result";
+/// Meta da grade: 60 FPS rolando, em ms por frame (p95). Um frame a 60 Hz
+/// dura 16,7 ms; os 20% de folga absorvem a variação do vsync, que num
+/// monitor de 60 Hz deixa metade dos intervalos um pouco acima de 16,7 ms
+/// mesmo sem nenhum frame perdido (um frame perdido dobra o intervalo).
+const GRID_FRAME_TARGET_MS: f64 = 20.0;
+/// Meta da grade: memória a mais que o app em repouso depois de carregar 1
+/// milhão de linhas: o buffer de 64 MB do resultado mais 32 MB de folga.
+const GRID_RAM_TARGET_MB: f64 = 96.0;
+/// Meta do IntelliSense: sugestões em menos de 50 ms (pior tecla).
+const INTELLISENSE_TARGET_MS: f64 = 50.0;
 
 const USAGE: &str = "\
 Uso: cargo xtask bench [opções]
 
-Mede o pgstudio (release): tempo do início do processo até o primeiro frame
-exibido e memória (RSS no Linux, working set no Windows) depois de um tempo
-parado. Compara com as metas: inicialização < 1 s e RAM em repouso < 100 MB.
+Mede o pgstudio (release) em três cenários e compara com as metas:
+
+  startup       do início do processo até o primeiro frame (< 1 s) e memória
+                depois de um tempo parado (< 100 MB; RSS no Linux, working
+                set no Windows)
+  grid          1 milhão de linhas sintéticas chegam e a grade rola do começo
+                ao fim em 600 frames: 60 FPS (p95 < 20 ms por frame: 16,7 ms
+                mais folga para o vsync) e memória a mais que o repouso
+                < 96 MB (buffer de 64 MB + folga)
+  intellisense  digita SQL uma tecla por frame num banco de 10 mil tabelas
+                com a lista de sugestões aberta: pior tecla < 50 ms
 
 Opções:
-  --runs N       execuções (padrão 5)
+  --scenario S   startup, grid, intellisense ou all (padrão all)
+  --runs N       execuções de cada cenário (padrão 5)
   --idle S       segundos parado antes de medir a memória (padrão 30)
   --no-build     não recompila; usa o binário existente
   --markdown     imprime o resultado como tabela Markdown
@@ -56,6 +80,7 @@ fn main() -> ExitCode {
 
 #[derive(Debug, PartialEq)]
 struct BenchArgs {
+    scenarios: Vec<Scenario>,
     runs: usize,
     idle: u64,
     build: bool,
@@ -65,6 +90,7 @@ struct BenchArgs {
 
 fn parse_bench(args: &[String]) -> Result<BenchArgs, String> {
     let mut out = BenchArgs {
+        scenarios: Scenario::ALL.to_vec(),
         runs: 5,
         idle: 30,
         build: true,
@@ -80,6 +106,16 @@ fn parse_bench(args: &[String]) -> Result<BenchArgs, String> {
         };
         match arg.as_str() {
             "--runs" => out.runs = number("--runs")?.max(1) as usize,
+            "--scenario" => {
+                out.scenarios = match it.next().map(String::as_str) {
+                    Some("all") => Scenario::ALL.to_vec(),
+                    Some(name) => vec![
+                        Scenario::parse(name)
+                            .ok_or_else(|| format!("cenário desconhecido: {name}"))?,
+                    ],
+                    None => return Err("--scenario precisa de um nome".into()),
+                }
+            }
             "--idle" => out.idle = number("--idle")?,
             "--no-build" => out.build = false,
             "--markdown" => out.markdown = true,
@@ -88,6 +124,31 @@ fn parse_bench(args: &[String]) -> Result<BenchArgs, String> {
         }
     }
     Ok(out)
+}
+
+/// O que medir.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scenario {
+    Startup,
+    Grid,
+    IntelliSense,
+}
+
+impl Scenario {
+    const ALL: [Scenario; 3] = [Scenario::Startup, Scenario::Grid, Scenario::IntelliSense];
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// Nome no `--scenario` e no `PGSTUDIO_BENCH` do app.
+    fn name(self) -> &'static str {
+        match self {
+            Scenario::Startup => "startup",
+            Scenario::Grid => "grid",
+            Scenario::IntelliSense => "intellisense",
+        }
+    }
 }
 
 fn workspace_root() -> PathBuf {
@@ -127,27 +188,287 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     }
 
     let mut samples = Vec::new();
-    for run in 1..=args.runs {
-        let s = measure(&exe, &root, Duration::from_secs(args.idle))?;
-        eprintln!(
-            "execução {run}/{}: primeiro frame {:.0} ms, RAM em repouso {:.1} MB{}",
-            args.runs,
-            s.startup_ms,
-            s.idle_mb,
-            s.peak_mb
-                .map(|p| format!(", pico {p:.1} MB"))
-                .unwrap_or_default()
-        );
-        samples.push(s);
+    let mut grid = Vec::new();
+    let mut intellisense = Vec::new();
+    for scenario in &args.scenarios {
+        for run in 1..=args.runs {
+            match scenario {
+                Scenario::Startup => {
+                    let s = measure(&exe, &root, Duration::from_secs(args.idle))?;
+                    eprintln!(
+                        "startup {run}/{}: primeiro frame {:.0} ms, RAM em repouso {:.1} MB{}",
+                        args.runs,
+                        s.startup_ms,
+                        s.idle_mb,
+                        s.peak_mb
+                            .map(|p| format!(", pico {p:.1} MB"))
+                            .unwrap_or_default()
+                    );
+                    samples.push(s);
+                }
+                Scenario::Grid | Scenario::IntelliSense => {
+                    let r = measure_scenario(&exe, &root, *scenario)?;
+                    eprintln!(
+                        "{} {run}/{}: {} (RAM {:.1} MB)",
+                        scenario.name(),
+                        args.runs,
+                        r.line,
+                        r.ram_mb
+                    );
+                    if *scenario == Scenario::Grid {
+                        grid.push(r);
+                    } else {
+                        intellisense.push(r);
+                    }
+                }
+            }
+        }
     }
 
     let report = Report::new(&samples, args.idle);
+    let scenarios = ScenarioReport {
+        idle_mb: (!samples.is_empty()).then_some(report.idle_median),
+        grid,
+        intellisense,
+    };
+    let startup = !samples.is_empty();
     if args.markdown {
-        println!("{}", report.markdown());
+        if startup {
+            println!("{}", report.markdown());
+        }
+        println!("{}", scenarios.markdown());
     } else {
-        println!("{}", report.text());
+        if startup {
+            println!("{}", report.text());
+        }
+        println!("{}", scenarios.text());
     }
-    Ok(!args.check || report.passed())
+    let passed = (!startup || report.passed()) && scenarios.passed();
+    Ok(!args.check || passed)
+}
+
+/// Uma execução de um cenário do app (grade ou IntelliSense).
+#[derive(Clone, Debug, Default)]
+struct ScenarioRun {
+    /// A linha de resultado do app.
+    line: String,
+    values: std::collections::BTreeMap<String, f64>,
+    /// Memória lida logo depois do resultado.
+    ram_mb: f64,
+}
+
+impl ScenarioRun {
+    fn parse(line: &str) -> Self {
+        let values = line
+            .strip_prefix(RESULT)
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|kv| {
+                let (k, v) = kv.split_once('=')?;
+                Some((k.to_string(), v.parse().ok()?))
+            })
+            .collect();
+        ScenarioRun {
+            line: line.strip_prefix(RESULT).unwrap_or(line).trim().to_string(),
+            values,
+            ram_mb: 0.0,
+        }
+    }
+
+    fn get(&self, key: &str) -> f64 {
+        self.values.get(key).copied().unwrap_or(f64::NAN)
+    }
+}
+
+/// Roda um cenário do app uma vez e lê a memória quando ele termina.
+fn measure_scenario(exe: &Path, root: &Path, scenario: Scenario) -> Result<ScenarioRun, String> {
+    let mut child = Command::new(exe)
+        .current_dir(root)
+        .env("PGSTUDIO_BENCH", scenario.name())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("não consegui abrir {}: {e}", exe.display()))?;
+    let stdout = child.stdout.take().expect("stdout foi pedido");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.starts_with(RESULT) {
+                let _ = tx.send(line);
+            }
+        }
+    });
+    let result = (|| {
+        let line = rx
+            .recv_timeout(Duration::from_secs(180))
+            .map_err(|_| format!("o cenário {} não terminou em 180 s", scenario.name()))?;
+        let mut run = ScenarioRun::parse(&line);
+        run.ram_mb = memory_mb(child.id())?.0;
+        Ok(run)
+    })();
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
+/// Resumo dos cenários da grade e do IntelliSense. O pior caso conta para a
+/// meta.
+#[derive(Debug, Default)]
+struct ScenarioReport {
+    /// RAM em repouso (mediana do cenário startup), base da meta da grade.
+    idle_mb: Option<f64>,
+    grid: Vec<ScenarioRun>,
+    intellisense: Vec<ScenarioRun>,
+}
+
+/// Mediana e pior valor de uma chave nas execuções.
+fn stats(runs: &[ScenarioRun], value: impl Fn(&ScenarioRun) -> f64) -> (f64, f64) {
+    let mut v: Vec<f64> = runs.iter().map(value).collect();
+    let worst = max(&v);
+    (median(&mut v), worst)
+}
+
+impl ScenarioReport {
+    fn grid_frame(&self) -> (f64, f64) {
+        stats(&self.grid, |r| r.get("frame_p95"))
+    }
+
+    fn grid_ram(&self) -> Option<(f64, f64)> {
+        let idle = self.idle_mb?;
+        Some(stats(&self.grid, |r| r.ram_mb - idle))
+    }
+
+    fn intellisense_key(&self) -> (f64, f64) {
+        stats(&self.intellisense, |r| r.get("ui_max"))
+    }
+
+    fn grid_ok(&self) -> bool {
+        self.grid.is_empty()
+            || (self.grid_frame().1 < GRID_FRAME_TARGET_MS
+                && self.grid_ram().is_none_or(|r| r.1 < GRID_RAM_TARGET_MB)
+                && self.grid.iter().all(|r| r.get("rows") == 1_000_000.0))
+    }
+
+    fn intellisense_ok(&self) -> bool {
+        self.intellisense.is_empty()
+            || (self.intellisense_key().1 < INTELLISENSE_TARGET_MS
+                && self.intellisense.iter().all(|r| r.get("popup_keys") > 0.0))
+    }
+
+    fn passed(&self) -> bool {
+        self.grid_ok() && self.intellisense_ok()
+    }
+
+    /// Linhas da tabela: medida, meta, mediana, pior e se passou.
+    fn rows(&self) -> Vec<[String; 5]> {
+        let ok = |pass: bool| if pass { "✅ dentro" } else { "❌ acima" }.to_string();
+        let ms = |v: f64| format!("{v:.1} ms");
+        let mb = |v: f64| format!("{v:.1} MB");
+        let mut rows = Vec::new();
+        if !self.grid.is_empty() {
+            let (load_med, load_max) = stats(&self.grid, |r| r.get("load_ms"));
+            rows.push([
+                "Grade: 1 milhão de linhas chegam".into(),
+                "—".into(),
+                ms(load_med),
+                ms(load_max),
+                "—".into(),
+            ]);
+            let (med, worst) = self.grid_frame();
+            rows.push([
+                "Grade: frame rolando (p95)".into(),
+                format!("< {GRID_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(worst < GRID_FRAME_TARGET_MS),
+            ]);
+            let (med, worst) = stats(&self.grid, |r| r.get("ui_p95"));
+            rows.push([
+                "Grade: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            match self.grid_ram() {
+                Some((med, worst)) => rows.push([
+                    "Grade: RAM a mais que o repouso".into(),
+                    format!("< {GRID_RAM_TARGET_MB:.0} MB"),
+                    mb(med),
+                    mb(worst),
+                    ok(worst < GRID_RAM_TARGET_MB),
+                ]),
+                None => {
+                    let (med, worst) = stats(&self.grid, |r| r.ram_mb);
+                    rows.push([
+                        "Grade: RAM com 1 milhão de linhas".into(),
+                        "—".into(),
+                        mb(med),
+                        mb(worst),
+                        "—".into(),
+                    ]);
+                }
+            }
+        }
+        if !self.intellisense.is_empty() {
+            let (med, worst) = stats(&self.intellisense, |r| r.get("load_ms"));
+            rows.push([
+                "IntelliSense: catálogo de 10 mil tabelas carregado".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(&self.intellisense, |r| r.get("ui_p95"));
+            rows.push([
+                "IntelliSense: tecla (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = self.intellisense_key();
+            rows.push([
+                "IntelliSense: pior tecla".into(),
+                format!("< {INTELLISENSE_TARGET_MS:.0} ms"),
+                ms(med),
+                ms(worst),
+                ok(self.intellisense_ok()),
+            ]);
+            let (med, worst) = stats(&self.intellisense, |r| r.ram_mb);
+            rows.push([
+                "IntelliSense: RAM com o catálogo".into(),
+                "—".into(),
+                mb(med),
+                mb(worst),
+                "—".into(),
+            ]);
+        }
+        rows
+    }
+
+    fn markdown(&self) -> String {
+        let mut s = String::from(
+            "| Cenário | Meta | Mediana | Pior | Situação |\n| --- | --- | --- | --- | --- |",
+        );
+        for r in self.rows() {
+            s.push_str(&format!("\n| {} |", r.join(" | ")));
+        }
+        s
+    }
+
+    fn text(&self) -> String {
+        self.rows()
+            .iter()
+            .map(|[name, target, med, worst, ok]| {
+                let ok = ok
+                    .replace("✅ dentro", "ok")
+                    .replace("❌ acima", "ACIMA DA META");
+                format!("{name}: mediana {med}, pior {worst} (meta {target}) {ok}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// Roda o app uma vez em modo de medição.
@@ -370,10 +691,11 @@ mod tests {
 
     #[test]
     fn parses_options() {
-        let a = args("--runs 3 --idle 10 --no-build --markdown --check").unwrap();
+        let a = args("--runs 3 --idle 10 --no-build --markdown --check --scenario grid").unwrap();
         assert_eq!(
             a,
             BenchArgs {
+                scenarios: vec![Scenario::Grid],
                 runs: 3,
                 idle: 10,
                 build: false,
@@ -385,6 +707,8 @@ mod tests {
         assert!(args("--runs").is_err());
         assert!(args("--runs x").is_err());
         assert!(args("--fast").is_err());
+        assert_eq!(args("--scenario all").unwrap().scenarios, Scenario::ALL);
+        assert!(args("--scenario fast").is_err());
     }
 
     #[test]
@@ -421,5 +745,76 @@ mod tests {
         // compilar rápido).
         let shell = include_str!("../../crates/ui-shell/src/lib.rs");
         assert!(shell.contains(&format!("\"{FIRST_FRAME}\"")));
+        let bench = include_str!("../../crates/ui-shell/src/bench.rs");
+        assert!(bench.contains(&format!("\"{RESULT}\"")));
+        for s in [Scenario::Grid, Scenario::IntelliSense] {
+            assert!(bench.contains(&format!("\"{}\" =>", s.name())));
+        }
+    }
+
+    fn scenario(line: &str, ram_mb: f64) -> ScenarioRun {
+        ScenarioRun {
+            ram_mb,
+            ..ScenarioRun::parse(line)
+        }
+    }
+
+    #[test]
+    fn scenarios_check_the_worst_run_against_the_targets() {
+        let grid = |p95: f64, ram| {
+            scenario(
+                &format!(
+                    "{RESULT} scenario=grid load_ms=300 ui_p95=1 frame_p95={p95} rows=1000000"
+                ),
+                ram,
+            )
+        };
+        let keys = |worst: f64| {
+            scenario(
+                &format!("{RESULT} scenario=intellisense ui_p95=2 ui_max={worst} popup_keys=100"),
+                140.0,
+            )
+        };
+        let good = ScenarioReport {
+            idle_mb: Some(120.0),
+            grid: vec![grid(15.0, 190.0), grid(16.0, 200.0)],
+            intellisense: vec![keys(4.0), keys(6.0)],
+        };
+        assert!(good.passed(), "{}", good.text());
+        let md = good.markdown();
+        assert!(
+            md.contains(
+                "| Grade: frame rolando (p95) | < 20 ms (60 FPS) | 15.5 ms | 16.0 ms | ✅ dentro |"
+            ),
+            "{md}"
+        );
+        assert!(
+            md.contains(
+                "| Grade: RAM a mais que o repouso | < 96 MB | 75.0 MB | 80.0 MB | ✅ dentro |"
+            ),
+            "{md}"
+        );
+        assert!(
+            md.contains("| IntelliSense: pior tecla | < 50 ms | 5.0 ms | 6.0 ms | ✅ dentro |"),
+            "{md}"
+        );
+
+        let janky = ScenarioReport {
+            grid: vec![grid(15.0, 190.0), grid(30.0, 190.0)],
+            ..Default::default()
+        };
+        assert!(!janky.passed());
+        assert!(janky.text().contains("ACIMA DA META"));
+        let heavy = ScenarioReport {
+            idle_mb: Some(100.0),
+            grid: vec![grid(10.0, 250.0)],
+            ..Default::default()
+        };
+        assert!(!heavy.passed());
+        let slow = ScenarioReport {
+            intellisense: vec![keys(80.0)],
+            ..Default::default()
+        };
+        assert!(!slow.passed());
     }
 }

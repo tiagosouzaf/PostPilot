@@ -6,7 +6,9 @@
 //! - `PGSTUDIO_SCREENSHOT=arquivo.png`: salva um PNG da janela depois dos
 //!   primeiros frames e fecha. Usado pelo CI.
 //! - `PGSTUDIO_BENCH=1`: modo de medição usado por `cargo xtask bench`; avisa
-//!   quando o primeiro frame aparece e ignora o layout salvo.
+//!   quando o primeiro frame aparece e ignora o layout salvo. Com `grid` ou
+//!   `intellisense`, roda também esse cenário e escreve os números (veja
+//!   `pgstudio_ui_shell::bench`).
 //! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
@@ -144,6 +146,10 @@ fn main() -> eframe::Result {
             }
             if bench {
                 app = app.with_bench();
+                let scenario = std::env::var("PGSTUDIO_BENCH").unwrap_or_default();
+                if let Some(s) = pgstudio_ui_shell::bench::Scenario::parse(&scenario) {
+                    app = app.with_bench_scenario(s);
+                }
             }
             if let Some(path) = screenshot {
                 app = app.with_screenshot(path);
