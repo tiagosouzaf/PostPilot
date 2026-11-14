@@ -99,12 +99,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           for theme in light dark; do
-            PGSTUDIO_THEME=$theme PGSTUDIO_SCREENSHOT=pgstudio-$theme.png timeout 120 \
-              xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/pgstudio
-            test -s pgstudio-$theme.png
+            PGSTUDIO_THEME=$theme PGSTUDIO_SCREENSHOT=postpilot-$theme.png timeout 120 \
+              xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/postpilot
+            test -s postpilot-$theme.png
           done
           PGSTUDIO_CONNECT=dialog PGSTUDIO_SCREENSHOT=pgstudio-connect.png timeout 120 \
-            xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/pgstudio
+            xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/postpilot
           test -s pgstudio-connect.png
       - name: Screenshot (Windows)
         if: runner.os == 'Windows'
@@ -112,21 +112,21 @@ jobs:
         run: |
           foreach ($theme in "light", "dark") {
             $env:PGSTUDIO_THEME = $theme
-            $env:PGSTUDIO_SCREENSHOT = "pgstudio-$theme.png"
-            $p = Start-Process -FilePath ".\target\release\pgstudio.exe" -PassThru -NoNewWindow
+            $env:PGSTUDIO_SCREENSHOT = "postpilot-$theme.png"
+            $p = Start-Process -FilePath ".\target\release\postpilot.exe" -PassThru -NoNewWindow
             if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
-            if (-not (Test-Path "pgstudio-$theme.png")) { throw "screenshot não gerado" }
+            if (-not (Test-Path "postpilot-$theme.png")) { throw "screenshot não gerado" }
           }
           $env:PGSTUDIO_THEME = "light"
           $env:PGSTUDIO_CONNECT = "dialog"
           $env:PGSTUDIO_SCREENSHOT = "pgstudio-connect.png"
-          $p = Start-Process -FilePath ".\target\release\pgstudio.exe" -PassThru -NoNewWindow
+          $p = Start-Process -FilePath ".\target\release\postpilot.exe" -PassThru -NoNewWindow
           if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
           if (-not (Test-Path "pgstudio-connect.png")) { throw "screenshot não gerado" }
       - uses: actions/upload-artifact@v4
         with:
           name: janela-${{ matrix.os }}
-          path: pgstudio-*.png
+          path: postpilot-*.png
 
   bench:
     name: Medição (${{ matrix.os }})

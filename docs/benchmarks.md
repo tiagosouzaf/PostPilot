@@ -1,6 +1,6 @@
 # Medições
 
-Números do `pgstudio` contra as metas do projeto. Gerados com
+Números do `postpilot` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
 vezes e mede dez cenários
 (`--scenario startup|grid|intellisense|diagram|diagram2000|designer|plan|activity|edit|export|all`,

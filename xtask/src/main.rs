@@ -1,6 +1,6 @@
 //! Tarefas de desenvolvimento: `cargo xtask <tarefa>`.
 //!
-//! - `bench`: mede o `pgstudio` compilado em release contra as metas do
+//! - `bench`: mede o `postpilot` compilado em release contra as metas do
 //!   projeto: tempo até o primeiro frame e memória em repouso, rolagem de
 //!   uma grade de 1 milhão de linhas, IntelliSense num catálogo de 10 mil
 //!   tabelas, diagramas, Table Designer, um plano de 2.000 nós e o Activity
@@ -59,7 +59,7 @@ const EXPORT_RAM_TARGET_MB: f64 = 32.0;
 const USAGE: &str = "\
 Uso: cargo xtask bench [opções]
 
-Mede o pgstudio (release) em oito cenários e compara com as metas:
+Mede o postpilot (release) em oito cenários e compara com as metas:
 
   startup       do início do processo até o primeiro frame (< 1 s) e memória
                 depois de um tempo parado (< 100 MB; RSS no Linux, working
@@ -275,7 +275,7 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     let exe = root
         .join("target")
         .join("release")
-        .join(format!("pgstudio{}", std::env::consts::EXE_SUFFIX));
+        .join(format!("postpilot{}", std::env::consts::EXE_SUFFIX));
     if !exe.exists() {
         return Err(format!("{} não existe; rode sem --no-build", exe.display()));
     }

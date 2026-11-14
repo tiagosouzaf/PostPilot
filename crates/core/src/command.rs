@@ -107,7 +107,7 @@ commands! {
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";
     // Help
     ViewHelp => "Help.ViewHelp", "View Help";
-    About => "Help.About", "About PGStudio";
+    About => "Help.About", "About PostPilot";
 }
 
 impl CommandId {
