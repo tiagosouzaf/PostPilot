@@ -18,6 +18,9 @@ pub struct Document {
     pub cursor: Option<(usize, usize)>,
     /// Conexão da janela, aberta na primeira execução.
     pub session: Option<Session>,
+    /// Banco em que a janela conecta (o do nó do Object Explorer de onde ela
+    /// veio); None usa o da conexão.
+    pub database: Option<String>,
     /// Última execução: resultados e mensagens.
     pub execution: Option<crate::execution::Execution>,
     /// Grade ou texto nas próximas execuções (Ctrl+D, Ctrl+T).
@@ -96,9 +99,19 @@ impl Documents {
             editor: Default::default(),
             cursor: None,
             session: None,
+            database: None,
             execution: None,
             results_mode: Default::default(),
         })
+    }
+
+    /// Cria `SQLQueryN.sql` com um texto (um script gerado) num banco.
+    pub fn new_script(&mut self, text: String, database: Option<String>) -> u32 {
+        let id = self.new_query();
+        let doc = self.docs.get_mut(&id).expect("acabou de ser criado");
+        doc.text = text;
+        doc.database = database;
+        id
     }
 
     /// Abre um arquivo. Se ele já está aberto, devolve o documento existente.
@@ -121,6 +134,7 @@ impl Documents {
             editor: Default::default(),
             cursor: None,
             session: None,
+            database: None,
             execution: None,
             results_mode: Default::default(),
         }))

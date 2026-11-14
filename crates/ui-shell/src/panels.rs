@@ -64,6 +64,8 @@ pub struct Viewer<'a> {
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
     pub commands: Vec<CommandId>,
+    /// Ações pedidas pelo menu de contexto do Object Explorer.
+    pub explorer_events: Vec<Event>,
     /// Documentos com alterações cujo fechamento foi pedido pela aba.
     pub close_requests: Vec<u32>,
     /// Cores do editor de SQL (seguem o tema).
@@ -124,11 +126,8 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     }
                 });
                 ui.separator();
-                for event in self.explorer.show(ui) {
-                    match event {
-                        Event::NewQuery(_) => self.commands.push(CommandId::NewQuery),
-                    }
-                }
+                let events = self.explorer.show(ui);
+                self.explorer_events.extend(events);
             }
             Panel::Properties => match self.explorer.selected() {
                 Some(node) => {
@@ -173,7 +172,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 }
                 let db = match &doc.session {
                     Some(s) => Some(s.0.database()),
-                    None => self.default_database.clone(),
+                    None => doc.database.clone().or(self.default_database.clone()),
                 };
                 let catalog = db.and_then(|db| self.catalogs.get(&db));
                 let out = pgstudio_sql_editor::SqlEditor::new(

@@ -147,9 +147,13 @@ fn text_lines(set: &ResultSet) -> u64 {
 /// SSMS. Só as linhas visíveis são montadas.
 fn text_results(ui: &mut egui::Ui, doc: u32, sets: &mut [ResultSet]) {
     for set in sets.iter_mut() {
-        if set.text_widths.is_none() {
+        // As linhas chegam enquanto o modo texto já aparece: recalcula até a
+        // amostra completar, senão a largura fica a do cabeçalho.
+        let sampled = set.len().min(text::WIDTH_SAMPLE);
+        if set.text_widths.is_none() || set.text_width_rows != sampled {
             let widths = text::widths(&mut set.store());
             set.text_widths = Some(widths);
+            set.text_width_rows = sampled;
         }
     }
     let total: u64 = sets.iter().map(text_lines).sum();

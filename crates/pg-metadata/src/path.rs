@@ -49,7 +49,7 @@ pub fn enc(name: &str) -> String {
     name.replace('%', "%25").replace('/', "%2F")
 }
 
-fn dec(segment: &str) -> String {
+pub(crate) fn dec(segment: &str) -> String {
     segment.replace("%2F", "/").replace("%25", "%")
 }
 
