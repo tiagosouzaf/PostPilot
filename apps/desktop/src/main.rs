@@ -28,6 +28,8 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
+//! - `PGSTUDIO_DATABASES=1`: abre a lista de bancos da toolbar (Ctrl+U)
+//!   quando a janela de consulta ativa estiver pronta.
 //! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign|plan|actualplan|info|activity|properties|backup`:
 //!   depois de
 //!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
@@ -237,6 +239,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             }
             if std::env::var_os("PGSTUDIO_LIST_MEMBERS").is_some() {
                 app = app.with_list_members_on_load();
+            }
+            if std::env::var_os("PGSTUDIO_DATABASES").is_some() {
+                app = app.with_database_list_on_load();
             }
             if let Ok(action) = std::env::var("PGSTUDIO_ACTION") {
                 use pgstudio_core::metadata::ScriptAction;
