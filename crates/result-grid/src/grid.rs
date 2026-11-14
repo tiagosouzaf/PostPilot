@@ -11,6 +11,7 @@ use std::ops::Range;
 
 use eframe::egui::{self, Color32, CursorIcon, FontId, Key, Pos2, Rect, Sense, Stroke, vec2};
 
+use crate::json;
 use crate::store::ResultStore;
 use crate::text;
 
@@ -96,9 +97,14 @@ pub struct GridState {
     /// Por que o resultado (ou a coluna) não é editável, para dizer ao
     /// usuário quando ele tenta.
     pub read_only_reason: Option<String>,
-    /// Colunas `json`/`jsonb`: o duplo clique nelas abre o visualizador
-    /// de JSON, não a edição.
+    /// Colunas JSON (reconhecidas pela amostra das primeiras linhas): o
+    /// duplo clique nelas abre o JSON Viewer, não a edição.
     pub json_columns: Vec<bool>,
+    /// Colunas que a grade reconheceu como JSON pela amostra das primeiras
+    /// linhas (somam-se às de [`GridState::json_columns`]).
+    pub json_detected: Vec<bool>,
+    /// Linhas da amostra quando [`GridState::json_detected`] foi calculado.
+    pub json_sampled: u64,
     /// Célula em edição e o texto digitado.
     pub editing: Option<CellEditor>,
     /// Uma alteração está sendo gravada: não começa outra.
@@ -132,6 +138,21 @@ impl GridState {
         let y = l.body.top() + ((cell.row as f64 - self.top) as f32 + 0.5) * l.row_h;
         let x = self.column_x(cell.col)? + self.widths[cell.col] / 2.0;
         (l.body.y_range().contains(y)).then(|| egui::pos2(x, y))
+    }
+
+    /// Botão `{…}` de uma célula de coluna JSON, que abre o JSON Viewer.
+    pub fn json_button(&self, cell: Cell) -> Option<Rect> {
+        if !self.is_json(cell.col) {
+            return None;
+        }
+        let r = self.cell_rect(cell)?;
+        if r.width() < 48.0 {
+            return None;
+        }
+        Some(Rect::from_min_max(
+            egui::pos2(r.right() - JSON_BUTTON_W - 2.0, r.top() + 2.0),
+            egui::pos2(r.right() - 2.0, r.bottom() - 2.0),
+        ))
     }
 
     /// Centro do cabeçalho da coluna.
@@ -176,6 +197,7 @@ impl GridState {
     /// Coluna JSON (duplo clique abre o visualizador).
     pub fn is_json(&self, col: usize) -> bool {
         self.json_columns.get(col).copied().unwrap_or(false)
+            || self.json_detected.get(col).copied().unwrap_or(false)
     }
 
     /// Começa a editar `cell` com o valor atual. Devolve `false` (sem
@@ -217,6 +239,29 @@ impl GridState {
         let l = self.layout?;
         (col < self.widths.len())
             .then(|| l.cells_x + self.widths[..col].iter().sum::<f32>() - self.left)
+    }
+
+    /// O JSON da célula, se ela tiver um objeto ou array.
+    pub fn json_at(store: &mut ResultStore, cell: Cell) -> Option<json::Node> {
+        json::container(store.cell(cell.row, cell.col)?)
+    }
+
+    /// Recalcula as colunas JSON enquanto a amostra cresce.
+    fn detect_json(&mut self, store: &mut ResultStore) {
+        let ncols = store.columns().len();
+        let sample = store.len().min(JSON_SAMPLE);
+        if self.json_detected.len() == ncols && self.json_sampled == sample {
+            return;
+        }
+        self.json_sampled = sample;
+        self.json_detected = (0..ncols)
+            .map(|c| {
+                let values: Vec<String> = (0..sample)
+                    .filter_map(|r| store.cell(r, c).map(str::to_string))
+                    .collect();
+                json::is_json_column(values.iter().map(String::as_str))
+            })
+            .collect();
     }
 
     /// Seleciona tudo.
@@ -262,6 +307,9 @@ pub struct GridOutput {
     pub copied: Option<String>,
     /// Pediu "Save Results As..." pelo menu de contexto.
     pub save_as: bool,
+    /// Pediu para ver o JSON desta célula (duplo clique, Enter ou "View
+    /// JSON..." no menu de contexto). A célula tem um objeto ou array.
+    pub open_json: Option<Cell>,
     /// Terminou a edição de uma célula com este valor (diferente do que
     /// havia): quem chamou grava no banco e, dando certo, troca no
     /// [`ResultStore`].
@@ -272,6 +320,11 @@ pub struct GridOutput {
     /// motivo está em [`GridState::read_only_reason`].
     pub edit_refused: bool,
 }
+
+/// Linhas lidas para reconhecer as colunas JSON.
+const JSON_SAMPLE: u64 = 50;
+/// Largura do botão `{…}` das células JSON.
+const JSON_BUTTON_W: f32 = 26.0;
 
 /// Largura máxima inicial de uma coluna, em caracteres.
 const MAX_INITIAL_CHARS: usize = 40;
@@ -331,6 +384,7 @@ pub fn show(
     if state.widths.len() != ncols {
         state.widths = initial_widths(store, m.char_w);
     }
+    state.detect_json(store);
     let rect = ui.available_rect_before_wrap();
     let response = ui.interact(rect, id, Sense::click_and_drag());
     ui.allocate_rect(rect, Sense::hover());
@@ -443,6 +497,41 @@ pub fn show(
     if response.clicked() || response.drag_started() || response.secondary_clicked() {
         response.request_focus();
     }
+    let mut open_json = None;
+    let pointer_cell = response
+        .interact_pointer_pos()
+        .or(response.hover_pos())
+        .and_then(|p| match hit(p, state) {
+            Some(Hit::Cell(cell)) => Some(cell),
+            _ => None,
+        });
+    if response.secondary_clicked()
+        && let Some(cell) = pointer_cell
+        && !state
+            .selection
+            .is_some_and(|s| s.contains(cell, nrows, ncols))
+    {
+        // O botão direito fora da seleção seleciona a célula, como no SSMS.
+        state.selection = Some(Selection::at(cell, Mode::Cells));
+    }
+    // Nas colunas JSON, o duplo clique e o botão `{…}` abrem o JSON
+    // Viewer; nas outras o duplo clique fica livre.
+    // Um triplo clique rápido também conta (o segundo clique já abriu).
+    let multi = response.double_clicked() || response.triple_clicked();
+    if (multi || response.clicked())
+        && !resizing
+        && let Some(cell) = pointer_cell
+        && state.is_json(cell.col)
+    {
+        let on_button = state.layout.is_some()
+            && state
+                .json_button(cell)
+                .zip(response.interact_pointer_pos())
+                .is_some_and(|(b, p)| b.contains(p));
+        if (multi || on_button) && GridState::json_at(store, cell).is_some() {
+            open_json = Some(cell);
+        }
+    }
     if !resizing {
         let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
         let pos = response.interact_pointer_pos().or(response.hover_pos());
@@ -517,6 +606,12 @@ pub fn show(
         if all {
             state.select_all(store);
         }
+        if ui.input(|i| i.key_pressed(Key::Enter) && i.modifiers.is_none())
+            && let Some(s) = state.selection
+            && GridState::json_at(store, s.cursor).is_some()
+        {
+            open_json = Some(s.cursor);
+        }
         if (dy != 0 || dx != 0 || home || end) && nrows > 0 && ncols > 0 {
             let cur = state
                 .selection
@@ -575,7 +670,18 @@ pub fn show(
         edit_refused |= !state.start_edit(store, cell);
     }
     let can_edit = !state.busy && state.editable.iter().any(|e| *e);
+    let json_cursor = state.selection.map(|s| s.cursor);
     response.context_menu(|ui| {
+        let json_cell = json_cursor.filter(|&c| GridState::json_at(store, c).is_some());
+        if ui
+            .add_enabled(json_cell.is_some(), egui::Button::new("View JSON..."))
+            .on_disabled_hover_text("The selected cell has no JSON object or array.")
+            .clicked()
+        {
+            open_json = json_cell;
+            ui.close();
+        }
+        ui.separator();
         if can_edit {
             let cursor = state.selection.map(|s| s.cursor);
             let cell_editable = cursor.is_some_and(|c| state.is_editable(c.col));
@@ -646,15 +752,23 @@ pub fn show(
         store,
         state,
         response.has_focus(),
+        pointer_cell.filter(|_| response.hovered()),
     );
     paint_scrollbars(
         ui, vtrack, htrack, vthumb_h, hthumb_w, state, max_top, max_left,
     );
     let commit = cell_editor(ui, id, &m, store, state, &response);
+    let on_json = pointer_cell.is_some_and(|c| state.is_json(c.col));
+    let response = if on_json && !response.dragged() {
+        response.on_hover_text_at_pointer("Double-click or click {…} to open the JSON Viewer.")
+    } else {
+        response
+    };
     GridOutput {
         response,
         copied,
         save_as,
+        open_json,
         commit,
         delete_rows,
         edit_refused,
@@ -774,6 +888,7 @@ fn paint(
     store: &mut ResultStore,
     state: &GridState,
     focused: bool,
+    hovered: Option<Cell>,
 ) {
     let v = ui.visuals();
     let grid = Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color);
@@ -820,7 +935,28 @@ fn paint(
         if selected_cols.as_ref().is_some_and(|r| r.contains(&c)) {
             cells.rect_filled(cell, 0.0, sel_bg);
         }
-        cell_text(&cells, cell, &store.columns()[c].clone(), &m.font, strong);
+        let is_json = state.is_json(c);
+        let name_cell = if is_json {
+            // Marca `{}` à direita do nome das colunas JSON.
+            let badge = Rect::from_min_max(egui::pos2(x + w - 22.0, cell.top()), cell.max);
+            cells.text(
+                badge.center(),
+                egui::Align2::CENTER_CENTER,
+                "{}",
+                m.font.clone(),
+                weak,
+            );
+            Rect::from_min_max(cell.min, egui::pos2(badge.left() + PAD, cell.bottom()))
+        } else {
+            cell
+        };
+        cell_text(
+            &cells,
+            name_cell,
+            &store.columns()[c].clone(),
+            &m.font,
+            strong,
+        );
         cells.vline(x + w, header.y_range(), grid);
         x += w;
     }
@@ -865,7 +1001,27 @@ fn paint(
                     }
                     None => cell_text(&cells, cell, "NULL", &m.font, weak),
                 }
-                if focused && state.selection.is_some_and(|s| s.cursor == here) {
+                let is_cursor = state.selection.is_some_and(|s| s.cursor == here);
+                if value.is_some()
+                    && (is_cursor || hovered == Some(here))
+                    && let Some(b) = state.json_button(here)
+                {
+                    cells.rect_filled(b, 2.0, v.widgets.inactive.weak_bg_fill);
+                    cells.rect_stroke(
+                        b,
+                        2.0,
+                        Stroke::new(1.0, v.widgets.inactive.bg_stroke.color),
+                        egui::StrokeKind::Inside,
+                    );
+                    cells.text(
+                        b.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "{…}",
+                        m.font.clone(),
+                        text,
+                    );
+                }
+                if focused && is_cursor {
                     cells.rect_stroke(
                         cell.shrink(1.0),
                         0.0,

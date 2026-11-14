@@ -23,6 +23,8 @@ pub struct Action {
     pub jump_to: Option<usize>,
     /// "Save Results As..." no resultado com este índice.
     pub save_results: Option<usize>,
+    /// Abrir o JSON Viewer nesta célula do resultado com este índice.
+    pub open_json: Option<(usize, pgstudio_result_grid::Cell)>,
 }
 
 /// Desenha o painel de resultados. `server` é o texto da conexão.
@@ -61,7 +63,8 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
         Tab::Results => match exec.mode {
             ResultsMode::Grid | ResultsMode::File => {
                 let mut log = Vec::new();
-                action.save_results = grids(ui, doc, &mut exec.results, &mut log);
+                (action.save_results, action.open_json) =
+                    grids(ui, doc, &mut exec.results, &mut log);
                 for text in log {
                     exec.push_info(text);
                 }
@@ -190,14 +193,15 @@ pub fn grid_id(doc: u32, index: usize) -> egui::Id {
 
 /// Uma grade por resultado, dividindo a altura entre elas.
 /// As grades, uma embaixo da outra. Devolve o resultado em que o usuário
-/// pediu "Save Results As...".
+/// pediu "Save Results As..." e a célula em que pediu o JSON Viewer.
 fn grids(
     ui: &mut egui::Ui,
     doc: u32,
     sets: &mut [ResultSet],
     log: &mut Vec<String>,
-) -> Option<usize> {
+) -> (Option<usize>, Option<(usize, pgstudio_result_grid::Cell)>) {
     let mut save = None;
+    let mut json = None;
     let gap = ui.spacing().item_spacing.y;
     let n = sets.len() as f32;
     let each = ((ui.available_height() - gap * (n - 1.0)) / n).max(90.0);
@@ -227,10 +231,13 @@ fn grids(
                         editor.confirm_window(ui.ctx(), &mut store, id);
                         log.extend(editor.take_log());
                     }
+                    if let Some(cell) = out.open_json {
+                        json = Some((i, cell));
+                    }
                 });
             }
         });
-    save
+    (save, json)
 }
 
 /// Linha acima da grade com a situação da edição: a tabela editável e

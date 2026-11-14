@@ -231,3 +231,50 @@ fn a_table_without_a_primary_key_is_read_only() {
     assert!(!e.is_confirming());
     value(&admin, &format!("DROP TABLE {t}"));
 }
+
+#[test]
+fn json_cells_are_edited_in_the_json_editor() {
+    let Some(service) = service() else { return };
+    let ctx = egui::Context::default();
+    let admin = service.open("postgres");
+    let t = format!("edit_rows_json_{}", std::process::id());
+    let mut e = open(
+        &service,
+        &admin,
+        &t,
+        &format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, data jsonb, raw json, note text); \
+             INSERT INTO {t} VALUES (1, '{{\"a\": [1, 2]}}', '{{\"b\":  1, \"b\": 2}}', 'x');"
+        ),
+        &ctx,
+    );
+    // Coluna de texto não abre o editor de JSON.
+    assert!(!e.open_json_editor(0, 3));
+    e.select(0, 1, &ctx);
+    assert!(e.open_json_editor(0, 1));
+    let v = e.json_editor_mut().unwrap();
+    assert_eq!(v.title(), "Edit JSON - data (row 1)");
+    v.set_edit_text("{\"a\": [1, 2, 3], \"b\": }");
+    assert!(v.error().is_some());
+    assert!(!e.json_editor_ok(), "JSON inválido não grava");
+    e.json_editor_mut()
+        .unwrap()
+        .set_edit_text("{\"a\": [1, 2, 3],\n \"ok\": true}");
+    assert!(e.json_editor_ok());
+    assert!(e.json_editor_mut().is_none());
+    // json guarda o texto como veio; o editor mostra e grava compacto.
+    assert!(e.open_json_editor(0, 2));
+    e.json_editor_mut().unwrap().set_edit_text("");
+    assert!(e.json_editor_ok(), "vazio é NULL");
+    e.commit(&ctx);
+    settle(&mut e, &ctx);
+    assert_eq!(e.row_state(0), RowState::Clean, "{:?}", e.row_error(0));
+    assert_eq!(
+        value(
+            &admin,
+            &format!("SELECT data::text || ' / ' || coalesce(raw::text, 'NULL') FROM {t}")
+        ),
+        Some("{\"a\": [1, 2, 3], \"ok\": true} / NULL".into())
+    );
+    value(&admin, &format!("DROP TABLE {t}"));
+}

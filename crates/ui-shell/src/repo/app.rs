@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use pgstudio_core::connection::ConnectionSettings;
+use pgstudio_i18n::{tr, trf};
 
 use super::panel::Action;
 use super::{QueryLink, Workspace, find_server_by_key, link_settings};
@@ -297,6 +298,59 @@ impl ShellApp {
         self.open_file(&path);
     }
 
+    /// "New Server Registration" na raiz dos servidores do workspace.
+    pub fn new_workspace_server(&mut self) {
+        let store = self.secrets.clone();
+        self.workspace_panel.new_server(store.as_ref());
+    }
+
+    /// Traz os Registered Servers desta máquina para o workspace aberto
+    /// (grupos de mesmo nome se juntam, um servidor de mesmo nome é
+    /// substituído). Com as senhas do workspace destrancadas, as senhas
+    /// lembradas deles são copiadas para lá, numa thread; o cofre do sistema
+    /// continua com as dele. Devolve a mensagem para a status bar.
+    pub fn import_registered_into_workspace(&mut self) -> Result<String, String> {
+        let local = self.registered.servers().root().clone();
+        let keys: Vec<String> = self
+            .registered
+            .servers()
+            .all_servers()
+            .into_iter()
+            .map(|s| crate::secrets::password_key(&s.settings))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if keys.is_empty() {
+            return Err(tr("There are no Registered Servers on this computer to import.").into());
+        }
+        let unlocked = self
+            .workspace_panel
+            .passwords()
+            .is_some_and(|p| p.is_unlocked());
+        let Some(panel) = self.workspace_panel.servers_mut() else {
+            return Err(tr("No workspace is open.").into());
+        };
+        let n = panel.servers_mut().import_tree(&[], local)?;
+        let imported = if n == 1 {
+            tr("Imported 1 server into the workspace.").to_string()
+        } else {
+            trf!("Imported {n} servers into the workspace.", n = n)
+        };
+        match (&self.secrets, unlocked) {
+            (Some(store), true) => {
+                self.workspace_panel.copy_passwords(keys, store.clone());
+                Ok(trf!(
+                    "{imported} Copying their saved passwords to the workspace passwords...",
+                    imported = imported
+                ))
+            }
+            _ => Ok(trf!(
+                "{imported} Turn on or unlock the workspace passwords to bring their saved passwords too.",
+                imported = imported
+            )),
+        }
+    }
+
     /// Uma vez por frame: trata os pedidos e os diálogos do Workspace
     /// Explorer.
     pub(crate) fn workspace_step(&mut self, ctx: &eframe::egui::Context, actions: Vec<Action>) {
@@ -311,6 +365,11 @@ impl ShellApp {
                     self.open_file(&path);
                 }
                 Action::NewQuery(folder) => self.new_workspace_query(&folder),
+                Action::ImportRegistered => {
+                    self.status = match self.import_registered_into_workspace() {
+                        Ok(s) | Err(s) => s,
+                    }
+                }
                 Action::Servers(registered::Action::ConnectExplorer(s)) => {
                     self.connect_registered(&s, false)
                 }
@@ -325,8 +384,8 @@ impl ShellApp {
                         continue;
                     };
                     self.status = match panel.servers_mut().import(&group, &path) {
-                        Ok(1) => "Imported 1 server into the workspace.".to_string(),
-                        Ok(n) => format!("Imported {n} servers into the workspace."),
+                        Ok(1) => tr("Imported 1 server into the workspace.").to_string(),
+                        Ok(n) => trf!("Imported {n} servers into the workspace.", n = n),
                         Err(e) => e,
                     };
                 }
