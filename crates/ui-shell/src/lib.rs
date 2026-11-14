@@ -22,10 +22,13 @@ pub mod panels;
 pub mod pgtools;
 pub mod properties;
 pub mod query_designer;
+pub mod registered;
 pub mod restore;
 pub mod results;
 pub mod schema_compare;
+pub mod secrets;
 pub mod security;
+pub mod servers;
 pub mod theme;
 
 /// Ações do menu de contexto do Object Explorer.
@@ -131,6 +134,19 @@ pub struct ShellApp {
     pending_events: Vec<pgstudio_object_explorer::Event>,
     /// Cenário de medição em andamento (`cargo xtask bench`).
     bench_run: Option<bench::Run>,
+    /// Cofre das senhas lembradas (Remember password). Sem ele, a senha é
+    /// sempre pedida.
+    secrets: Option<Arc<dyn secrets::SecretStore>>,
+    /// Janela Registered Servers.
+    registered: registered::RegisteredPanel,
+    /// Outros servidores conectados no Object Explorer.
+    servers: servers::Servers,
+    /// Servidor de cada janela de consulta (pela chave do servidor).
+    doc_servers: std::collections::HashMap<u32, String>,
+    last_active_doc: Option<u32>,
+    /// Abrir uma janela de consulta assim que este servidor conectar
+    /// (Registered Servers > Connect > New Query).
+    new_query_on_connect: Option<String>,
     selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
 }
 
@@ -248,6 +264,12 @@ impl Default for ShellApp {
             selected_action: None,
             pending_events: Vec::new(),
             bench_run: None,
+            secrets: None,
+            registered: Default::default(),
+            servers: Default::default(),
+            doc_servers: Default::default(),
+            last_active_doc: None,
+            new_query_on_connect: None,
         }
     }
 }
@@ -305,7 +327,8 @@ impl ShellApp {
         }
         if self.connect_dialog.is_none() {
             let settings = self.recent.list().first().cloned().unwrap_or_default();
-            self.connect_dialog = Some(ConnectDialog::new(&settings));
+            self.connect_dialog =
+                Some(ConnectDialog::new(&settings).with_store(self.secrets.clone()));
         }
     }
 
@@ -344,7 +367,10 @@ impl ShellApp {
         let was_connecting = dialog.is_connecting();
         match dialog.poll() {
             Some((connected, password)) => {
-                self.connect_dialog = None;
+                if let Some(dialog) = self.connect_dialog.take() {
+                    dialog.save_password(&connected.settings, &password);
+                }
+                self.make_room_for(&connected.settings);
                 self.password = password;
                 let name = connected.settings.server_name();
                 self.recent.remember(&connected.settings);
@@ -1078,6 +1104,7 @@ impl ShellApp {
                 | ResetWindowLayout
                 | ConnectObjectExplorer
                 | DisconnectObjectExplorer
+                | RegisteredServers
                 | NewQuery
                 | OpenFile
                 | CloseDocument
@@ -1300,7 +1327,9 @@ impl ShellApp {
                 self.explorer.disconnect();
                 self.catalogs.clear();
                 self.password.clear();
+                self.promote_next_server();
             }
+            CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
@@ -1335,6 +1364,7 @@ impl ShellApp {
             self.status = "No query window is open.".to_string();
             return;
         };
+        self.activate_server_of(id);
         let queries = match &self.connection {
             Some(c) => (c.queries.clone(), c.settings.database.clone()),
             None if self.connector.is_none() && self.explorer.is_connected() => (
@@ -1969,6 +1999,8 @@ impl ShellApp {
         let server = self.connection_label();
         let default_db = self.default_database();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
+        let mut registered_actions = Vec::new();
+        let mut activate = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -1990,8 +2022,15 @@ impl ShellApp {
                     server,
                     catalogs: &self.catalogs,
                     default_database: default_db,
+                    servers: &mut self.servers,
+                    registered: &mut self.registered,
+                    secrets: self.secrets.as_ref(),
+                    activate_server: None,
+                    registered_actions: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
+                activate = viewer.activate_server;
+                registered_actions = viewer.registered_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 for id in viewer.close_requests {
@@ -2000,7 +2039,11 @@ impl ShellApp {
                     self.request_close(vec![id], false);
                 }
             });
+        if let Some(i) = activate {
+            self.activate_parked(i);
+        }
         self.sync_documents();
+        self.servers_step(&ctx, registered_actions);
         self.designer_step();
         self.diagram_step();
         self.activity_step(&ctx);

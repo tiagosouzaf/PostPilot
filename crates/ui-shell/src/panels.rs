@@ -23,6 +23,8 @@ pub enum Panel {
     Diagram(u32),
     /// Activity Monitor (um só, do servidor conectado).
     ActivityMonitor,
+    /// Registered Servers (Ctrl+Alt+G).
+    RegisteredServers,
 }
 
 impl Panel {
@@ -36,6 +38,7 @@ impl Panel {
             Panel::TableDesigner(_) => "Table Designer",
             Panel::Diagram(_) => "Database Diagram",
             Panel::ActivityMonitor => "Activity Monitor",
+            Panel::RegisteredServers => "Registered Servers",
         }
     }
 }
@@ -43,7 +46,7 @@ impl Panel {
 impl Pane for Panel {
     fn area(&self) -> Area {
         match self {
-            Panel::ObjectExplorer => Area::Left,
+            Panel::ObjectExplorer | Panel::RegisteredServers => Area::Left,
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
@@ -94,6 +97,16 @@ pub struct Viewer<'a> {
     pub catalogs: &'a crate::intellisense::Catalogs,
     /// Banco das janelas sem conexão própria.
     pub default_database: Option<String>,
+    /// Os outros servidores conectados no Object Explorer.
+    pub servers: &'a mut crate::servers::Servers,
+    /// Janela Registered Servers.
+    pub registered: &'a mut crate::registered::RegisteredPanel,
+    /// Cofre das senhas lembradas.
+    pub secrets: Option<&'a std::sync::Arc<dyn crate::secrets::SecretStore>>,
+    /// Servidor guardado que o usuário usou neste frame (vira o ativo).
+    pub activate_server: Option<usize>,
+    /// Pedidos de conexão da janela Registered Servers.
+    pub registered_actions: Vec<crate::registered::Action>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -154,8 +167,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         "{} Connect",
                         egui_phosphor::regular::PLUGS_CONNECTED
                     ));
+                    // Como no SSMS, dá para conectar mais servidores.
                     if ui
-                        .add_enabled(!connected, connect)
+                        .add(connect)
                         .on_hover_text("Connect Object Explorer")
                         .clicked()
                     {
@@ -171,8 +185,13 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     }
                 });
                 ui.separator();
-                let events = self.explorer.show(ui);
-                self.explorer_events.extend(events);
+                let shown = crate::servers::show(ui, self.explorer, self.servers);
+                self.explorer_events.extend(shown.events);
+                self.activate_server = self.activate_server.or(shown.activate);
+            }
+            Panel::RegisteredServers => {
+                let actions = self.registered.show(ui, self.secrets);
+                self.registered_actions.extend(actions);
             }
             Panel::Properties => match self.explorer.selected() {
                 Some(node) => {
