@@ -1,0 +1,14 @@
+[package]
+name = "pgstudio-i18n"
+description = "Tradução da interface do PGStudio (inglês e português do Brasil)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sys-locale.workspace = true
+
+[lints]
+workspace = true
