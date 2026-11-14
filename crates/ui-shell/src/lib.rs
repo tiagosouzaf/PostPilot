@@ -414,6 +414,22 @@ impl ShellApp {
     /// Abre um arquivo numa janela de consulta (ou traz a que já o tem).
     /// Em caso de erro, avisa na status bar e devolve `false`.
     pub fn open_file(&mut self, path: &std::path::Path) -> bool {
+        if path.extension().is_some_and(|e| e == diagrams::EXTENSION) {
+            let Some(provider) = self.explorer.provider() else {
+                self.status = "Connect to the server of the diagram first.".to_string();
+                return false;
+            };
+            return match self.diagrams.open_file(provider, path) {
+                Ok(id) => {
+                    self.workspace.open(Panel::Diagram(id));
+                    true
+                }
+                Err(e) => {
+                    self.status = format!("Could not open {}: {e}", path.display());
+                    false
+                }
+            };
+        }
         match self.documents.open(path) {
             Ok(id) => {
                 self.activate_document(id);
@@ -781,7 +797,19 @@ impl ShellApp {
             self.workspace.open(panel);
             return;
         }
+        if let Panel::Diagram(id) = panel
+            && let Some(d) = self.diagrams.get_mut(id)
+            && !d.request_close()
+        {
+            self.workspace.open(panel);
+            return;
+        }
         self.workspace.close(&panel);
+    }
+
+    /// Abre o painel (se preciso) e dá o foco a ele, como clicar na aba.
+    pub fn focus_panel(&mut self, panel: Panel) {
+        self.workspace.open(panel);
     }
 
     /// Fecha um painel, como o botão de fechar da aba.
@@ -915,6 +943,29 @@ impl ShellApp {
             CommandId::OpenFile => {
                 if let Some(path) = self.dialogs.open_path() {
                     self.open_file(&path);
+                }
+            }
+            CommandId::Save | CommandId::SaveAs | CommandId::Undo | CommandId::Redo
+                if self.focused_diagram().is_some() =>
+            {
+                available = true;
+                let id = self.focused_diagram().expect("checado no guard");
+                let Some(d) = self.diagrams.get_mut(id) else {
+                    return;
+                };
+                match cmd {
+                    CommandId::Save | CommandId::SaveAs => {
+                        let path = match d.path() {
+                            Some(p) if cmd == CommandId::Save => Some(p.to_path_buf()),
+                            current => {
+                                let current = current.map(|p| p.to_path_buf());
+                                self.dialogs.save_path(&d.file_name(), current.as_deref())
+                            }
+                        };
+                        d.save(path);
+                    }
+                    CommandId::Undo => d.undo(),
+                    _ => d.redo(),
                 }
             }
             CommandId::Save | CommandId::Undo | CommandId::Redo
@@ -1177,7 +1228,7 @@ impl ShellApp {
                 match provider.database_of(&node) {
                     Some(db) => {
                         let all = self.diagram_all_tables;
-                        let id = self.diagrams.open(provider, db, all, ctx);
+                        let id = self.diagrams.open(provider, db, Some(node), all, ctx);
                         self.workspace.open(Panel::Diagram(id));
                     }
                     None => self.status = "Select a database to diagram.".to_string(),
@@ -1528,6 +1579,11 @@ impl ShellApp {
         self.sync_documents();
         self.designer_step();
         self.diagram_step();
+        if self.diagrams.is_loading() {
+            // Um diagrama aberto de arquivo não tem quem acorde a janela
+            // quando o modelo chegar.
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
         self.confirm_window(&ctx);
         self.connect_window(&ctx);
 
@@ -1563,17 +1619,32 @@ impl ShellApp {
         }
     }
 
-    /// Se há um Table Designer com alterações, traz ele para a frente e
-    /// pergunta se salva. Devolve se perguntou.
+    /// Se há um Table Designer ou diagrama com alterações, traz ele para a
+    /// frente e pergunta. Devolve se perguntou.
     fn ask_dirty_designer(&mut self) -> bool {
-        let Some(id) = self.designers.dirty().first().copied() else {
-            return false;
-        };
-        self.workspace.open(Panel::TableDesigner(id));
-        if let Some(d) = self.designers.get_mut(id) {
-            d.request_close();
+        if let Some(id) = self.designers.dirty().first().copied() {
+            self.workspace.open(Panel::TableDesigner(id));
+            if let Some(d) = self.designers.get_mut(id) {
+                d.request_close();
+            }
+            return true;
         }
-        true
+        if let Some(id) = self.diagrams.dirty().first().copied() {
+            self.workspace.open(Panel::Diagram(id));
+            if let Some(d) = self.diagrams.get_mut(id) {
+                d.request_close();
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Diagrama com o foco, se for o painel focado.
+    fn focused_diagram(&mut self) -> Option<u32> {
+        match self.workspace.focused() {
+            Some(Panel::Diagram(id)) => Some(*id),
+            _ => None,
+        }
     }
 
     /// Table Designers abertos.
@@ -1603,9 +1674,17 @@ impl ShellApp {
         self
     }
 
-    /// Recebe os modelos dos diagramas e esquece os de abas fechadas.
+    /// Recebe os modelos e gravações dos diagramas, leva o log ao Output,
+    /// fecha os que pediram e esquece os de abas fechadas.
     fn diagram_step(&mut self) {
         self.diagrams.step();
+        self.output.extend(self.diagrams.take_log());
+        for node in self.diagrams.take_saved() {
+            self.explorer.refresh(&node);
+        }
+        for id in self.diagrams.take_closed() {
+            self.workspace.close(&Panel::Diagram(id));
+        }
         for id in self.diagrams.ids() {
             if !self.workspace.is_open(&Panel::Diagram(id)) {
                 self.diagrams.remove(id);

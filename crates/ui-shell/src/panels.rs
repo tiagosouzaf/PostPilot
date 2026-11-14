@@ -120,6 +120,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .designers
                 .get_mut(*id)
                 .is_none_or(crate::designer::TableDesigner::request_close),
+            Panel::Diagram(id) => self
+                .diagrams
+                .get_mut(*id)
+                .is_none_or(crate::diagrams::DiagramView::request_close),
             _ => true,
         }
     }

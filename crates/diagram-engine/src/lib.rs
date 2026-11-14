@@ -9,6 +9,12 @@
 //! - [`Diagram::show`] desenha só o que está na tela e, com o zoom bem
 //!   afastado, só o contorno e o nome de cada tabela, para manter 60 FPS
 //!   com centenas de tabelas.
+//! - Arrastar o título move a tabela, a borda direita muda a largura, e
+//!   arrastar uma coluna até a coluna de outra tabela pede um
+//!   relacionamento ([`DiagramEvent::Link`], como no SSMS: da chave para a
+//!   coluna que vai referenciá-la).
+//! - [`Diagram::sync`] refaz as caixas depois de o modelo mudar, mantendo
+//!   onde cada tabela estava.
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
@@ -16,8 +22,13 @@ use eframe::egui::{
 };
 use pgstudio_schema_model::{Id, Model};
 
-/// Largura de uma caixa de tabela (em unidades do diagrama).
+/// Largura de uma caixa de tabela nova (em unidades do diagrama).
 pub const NODE_WIDTH: f32 = 220.0;
+/// Largura mínima ao redimensionar.
+pub const MIN_NODE_WIDTH: f32 = 120.0;
+/// Distância (em pixels da tela) da borda direita que pega o
+/// redimensionamento.
+const RESIZE_GRIP: f32 = 6.0;
 /// Altura do título da caixa.
 pub const HEADER_HEIGHT: f32 = 24.0;
 /// Altura de cada coluna na caixa.
@@ -54,12 +65,14 @@ pub struct Node {
     pub columns: Vec<NodeColumn>,
     /// Canto superior esquerdo, em unidades do diagrama.
     pub pos: Pos2,
+    /// Largura da caixa.
+    pub width: f32,
 }
 
 impl Node {
     pub fn size(&self) -> Vec2 {
         vec2(
-            NODE_WIDTH,
+            self.width,
             HEADER_HEIGHT + self.columns.len().max(1) as f32 * ROW_HEIGHT + 6.0,
         )
     }
@@ -73,6 +86,46 @@ impl Node {
     pub fn title(&self) -> String {
         format!("{}.{}", self.schema, self.name)
     }
+
+    /// Coluna na posição `p` do diagrama, se `p` cair numa linha dela.
+    pub fn column_at(&self, p: Pos2) -> Option<usize> {
+        let r = self.rect();
+        if !r.contains(p) {
+            return None;
+        }
+        let y = p.y - r.min.y - HEADER_HEIGHT - 3.0;
+        if y < 0.0 {
+            return None;
+        }
+        let i = (y / ROW_HEIGHT) as usize;
+        (i < self.columns.len()).then_some(i)
+    }
+}
+
+/// O que o usuário fez no diagrama, para quem o mostra tratar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiagramEvent {
+    /// Uma tabela mudou de lugar ou de largura.
+    Moved(Id),
+    /// Arrastou a coluna `from_column` de `from` (a chave) até a coluna
+    /// `to_column` de `to` (quem vai referenciar).
+    Link {
+        from: Id,
+        from_column: String,
+        to: Id,
+        to_column: String,
+    },
+}
+
+/// Arrasto em andamento.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Drag {
+    Pan,
+    /// Movendo a tabela; o vetor é do canto dela até o ponteiro.
+    Move(usize, Vec2),
+    Resize(usize),
+    /// Da coluna `1` da tabela `0` até o ponto (do diagrama) `2`.
+    Link(usize, usize, Pos2),
 }
 
 /// Um relacionamento (FK) entre duas tabelas do diagrama.
@@ -138,6 +191,12 @@ pub struct Diagram {
     fit_pending: bool,
     /// Caixas e linhas desenhadas no último frame.
     drawn: (usize, usize),
+    drag: Option<Drag>,
+    events: Vec<DiagramEvent>,
+    /// Tamanho do canvas no último frame.
+    canvas: Vec2,
+    /// Canto do canvas na tela no último frame.
+    origin: Pos2,
 }
 
 impl Diagram {
@@ -167,26 +226,10 @@ impl Diagram {
                 name: t.name.clone(),
                 columns,
                 pos: Pos2::ZERO,
+                width: NODE_WIDTH,
             });
         }
-        let mut edges = Vec::new();
-        for (from, node) in nodes.iter().enumerate() {
-            let Some(t) = model.table(node.table) else {
-                continue;
-            };
-            for fk in &t.foreign_keys {
-                let to = nodes
-                    .iter()
-                    .position(|n| n.schema == fk.ref_schema && n.name == fk.ref_table);
-                if let Some(to) = to {
-                    edges.push(Edge {
-                        name: fk.name.clone(),
-                        from,
-                        to,
-                    });
-                }
-            }
-        }
+        let edges = edges_between(model, &nodes);
         let mut d = Diagram {
             nodes,
             edges,
@@ -195,6 +238,62 @@ impl Diagram {
         };
         d.auto_layout();
         d
+    }
+
+    /// Refaz caixas e linhas das tabelas `tables` a partir do modelo
+    /// (depois de uma edição ou de um undo), mantendo posição e largura das
+    /// que já estavam; as novas vão para o centro da tela. Tabelas que
+    /// sumiram do modelo saem do diagrama.
+    pub fn sync(&mut self, model: &Model, tables: &[Id]) {
+        let selected = self.selected.map(|i| self.nodes[i].table);
+        let fresh = Diagram::from_model(model, tables);
+        let mut next = self.view_center();
+        let mut nodes = Vec::new();
+        for mut n in fresh.nodes {
+            match self.nodes.iter().find(|o| o.table == n.table) {
+                Some(old) => {
+                    n.pos = old.pos;
+                    n.width = old.width;
+                }
+                None => {
+                    n.pos = next - n.size() / 2.0;
+                    next += vec2(30.0, 30.0);
+                }
+            }
+            nodes.push(n);
+        }
+        self.edges = edges_between(model, &nodes);
+        self.selected = selected.and_then(|id| nodes.iter().position(|n| n.table == id));
+        self.nodes = nodes;
+        if self.drag.is_some_and(|d| !matches!(d, Drag::Pan)) {
+            self.drag = None;
+        }
+    }
+
+    /// Centro da tela, em unidades do diagrama.
+    pub fn view_center(&self) -> Pos2 {
+        self.camera
+            .to_world(Pos2::ZERO, (self.canvas / 2.0).to_pos2())
+    }
+
+    /// Onde o ponto `p` do diagrama apareceu na tela no último frame.
+    pub fn screen_pos(&self, p: Pos2) -> Pos2 {
+        self.camera.to_screen(self.origin, p)
+    }
+
+    /// O que aconteceu desde a última chamada.
+    pub fn take_events(&mut self) -> Vec<DiagramEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Índice da tabela `id` no diagrama.
+    pub fn index_of(&self, id: Id) -> Option<usize> {
+        self.nodes.iter().position(|n| n.table == id)
+    }
+
+    /// Tabela selecionada (o id no modelo).
+    pub fn selected_table(&self) -> Option<Id> {
+        self.selected.map(|i| self.nodes[i].table)
     }
 
     /// Põe as tabelas em colunas: quem não aponta para ninguém fica na
@@ -233,18 +332,21 @@ impl Diagram {
             members.sort_by(|a, b| self.nodes[*a].title().cmp(&self.nodes[*b].title()));
             let mut y = 0.0;
             let mut used = false;
+            let mut width: f32 = 0.0;
             for i in members {
                 let h = self.nodes[i].size().y;
                 if used && y + h > max_height {
-                    x += NODE_WIDTH + GAP_X;
+                    x += width + GAP_X;
                     y = 0.0;
+                    width = 0.0;
                 }
                 self.nodes[i].pos = pos2(x, y);
                 y += h + GAP_Y;
+                width = width.max(self.nodes[i].width);
                 used = true;
             }
             if used {
-                x += NODE_WIDTH + GAP_X;
+                x += width + GAP_X;
             }
         }
         self.fit_pending = true;
@@ -267,6 +369,11 @@ impl Diagram {
             .clamp(MIN_ZOOM, 1.0);
         self.camera.zoom = zoom;
         self.camera.pan = size / 2.0 - b.center().to_vec2() * zoom;
+        self.fit_pending = false;
+    }
+
+    /// Mantém a câmera como está (não enquadra ao abrir).
+    pub fn keep_camera(&mut self) {
         self.fit_pending = false;
     }
 
@@ -296,6 +403,8 @@ impl Diagram {
     /// seleção (clique).
     pub fn show(&mut self, ui: &mut egui::Ui) -> Response {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.canvas = rect.size();
+        self.origin = rect.min;
         if self.fit_pending {
             self.zoom_to_fit(rect.size());
         }
@@ -383,15 +492,102 @@ impl Diagram {
                     );
             }
         }
+        if let Some(Drag::Link(i, c, w)) = self.drag {
+            let n = &self.nodes[i];
+            let y = n.pos.y + HEADER_HEIGHT + 3.0 + ROW_HEIGHT * (c as f32 + 0.5);
+            let from = self.camera.to_screen(origin, pos2(n.pos.x + n.width, y));
+            let to = self.camera.to_screen(origin, w);
+            painter.line_segment([from, to], Stroke::new(2.0, colors.selection));
+            painter.circle_filled(to, 3.0, colors.selection);
+        }
         self.drawn = (nodes, edges);
         response
     }
 
+    /// O que um arrasto começando em `p` (tela) faz.
+    fn drag_at(&self, origin: Pos2, p: Pos2, primary: bool) -> Drag {
+        let w = self.camera.to_world(origin, p);
+        let Some(i) = self.node_at(w).filter(|_| primary) else {
+            return Drag::Pan;
+        };
+        let n = &self.nodes[i];
+        let r = self.camera.rect_to_screen(origin, n.rect());
+        if (r.max.x - p.x).abs() <= RESIZE_GRIP {
+            return Drag::Resize(i);
+        }
+        match n.column_at(w) {
+            Some(c) if self.camera.zoom >= DETAIL_ZOOM => Drag::Link(i, c, w),
+            _ => Drag::Move(i, w - n.pos),
+        }
+    }
+
     fn handle_input(&mut self, ui: &egui::Ui, response: &Response, origin: Pos2) {
-        if response.dragged_by(egui::PointerButton::Primary)
-            || response.dragged_by(egui::PointerButton::Middle)
+        let pointer = response.interact_pointer_pos();
+        // O arrasto só "começa" depois de o ponteiro andar um pouco; o que
+        // ele pega é o que estava embaixo do clique.
+        let press = ui.input(|i| i.pointer.press_origin()).or(pointer);
+        if response.drag_started()
+            && let Some(p) = press
         {
-            self.camera.pan += response.drag_delta();
+            let primary = response.dragged_by(egui::PointerButton::Primary);
+            let drag = self.drag_at(origin, p, primary);
+            if let Drag::Move(i, _) | Drag::Resize(i) | Drag::Link(i, _, _) = drag {
+                self.selected = Some(i);
+            }
+            self.drag = Some(drag);
+            // O fundo acompanha o ponteiro desde o clique, não desde que o
+            // arrasto foi reconhecido.
+            if drag == Drag::Pan
+                && let Some(now) = pointer
+            {
+                self.camera.pan += now - p - response.drag_delta();
+            }
+        }
+        if response.dragged() {
+            let world = pointer.map(|p| self.camera.to_world(origin, p));
+            match (self.drag, world) {
+                (Some(Drag::Move(i, grab)), Some(w)) => {
+                    self.nodes[i].pos = w - grab;
+                }
+                (Some(Drag::Resize(i)), Some(w)) => {
+                    let n = &mut self.nodes[i];
+                    n.width = (w.x - n.pos.x).max(MIN_NODE_WIDTH);
+                }
+                (Some(Drag::Link(i, c, _)), Some(w)) => self.drag = Some(Drag::Link(i, c, w)),
+                _ => self.camera.pan += response.drag_delta(),
+            }
+        }
+        if response.drag_stopped() {
+            match self.drag.take() {
+                Some(Drag::Move(i, _) | Drag::Resize(i)) => {
+                    self.events.push(DiagramEvent::Moved(self.nodes[i].table));
+                }
+                Some(Drag::Link(i, c, w)) => {
+                    if let Some(j) = self.node_at(w).filter(|j| *j != i)
+                        && let Some(k) = self.nodes[j].column_at(w)
+                    {
+                        self.events.push(DiagramEvent::Link {
+                            from: self.nodes[i].table,
+                            from_column: self.nodes[i].columns[c].name.clone(),
+                            to: self.nodes[j].table,
+                            to_column: self.nodes[j].columns[k].name.clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(p) = response.hover_pos() {
+            let icon = match self.drag.unwrap_or_else(|| self.drag_at(origin, p, true)) {
+                Drag::Resize(_) => Some(egui::CursorIcon::ResizeHorizontal),
+                Drag::Move(..) if self.drag.is_some() => Some(egui::CursorIcon::Grabbing),
+                Drag::Move(..) => Some(egui::CursorIcon::Grab),
+                Drag::Link(..) => Some(egui::CursorIcon::Alias),
+                Drag::Pan => None,
+            };
+            if let Some(icon) = icon {
+                ui.ctx().set_cursor_icon(icon);
+            }
         }
         if response.clicked() {
             self.selected = response
@@ -499,6 +695,29 @@ impl Diagram {
         let base = end - dir * (6.0 * zoom).max(2.0);
         painter.line_segment([base - normal, base + normal], stroke);
     }
+}
+
+/// Uma linha para cada FK entre duas tabelas de `nodes`.
+fn edges_between(model: &Model, nodes: &[Node]) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    for (from, node) in nodes.iter().enumerate() {
+        let Some(t) = model.table(node.table) else {
+            continue;
+        };
+        for fk in &t.foreign_keys {
+            let to = nodes
+                .iter()
+                .position(|n| n.schema == fk.ref_schema && n.name == fk.ref_table);
+            if let Some(to) = to {
+                edges.push(Edge {
+                    name: fk.name.clone(),
+                    from,
+                    to,
+                });
+            }
+        }
+    }
+    edges
 }
 
 /// Pontos da linha em cotovelo de `a` para `b`, saindo do lado de `a` que
@@ -674,6 +893,7 @@ mod tests {
                         5
                     ],
                     pos: Pos2::ZERO,
+                    width: NODE_WIDTH,
                 })
                 .collect(),
             edges: vec![
@@ -750,5 +970,121 @@ mod tests {
         }
         harness.run();
         assert_eq!(harness.state().selected, Some(first));
+    }
+
+    /// Diagrama do `shop` sem enquadrar: zoom 1, (0, 0) no canto.
+    fn shop_harness() -> egui_kittest::Harness<'static, Diagram> {
+        let m = shop();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size([1000.0, 600.0])
+            .build_ui_state(
+                |ui, d: &mut Diagram| {
+                    egui::Frame::new().show(ui, |ui| d.show(ui));
+                },
+                Diagram::from_model(&m, &ids(&m)),
+            );
+        harness.run();
+        harness.state_mut().camera = Camera::default();
+        harness.run();
+        harness
+    }
+
+    /// Arrasta do ponto `from` ao `to` do diagrama.
+    fn drag(harness: &mut egui_kittest::Harness<'static, Diagram>, from: Pos2, to: Pos2) {
+        let (from, to) = (
+            harness.state().screen_pos(from),
+            harness.state().screen_pos(to),
+        );
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        harness.event(egui::Event::PointerMoved(from));
+        harness.run();
+        harness.event(button(from, true));
+        harness.run();
+        for k in 1..=5 {
+            harness.event(egui::Event::PointerMoved(
+                from + (to - from) * k as f32 / 5.0,
+            ));
+            harness.run();
+        }
+        harness.event(button(to, false));
+        harness.run();
+    }
+
+    fn node<'a>(d: &'a Diagram, name: &str) -> &'a Node {
+        d.nodes.iter().find(|n| n.name == name).unwrap()
+    }
+
+    #[test]
+    fn dragging_the_title_moves_and_the_right_edge_resizes() {
+        let mut h = shop_harness();
+        drag(&mut h, pos2(100.0, 12.0), pos2(150.0, 62.0));
+        assert_eq!(node(h.state(), "cliente").pos, pos2(50.0, 50.0));
+        let produto = node(h.state(), "produto").rect();
+        let y = produto.center().y;
+        drag(
+            &mut h,
+            pos2(produto.max.x - 2.0, y),
+            pos2(produto.min.x + 260.0, y),
+        );
+        assert_eq!(node(h.state(), "produto").width, 260.0);
+        let events = h.state_mut().take_events();
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(matches!(events[0], DiagramEvent::Moved(_)));
+        // Arrastar o fundo continua movendo a câmera.
+        drag(&mut h, pos2(900.0, 500.0), pos2(880.0, 480.0));
+        assert_eq!(h.state().camera.pan, vec2(-20.0, -20.0));
+    }
+
+    #[test]
+    fn dragging_a_key_onto_a_column_asks_for_a_relationship() {
+        let mut h = shop_harness();
+        let pedido = node(h.state(), "pedido").pos;
+        let row = |i: f32| HEADER_HEIGHT + 3.0 + ROW_HEIGHT * (i + 0.5);
+        drag(&mut h, pos2(50.0, row(0.0)), pedido + vec2(60.0, row(1.0)));
+        let events = h.state_mut().take_events();
+        assert_eq!(
+            events,
+            [DiagramEvent::Link {
+                from: node(h.state(), "cliente").table,
+                from_column: "id".into(),
+                to: node(h.state(), "pedido").table,
+                to_column: "cliente_id".into(),
+            }]
+        );
+        // Soltar no vazio não pede nada, e a tabela não sai do lugar.
+        drag(&mut h, pos2(50.0, row(0.0)), pos2(700.0, 500.0));
+        assert!(h.state_mut().take_events().is_empty());
+        assert_eq!(node(h.state(), "cliente").pos, Pos2::ZERO);
+    }
+
+    #[test]
+    fn sync_keeps_positions_and_places_new_tables_in_view() {
+        let mut m = shop();
+        let mut d = Diagram::from_model(&m, &ids(&m));
+        d.canvas = vec2(800.0, 600.0);
+        d.camera = Camera::default();
+        d.nodes[0].pos = pos2(-500.0, -500.0);
+        d.nodes[0].width = 300.0;
+        d.selected = Some(1);
+        let selected = d.selected_table();
+        let mut doc = Document::new(m.clone());
+        let novo = doc.add_table("public", "novo").unwrap();
+        doc.drop_table(ids(&m)[3]).unwrap();
+        m = doc.model.clone();
+        let mut tables = d.tables();
+        tables.push(novo);
+        d.sync(&m, &tables);
+        assert_eq!(d.nodes.len(), 4);
+        assert_eq!(d.nodes[0].pos, pos2(-500.0, -500.0));
+        assert_eq!(d.nodes[0].width, 300.0);
+        assert_eq!(d.selected_table(), selected);
+        let n = node(&d, "novo");
+        assert!(n.rect().contains(pos2(400.0, 300.0)), "{:?}", n.rect());
+        assert_eq!(d.edges.len(), 2);
     }
 }
