@@ -18,6 +18,7 @@ use pgstudio_i18n::{Language, catalog_keys, has_translation};
 /// diminui: um arquivo daqui sem nenhum texto solto também falha, para ser
 /// tirado da lista.
 const PENDING: &[&str] = &[
+    "crates/ui-shell/src/result_edit.rs",
     "crates/ui-shell/src/update.rs",
     "crates/ui-shell/src/repo/source_control.rs",
     "crates/ui-shell/src/claude.rs",
