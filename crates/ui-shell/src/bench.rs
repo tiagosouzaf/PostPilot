@@ -19,6 +19,13 @@
 //!   designer de uma delas e acrescenta [`DESIGNER_EDITS`] colunas, uma por
 //!   frame (cada uma é uma edição com undo); no fim, mede o tempo de gerar
 //!   o script de alterações.
+//! - **Plano grande:** o Ctrl+L de uma consulta numa tabela particionada
+//!   devolve um plano de [`PLAN_NODES`] nós (duas `Append` com
+//!   [`PLAN_PARTITIONS`] partições cada); o plano passeia do topo ao fim com
+//!   o zoom indo e voltando em [`PLAN_SECONDS`] segundos.
+//! - **Activity Monitor:** um servidor com [`ACTIVITY_SESSIONS`] sessões
+//!   (e o dobro de locks, um décimo delas bloqueadas) atualizado a cada
+//!   segundo por [`ACTIVITY_SECONDS`] segundos.
 //!
 //! Ao terminar, o app escreve uma linha [`RESULT_PREFIX`] com os números
 //! (`chave=valor`) e fica parado para a memória ser lida de fora.
@@ -57,6 +64,18 @@ pub const DESIGNER_EDITS: usize = 300;
 pub const DIAGRAM_SECONDS: f64 = 10.0;
 /// Zoom mínimo e máximo do passeio (de tudo na tela a colunas legíveis).
 pub const DIAGRAM_ZOOM: (f32, f32) = (0.08, 1.2);
+/// Partições de cada `Append` do plano grande.
+pub const PLAN_PARTITIONS: usize = 997;
+/// Nós do plano grande: seis nós em volta das duas `Append`.
+pub const PLAN_NODES: usize = 6 + 2 * PLAN_PARTITIONS;
+/// Duração do passeio pelo plano grande.
+pub const PLAN_SECONDS: f64 = 10.0;
+/// Zoom mínimo e máximo do passeio pelo plano.
+pub const PLAN_ZOOM: (f32, f32) = (0.25, 1.0);
+/// Sessões do servidor sintético do Activity Monitor.
+pub const ACTIVITY_SESSIONS: usize = 5_000;
+/// Duração do cenário do Activity Monitor (uma atualização por segundo).
+pub const ACTIVITY_SECONDS: f64 = 10.0;
 /// Início da linha com os resultados de um cenário.
 pub const RESULT_PREFIX: &str = "pgstudio-bench: result";
 
@@ -70,6 +89,10 @@ pub enum Scenario {
     DiagramLarge,
     /// Table Designer num banco de [`DESIGNER_TABLES`] tabelas.
     Designer,
+    /// Plano estimado de [`PLAN_NODES`] nós.
+    Plan,
+    /// Activity Monitor com [`ACTIVITY_SESSIONS`] sessões.
+    Activity,
 }
 
 impl Scenario {
@@ -81,6 +104,8 @@ impl Scenario {
             "diagram" => Some(Scenario::Diagram),
             "diagram2000" => Some(Scenario::DiagramLarge),
             "designer" => Some(Scenario::Designer),
+            "plan" => Some(Scenario::Plan),
+            "activity" => Some(Scenario::Activity),
             _ => None,
         }
     }
@@ -92,6 +117,8 @@ impl Scenario {
             Scenario::Diagram => "diagram",
             Scenario::DiagramLarge => "diagram2000",
             Scenario::Designer => "designer",
+            Scenario::Plan => "plan",
+            Scenario::Activity => "activity",
         }
     }
 
@@ -145,6 +172,8 @@ pub(crate) struct Run {
     pub warmup: usize,
     /// Quando a rolagem da grade começou.
     pub scroll_start: Option<Instant>,
+    /// Quando a atualização em andamento do Activity Monitor começou.
+    pub refresh_start: Option<Instant>,
 }
 
 impl Run {
@@ -162,6 +191,7 @@ impl Run {
             next_key: None,
             warmup: 0,
             scroll_start: None,
+            refresh_start: None,
         }
     }
 
@@ -263,6 +293,251 @@ impl QuerySession for SyntheticSession {
     fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
     }
+
+    fn database(&self) -> String {
+        "bench".to_string()
+    }
+}
+
+/// O `EXPLAIN (FORMAT JSON)` de uma junção de duas tabelas particionadas,
+/// com `partitions` partições cada: `Gather Merge > Sort > Hash Join`, uma
+/// `Append` de `Seq Scan` e um `Hash` com uma `Append` de `Index Scan`.
+pub fn synthetic_plan_json(partitions: usize) -> String {
+    use serde_json::{Value, json};
+    let scans = |kind: &str, table: &str| -> Vec<Value> {
+        (0..partitions)
+            .map(|i| {
+                let mut node = json!({
+                    "Node Type": kind,
+                    "Parent Relationship": "Member",
+                    "Relation Name": format!("{table}_p{i:04}"),
+                    "Schema": "public",
+                    "Alias": format!("{table}_{i}"),
+                    "Startup Cost": 0.0,
+                    "Total Cost": 120.0 + (i % 37) as f64,
+                    "Plan Rows": 5000 + (i % 91) * 10,
+                    "Plan Width": 48,
+                });
+                if kind == "Index Scan" {
+                    node["Index Name"] = json!(format!("{table}_p{i:04}_pkey"));
+                    node["Index Cond"] = json!("(id = pedido.cliente_id)");
+                } else {
+                    node["Filter"] = json!("(total > 100)");
+                }
+                node
+            })
+            .collect()
+    };
+    let append = |kind: &str, table: &str, rel: &str| {
+        json!({
+            "Node Type": "Append",
+            "Parent Relationship": rel,
+            "Startup Cost": 0.0,
+            "Total Cost": 140000.0,
+            "Plan Rows": 5_000_000,
+            "Plan Width": 48,
+            "Plans": scans(kind, table),
+        })
+    };
+    json!([{
+        "Plan": {
+            "Node Type": "Gather Merge",
+            "Startup Cost": 900000.0,
+            "Total Cost": 1500000.0,
+            "Plan Rows": 5_000_000,
+            "Plan Width": 96,
+            "Workers Planned": 2,
+            "Plans": [{
+                "Node Type": "Sort",
+                "Parent Relationship": "Outer",
+                "Startup Cost": 890000.0,
+                "Total Cost": 900000.0,
+                "Plan Rows": 2_000_000,
+                "Plan Width": 96,
+                "Sort Key": ["pedido.total DESC"],
+                "Plans": [{
+                    "Node Type": "Hash Join",
+                    "Parent Relationship": "Outer",
+                    "Join Type": "Inner",
+                    "Startup Cost": 300000.0,
+                    "Total Cost": 800000.0,
+                    "Plan Rows": 2_000_000,
+                    "Plan Width": 96,
+                    "Hash Cond": "(pedido.cliente_id = cliente.id)",
+                    "Plans": [
+                        append("Seq Scan", "pedido", "Outer"),
+                        {
+                            "Node Type": "Hash",
+                            "Parent Relationship": "Inner",
+                            "Startup Cost": 200000.0,
+                            "Total Cost": 200000.0,
+                            "Plan Rows": 5_000_000,
+                            "Plan Width": 48,
+                            "Plans": [append("Index Scan", "cliente", "Outer")],
+                        }
+                    ],
+                }],
+            }],
+        }
+    }])
+    .to_string()
+}
+
+/// Sessão sem banco que responde qualquer comando com o plano de
+/// [`synthetic_plan_json`] (Ctrl+L do cenário do plano).
+pub(crate) struct SyntheticPlanSession;
+
+impl QuerySession for SyntheticPlanSession {
+    fn execute(&self, _sql: String, mut sink: QuerySink) {
+        std::thread::spawn(move || {
+            sink(QueryEvent::Columns(vec!["QUERY PLAN".into()]));
+            sink(QueryEvent::Row(vec![Some(synthetic_plan_json(
+                PLAN_PARTITIONS,
+            ))]));
+            sink(QueryEvent::CommandComplete { rows: 1 });
+            sink(QueryEvent::Finished { canceled: false });
+        });
+    }
+
+    fn cancel(&self) {}
+
+    fn database(&self) -> String {
+        "bench".to_string()
+    }
+}
+
+/// Zoom e rolagem do passeio pelo plano no instante `t` (0 a 1): do topo
+/// ao fim, com o zoom indo de 100% a 25% e voltando duas vezes.
+pub fn plan_camera(size: eframe::egui::Vec2, t: f64) -> (f32, eframe::egui::Vec2) {
+    let t = t.clamp(0.0, 1.0) as f32;
+    let (lo, hi) = PLAN_ZOOM;
+    let wave = 0.5 - 0.5 * (t * std::f32::consts::TAU * 2.0).cos();
+    let zoom = hi - (hi - lo) * wave;
+    (zoom, size * zoom * t)
+}
+
+/// Servidor sintético do Activity Monitor: [`ACTIVITY_SESSIONS`] sessões,
+/// o dobro de locks e 20 bancos; os números mudam a cada leitura.
+pub(crate) struct SyntheticActivitySession {
+    reads: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl SyntheticActivitySession {
+    pub fn new() -> Self {
+        SyntheticActivitySession {
+            reads: Arc::default(),
+        }
+    }
+}
+
+impl QuerySession for SyntheticActivitySession {
+    fn execute(&self, sql: String, mut sink: QuerySink) {
+        let read = self.reads.fetch_add(1, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            let some = |s: String| Some(s);
+            let mut set = |rows: Vec<Vec<Option<String>>>| {
+                sink(QueryEvent::Columns(vec!["c".into()]));
+                let n = rows.len() as u64;
+                for r in rows {
+                    sink(QueryEvent::Row(r));
+                }
+                sink(QueryEvent::CommandComplete { rows: n });
+            };
+            let n = ACTIVITY_SESSIONS;
+            let states = ["active", "idle", "idle in transaction", "active"];
+            set((0..n)
+                .map(|i| {
+                    let pid = 10_000 + i;
+                    let blocked = i % 10 == 9;
+                    vec![
+                        some(pid.to_string()),
+                        some(format!("app_user_{}", i % 25)),
+                        some(format!("db_{:02}", i % 20)),
+                        some(format!("service-{}", i % 40)),
+                        some(format!("10.0.{}.{}", i / 250, i % 250)),
+                        some(states[(i + read as usize) % 4].into()),
+                        if blocked { some("Lock".into()) } else { None },
+                        if blocked {
+                            some("relation".into())
+                        } else {
+                            None
+                        },
+                        if blocked {
+                            some((pid - 1).to_string())
+                        } else {
+                            some(String::new())
+                        },
+                        some(format!("{}.5", (i * 7 + read as usize) % 600)),
+                        some(format!("{}.25", (i * 3 + read as usize) % 120)),
+                        some("client backend".into()),
+                        some(format!(
+                            "SELECT * FROM pedido WHERE cliente_id = {} AND total > {}",
+                            i, read
+                        )),
+                    ]
+                })
+                .collect());
+            set((0..20)
+                .map(|d| {
+                    let r = read as f64;
+                    vec![
+                        some(format!("db_{d:02}")),
+                        some(format!("{}", 1_000_000.0 + r * 500.0 * (d + 1) as f64)),
+                        some(format!("{}", 50_000.0 + r * 30.0 * (d + 1) as f64)),
+                        some(format!("{}", 9_000_000.0 + r * 4000.0)),
+                        some("0".into()),
+                    ]
+                })
+                .collect());
+            set((0..2 * n)
+                .map(|i| {
+                    let pid = 10_000 + i / 2;
+                    let waiting = i / 2 % 10 == 9 && i % 2 == 0;
+                    vec![
+                        some(pid.to_string()),
+                        some(if i % 2 == 0 { "relation" } else { "virtualxid" }.into()),
+                        some(
+                            if waiting {
+                                "AccessExclusiveLock"
+                            } else {
+                                "AccessShareLock"
+                            }
+                            .into(),
+                        ),
+                        some(if waiting { "f" } else { "t" }.into()),
+                        if i % 2 == 0 {
+                            some(format!("pedido_p{:04}", i % 997))
+                        } else {
+                            None
+                        },
+                        if i % 2 == 1 {
+                            some(format!("{}/{}", i % 64, i))
+                        } else {
+                            None
+                        },
+                        some(format!("db_{:02}", (i / 2) % 20)),
+                    ]
+                })
+                .collect());
+            set(vec![vec![some("1".into())]]);
+            if sql.contains("pg_stat_statements ORDER BY") {
+                set((0..25)
+                    .map(|i| {
+                        vec![
+                            some(format!("{}", 1000 * (25 - i))),
+                            some(format!("{}", 50_000.0 / (i + 1) as f64)),
+                            some(format!("{}", 2.5 / (i + 1) as f64)),
+                            some(format!("{}", 10 * i)),
+                            some(format!("SELECT * FROM pedido_{i} WHERE id = $1")),
+                        ]
+                    })
+                    .collect());
+            }
+            sink(QueryEvent::Finished { canceled: false });
+        });
+    }
+
+    fn cancel(&self) {}
 
     fn database(&self) -> String {
         "bench".to_string()
