@@ -496,7 +496,7 @@ impl ShellApp {
     }
 
     /// Roda um cenário de medição (grade ou IntelliSense) e escreve o
-    /// resultado na saída padrão. Veja o módulo [`bench`].
+    /// resultado na saída padrão. Veja o módulo [`mod@bench`].
     pub fn with_bench_scenario(mut self, scenario: bench::Scenario) -> Self {
         self.bench_run = Some(bench::Run::new(scenario));
         self
