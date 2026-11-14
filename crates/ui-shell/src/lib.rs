@@ -1891,6 +1891,10 @@ impl ShellApp {
                 self.open_activity_monitor(ctx);
                 return;
             }
+            Event::Register(_) => {
+                self.register_active_server();
+                return;
+            }
             Event::BackUp(node) => {
                 match provider.database_of(&node) {
                     Some(db) => self.open_backup(ctx, db),
@@ -2257,6 +2261,7 @@ impl ShellApp {
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
         let default_db = self.default_database();
+        let doc_servers = self.document_servers();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut activate = None;
@@ -2281,6 +2286,7 @@ impl ShellApp {
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
                     },
                     server,
+                    doc_servers,
                     catalogs: &self.catalogs,
                     default_database: default_db,
                     servers: &mut self.servers,
