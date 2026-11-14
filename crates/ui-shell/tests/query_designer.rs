@@ -247,3 +247,41 @@ fn a_cte_shows_a_warning_and_keeps_the_selection() {
         format!("{text}\nSELECT *;")
     );
 }
+
+/// Marco 6.1: LEFT JOIN, OR e LIMIT lidos sem aviso; o tipo do JOIN, o
+/// Distinct e as colunas Or... aparecem na tela; Add Expression põe uma
+/// linha nova na grade.
+#[test]
+fn outer_joins_or_and_limit_open_without_a_warning() {
+    let (mut harness, doc) = open_with_selection(
+        "select a.name from table_00001 a left join table_00002 b on b.id = a.id \
+         where a.name = 'x' or b.email is null limit 3",
+    );
+    let qd = harness.state().query_designer().unwrap();
+    assert_eq!(qd.notice(), None);
+    assert!(qd.replaces_selection());
+    assert_eq!(qd.query.limit, Some(3));
+    assert_eq!(qd.query.or_columns, 1);
+    assert_eq!(
+        qd.query.joins[0].kind(),
+        pgstudio_ui_shell::query_designer::JoinKind::Left
+    );
+    assert!(harness.query_by_label("Joins:").is_some(), "the joins show");
+    assert!(harness.query_by_label("Or...").is_some());
+    harness.get_by_label("Distinct").click();
+    harness.run();
+    harness.get_by_label_contains("Add Expression").click();
+    harness.run();
+    let qd = harness.state().query_designer().unwrap();
+    assert!(qd.query.distinct);
+    assert!(qd.query.rows.last().is_some_and(|r| r.expression));
+    let expected = "SELECT DISTINCT a.name\n\
+        FROM public.table_00001 AS a\n    \
+        LEFT JOIN public.table_00002 AS b ON b.id = a.id\n\
+        WHERE (a.name = 'x')\n   OR (b.email IS NULL)\n\
+        LIMIT 3;";
+    assert_eq!(qd.sql(), expected);
+    harness.get_by_label("OK").click();
+    harness.run_steps(3);
+    assert_eq!(harness.state().documents().get(doc).unwrap().text, expected);
+}
