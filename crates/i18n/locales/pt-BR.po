@@ -2819,3 +2819,327 @@ msgstr "Executou a janela de consulta"
 
 msgid "Read results"
 msgstr "Leu os resultados"
+
+# Backup, restauração e Schema Compare (lado da comparação)
+
+msgctxt "side"
+msgid "source"
+msgstr "de origem"
+
+msgctxt "side"
+msgid "target"
+msgstr "de destino"
+
+# Backup, restauração e Comparação de Esquemas
+
+msgid "A snapshot file cannot be changed."
+msgstr "Um arquivo de instantâneo não pode ser alterado."
+
+msgid "All"
+msgstr "Todos"
+
+msgid "Apply {count} statements to {target} in one transaction?"
+msgstr "Aplicar {count} instruções em {target} em uma transação?"
+
+msgid "Applying..."
+msgstr "Aplicando..."
+
+msgid "Back Up Database - {database}"
+msgstr "Fazer Backup do Banco de Dados - {database}"
+
+msgid "Back Up: command line copied to the clipboard."
+msgstr "Backup: linha de comando copiada para a área de transferência."
+
+msgid "Back Up: completed ({file})."
+msgstr "Backup: concluído ({file})."
+
+msgid "Back Up: failed ({e})."
+msgstr "Backup: falhou ({e})."
+
+msgid "Back Up: {database} to {file}"
+msgstr "Backup: {database} para {file}"
+
+msgid "Back up to:"
+msgstr "Fazer backup em:"
+
+msgid "Backing up..."
+msgstr "Fazendo backup..."
+
+msgid "Backup file:"
+msgstr "Arquivo de backup:"
+
+msgid "Backup type:"
+msgstr "Tipo de backup:"
+
+msgid "Browse..."
+msgstr "Procurar..."
+
+msgid "Choose a database to save as a snapshot."
+msgstr "Escolha um banco de dados para salvar como instantâneo."
+
+msgid "Choose a database to save."
+msgstr "Escolha um banco de dados para salvar."
+
+msgid "Choose the backup file."
+msgstr "Escolha o arquivo de backup."
+
+msgid "Choose the destination database."
+msgstr "Escolha o banco de dados de destino."
+
+msgid "Choose the destination file."
+msgstr "Escolha o arquivo de destino."
+
+msgid "Choose the source and the target and press Compare."
+msgstr "Escolha a origem e o destino e pressione Comparar."
+
+msgid "Choose the {what} database."
+msgstr "Escolha o banco de dados {what}."
+
+msgid "Choose the {what} snapshot file."
+msgstr "Escolha o arquivo de instantâneo {what}."
+
+msgid "Compare"
+msgstr "Comparar"
+
+msgid "Comparing..."
+msgstr "Comparando..."
+
+msgid "Contents: {chosen} of {total} items selected"
+msgstr "Conteúdo: {chosen} de {total} itens selecionados"
+
+msgid "Custom (pg_restore)"
+msgstr "Personalizado (pg_restore)"
+
+msgid "Data only"
+msgstr "Somente dados"
+
+msgid "Database named in the file (--create)"
+msgstr "Banco de dados indicado no arquivo (--create)"
+
+msgid "Destination:"
+msgstr "Destino:"
+
+msgid "Different"
+msgstr "Diferente"
+
+msgid "Directory"
+msgstr "Diretório"
+
+msgid "Do not restore the owners (--no-owner)"
+msgstr "Não restaurar os proprietários (--no-owner)"
+
+msgid "Drop the objects before recreating them (--clean)"
+msgstr "Descartar os objetos antes de recriá-los (--clean)"
+
+msgid "Enter the {what} database."
+msgstr "Informe o banco de dados {what}."
+
+msgid "Existing database"
+msgstr "Banco de dados existente"
+
+msgid "File (.{extension})"
+msgstr "Arquivo (.{extension})"
+
+msgid "Format:"
+msgstr "Formato:"
+
+msgid "Generate Script"
+msgstr "Gerar Script"
+
+msgid "List Contents"
+msgstr "Listar Conteúdo"
+
+msgid "List the contents of the file first."
+msgstr "Liste o conteúdo do arquivo primeiro."
+
+msgid "Login"
+msgstr "Logon"
+
+msgid "Name the new database."
+msgstr "Dê um nome ao novo banco de dados."
+
+msgid "New database"
+msgstr "Novo banco de dados"
+
+msgid "None"
+msgstr "Nenhum"
+
+msgid "Nothing was changed: {e}"
+msgstr "Nada foi alterado: {e}"
+
+msgid "Only in source"
+msgstr "Somente na origem"
+
+msgid "Only in target"
+msgstr "Somente no destino"
+
+msgid "Options:"
+msgstr "Opções:"
+
+msgid "Other server"
+msgstr "Outro servidor"
+
+msgid "Plain SQL script"
+msgstr "Script SQL simples"
+
+msgid "Reading the backup file..."
+msgstr "Lendo o arquivo de backup..."
+
+msgid "Restore Database"
+msgstr "Restaurar Banco de Dados"
+
+msgid "Restore in a single transaction"
+msgstr "Restaurar em uma única transação"
+
+msgid "Restore: command line copied to the clipboard."
+msgstr "Restauração: linha de comando copiada para a área de transferência."
+
+msgid "Restore: completed."
+msgstr "Restauração: concluída."
+
+msgid "Restore: failed ({e})."
+msgstr "Restauração: falhou ({e})."
+
+msgid "Restore: {e}"
+msgstr "Restauração: {e}"
+
+msgid "Restore: {file} to {database}"
+msgstr "Restauração: {file} para {database}"
+
+msgid "Restoring..."
+msgstr "Restaurando..."
+
+msgid "Save Snapshot..."
+msgstr "Salvar Instantâneo..."
+
+msgid "Saved the snapshot of {line}."
+msgstr "Instantâneo de {line} salvo."
+
+msgid "Saving the snapshot..."
+msgstr "Salvando o instantâneo..."
+
+msgid "Schema Compare"
+msgstr "Comparação de Esquemas"
+
+msgid "Schema Compare: applied {count} statements to {label}."
+msgstr "Comparação de Esquemas: {count} instruções aplicadas em {label}."
+
+msgid "Schema Compare: changes that make {target} like {source}."
+msgstr "Comparação de Esquemas: alterações que deixam {target} igual a {source}."
+
+msgid "Schema Compare: failed ({e})."
+msgstr "Comparação de Esquemas: falhou ({e})."
+
+msgid "Schema Compare: saved the snapshot of {line}."
+msgstr "Comparação de Esquemas: instantâneo de {line} salvo."
+
+msgid "Schema Compare: the changes were rolled back ({e})."
+msgstr "Comparação de Esquemas: as alterações foram revertidas ({e})."
+
+msgid "Schema Compare: the script was saved to {path}."
+msgstr "Comparação de Esquemas: o script foi salvo em {path}."
+
+msgid "Schema Compare: {source} to {target}: {differences} differences, {equal} equal."
+msgstr "Comparação de Esquemas: {source} com {target}: {differences} diferenças, {equal} iguais."
+
+msgid "Schema and data"
+msgstr "Esquema e dados"
+
+msgid "Schema only"
+msgstr "Somente esquema"
+
+msgid "Select a difference to see its script."
+msgstr "Selecione uma diferença para ver o script."
+
+msgid "Select at least one difference."
+msgstr "Selecione pelo menos uma diferença."
+
+msgid "Select at least one item to restore."
+msgstr "Selecione pelo menos um item para restaurar."
+
+msgid "Select at least one table, or back up the whole database."
+msgstr "Selecione pelo menos uma tabela ou faça backup do banco de dados inteiro."
+
+msgid "Selected tables"
+msgstr "Tabelas selecionadas"
+
+msgid "Server name"
+msgstr "Nome do servidor"
+
+msgid "Snapshot file"
+msgstr "Arquivo de instantâneo"
+
+msgid "Source:"
+msgstr "Origem:"
+
+msgid "Target:"
+msgstr "Destino:"
+
+msgid "The backup failed: {e}"
+msgstr "O backup falhou: {e}"
+
+msgid "The backup of {database} completed."
+msgstr "O backup de {database} foi concluído."
+
+msgid "The changes were applied to {label}."
+msgstr "As alterações foram aplicadas em {label}."
+
+msgid "The database has no tables."
+msgstr "O banco de dados não tem tabelas."
+
+msgid "The file could not be read ({e})."
+msgstr "Não foi possível ler o arquivo ({e})."
+
+msgid "The list of items could not be written: {e}"
+msgstr "Não foi possível gravar a lista de itens: {e}"
+
+msgid "The restore failed: {e}"
+msgstr "A restauração falhou: {e}"
+
+msgid "The schemas are equal ({count} objects compared)."
+msgstr "Os esquemas são iguais ({count} objetos comparados)."
+
+msgid "The script was saved to {path}."
+msgstr "O script foi salvo em {path}."
+
+msgid "The snapshot was not saved: {e}"
+msgstr "O instantâneo não foi salvo: {e}"
+
+msgid "The source and the target are the same database."
+msgstr "A origem e o destino são o mesmo banco de dados."
+
+msgid "The target is a snapshot file; generate a script instead."
+msgstr "O destino é um arquivo de instantâneo; gere um script."
+
+msgid "This build cannot connect to other servers."
+msgstr "Esta versão não pode se conectar a outros servidores."
+
+msgid "Whole database"
+msgstr "Banco de dados inteiro"
+
+msgid "custom or directory backup"
+msgstr "backup personalizado ou de diretório"
+
+msgid "pg_dump could not start: {e}"
+msgstr "Não foi possível iniciar o pg_dump: {e}"
+
+msgid "pg_dump:"
+msgstr "pg_dump:"
+
+msgid "pg_restore could not start: {e}"
+msgstr "Não foi possível iniciar o pg_restore: {e}"
+
+msgid "pg_restore:"
+msgstr "pg_restore:"
+
+msgid "the database named in the file"
+msgstr "o banco de dados indicado no arquivo"
+
+msgid "{differences} differences, {selected} selected ({equal} objects equal)"
+msgstr "{differences} diferenças, {selected} selecionadas ({equal} objetos iguais)"
+
+msgid "{source} to {file}"
+msgstr "{source} para {file}"
+
+msgid "{what} server: {e}"
+msgstr "Servidor {what}: {e}"

@@ -10,6 +10,7 @@
 //! funções, procedures, triggers, sequências e tipos são lidos pelo
 //! [`catalog`] e comparados pela definição. O [`Outcome`] junta tudo.
 
+use pgstudio_i18n::{tr, trc, trf};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,11 +45,11 @@ impl Place {
     pub const ALL: [Place; 3] = [Place::Database, Place::Server, Place::Snapshot];
 
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Place::Database => "Database",
             Place::Server => "Other server",
             Place::Snapshot => "Snapshot file",
-        }
+        })
     }
 }
 
@@ -111,14 +112,14 @@ impl Side {
     fn endpoint(&self, what: &str) -> Result<Endpoint, String> {
         match self.place {
             Place::Database if self.database.is_empty() => {
-                Err(format!("Choose the {what} database."))
+                Err(trf!("Choose the {what} database.", what = what))
             }
             Place::Database => Ok(Endpoint::Here(self.database.clone())),
             Place::Server => {
-                let (host, port) =
-                    parse_server_name(&self.server).map_err(|e| format!("{what}: {e}"))?;
+                let (host, port) = parse_server_name(&self.server)
+                    .map_err(|e| trf!("{what} server: {e}", what = what, e = e))?;
                 if self.database.trim().is_empty() {
-                    return Err(format!("Enter the {what} database."));
+                    return Err(trf!("Enter the {what} database.", what = what));
                 }
                 let settings = ConnectionSettings {
                     host,
@@ -130,7 +131,7 @@ impl Side {
                 Ok(Endpoint::There(settings, self.password.clone()))
             }
             Place::Snapshot if self.file.trim().is_empty() => {
-                Err(format!("Choose the {what} snapshot file."))
+                Err(trf!("Choose the {what} snapshot file.", what = what))
             }
             Place::Snapshot => Ok(Endpoint::File(PathBuf::from(self.file.trim()))),
         }
@@ -154,7 +155,7 @@ impl Env {
         password: &str,
     ) -> Result<pgstudio_core::connection::Connected, String> {
         let Some(connector) = &self.connector else {
-            return Err("This build cannot connect to other servers.".into());
+            return Err(tr("This build cannot connect to other servers.").into());
         };
         connector
             .connect(settings, password)
@@ -184,7 +185,7 @@ impl Env {
         let (server, db) = match e {
             Endpoint::Here(db) => (self.server.clone(), db.clone()),
             Endpoint::There(s, _) => (s.server_name(), s.database.clone()),
-            Endpoint::File(_) => return Err("Choose a database to save.".into()),
+            Endpoint::File(_) => return Err(tr("Choose a database to save.").into()),
         };
         let taken = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -203,7 +204,7 @@ impl Env {
                     .apply_ddl(&settings.database, statements)
                     .map_err(|e| e.0)
             }
-            Endpoint::File(_) => Err("A snapshot file cannot be changed.".into()),
+            Endpoint::File(_) => Err(tr("A snapshot file cannot be changed.").into()),
         }
     }
 }
@@ -352,8 +353,8 @@ impl SchemaCompare {
     pub fn compare(&mut self, ctx: &egui::Context) {
         let ends = self
             .source
-            .endpoint("source")
-            .and_then(|s| Ok((s, self.target.endpoint("target")?)));
+            .endpoint(trc("side", "source"))
+            .and_then(|s| Ok((s, self.target.endpoint(trc("side", "target"))?)));
         let (s, t) = match ends {
             Ok(e) => e,
             Err(e) => {
@@ -362,7 +363,7 @@ impl SchemaCompare {
             }
         };
         if s.same_as(&t) {
-            self.error = Some("The source and the target are the same database.".into());
+            self.error = Some(tr("The source and the target are the same database.").into());
             return;
         }
         self.error = None;
@@ -389,12 +390,12 @@ impl SchemaCompare {
             Which::Target => &self.target,
         };
         let e = match side.endpoint(if which == Which::Source {
-            "source"
+            trc("side", "source")
         } else {
-            "target"
+            trc("side", "target")
         }) {
             Ok(Endpoint::File(_)) => {
-                self.error = Some("Choose a database to save as a snapshot.".into());
+                self.error = Some(tr("Choose a database to save as a snapshot.").into());
                 return;
             }
             Ok(e) => e,
@@ -407,7 +408,11 @@ impl SchemaCompare {
         self.status = None;
         let (tx, rx) = mpsc::channel();
         let env = self.env.clone();
-        let line = format!("{} to {}", e.label(), path.display());
+        let line = trf!(
+            "{source} to {file}",
+            source = e.label(),
+            file = path.display()
+        );
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(env.save(&e, &path));
@@ -437,12 +442,13 @@ impl SchemaCompare {
             return;
         };
         if !self.can_apply() {
-            self.error = Some("The target is a snapshot file; generate a script instead.".into());
+            self.error =
+                Some(tr("The target is a snapshot file; generate a script instead.").into());
             return;
         }
         let script = c.outcome.script(&self.chosen);
         if script.is_empty() {
-            self.error = Some("Select at least one difference.".into());
+            self.error = Some(tr("Select at least one difference.").into());
             return;
         }
         self.error = None;
@@ -465,9 +471,12 @@ impl SchemaCompare {
             return String::new();
         };
         format!(
-            "-- Schema Compare: changes that make {} like {}.\n\n{}\n",
-            c.target.label(),
-            c.source,
+            "-- {}\n\n{}\n",
+            trf!(
+                "Schema Compare: changes that make {target} like {source}.",
+                target = c.target.label(),
+                source = c.source
+            ),
             self.script().join("\n\n")
         )
     }
@@ -494,11 +503,12 @@ impl SchemaCompare {
                     Ok(o) => {
                         self.chosen = o.items.iter().map(|i| i.key.clone()).collect();
                         self.selected = o.items.first().map(|i| i.key.clone());
-                        let line = format!(
-                            "Schema Compare: {source} to {}: {} differences, {} equal.",
-                            target.label(),
-                            o.items.len(),
-                            o.equal
+                        let line = trf!(
+                            "Schema Compare: {source} to {target}: {differences} differences, {equal} equal.",
+                            source = source,
+                            target = target.label(),
+                            differences = o.items.len(),
+                            equal = o.equal
                         );
                         self.compared = Some(Compared {
                             outcome: o,
@@ -510,7 +520,10 @@ impl SchemaCompare {
                     Err(e) => {
                         self.compared = None;
                         self.error = Some(e.clone());
-                        Some(Request::Log(vec![format!("Schema Compare: failed ({e}).")]))
+                        Some(Request::Log(vec![trf!(
+                            "Schema Compare: failed ({e}).",
+                            e = e
+                        )]))
                     }
                 }
             }
@@ -520,13 +533,14 @@ impl SchemaCompare {
                 self.phase = Phase::Idle;
                 match r {
                     Ok(()) => {
-                        self.status = Some(format!("Saved the snapshot of {line}."));
-                        Some(Request::Log(vec![format!(
-                            "Schema Compare: saved the snapshot of {line}."
+                        self.status = Some(trf!("Saved the snapshot of {line}.", line = line));
+                        Some(Request::Log(vec![trf!(
+                            "Schema Compare: saved the snapshot of {line}.",
+                            line = line
                         )]))
                     }
                     Err(e) => {
-                        self.error = Some(format!("The snapshot was not saved: {e}"));
+                        self.error = Some(trf!("The snapshot was not saved: {e}", e = e));
                         None
                     }
                 }
@@ -539,25 +553,28 @@ impl SchemaCompare {
                 let label = target.label();
                 match r {
                     Ok(()) => {
-                        let mut log = vec![format!(
-                            "Schema Compare: applied {} statements to {label}.",
-                            script.len()
+                        let mut log = vec![trf!(
+                            "Schema Compare: applied {count} statements to {label}.",
+                            count = script.len(),
+                            label = label
                         )];
                         log.extend(script.iter().map(|s| format!("  {}", first_line(s))));
                         // Compara de novo os mesmos lados: o que entrou some
                         // da lista.
                         let source = self.compared.as_ref()?.source.clone();
                         self.recompare(ctx, source, target.clone());
-                        self.status = Some(format!("The changes were applied to {label}."));
+                        self.status =
+                            Some(trf!("The changes were applied to {label}.", label = label));
                         Some(match target {
                             Endpoint::Here(db) => Request::Applied(db, log),
                             _ => Request::Log(log),
                         })
                     }
                     Err(e) => {
-                        self.error = Some(format!("Nothing was changed: {e}"));
-                        Some(Request::Log(vec![format!(
-                            "Schema Compare: the changes were rolled back ({e})."
+                        self.error = Some(trf!("Nothing was changed: {e}", e = e));
+                        Some(Request::Log(vec![trf!(
+                            "Schema Compare: the changes were rolled back ({e}).",
+                            e = e
                         )]))
                     }
                 }
@@ -568,7 +585,7 @@ impl SchemaCompare {
     /// Compara de novo depois de aplicar, com os lados da última
     /// comparação (mesmo que a janela tenha mudado).
     fn recompare(&mut self, ctx: &egui::Context, source_label: String, target: Endpoint) {
-        let source = match self.source.endpoint("source") {
+        let source = match self.source.endpoint(trc("side", "source")) {
             Ok(s) if s.label() == source_label => s,
             _ => {
                 self.compare(ctx);
@@ -595,7 +612,7 @@ impl SchemaCompare {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("schema_compare")).show(ctx, |ui| {
             ui.set_width(980.0);
-            ui.heading("Schema Compare");
+            ui.heading(tr("Schema Compare"));
             ui.separator();
             let idle = !self.is_busy();
             ui.add_enabled_ui(idle, |ui| {
@@ -604,16 +621,20 @@ impl SchemaCompare {
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
                         for which in [Which::Source, Which::Target] {
-                            ui.label(match which {
+                            ui.label(tr(match which {
                                 Which::Source => "Source:",
                                 Which::Target => "Target:",
-                            });
+                            }));
                             ui.horizontal(|ui| self.side_ui(ui, ctx, which, dialogs));
                             ui.end_row();
                         }
                     });
                 if ui
-                    .button(format!("{} Compare", egui_phosphor::regular::GIT_DIFF))
+                    .button(format!(
+                        "{} {}",
+                        egui_phosphor::regular::GIT_DIFF,
+                        tr("Compare")
+                    ))
                     .clicked()
                 {
                     self.compare(ctx);
@@ -639,24 +660,28 @@ impl SchemaCompare {
                     .map(|c| c.target.label())
                     .unwrap_or_default();
                 if self.confirming {
-                    if ui.button("No").clicked() {
+                    if ui.button(tr("No")).clicked() {
                         self.confirming = false;
                     }
-                    if ui.button("Yes").clicked() {
+                    if ui.button(tr("Yes")).clicked() {
                         self.apply(ctx);
                     }
-                    ui.label(format!(
-                        "Apply {} statements to {target} in one transaction?",
-                        self.script().len(),
+                    ui.label(trf!(
+                        "Apply {count} statements to {target} in one transaction?",
+                        count = self.script().len(),
+                        target = target
                     ));
                     return;
                 }
-                if ui.add_enabled(idle, egui::Button::new("Close")).clicked() {
+                if ui
+                    .add_enabled(idle, egui::Button::new(tr("Close")))
+                    .clicked()
+                {
                     request = Some(Request::Closed);
                 }
                 let ready = idle && self.compared.is_some() && !self.chosen.is_empty();
                 if ui
-                    .add_enabled(ready && self.can_apply(), egui::Button::new("Apply"))
+                    .add_enabled(ready && self.can_apply(), egui::Button::new(tr("Apply")))
                     .clicked()
                 {
                     self.confirming = true;
@@ -665,8 +690,9 @@ impl SchemaCompare {
                     .add_enabled(
                         ready,
                         egui::Button::new(format!(
-                            "{} Generate Script",
-                            egui_phosphor::regular::SCROLL
+                            "{} {}",
+                            egui_phosphor::regular::SCROLL,
+                            tr("Generate Script")
                         )),
                     )
                     .clicked()
@@ -692,10 +718,13 @@ impl SchemaCompare {
                 let path = dialogs.save_path("SchemaCompare.sql", None)?;
                 match std::fs::write(&path, text) {
                     Ok(()) => {
-                        self.status = Some(format!("The script was saved to {}.", path.display()));
-                        Some(Request::Log(vec![format!(
-                            "Schema Compare: the script was saved to {}.",
-                            path.display()
+                        self.status = Some(trf!(
+                            "The script was saved to {path}.",
+                            path = path.display()
+                        ));
+                        Some(Request::Log(vec![trf!(
+                            "Schema Compare: the script was saved to {path}.",
+                            path = path.display()
                         )]))
                     }
                     Err(e) => {
@@ -740,7 +769,7 @@ impl SchemaCompare {
                             ui.selectable_value(&mut side.database, d.clone(), d.as_str());
                         }
                     });
-                save = ui.button("Save Snapshot...").clicked();
+                save = ui.button(tr("Save Snapshot...")).clicked();
             }
             Place::Server => {
                 let field = |ui: &mut egui::Ui, text: &mut String, hint: &str, w: f32| {
@@ -750,24 +779,24 @@ impl SchemaCompare {
                             .desired_width(w),
                     );
                 };
-                field(ui, &mut side.server, "Server name", 150.0);
-                field(ui, &mut side.user, "Login", 100.0);
+                field(ui, &mut side.server, tr("Server name"), 150.0);
+                field(ui, &mut side.user, tr("Login"), 100.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut side.password)
                         .password(true)
-                        .hint_text("Password")
+                        .hint_text(tr("Password"))
                         .desired_width(100.0),
                 );
-                field(ui, &mut side.database, "Database", 120.0);
-                save = ui.button("Save Snapshot...").clicked();
+                field(ui, &mut side.database, tr("Database"), 120.0);
+                save = ui.button(tr("Save Snapshot...")).clicked();
             }
             Place::Snapshot => {
                 ui.add(
                     egui::TextEdit::singleline(&mut side.file)
-                        .hint_text(format!("File (.{})", snapshot::EXTENSION))
+                        .hint_text(trf!("File (.{extension})", extension = snapshot::EXTENSION))
                         .desired_width(420.0),
                 );
-                if ui.button("Browse...").clicked() {
+                if ui.button(tr("Browse...")).clicked() {
                     if let Some(path) = dialogs.open_path() {
                         side.file = path.display().to_string();
                     }
@@ -786,50 +815,54 @@ impl SchemaCompare {
         if matches!(self.phase, Phase::Comparing(..)) {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Comparing...");
+                ui.label(tr("Comparing..."));
             });
             return;
         }
         if matches!(self.phase, Phase::Applying(..)) {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Applying...");
+                ui.label(tr("Applying..."));
             });
             return;
         }
         if matches!(self.phase, Phase::Saving(..)) {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Saving the snapshot...");
+                ui.label(tr("Saving the snapshot..."));
             });
             return;
         }
         let Some(o) = self.compared.as_ref().map(|c| &c.outcome) else {
-            ui.label("Choose the source and the target and press Compare.");
+            ui.label(tr("Choose the source and the target and press Compare."));
             return;
         };
         if o.items.is_empty() {
             ui.label(format!(
-                "{} The schemas are equal ({} objects compared).",
+                "{} {}",
                 egui_phosphor::regular::CHECK_CIRCLE,
-                o.equal
+                trf!(
+                    "The schemas are equal ({count} objects compared).",
+                    count = o.equal
+                )
             ));
             return;
         }
         ui.horizontal(|ui| {
-            ui.strong(format!(
-                "{} differences, {} selected ({} objects equal)",
-                o.items.len(),
-                o.items
+            ui.strong(trf!(
+                "{differences} differences, {selected} selected ({equal} objects equal)",
+                differences = o.items.len(),
+                selected = o
+                    .items
                     .iter()
                     .filter(|i| self.chosen.contains(&i.key))
                     .count(),
-                o.equal
+                equal = o.equal
             ));
-            if ui.small_button("All").clicked() {
+            if ui.small_button(tr("All")).clicked() {
                 self.chosen = o.items.iter().map(|i| i.key.clone()).collect();
             }
-            if ui.small_button("None").clicked() {
+            if ui.small_button(tr("None")).clicked() {
                 self.chosen.clear();
             }
         });
@@ -893,7 +926,7 @@ impl SchemaCompare {
                             }
                         }
                         None => {
-                            ui.label("Select a difference to see its script.");
+                            ui.label(tr("Select a difference to see its script."));
                         }
                     });
             });

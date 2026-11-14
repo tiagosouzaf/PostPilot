@@ -23,9 +23,6 @@ const PENDING: &[&str] = &[
     "crates/ui-shell/src/claude.rs",
     "crates/ui-shell/src/repo/app.rs",
     "crates/ui-shell/src/repo/panel.rs",
-    "crates/ui-shell/src/backup.rs",
-    "crates/ui-shell/src/restore.rs",
-    "crates/ui-shell/src/schema_compare.rs",
 ];
 
 /// Pastas com código da interface.
