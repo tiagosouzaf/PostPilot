@@ -15,6 +15,7 @@ use std::sync::Arc;
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE, SslMode};
+use pgstudio_core::connection_string;
 use serde::{Deserialize, Serialize};
 
 use crate::secrets::{self, Lookup, SecretStore};
@@ -421,6 +422,18 @@ impl RegisteredServers {
         } else {
             merge_group(target, file.root)
         };
+        self.save_or_log();
+        Ok(count)
+    }
+
+    /// Junta uma árvore inteira (a raiz de outro Registered Servers) ao
+    /// grupo `parent`, como `import` faz com um arquivo. Devolve quantos
+    /// servidores vieram.
+    pub fn import_tree(&mut self, parent: &[usize], root: ServerGroup) -> Result<usize, String> {
+        let target = self
+            .group_mut(parent)
+            .ok_or(tr("The group no longer exists."))?;
+        let count = merge(target, root);
         self.save_or_log();
         Ok(count)
     }
@@ -1100,6 +1113,10 @@ pub struct ServerDialog {
     pub ssl: SslMode,
     pub name: String,
     pub description: String,
+    /// Uma connection string colada: preenche os campos acima e é limpa
+    /// (a senha vai para o campo de senha, nunca para o arquivo).
+    pub connection_string: String,
+    connection_error: Option<String>,
     error: Option<String>,
     store: Option<Arc<dyn SecretStore>>,
     lookup: Option<Lookup>,
@@ -1126,6 +1143,8 @@ impl ServerDialog {
             ssl: s.ssl,
             name: server.name.clone(),
             description: server.description.clone(),
+            connection_string: String::new(),
+            connection_error: None,
             error: None,
             store: store.cloned(),
             lookup,
@@ -1136,6 +1155,38 @@ impl ServerDialog {
     /// Mensagem de erro da última tentativa de salvar.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// Erro da connection string colada, se ela não pôde ser lida.
+    pub fn connection_error(&self) -> Option<&str> {
+        self.connection_error.as_deref()
+    }
+
+    /// Lê `connection_string` e preenche servidor, login, senha, banco e
+    /// SSL. A senha lida liga o "Remember password". Depois de ler, o campo
+    /// da connection string fica vazio.
+    pub fn apply_connection_string(&mut self) -> Result<(), String> {
+        let parsed = match connection_string::parse(&self.connection_string) {
+            Ok(p) => p,
+            Err(e) => {
+                self.connection_error = Some(e.clone());
+                return Err(e);
+            }
+        };
+        let s = parsed.settings;
+        self.server = s.server_name();
+        self.user = s.user;
+        self.database = s.database;
+        self.ssl = s.ssl;
+        if let Some(p) = parsed.password {
+            // A senha lembrada antes (de outro login) não vale mais.
+            self.lookup = None;
+            self.password = p;
+            self.remember = true;
+        }
+        self.connection_string.clear();
+        self.connection_error = None;
+        Ok(())
     }
 
     /// Espera a leitura da senha guardada (testes).
@@ -1235,6 +1286,31 @@ impl ServerDialog {
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
+                    let label = ui.label(tr("Connection string:"));
+                    let hide = !self.connection_string.is_empty();
+                    let changed = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.connection_string)
+                                .password(hide)
+                                .desired_width(300.0)
+                                .hint_text(tr("paste postgresql://... to fill the fields")),
+                        )
+                        .labelled_by(label.id)
+                        .changed();
+                    if changed {
+                        if self.connection_string.trim().is_empty() {
+                            self.connection_error = None;
+                        } else {
+                            let _ = self.apply_connection_string();
+                        }
+                    }
+                    ui.end_row();
+                    if let Some(e) = &self.connection_error {
+                        ui.label("");
+                        ui.colored_label(ui.visuals().error_fg_color, e);
+                        ui.end_row();
+                    }
+
                     let label = ui.label(tr("Server name:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.server)

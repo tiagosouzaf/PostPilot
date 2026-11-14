@@ -38,11 +38,28 @@ pub type SharedVault = Arc<Mutex<VaultSlot>>;
 pub struct WorkspaceSecrets {
     system: Option<Arc<dyn SecretStore>>,
     slot: SharedVault,
+    /// Toda chave é de um servidor do workspace (o painel do workspace usa
+    /// assim: um servidor recém-registrado ainda não está em `keys`).
+    all_ours: bool,
 }
 
 impl WorkspaceSecrets {
     pub fn new(system: Option<Arc<dyn SecretStore>>, slot: SharedVault) -> Self {
-        WorkspaceSecrets { system, slot }
+        WorkspaceSecrets {
+            system,
+            slot,
+            all_ours: false,
+        }
+    }
+
+    /// O cofre dos servidores do próprio workspace: grava no cofre do
+    /// workspace sempre que ele estiver destrancado.
+    pub fn workspace_only(system: Option<Arc<dyn SecretStore>>, slot: SharedVault) -> Self {
+        WorkspaceSecrets {
+            system,
+            slot,
+            all_ours: true,
+        }
     }
 }
 
@@ -71,7 +88,7 @@ impl SecretStore for WorkspaceSecrets {
     fn set(&self, key: &str, secret: &str) -> Result<(), SecretError> {
         {
             let mut slot = self.slot.lock().expect("vault lock");
-            let ours = slot.keys.contains(key);
+            let ours = self.all_ours || slot.keys.contains(key);
             if let Some(v) = slot.vault.as_mut().filter(|v| ours && v.is_unlocked()) {
                 return v.set(key, secret).map_err(|e| SecretError(e.to_string()));
             }
@@ -85,7 +102,7 @@ impl SecretStore for WorkspaceSecrets {
     fn delete(&self, key: &str) -> Result<(), SecretError> {
         {
             let mut slot = self.slot.lock().expect("vault lock");
-            let ours = slot.keys.contains(key);
+            let ours = self.all_ours || slot.keys.contains(key);
             if let Some(v) = slot.vault.as_mut().filter(|v| ours && v.exists()) {
                 v.delete(key).map_err(|e| SecretError(e.to_string()))?;
             }

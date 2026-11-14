@@ -6,6 +6,7 @@
 pub mod catalog;
 pub mod command;
 pub mod connection;
+pub mod connection_string;
 pub mod keymap;
 pub mod metadata;
 pub mod query;
