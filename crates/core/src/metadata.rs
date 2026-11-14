@@ -14,11 +14,16 @@ pub enum Folder {
     Schemas,
     Tables,
     Views,
+    MaterializedViews,
     Functions,
+    Procedures,
+    Types,
+    Extensions,
     Columns,
     Indexes,
     Sequences,
     Constraints,
+    Triggers,
     Security,
     Roles,
 }
@@ -32,11 +37,16 @@ impl Folder {
             Folder::Schemas => "Schemas",
             Folder::Tables => "Tables",
             Folder::Views => "Views",
+            Folder::MaterializedViews => "Materialized Views",
             Folder::Functions => "Functions",
+            Folder::Procedures => "Procedures",
+            Folder::Types => "Types",
+            Folder::Extensions => "Extensions",
             Folder::Columns => "Columns",
             Folder::Indexes => "Indexes",
             Folder::Sequences => "Sequences",
             Folder::Constraints => "Constraints",
+            Folder::Triggers => "Triggers",
             Folder::Security => "Security",
             Folder::Roles => "Roles",
         }
@@ -52,11 +62,16 @@ pub enum NodeKind {
     Schema,
     Table,
     View,
+    MaterializedView,
     Function,
+    Procedure,
     Column,
     Index,
     Sequence,
     Constraint,
+    Trigger,
+    Type,
+    Extension,
     Role,
 }
 
@@ -70,11 +85,16 @@ impl NodeKind {
             NodeKind::Schema => "Schema",
             NodeKind::Table => "Table",
             NodeKind::View => "View",
+            NodeKind::MaterializedView => "Materialized View",
             NodeKind::Function => "Function",
+            NodeKind::Procedure => "Procedure",
             NodeKind::Column => "Column",
             NodeKind::Index => "Index",
             NodeKind::Sequence => "Sequence",
             NodeKind::Constraint => "Constraint",
+            NodeKind::Trigger => "Trigger",
+            NodeKind::Type => "Type",
+            NodeKind::Extension => "Extension",
             NodeKind::Role => "Role",
         }
     }
@@ -132,16 +152,30 @@ impl NodeKind {
                 | NodeKind::Schema
                 | NodeKind::Table
                 | NodeKind::View
+                | NodeKind::MaterializedView
                 | NodeKind::Function
+                | NodeKind::Procedure
                 | NodeKind::Index
                 | NodeKind::Sequence
                 | NodeKind::Constraint
+                | NodeKind::Trigger
+                | NodeKind::Type
+                | NodeKind::Extension
         )
     }
 
     /// Se dá para ler linhas (Select Top, Edit Top).
     pub fn has_rows(self) -> bool {
-        matches!(self, NodeKind::Table | NodeKind::View)
+        matches!(
+            self,
+            NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
+        )
+    }
+
+    /// Se o nó é um objeto com propriedades (tudo menos o servidor e as
+    /// pastas).
+    pub fn has_properties(self) -> bool {
+        !matches!(self, NodeKind::Server | NodeKind::Folder(_))
     }
 }
 
@@ -169,6 +203,14 @@ pub trait MetadataProvider: Send + Sync {
         Err(MetadataError(
             "Scripting is not available for this server.".to_string(),
         ))
+    }
+
+    /// Propriedades do objeto para a janela Properties (F4): pares de nome
+    /// e valor, na ordem em que aparecem. Vazio quando o provedor não tem
+    /// nada além do nome e do tipo.
+    fn properties(&self, node: &NodeId) -> Result<Vec<Property>, MetadataError> {
+        let _ = node;
+        Ok(Vec::new())
     }
 
     /// Catálogo inteiro de um banco, para o IntelliSense.
@@ -222,6 +264,22 @@ pub trait MetadataProvider: Send + Sync {
 }
 
 pub use pgstudio_schema_model::Model;
+
+/// Uma linha da janela Properties.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Property {
+    pub name: String,
+    pub value: String,
+}
+
+impl Property {
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Property {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
 
 /// Onde o Table Designer abre.
 #[derive(Clone, Debug, PartialEq, Eq)]
