@@ -2,6 +2,7 @@
 //! sessão (em outra thread) e guarda resultados e mensagens para as abas
 //! Results e Messages, como no SSMS.
 
+use pgstudio_i18n::{tr, trf};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
@@ -131,12 +132,12 @@ pub enum Outcome {
 impl Outcome {
     /// Texto da faixa de status da janela de consulta, como no SSMS.
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Outcome::Running => "Executing query...",
             Outcome::Succeeded => "Query executed successfully.",
             Outcome::Failed => "Query completed with errors.",
             Outcome::Canceled => "Query was canceled.",
-        }
+        })
     }
 }
 
@@ -483,7 +484,11 @@ impl Execution {
                         failed = Some(e.to_string());
                     }
                     if let Some(e) = failed.take() {
-                        let message = format!("Could not write the results to {shown}: {e}");
+                        let message = trf!(
+                            "Could not write the results to {path}: {error}",
+                            path = shown,
+                            error = e
+                        );
                         let _ = tx.send(Incoming::Event(QueryEvent::Error(ServerMessage::error(
                             message,
                         ))));
@@ -644,8 +649,9 @@ impl Execution {
                     .filter(|_| had_result)
                     .and_then(|s| s.store().spill_error().map(str::to_string));
                 if let Some(e) = spill_error {
-                    self.info(format!(
-                        "Warning: the results could not be paged to disk ({e}); they are kept in memory."
+                    self.info(trf!(
+                        "Warning: the results could not be paged to disk ({error}); they are kept in memory.",
+                        error = e
                     ));
                 }
             }
@@ -664,13 +670,19 @@ impl Execution {
                 let header = match original {
                     Some(p) => {
                         let (line, col) = line_col(&self.sql, p);
-                        format!(
-                            "Msg {}, Level {}, Line {line}, Column {col}",
-                            code(&e),
-                            e.severity
+                        trf!(
+                            "Msg {code}, Level {level}, Line {line}, Column {col}",
+                            code = code(&e),
+                            level = e.severity,
+                            line = line,
+                            col = col
                         )
                     }
-                    None => format!("Msg {}, Level {}", code(&e), e.severity),
+                    None => trf!(
+                        "Msg {code}, Level {level}",
+                        code = code(&e),
+                        level = e.severity
+                    ),
                 };
                 self.messages.push(Message {
                     text: format!("{header}\n{}", describe(&e)),
@@ -691,28 +703,28 @@ impl Execution {
                     if canceled || self.outcome == Outcome::Failed {
                         self.session.execute("ROLLBACK".into(), Box::new(|_| {}));
                     }
-                    self.info("The changes made by the statements were rolled back.".into());
+                    self.info(tr("The changes made by the statements were rolled back.").into());
                 }
 
                 if canceled {
                     self.outcome = Outcome::Canceled;
-                    self.info("Query was cancelled by user.".into());
+                    self.info(tr("Query was cancelled by user.").into());
                 } else if self.outcome == Outcome::Running {
                     self.outcome = Outcome::Succeeded;
                     if !self.messages.iter().any(|m| m.kind == MessageKind::Info) {
-                        self.info("Commands completed successfully.".into());
+                        self.info(tr("Commands completed successfully.").into());
                     }
                 }
                 if let Some(path) = &self.file
                     && self.outcome != Outcome::Failed
                 {
-                    let text = format!("The results were saved to {}.", path.display());
+                    let text = trf!("The results were saved to {path}.", path = path.display());
                     self.info(text);
                 }
                 self.info(String::new());
-                self.info(format!(
-                    "Total execution time: {}",
-                    format_elapsed(self.elapsed(), true)
+                self.info(trf!(
+                    "Total execution time: {time}",
+                    time = format_elapsed(self.elapsed(), true)
                 ));
                 // Erros vão para a aba Messages, como no SSMS.
                 if self.plan_mode {
@@ -738,16 +750,20 @@ impl Execution {
         }
         let statements = pgstudio_sql_editor::lexer::statements(&self.sql);
         let reason = if self.batch.segments.is_empty() {
-            Some("The results are read-only: they were produced by PostPilot, not by a query.")
+            Some(tr(
+                "The results are read-only: they were produced by PostPilot, not by a query.",
+            ))
         } else if self.outcome != Outcome::Succeeded {
-            Some("The results are read-only: the query did not complete successfully.")
+            Some(tr(
+                "The results are read-only: the query did not complete successfully.",
+            ))
         } else if statements.len() != 1 || self.results.len() != 1 {
-            Some(
+            Some(tr(
                 "The results are read-only: the batch has more than one statement. \
                  Run the SELECT by itself to edit its results.",
-            )
+            ))
         } else if changes_data(&self.sql) {
-            Some("The results are read-only: the statement changes data.")
+            Some(tr("The results are read-only: the statement changes data."))
         } else {
             None
         };
@@ -822,10 +838,10 @@ fn code(e: &ServerMessage) -> &str {
 fn describe(m: &ServerMessage) -> String {
     let mut text = m.message.clone();
     if let Some(d) = &m.detail {
-        text.push_str(&format!("\nDETAIL: {d}"));
+        text.push_str(&format!("\n{}: {d}", tr("DETAIL")));
     }
     if let Some(h) = &m.hint {
-        text.push_str(&format!("\nHINT: {h}"));
+        text.push_str(&format!("\n{}: {h}", tr("HINT")));
     }
     text
 }
@@ -833,9 +849,9 @@ fn describe(m: &ServerMessage) -> String {
 /// `(n rows affected)`, como no SSMS.
 pub fn rows_affected(rows: u64) -> String {
     if rows == 1 {
-        "(1 row affected)".into()
+        tr("(1 row affected)").into()
     } else {
-        format!("({rows} rows affected)")
+        trf!("({rows} rows affected)", rows = rows)
     }
 }
 

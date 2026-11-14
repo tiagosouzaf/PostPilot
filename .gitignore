@@ -3,3 +3,26 @@ target/
 .DS_Store
 .idea/
 .vscode/
+
+# Configuração local e credenciais: nunca versionar (o repositório é público).
+# O app guarda as configurações fora do repositório (~/.config/PostPilot,
+# %APPDATA%\PostPilot); estes padrões cobrem cópias feitas para testar.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.pgpass
+pgpass.conf
+/secrets.json
+/settings.json
+/registered.json
+/workspace.txt
+
+# Pacotes gerados fora de target/
+*.AppImage
+*.msi
+*.deb
+*.pkg.tar.zst

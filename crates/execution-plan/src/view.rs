@@ -8,6 +8,7 @@
 //! (galleys) de um nó são reaproveitados enquanto o tamanho da fonte não
 //! muda.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -356,16 +357,16 @@ fn node_text(plan: &Plan, id: usize, share: f64) -> NodeText {
     let title = node.title();
     let subtitle = node.subtitle();
     let label = format!(
-        "{title}{}, Cost: {:.0} %{}",
+        "{title}{}, {}{}",
         subtitle
             .as_deref()
             .map(|s| format!(", {s}"))
             .unwrap_or_default(),
-        share * 100.0,
+        trf!("Cost: {cost} %", cost = format!("{:.0}", share * 100.0)),
         if warning {
-            ", Warning: estimated rows differ from actual"
+            format!(", {}", tr("Warning: estimated rows differ from actual"))
         } else {
-            ""
+            String::new()
         }
     );
     let width_chars = ((NODE_WIDTH - 8.0) / 6.0) as usize;
@@ -373,11 +374,19 @@ fn node_text(plan: &Plan, id: usize, share: f64) -> NodeText {
     if let Some(s) = subtitle {
         lines.push((truncate(&s, width_chars), true));
     }
-    lines.push((format!("Cost: {:.0} %", share * 100.0), false));
+    lines.push((
+        trf!("Cost: {cost} %", cost = format!("{:.0}", share * 100.0)),
+        false,
+    ));
     if let Some(a) = node.actual_total_rows() {
         let est = node.plan_rows * node.actual.map_or(1.0, |a| a.loops);
         let pct = if est > 0.0 { a / est * 100.0 } else { 0.0 };
-        let rows = format!("{} of {} ({pct:.0}%)", count(a), count(est));
+        let rows = trf!(
+            "{actual} of {estimated} ({percent}%)",
+            actual = count(a),
+            estimated = count(est),
+            percent = format!("{pct:.0}")
+        );
         lines.push((truncate(&rows, width_chars), true));
     }
     NodeText {
@@ -461,8 +470,12 @@ fn tooltip(ui: &mut egui::Ui, plan: &Plan, id: usize) {
         ui.colored_label(
             ui.visuals().warn_fg_color,
             format!(
-                "{} Estimated rows differ from the actual rows by {r:.0}x. The statistics may be out of date; try ANALYZE on the table.",
-                icon::WARNING
+                "{} {}",
+                icon::WARNING,
+                trf!(
+                    "Estimated rows differ from the actual rows by {ratio}x. The statistics may be out of date; try ANALYZE on the table.",
+                    ratio = format!("{r:.0}")
+                )
             ),
         );
     }
@@ -477,19 +490,25 @@ fn tooltip(ui: &mut egui::Ui, plan: &Plan, id: usize) {
                 ui.end_row();
             };
             row(
-                "Estimated Operator Cost",
+                tr("Estimated Operator Cost"),
                 format!(
                     "{:.2} ({:.0}%)",
                     plan.own_cost(id),
                     plan.cost_share(id) * 100.0
                 ),
             );
-            row("Estimated Subtree Cost", format!("{:.2}", node.total_cost));
-            row("Estimated Number of Rows", count(node.plan_rows));
+            row(
+                tr("Estimated Subtree Cost"),
+                format!("{:.2}", node.total_cost),
+            );
+            row(tr("Estimated Number of Rows"), count(node.plan_rows));
             if let Some(a) = node.actual {
-                row("Actual Number of Rows", count(a.rows * a.loops));
-                row("Actual Executions", count(a.loops));
-                row("Actual Time (ms)", format!("{:.3}", a.total_ms * a.loops));
+                row(tr("Actual Number of Rows"), count(a.rows * a.loops));
+                row(tr("Actual Executions"), count(a.loops));
+                row(
+                    tr("Actual Time (ms)"),
+                    format!("{:.3}", a.total_ms * a.loops),
+                );
             }
             for (k, v) in &node.properties {
                 row(k, truncate(v, 200));

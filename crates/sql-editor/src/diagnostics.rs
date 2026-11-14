@@ -5,6 +5,7 @@
 //! parênteses sem par. O erro que o servidor devolve na execução também é
 //! sublinhado (ver `EditorState::mark_error`).
 
+use pgstudio_i18n::tr;
 use std::ops::Range;
 
 use crate::lexer::{Token, TokenKind, tokenize};
@@ -34,11 +35,15 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
         let piece = &text[last.range.clone()];
         let message = match last.kind {
             TokenKind::String if piece.starts_with('$') => {
-                Some("Unterminated dollar-quoted string.")
+                Some(tr("Unterminated dollar-quoted string."))
             }
-            TokenKind::String => Some("Unclosed quotation mark after the character string."),
-            TokenKind::QuotedIdentifier => Some("Unclosed quotation mark after the identifier."),
-            TokenKind::Comment if piece.starts_with("/*") => Some("Missing end comment mark '*/'."),
+            TokenKind::String => Some(tr("Unclosed quotation mark after the character string.")),
+            TokenKind::QuotedIdentifier => {
+                Some(tr("Unclosed quotation mark after the identifier."))
+            }
+            TokenKind::Comment if piece.starts_with("/*") => {
+                Some(tr("Missing end comment mark '*/'."))
+            }
             _ => None,
         };
         // Sem o fecho no fim já é erro; com ele, ainda pode ser escape (`''`)
@@ -67,7 +72,7 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
         for r in open.drain(..) {
             out.push(Diagnostic {
                 range: r,
-                message: "Missing ')'.".to_string(),
+                message: tr("Missing ')'.").to_string(),
             });
         }
     };
@@ -78,7 +83,7 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
                 if open.pop().is_none() {
                     out.push(Diagnostic {
                         range: t.range.clone(),
-                        message: "Incorrect syntax near ')'.".to_string(),
+                        message: tr("Incorrect syntax near ')'.").to_string(),
                     });
                 }
             }
