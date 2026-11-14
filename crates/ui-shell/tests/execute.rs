@@ -1121,3 +1121,126 @@ fn tasks_compare_schema_opens_with_the_database_as_source() {
     harness.run_steps(3);
     assert!(harness.state().schema_compare().is_none());
 }
+
+/// Responde todo "salvar resultados" com o mesmo arquivo.
+struct SaveResultsTo(std::path::PathBuf);
+
+impl pgstudio_ui_shell::documents::FileDialogs for SaveResultsTo {
+    fn save_path(&mut self, _: &str, _: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn open_path(&mut self) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn save_results_path(&mut self, _: &str) -> Option<std::path::PathBuf> {
+        Some(self.0.clone())
+    }
+}
+
+/// Conectado, com os resultados salvos sempre em `path`.
+fn harness_saving(path: &std::path::Path) -> Harness<'static, ShellApp> {
+    let log = Log::default();
+    let mut app = ShellApp::default()
+        .with_connector(Arc::new(FakeConnector(log)))
+        .with_file_dialogs(SaveResultsTo(path.to_path_buf()));
+    app.connect_to(
+        ConnectionSettings {
+            database: "loja".into(),
+            ..Default::default()
+        },
+        "secret".into(),
+    );
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    let start = Instant::now();
+    while harness.state().connection().is_none() {
+        harness.step();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    harness
+}
+
+fn temp_file(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("pgstudio-{}-{name}", std::process::id()))
+}
+
+#[test]
+fn results_to_file_writes_the_rows_without_keeping_them() {
+    let path = temp_file("results.csv");
+    let mut harness = harness_saving(&path);
+    let id = query_with(&mut harness, "rows 3");
+    harness.key_press_modifiers(Modifiers::CTRL | Modifiers::SHIFT, Key::F);
+    harness.run();
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    let exec = execution(&harness, id);
+    assert_eq!(exec.outcome(), Outcome::Succeeded);
+    assert!(exec.results.is_empty());
+    assert_eq!(exec.file(), Some(path.as_path()));
+    assert!(
+        exec.messages
+            .iter()
+            .any(|m| m.text == format!("The results were saved to {}.", path.display())),
+        "{:?}",
+        exec.messages
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "n,label\n0,row 0\n1,row 1\n2,row 2\n"
+    );
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn save_results_as_exports_the_grid_in_the_format_of_the_extension() {
+    let path = temp_file("results.json");
+    let mut harness = harness_saving(&path);
+    let id = query_with(&mut harness, "rows 2");
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    harness.run();
+    // Botão direito numa célula da grade (desenhada, sem nó de
+    // acessibilidade): pela posição.
+    let pos = execution(&harness, id).results[0]
+        .grid
+        .cell_center(pgstudio_result_grid::Cell { row: 1, col: 1 })
+        .unwrap();
+    for pressed in [true, false] {
+        harness.event(Event::PointerMoved(pos));
+        harness.event(Event::PointerButton {
+            pos,
+            button: eframe::egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    harness.run();
+    harness.get_by_label("Save Results As...").click();
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if !harness.state().is_exporting() && path.exists() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "never saved");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "[\n  {\"n\": \"0\", \"label\": \"row 0\"},\n  {\"n\": \"1\", \"label\": \"row 1\"}\n]\n"
+    );
+    assert!(
+        harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l == &format!("Saved 2 rows to {}.", path.display()))
+    );
+    std::fs::remove_file(&path).unwrap();
+}
