@@ -60,6 +60,9 @@ pub enum Event {
     Properties(NodeId),
     /// Tasks > Back Up... num banco.
     BackUp(NodeId),
+    /// Tasks > Restore... num banco, ou "Restore Database..." na pasta
+    /// Databases (banco novo).
+    Restore(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -407,7 +410,18 @@ impl ObjectExplorer {
                                                 events.push(Event::BackUp(node.id.clone()));
                                                 ui.close();
                                             }
+                                            if ui.button("Restore...").clicked() {
+                                                events.push(Event::Restore(node.id.clone()));
+                                                ui.close();
+                                            }
                                         });
+                                        ui.separator();
+                                    }
+                                    if node.kind == NodeKind::Folder(Folder::Databases) {
+                                        if ui.button("Restore Database...").clicked() {
+                                            events.push(Event::Restore(node.id.clone()));
+                                            ui.close();
+                                        }
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Server {

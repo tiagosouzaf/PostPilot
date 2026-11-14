@@ -22,6 +22,7 @@ pub mod panels;
 pub mod pgtools;
 pub mod properties;
 pub mod query_designer;
+pub mod restore;
 pub mod results;
 pub mod security;
 pub mod theme;
@@ -77,10 +78,13 @@ pub struct ShellApp {
     security: Option<properties::SecurityDialog>,
     /// "Back Up Database" aberta.
     backup: Option<backup::BackupDialog>,
+    restore: Option<restore::RestoreDialog>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
     design_query_on_open: bool,
+    /// Arquivo que o "Restore Database" já abre listando (screenshots).
+    restore_file: Option<String>,
     /// Texto e comando para a próxima janela de "New Query" (screenshots).
     query_on_open: Option<(String, CommandId)>,
     /// Janela de consulta ativa (a última que teve foco).
@@ -212,8 +216,10 @@ impl Default for ShellApp {
             activity: None,
             security: None,
             backup: None,
+            restore: None,
             query_designer: None,
             design_query_on_open: false,
+            restore_file: None,
             query_on_open: None,
             active_doc: None,
             focus_editor: None,
@@ -1496,6 +1502,11 @@ impl ShellApp {
                 }
                 return;
             }
+            Event::Restore(node) => {
+                let db = provider.database_of(&node);
+                self.open_restore(ctx, db);
+                return;
+            }
             Event::Properties(node) => {
                 match provider.securable(&node) {
                     Some(target) => self.open_security(ctx, target),
@@ -1787,6 +1798,7 @@ impl ShellApp {
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
             || self.security.is_some()
             || self.backup.is_some()
+            || self.restore.is_some()
         {
             Vec::new()
         } else {
@@ -1876,6 +1888,7 @@ impl ShellApp {
         self.actual_confirm_window(&ctx);
         self.security_window(&ctx);
         self.backup_window(&ctx);
+        self.restore_window(&ctx);
         self.connect_window(&ctx);
 
         if self.about_open {
@@ -1974,6 +1987,12 @@ impl ShellApp {
     /// (screenshots).
     pub fn with_design_query_on_open(mut self) -> Self {
         self.design_query_on_open = true;
+        self
+    }
+
+    /// O "Restore Database" já abre com `file` listado (screenshots).
+    pub fn with_restore_file(mut self, file: String) -> Self {
+        self.restore_file = Some(file);
         self
     }
 
@@ -2108,6 +2127,56 @@ impl ShellApp {
             None => {}
             Some(backup::Request::Log(lines)) => self.output.extend(lines),
             Some(backup::Request::Closed) => self.backup = None,
+        }
+    }
+
+    /// Abre "Restore Database"; `database` é o destino sugerido (None:
+    /// banco novo).
+    fn open_restore(&mut self, ctx: &egui::Context, database: Option<String>) {
+        let Some(c) = &self.connection else {
+            self.status = "Connect to a PostgreSQL server to restore a database.".to_string();
+            return;
+        };
+        let session = c.queries.open(&c.settings.database);
+        let mut dialog = restore::RestoreDialog::open(
+            database,
+            c.settings.clone(),
+            self.password.clone(),
+            &c.server_version,
+            session,
+            ctx,
+        );
+        if let Some(file) = self.restore_file.take() {
+            dialog.options.file = file;
+            dialog.list(ctx);
+        }
+        self.restore = Some(dialog);
+    }
+
+    /// "Restore Database", para testes.
+    pub fn restore_dialog(&self) -> Option<&restore::RestoreDialog> {
+        self.restore.as_ref()
+    }
+
+    /// "Restore Database", mutável (testes).
+    pub fn restore_dialog_mut(&mut self) -> Option<&mut restore::RestoreDialog> {
+        self.restore.as_mut()
+    }
+
+    fn restore_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.restore else {
+            return;
+        };
+        match dialog.show(ctx) {
+            None => {}
+            Some(restore::Request::Log(lines)) => self.output.extend(lines),
+            Some(restore::Request::Restored(lines)) => {
+                self.output.extend(lines);
+                self.status = "The restore completed.".to_string();
+                self.explorer
+                    .refresh(&pgstudio_core::metadata::NodeId("server/Databases".into()));
+            }
+            Some(restore::Request::Closed) => self.restore = None,
         }
     }
 

@@ -34,7 +34,9 @@
 //!   o plano estimado (Ctrl+L); `actualplan` faz o mesmo com o plano real
 //!   (Ctrl+M e F5) e `info` com o Alt+F1 no começo do texto. `activity`
 //!   abre o Activity Monitor e `properties`, as propriedades de segurança
-//!   (Permissions ou Role Properties), e `backup`, o "Back Up Database".
+//!   (Permissions ou Role Properties), `backup`, o "Back Up Database", e
+//!   `restore`, o "Restore Database" (com `PGSTUDIO_RESTORE_FILE`, já
+//!   listando o arquivo).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -156,12 +158,16 @@ fn main() -> eframe::Result {
                     "activity" => Event::ActivityMonitor,
                     "properties" => Event::Properties,
                     "backup" => Event::BackUp,
+                    "restore" => Event::Restore,
                     "querydesign" | "plan" | "actualplan" | "info" => Event::NewQuery,
                     _ => |n| Event::Script(n, ScriptAction::Drop),
                 };
                 app = app.with_selected_action(make);
                 if action == "querydesign" {
                     app = app.with_design_query_on_open();
+                }
+                if let Ok(file) = std::env::var("PGSTUDIO_RESTORE_FILE") {
+                    app = app.with_restore_file(file);
                 }
                 if matches!(action.as_str(), "plan" | "actualplan" | "info") {
                     let text = std::env::var("PGSTUDIO_QUERY").unwrap_or_default();
