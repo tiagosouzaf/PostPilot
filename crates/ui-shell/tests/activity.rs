@@ -53,6 +53,8 @@ impl QuerySession for FakeSession {
                         ("idle", "Client", "ClientRead")
                     };
                     let app = if i == 7 { "payroll" } else { "psql" };
+                    // Quem espera lock está bloqueado pela 1001.
+                    let blocked = if i % 10 == 0 { "1001" } else { "" };
                     sink(QueryEvent::Row(row(&[
                         &pid,
                         "app",
@@ -62,7 +64,7 @@ impl QuerySession for FakeSession {
                         state,
                         wait,
                         event,
-                        "",
+                        blocked,
                         "3",
                         "2",
                         "client backend",
@@ -74,6 +76,17 @@ impl QuerySession for FakeSession {
                 });
                 sink(QueryEvent::Columns(vec!["datname".into()]));
                 sink(QueryEvent::Row(row(&["loja", "100", "20", "80", "0"])));
+                sink(QueryEvent::CommandComplete { rows: 1 });
+                sink(QueryEvent::Columns(vec!["pid".into()]));
+                sink(QueryEvent::Row(row(&[
+                    "1010",
+                    "transactionid",
+                    "ShareLock",
+                    "f",
+                    "",
+                    "740",
+                    "loja",
+                ])));
                 sink(QueryEvent::CommandComplete { rows: 1 });
                 sink(QueryEvent::Columns(vec!["count".into()]));
                 sink(QueryEvent::Row(row(&["0"])));
@@ -349,4 +362,114 @@ fn kill_terminates_a_real_session() {
     m.refresh(&ctx);
     pump(&mut m, &ctx, |m| !m.is_refreshing());
     assert!(m.snapshot().unwrap().processes.iter().all(|p| p.pid != pid));
+}
+
+#[test]
+fn the_locks_section_shows_who_blocks_whom() {
+    let (mut harness, _) = monitor();
+    // Fecha Overview e Processes para a seção Locks caber na tela.
+    harness.get_by_label("Overview").click();
+    harness.get_by_label("Processes").click();
+    harness.run_steps(10);
+    // Já começa aberta: há sessões bloqueadas.
+    harness.get_by_label_contains("Head blocker 1001");
+    harness.get_by_label_contains("1010 waits");
+    harness.get_by_label("Waiting");
+    harness.get_by_label("ShareLock");
+}
+
+/// Roda `sql` e espera o fim; devolve o erro, se houver.
+fn run(session: &Arc<dyn QuerySession>, sql: &str) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    session.execute(sql.into(), Box::new(move |e| drop(tx.send(e))));
+    let mut error = None;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)).unwrap() {
+            QueryEvent::Error(e) => error = Some(e.message),
+            QueryEvent::Finished { .. } => return error,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn a_real_block_shows_up_with_its_chain() {
+    let Some(service) = service() else { return };
+    let table = format!("pgstudio_locks_{}", std::process::id());
+    let holder = service.open("postgres");
+    assert_eq!(
+        run(
+            &holder,
+            &format!("SET application_name = 'pgstudio_holder'; CREATE TABLE {table} (id int)")
+        ),
+        None
+    );
+    // Num lote só, o BEGIN levaria o CREATE junto para a transação aberta.
+    assert_eq!(run(&holder, &format!("BEGIN; LOCK TABLE {table}")), None);
+    let waiter = service.open("postgres");
+    let (tx, rx) = mpsc::channel();
+    waiter.execute(
+        format!("SELECT * FROM {table}"),
+        Box::new(move |e| drop(tx.send(e))),
+    );
+    let ctx = egui::Context::default();
+    let mut m = ActivityMonitor::new(service.open("postgres"), "test".into());
+    let start = Instant::now();
+    let (head, blocked) = loop {
+        m.refresh(&ctx);
+        pump(&mut m, &ctx, |m| !m.is_refreshing());
+        let s = m.snapshot().unwrap();
+        let pid = |app: &str| {
+            s.processes
+                .iter()
+                .find(|p| p.application == app)
+                .map(|p| p.pid)
+        };
+        let waiter_pid = s
+            .processes
+            .iter()
+            .find(|p| p.query == format!("SELECT * FROM {table}"))
+            .map(|p| p.pid);
+        if let (Some(h), Some(w)) = (pid("pgstudio_holder"), waiter_pid) {
+            let chains = pgstudio_ui_shell::activity::blocking_chains(&s.processes);
+            if chains.contains(&(1, w)) {
+                assert!(chains.contains(&(0, h)), "{chains:?}");
+                break (h, w);
+            }
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "block not seen: {:?} {:?}",
+            m.error(),
+            s.processes
+                .iter()
+                .filter(|p| p.database == "postgres")
+                .collect::<Vec<_>>()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let s = m.snapshot().unwrap();
+    let waiting = s
+        .locks
+        .iter()
+        .find(|l| l.pid == blocked && !l.granted)
+        .expect("the waiter's lock");
+    assert_eq!(waiting.relation, table);
+    assert!(
+        s.locks
+            .iter()
+            .any(|l| l.pid == head && l.granted && l.mode == "AccessExclusiveLock")
+    );
+    let p = s.processes.iter().find(|p| p.pid == blocked).unwrap();
+    assert!(p.is_waiting());
+    assert_eq!(p.blocked_by, head.to_string());
+    // Solta: o waiter termina sem erro.
+    assert_eq!(run(&holder, &format!("ROLLBACK; DROP TABLE {table}")), None);
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)).unwrap() {
+            QueryEvent::Error(e) => panic!("{}", e.message),
+            QueryEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
 }

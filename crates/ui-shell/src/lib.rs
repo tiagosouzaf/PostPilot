@@ -16,6 +16,7 @@ pub mod intellisense;
 pub mod keys;
 pub mod layout;
 pub mod menus;
+pub mod object_info;
 pub mod panels;
 pub mod query_designer;
 pub mod results;
@@ -140,7 +141,22 @@ struct Confirm {
 enum Run {
     Results,
     EstimatedPlan,
-    ActualPlan { roll_back: bool },
+    ActualPlan {
+        roll_back: bool,
+    },
+    /// Alt+F1: o SQL é do PGStudio, não do documento.
+    ObjectInfo,
+}
+
+/// O que o usuário pediu na janela de consulta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ask {
+    /// F5.
+    Run,
+    /// Ctrl+L.
+    Plan,
+    /// Alt+F1.
+    Info,
 }
 
 /// Plano real de um lote que altera dados, esperando a resposta.
@@ -589,7 +605,7 @@ impl ShellApp {
                             )));
                         }
                         self.activate_document(id);
-                        self.execute_query(ctx, false);
+                        self.execute_query(ctx, Ask::Run);
                         id
                     }
                     Scenario::IntelliSense => {
@@ -948,6 +964,7 @@ impl ShellApp {
                 | ResultsToGrid
                 | DesignQuery
                 | ActivityMonitor
+                | ObjectInfo
         )
     }
 
@@ -1103,8 +1120,9 @@ impl ShellApp {
                 None => self.status = "No query window is open.".to_string(),
             },
             CommandId::DesignQuery => self.open_query_designer(ctx),
-            CommandId::Execute => self.execute_query(ctx, false),
-            CommandId::EstimatedPlan => self.execute_query(ctx, true),
+            CommandId::Execute => self.execute_query(ctx, Ask::Run),
+            CommandId::EstimatedPlan => self.execute_query(ctx, Ask::Plan),
+            CommandId::ObjectInfo => self.execute_query(ctx, Ask::Info),
             CommandId::ActualPlan => {
                 match self.active_doc.and_then(|id| self.documents.get_mut(id)) {
                     Some(doc) => {
@@ -1168,9 +1186,10 @@ impl ShellApp {
     }
 
     /// F5: roda a seleção (ou o documento inteiro) na conexão da janela de
-    /// consulta ativa. Com `plan` (Ctrl+L), pede só o plano estimado de
-    /// cada comando, sem rodar nada.
-    fn execute_query(&mut self, ctx: &egui::Context, plan: bool) {
+    /// consulta ativa. Com [`Ask::Plan`] (Ctrl+L), pede só o plano estimado
+    /// de cada comando, sem rodar nada; com [`Ask::Info`] (Alt+F1), mostra
+    /// as informações do objeto selecionado ou sob o cursor.
+    fn execute_query(&mut self, ctx: &egui::Context, ask: Ask) {
         let Some(id) = self.active_doc else {
             self.status = "No query window is open.".to_string();
             return;
@@ -1204,11 +1223,32 @@ impl ShellApp {
             }
             _ => (doc.text.clone(), 0),
         };
+        let (sql, offset) = if ask == Ask::Info {
+            let name = match pgstudio_sql_editor::selection(ctx, editor) {
+                Some((a, b)) if a != b => Some(sql.trim().to_string()),
+                Some((_, cursor)) => object_info::name_at(&doc.text, cursor),
+                // Editor ainda não desenhado: o cursor está no começo.
+                None => object_info::name_at(&doc.text, 0),
+            };
+            match name {
+                Some(n) if !n.is_empty() => (object_info::info_sql(&n), 0),
+                _ => {
+                    self.status =
+                        "Select an object name, or place the cursor on one, for Object Information."
+                            .to_string();
+                    return;
+                }
+            }
+        } else {
+            (sql, offset)
+        };
         doc.session.get_or_insert_with(|| {
             let db = doc.database.clone().unwrap_or(queries.1);
             documents::Session(queries.0.open(&db))
         });
-        let kind = if plan {
+        let kind = if ask == Ask::Info {
+            Run::ObjectInfo
+        } else if ask == Ask::Plan {
             Run::EstimatedPlan
         } else if doc.actual_plan {
             if execution::changes_data(&sql) {
@@ -1241,6 +1281,7 @@ impl ShellApp {
             Run::ActualPlan { roll_back } => {
                 execution::Execution::start_actual_plan(session, sql, offset, roll_back, ctx)
             }
+            Run::ObjectInfo => Some(execution::Execution::start_generated(session, sql, ctx)),
         };
         let Some(mut exec) = exec else {
             self.status = "There is no statement to show a plan for.".to_string();
@@ -1335,7 +1376,7 @@ impl ShellApp {
     fn execution_step(&mut self, ctx: &egui::Context) {
         if self.run_on_connect && self.connection.is_some() && self.active_doc.is_some() {
             self.run_on_connect = false;
-            self.execute_query(ctx, false);
+            self.execute_query(ctx, Ask::Run);
         }
         let active = self.active_doc;
         for id in self.documents.ids() {
@@ -1485,7 +1526,7 @@ impl ShellApp {
                     self.activate_document(id);
                     self.status = "Ready".to_string();
                     if pending.run {
-                        self.execute_query(ctx, false);
+                        self.execute_query(ctx, Ask::Run);
                     }
                     if pending.read_only {
                         self.output.push(

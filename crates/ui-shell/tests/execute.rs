@@ -796,3 +796,59 @@ fn new_query_on_a_database_connects_to_that_database() {
     let doc = harness.state().documents().get(id).unwrap();
     assert_eq!(doc.session.as_ref().unwrap().0.database(), "app_01");
 }
+
+#[test]
+fn alt_f1_shows_the_object_under_the_cursor() {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, "select * from public.pedido p");
+    pgstudio_sql_editor::set_selection(&harness.ctx, editor_id(id), (17, 17));
+    harness.run();
+    harness.key_press_modifiers(Modifiers::ALT, Key::F1);
+    wait(&mut harness, id);
+    let sent = log.lock().unwrap()[0].clone();
+    assert!(sent.contains("'public.pedido'::regclass"), "{sent}");
+    // O texto do documento fica como estava.
+    assert_eq!(
+        harness.state().documents().get(id).unwrap().text,
+        "select * from public.pedido p"
+    );
+}
+
+#[test]
+fn alt_f1_errors_do_not_point_into_the_document() {
+    let (mut harness, _) = harness_with(true);
+    let id = query_with(&mut harness, "select * from bad");
+    pgstudio_sql_editor::set_selection(&harness.ctx, editor_id(id), (15, 15));
+    harness.run();
+    harness.key_press_modifiers(Modifiers::ALT, Key::F1);
+    wait(&mut harness, id);
+    let exec = execution(&harness, id);
+    let error = exec
+        .messages
+        .iter()
+        .find(|m| m.kind == MessageKind::Error)
+        .unwrap();
+    assert_eq!(error.position, None);
+    assert!(
+        error.text.starts_with("Msg 42703, Level ERROR\n"),
+        "{}",
+        error.text
+    );
+}
+
+#[test]
+fn alt_f1_without_a_name_only_warns() {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, "1 + 2");
+    pgstudio_sql_editor::set_selection(&harness.ctx, editor_id(id), (2, 2));
+    harness.run();
+    harness.key_press_modifiers(Modifiers::ALT, Key::F1);
+    harness.run();
+    assert!(log.lock().unwrap().is_empty());
+    assert!(
+        harness
+            .state()
+            .status()
+            .starts_with("Select an object name")
+    );
+}
