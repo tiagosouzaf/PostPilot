@@ -23,7 +23,7 @@ crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
 crates/sql-editor/ editor de SQL: realce, números de linha, busca, Go To Line
 crates/result-grid/ buffer paginado, grade de resultados e resultados em texto
-xtask/            tarefas de desenvolvimento (`cargo xtask bench`, `cargo xtask dist`)
+xtask/            tarefas de desenvolvimento (`cargo xtask bench`, `dist`, `pgmatrix`)
 packaging/        ícone, atalho .desktop e textos dos pacotes de instalação
 ```
 
@@ -249,6 +249,16 @@ Os testes de `pg-client` e `pg-metadata` que precisam de servidor usam `PGSTUDIO
 `PGSTUDIO_TEST_PORT`, `PGSTUDIO_TEST_USER` e `PGSTUDIO_TEST_PASSWORD`; sem
 `PGSTUDIO_TEST_HOST` eles só avisam. No CI eles rodam contra o PostgreSQL 13 e 17
 em container, com TLS ligado.
+
+`cargo xtask pgmatrix` roda a suíte inteira contra cada versão suportada
+(PostgreSQL 13, 14, 15, 16 e 17): cria um cluster descartável com o `initdb` de
+cada versão, sobe com TLS, roda `cargo test --workspace` apontando para ele e
+imprime uma tabela com o resultado. Os binários vêm de `/usr/lib/postgresql/<V>/bin`,
+`/usr/pgsql-<V>/bin`, `/opt/pgmatrix/<V>/bin` ou `--pg-bin <V>=<pasta>`; a versão
+sem binários aparece como "não testada" e faz o comando falhar. No Arch, que só
+empacota a versão atual, as outras se compilam do código-fonte (veja
+`cargo xtask pgmatrix --help`). A extensão `citext` (contrib) precisa estar
+instalada em cada versão.
 
 `cargo xtask bench` mede o tempo até o primeiro frame e a RAM em repouso contra
 as metas (inicialização < 1 s, RAM < 100 MB). Os números ficam em
