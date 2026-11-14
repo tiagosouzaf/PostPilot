@@ -2619,10 +2619,11 @@ impl ShellApp {
             c.metadata.clone(),
             c.queries.clone(),
             ctx,
-        );
+        )
+        .with_connector(self.connector.clone(), &c.settings);
         if let Some((source, target)) = self.compare_target.take() {
-            dialog.source = source;
-            dialog.target = target;
+            dialog.source.database = source;
+            dialog.target.database = target;
             dialog.compare(ctx);
         }
         self.compare = Some(dialog);
@@ -2642,7 +2643,7 @@ impl ShellApp {
         let Some(dialog) = &mut self.compare else {
             return;
         };
-        match dialog.show(ctx) {
+        match dialog.show(ctx, &mut *self.dialogs) {
             None => {}
             Some(schema_compare::Request::Log(lines)) => self.output.extend(lines),
             Some(schema_compare::Request::Script(sql, db)) => {
