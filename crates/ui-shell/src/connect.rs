@@ -4,6 +4,11 @@
 //! aplicativo recebe, numa thread separada, para a interface não esperar a
 //! rede. As conexões recentes ficam em `connections.json`, sem senha.
 //!
+//! Com "Remember password" marcado, a senha vai para o cofre do sistema
+//! (veja [`crate::secrets`]) depois que a conexão funciona. Ao abrir ou
+//! trocar de servidor, o diálogo procura a senha guardada numa thread
+//! separada e preenche o campo; sem cofre, o campo fica vazio e pronto.
+//!
 //! [`Connector`]: pgstudio_core::connection::Connector
 
 use std::path::{Path, PathBuf};
@@ -13,6 +18,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use eframe::egui;
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector, SslMode};
 use serde::{Deserialize, Serialize};
+
+use crate::secrets::{self, Lookup, SecretStore};
 
 /// Quantas conexões recentes guardar.
 pub const MAX_RECENT: usize = 10;
@@ -115,9 +122,19 @@ pub struct ConnectDialog {
     pub password: String,
     pub database: String,
     pub ssl: SslMode,
+    /// "Remember password": guardar a senha no cofre ao conectar.
+    pub remember: bool,
     error: Option<String>,
     pending: Option<Pending>,
     focus: bool,
+    /// Cofre das senhas lembradas, se houver.
+    store: Option<Arc<dyn SecretStore>>,
+    /// Leitura da senha guardada em andamento.
+    lookup: Option<Lookup>,
+    /// O cofre tinha senha para o servidor do diálogo.
+    saved: bool,
+    /// Conectar sozinho se o cofre tiver a senha (Registered Servers).
+    auto_connect: bool,
 }
 
 struct Pending {
@@ -136,18 +153,91 @@ impl ConnectDialog {
             password: String::new(),
             database: settings.database.clone(),
             ssl: settings.ssl,
+            remember: false,
             error: None,
             pending: None,
             focus: true,
+            store: None,
+            lookup: None,
+            saved: false,
+            auto_connect: false,
         }
     }
 
-    /// Preenche com uma conexão recente; a senha é apagada.
+    /// Usa o cofre das senhas lembradas e já procura a senha do servidor.
+    pub fn with_store(mut self, store: Option<Arc<dyn SecretStore>>) -> Self {
+        self.store = store;
+        self.start_lookup();
+        self
+    }
+
+    /// Conecta sozinho quando o cofre tiver a senha; sem senha guardada (ou
+    /// sem cofre), o diálogo fica aberto pedindo a senha.
+    pub fn connect_when_found(mut self) -> Self {
+        self.auto_connect = self.lookup.is_some();
+        self
+    }
+
+    /// Preenche com uma conexão recente; a senha é apagada e procurada de
+    /// novo no cofre.
     pub fn fill(&mut self, settings: &ConnectionSettings) {
+        let store = self.store.take();
         *self = ConnectDialog {
             focus: false,
             ..ConnectDialog::new(settings)
+        }
+        .with_store(store);
+    }
+
+    fn start_lookup(&mut self) {
+        self.lookup = match (&self.store, self.settings()) {
+            (Some(store), Ok(s)) => Some(secrets::lookup(store, secrets::password_key(&s))),
+            _ => None,
         };
+    }
+
+    /// Se ainda está procurando a senha guardada.
+    pub fn is_looking_up(&self) -> bool {
+        self.lookup.is_some()
+    }
+
+    /// Se a senha do campo veio do cofre.
+    pub fn password_was_saved(&self) -> bool {
+        self.saved
+    }
+
+    /// Aplica a senha guardada quando a leitura terminar. Devolve se é
+    /// hora de conectar sozinho.
+    fn poll_lookup(&mut self) -> bool {
+        let Some(found) = self.lookup.as_ref().and_then(Lookup::poll) else {
+            return false;
+        };
+        let key = self.lookup.take().map(|l| l.key);
+        let same_server = self.settings().ok().map(|s| secrets::password_key(&s)) == key;
+        let auto = std::mem::take(&mut self.auto_connect);
+        match found {
+            Some(password) if same_server && self.password.is_empty() => {
+                self.password = password;
+                self.remember = true;
+                self.saved = true;
+                auto
+            }
+            _ => false,
+        }
+    }
+
+    /// O que fazer com o cofre depois de conectar com `password`: guardar,
+    /// esquecer a senha que estava lá, ou nada.
+    pub fn save_password(&self, settings: &ConnectionSettings, password: &str) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let key = secrets::password_key(settings);
+        if self.remember {
+            secrets::save_in_background(store, key, Some(password.to_string()));
+        } else if self.saved {
+            secrets::save_in_background(store, key, None);
+        }
     }
 
     /// Mensagem de erro da última tentativa.
@@ -227,7 +317,16 @@ impl ConnectDialog {
     /// Desenha o diálogo. `recent` alimenta o menu do campo "Server name".
     pub fn show(&mut self, ctx: &egui::Context, recent: &[ConnectionSettings]) -> DialogAction {
         let mut action = DialogAction::None;
-        let connecting = self.pending.is_some();
+        if self.poll_lookup()
+            && self.pending.is_none()
+            && let Ok(s) = self.settings()
+        {
+            action = DialogAction::Connect(s, self.password.clone());
+        }
+        if self.lookup.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(20));
+        }
+        let connecting = self.pending.is_some() || action != DialogAction::None;
         let modal = egui::Modal::new(egui::Id::new("connect_to_server")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading("Connect to Server");
@@ -248,6 +347,12 @@ impl ConnectDialog {
                     ui.spinner();
                     ui.label(format!("Connecting to {}…", p.server));
                 });
+            } else if self.auto_connect {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Looking for the saved password…");
+                });
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -256,7 +361,7 @@ impl ConnectDialog {
                 }
                 let connect = ui.add_enabled(!connecting, egui::Button::new("Connect"));
                 let enter = !connecting && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if connect.clicked() || enter {
+                if (connect.clicked() || enter) && action == DialogAction::None {
                     match self.settings() {
                         Ok(s) => action = DialogAction::Connect(s, self.password.clone()),
                         Err(e) => self.error = Some(e),
@@ -332,6 +437,10 @@ impl ConnectDialog {
                 .desired_width(300.0),
         )
         .labelled_by(label.id);
+        ui.end_row();
+
+        ui.label("");
+        ui.checkbox(&mut self.remember, "Remember password");
         ui.end_row();
 
         let label = ui.label("Database:");

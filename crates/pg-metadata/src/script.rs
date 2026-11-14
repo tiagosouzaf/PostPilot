@@ -2,8 +2,8 @@
 //!
 //! O DDL vem das funções do próprio PostgreSQL (`pg_get_viewdef`,
 //! `pg_get_functiondef`, `pg_get_indexdef`, `pg_get_constraintdef`,
-//! `pg_get_expr`); o `CREATE TABLE`, que o PostgreSQL não gera, é montado
-//! a partir das colunas e constraints. Os nomes saem do `quote_ident` do
+//! `pg_get_triggerdef`, `pg_get_expr`); o `CREATE TABLE` e o `CREATE TYPE`,
+//! que o PostgreSQL não gera, são montados a partir do catálogo. Os nomes saem do `quote_ident` do
 //! servidor, que conhece as palavras reservadas da versão.
 
 use pgstudio_core::metadata::{MetadataError, NodeId, ScriptAction};
@@ -14,21 +14,27 @@ use crate::path::{Path, dec};
 
 /// Objeto com script, como o caminho do nó o identifica.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Object {
+pub(crate) enum Object {
     Database(String),
     Schema(String, String),
     Relation(String, u32),
+    /// Função ou procedure.
     Function(String, u32),
     Sequence(String, u32),
     Index(String, u32),
     Constraint(String, u32),
+    Trigger(String, u32),
+    Type(String, u32),
+    Extension(String, u32),
 }
 
-fn object(id: &NodeId) -> Option<Object> {
+pub(crate) fn object(id: &NodeId) -> Option<Object> {
     match Path::parse(id) {
         Path::Database(db) => return Some(Object::Database(db)),
         Path::Schema(db, s) => return Some(Object::Schema(db, s)),
-        Path::Table(db, oid) | Path::View(db, oid) => return Some(Object::Relation(db, oid)),
+        Path::Table(db, oid) | Path::View(db, oid) | Path::MaterializedView(db, oid) => {
+            return Some(Object::Relation(db, oid));
+        }
         _ => {}
     }
     let parts: Vec<&str> = id.0.split('/').collect();
@@ -37,7 +43,10 @@ fn object(id: &NodeId) -> Option<Object> {
     };
     let (db, oid) = (dec(db), oid.parse().ok()?);
     Some(match *tag {
-        "fn" => Object::Function(db, oid),
+        "fn" | "proc" => Object::Function(db, oid),
+        "trg" => Object::Trigger(db, oid),
+        "typ" => Object::Type(db, oid),
+        "ext" => Object::Extension(db, oid),
         "seq" => Object::Sequence(db, oid),
         "idx" => Object::Index(db, oid),
         "con" => Object::Constraint(db, oid),
@@ -70,6 +79,8 @@ pub(crate) fn database_of(id: &NodeId) -> Option<String> {
         Path::Database(db)
         | Path::Schemas(db)
         | Path::Diagrams(db)
+        | Path::Extensions(db)
+        | Path::MaterializedView(db, _)
         | Path::Schema(db, _)
         | Path::SchemaFolder(db, _, _)
         | Path::Table(db, _)
@@ -141,6 +152,47 @@ mod sql {
         quote_ident(k.conname), pg_catalog.pg_get_constraintdef(k.oid, true) \
         FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class t ON t.oid = k.conrelid \
         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace WHERE k.oid = $1";
+
+    pub const TRIGGER: &str = "SELECT quote_ident(t.tgname), \
+        quote_ident(n.nspname) || '.' || quote_ident(c.relname), \
+        pg_catalog.pg_get_triggerdef(t.oid, true), t.tgenabled::text \
+        FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE t.oid = $1";
+
+    /// Tipo, com o que o domínio precisa (tipo base, NOT NULL, default e
+    /// collation quando difere da do tipo base).
+    pub const TYPE: &str = "SELECT quote_ident(n.nspname) || '.' || quote_ident(t.typname), \
+        t.typtype::text, t.typrelid, pg_catalog.format_type(t.typbasetype, t.typtypmod), \
+        t.typnotnull, t.typdefault, \
+        CASE WHEN t.typcollation <> 0 AND t.typcollation <> b.typcollation \
+            THEN quote_ident(cn.nspname) || '.' || quote_ident(co.collname) END \
+        FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+        LEFT JOIN pg_catalog.pg_type b ON b.oid = t.typbasetype \
+        LEFT JOIN pg_catalog.pg_collation co ON co.oid = t.typcollation \
+        LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid = co.collnamespace \
+        WHERE t.oid = $1";
+
+    pub const ENUM_LABELS: &str = "SELECT quote_literal(enumlabel) FROM pg_catalog.pg_enum \
+        WHERE enumtypid = $1 ORDER BY enumsortorder";
+
+    /// CHECKs do domínio (o NOT NULL vem do `typnotnull`).
+    pub const DOMAIN_CHECKS: &str = "SELECT quote_ident(conname), \
+        pg_catalog.pg_get_constraintdef(oid, true) FROM pg_catalog.pg_constraint \
+        WHERE contypid = $1 AND contype = 'c' ORDER BY conname";
+
+    pub const COMPOSITE_ATTRIBUTES: &str = "SELECT quote_ident(a.attname), \
+        pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_catalog.pg_attribute a \
+        WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum";
+
+    /// Subtipo e função de diferença do range (a padrão do tipo fica de fora).
+    pub const RANGE: &str = "SELECT pg_catalog.format_type(r.rngsubtype, NULL), \
+        CASE WHEN r.rngsubdiff <> 0 THEN r.rngsubdiff::regproc::text END \
+        FROM pg_catalog.pg_range r WHERE r.rngtypid = $1";
+
+    pub const EXTENSION: &str = "SELECT quote_ident(e.extname), quote_ident(n.nspname), \
+        quote_literal(e.extversion) \
+        FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+        WHERE e.oid = $1";
 
     pub const SELECT_COLUMNS: &str = "SELECT quote_ident(attname) FROM pg_catalog.pg_attribute \
         WHERE attrelid = $1 AND attnum > 0 AND NOT attisdropped ORDER BY attnum";
@@ -267,7 +319,119 @@ impl CatalogExplorer {
                     _ => format!("ALTER TABLE {table}\n    ADD CONSTRAINT {name} {def};\n"),
                 })
             }
+            (Object::Trigger(db, oid), action) => {
+                let r = self.one(&db, sql::TRIGGER, &[&oid], "trigger")?;
+                let (name, table, def, enabled): (String, String, String, String) =
+                    (r.get(0), r.get(1), r.get(2), r.get(3));
+                Ok(match action {
+                    ScriptAction::Drop => format!("DROP TRIGGER {name} ON {table};\n"),
+                    _ => {
+                        let mut out = format!("{def};\n");
+                        if enabled == "D" {
+                            out.push_str(&format!(
+                                "\nALTER TABLE {table}\n    DISABLE TRIGGER {name};\n"
+                            ));
+                        }
+                        out
+                    }
+                })
+            }
+            (Object::Type(db, oid), action) => self.type_script(&db, oid, action),
+            (Object::Extension(db, oid), action) => {
+                let r = self.one(&db, sql::EXTENSION, &[&oid], "extension")?;
+                let (name, schema, version): (String, String, String) =
+                    (r.get(0), r.get(1), r.get(2));
+                Ok(match action {
+                    ScriptAction::Drop => format!("DROP EXTENSION {name};\n"),
+                    _ => format!(
+                        "CREATE EXTENSION IF NOT EXISTS {name}\n    WITH SCHEMA {schema}\n    \
+                         VERSION {version};\n"
+                    ),
+                })
+            }
         }
+    }
+
+    fn type_script(
+        &self,
+        db: &str,
+        oid: u32,
+        action: ScriptAction,
+    ) -> Result<String, MetadataError> {
+        let r = self.one(db, sql::TYPE, &[&oid], "type")?;
+        let (name, kind, relid): (String, String, u32) = (r.get(0), r.get(1), r.get(2));
+        if action == ScriptAction::Drop {
+            let what = if kind == "d" { "DOMAIN" } else { "TYPE" };
+            return Ok(format!("DROP {what} {name};\n"));
+        }
+        let column = |sql: &str, param: u32| -> Result<Vec<(String, String)>, MetadataError> {
+            Ok(self
+                .query(db, sql, &[&param])?
+                .iter()
+                .map(|r| (r.get(0), r.try_get(1).unwrap_or_default()))
+                .collect())
+        };
+        Ok(match kind.as_str() {
+            "e" => {
+                let labels: Vec<String> = self
+                    .query(db, sql::ENUM_LABELS, &[&oid])?
+                    .iter()
+                    .map(|r| r.get(0))
+                    .collect();
+                format!(
+                    "CREATE TYPE {name} AS ENUM (\n    {}\n);\n",
+                    labels.join(",\n    ")
+                )
+            }
+            "d" => {
+                let (base, not_null, default, collation): (
+                    String,
+                    bool,
+                    Option<String>,
+                    Option<String>,
+                ) = (r.get(3), r.get(4), r.get(5), r.get(6));
+                let mut out = format!("CREATE DOMAIN {name}\n    AS {base}");
+                if let Some(c) = collation {
+                    out.push_str(&format!("\n    COLLATE {c}"));
+                }
+                if let Some(d) = default {
+                    out.push_str(&format!("\n    DEFAULT {d}"));
+                }
+                if not_null {
+                    out.push_str("\n    NOT NULL");
+                }
+                for (con, def) in column(sql::DOMAIN_CHECKS, oid)? {
+                    out.push_str(&format!("\n    CONSTRAINT {con} {def}"));
+                }
+                out.push_str(";\n");
+                out
+            }
+            "c" => {
+                let attrs: Vec<String> = column(sql::COMPOSITE_ATTRIBUTES, relid)?
+                    .into_iter()
+                    .map(|(a, ty)| format!("{a} {ty}"))
+                    .collect();
+                format!(
+                    "CREATE TYPE {name} AS (\n    {}\n);\n",
+                    attrs.join(",\n    ")
+                )
+            }
+            "r" => {
+                let r = self.one(db, sql::RANGE, &[&oid], "type")?;
+                let (subtype, diff): (String, Option<String>) = (r.get(0), r.get(1));
+                let mut out = format!("CREATE TYPE {name} AS RANGE (\n    SUBTYPE = {subtype}");
+                if let Some(diff) = diff {
+                    out.push_str(&format!(",\n    SUBTYPE_DIFF = {diff}"));
+                }
+                out.push_str("\n);\n");
+                out
+            }
+            _ => {
+                return Err(MetadataError(
+                    "Scripting this kind of type is not supported.".to_string(),
+                ));
+            }
+        })
     }
 
     fn select_top(&self, db: &str, oid: u32, n: u32) -> Result<String, MetadataError> {
@@ -404,6 +568,30 @@ mod tests {
             object(&id("db/loja/fn/7")),
             Some(Object::Function("loja".into(), 7))
         );
+        assert_eq!(
+            object(&id("db/loja/proc/8")),
+            Some(Object::Function("loja".into(), 8))
+        );
+        assert_eq!(
+            object(&id("db/loja/mv/9")),
+            Some(Object::Relation("loja".into(), 9))
+        );
+        assert_eq!(
+            object(&id("db/loja/trg/10")),
+            Some(Object::Trigger("loja".into(), 10))
+        );
+        assert_eq!(
+            object(&id("db/loja/typ/11")),
+            Some(Object::Type("loja".into(), 11))
+        );
+        assert_eq!(
+            object(&id("db/loja/ext/12")),
+            Some(Object::Extension("loja".into(), 12))
+        );
+        assert_eq!(
+            database_of(&id("db/loja/Extensions")).as_deref(),
+            Some("loja")
+        );
         assert_eq!(object(&id("db/loja/col/7/1")), None);
         assert_eq!(object(&id("server")), None);
         assert_eq!(database_of(&id("db/a%2Fb/idx/9")).as_deref(), Some("a/b"));
@@ -448,7 +636,22 @@ mod tests {
                 oid: 7
             })
         );
+        assert_eq!(
+            securable(&id("db/loja/proc/8")),
+            Some(Securable::Function {
+                database: "loja".into(),
+                oid: 8
+            })
+        );
+        assert_eq!(
+            securable(&id("db/loja/mv/9")),
+            Some(Securable::Relation {
+                database: "loja".into(),
+                oid: 9
+            })
+        );
         assert_eq!(securable(&id("db/loja/idx/7")), None);
+        assert_eq!(securable(&id("db/loja/typ/7")), None);
         assert_eq!(securable(&id("server")), None);
     }
 }

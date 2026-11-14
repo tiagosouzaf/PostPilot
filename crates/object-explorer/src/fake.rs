@@ -11,7 +11,7 @@ use std::time::Duration;
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::metadata::{
     DesignTarget, Folder, MetadataError, MetadataProvider, Model, NodeId, NodeKind, ObjectNode,
-    ScriptAction,
+    Property, ScriptAction,
 };
 use pgstudio_core::schema::{self, Index, Key};
 
@@ -119,6 +119,9 @@ const COLUMN_DEFS: [(&str, &str); 6] = [
     ("balance", "numeric(12,2)"),
     ("active", "boolean NOT NULL"),
 ];
+
+/// Dono de todo objeto do servidor falso, na janela Properties.
+pub const FAKE_OWNER: &str = "demo_owner";
 
 /// Nome exibido do servidor falso.
 pub const SERVER_NAME: &str = "localhost (PostgreSQL 17, demo)";
@@ -386,6 +389,15 @@ impl MetadataProvider for FakeProvider {
 
     /// O mesmo catálogo da árvore: tabelas `table_NNNNN` com as colunas da
     /// pasta Columns. Como a árvore, aceita qualquer banco.
+    fn properties(&self, node: &NodeId) -> Result<Vec<Property>, MetadataError> {
+        thread::sleep(self.delay);
+        Ok(if node.0.starts_with("srv/Databases/") {
+            vec![Property::new("Owner", FAKE_OWNER)]
+        } else {
+            Vec::new()
+        })
+    }
+
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
         thread::sleep(self.delay);
         let (schemas, tables) = if database == "stress" {

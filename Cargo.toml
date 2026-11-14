@@ -55,6 +55,9 @@ tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
+# Cofre do sistema para "Remember password" (marco 5.4). A 3.x pela MSRV 1.87;
+# no Linux, Secret Service por zbus (Rust puro, sem libdbus).
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "apple-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

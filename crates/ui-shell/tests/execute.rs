@@ -74,6 +74,34 @@ impl QuerySession for FakeSession {
                 sink(QueryEvent::Finished { canceled: false });
                 return;
             }
+            // Edit Top 200 Rows: colunas (id é a chave), duas linhas e o
+            // UPDATE devolvendo a linha gravada.
+            let edit: Option<Vec<Vec<&str>>> = if sql.contains("attidentity") {
+                let t = "public.table_00003";
+                Some(vec![
+                    vec!["id", "integer", "t", "f", t, t],
+                    vec!["name", "text", "f", "f", t, t],
+                ])
+            } else if sql.starts_with("SELECT id, name FROM") {
+                Some(vec![vec!["1", "a"], vec!["2", "b"]])
+            } else if sql.starts_with("UPDATE ") {
+                Some(vec![vec!["1", "novo"]])
+            } else {
+                None
+            };
+            if let Some(rows) = edit {
+                sink(QueryEvent::Columns(vec!["c".into()]));
+                for r in &rows {
+                    sink(QueryEvent::Row(
+                        r.iter().map(|v| Some(v.to_string())).collect(),
+                    ));
+                }
+                sink(QueryEvent::CommandComplete {
+                    rows: rows.len() as u64,
+                });
+                sink(QueryEvent::Finished { canceled: false });
+                return;
+            }
             if sql.contains("notice") {
                 sink(QueryEvent::Notice(ServerMessage {
                     severity: "NOTICE".into(),
@@ -672,6 +700,12 @@ fn a_large_result_arrives_over_several_frames_without_blocking() {
 
 /// Conectado, com a árvore aberta até as tabelas de `app_01.public`.
 fn harness_with_tables() -> (Harness<'static, ShellApp>, Log) {
+    harness_with_folder("Tables", "public.table_00003")
+}
+
+/// Conectado, com a árvore aberta até a pasta `folder` de `app_01.public`,
+/// esperando `node` aparecer.
+fn harness_with_folder(folder: &str, node: &str) -> (Harness<'static, ShellApp>, Log) {
     let log = Log::default();
     let mut app = ShellApp::default().with_connector(Arc::new(FakeConnector(log.clone())));
     app.connect_to(
@@ -692,16 +726,13 @@ fn harness_with_tables() -> (Harness<'static, ShellApp>, Log) {
         ]
         .into_iter()
         .map(String::from)
-        .chain([format!("{schema}/Tables")]),
+        .chain([format!("{schema}/{folder}")]),
     );
     let mut harness = Harness::builder()
         .with_size([1280.0, 900.0])
         .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
     let start = Instant::now();
-    while harness
-        .query_by_label_contains("public.table_00003")
-        .is_none()
-    {
+    while harness.query_by_label_contains(node).is_none() {
         harness.step();
         assert!(
             start.elapsed() < Duration::from_secs(5),
@@ -763,9 +794,9 @@ fn select_top_runs_in_the_database_of_the_table() {
 }
 
 #[test]
-fn edit_top_shows_two_hundred_rows_read_only() {
-    let (mut harness, log) = harness_with_tables();
-    context_menu(&mut harness, "public.table_00003", "Edit Top 200 Rows");
+fn edit_top_on_a_view_shows_the_rows_read_only() {
+    let (mut harness, log) = harness_with_folder("Views", "public.view_1");
+    context_menu(&mut harness, "public.view_1", "Edit Top 200 Rows");
     let id = wait_document(&mut harness);
     wait(&mut harness, id);
     assert!(log.lock().unwrap()[0].ends_with(" LIMIT 200;\n"));
@@ -776,6 +807,60 @@ fn edit_top_shows_two_hundred_rows_read_only() {
             .iter()
             .any(|l| l.contains("read-only"))
     );
+}
+
+/// Roda frames até a janela Edit Rows aberta terminar de ler ou gravar.
+fn wait_edit(harness: &mut Harness<'static, ShellApp>) -> u32 {
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if let Some(&id) = harness.state().edit_rows_ids().last()
+            && let Some(e) = harness.state().edit_rows(id)
+            && !e.is_loading()
+            && !e.is_saving()
+        {
+            harness.run();
+            return id;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "edit rows never loaded"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn edit_top_on_a_table_edits_the_rows_by_their_key() {
+    let (mut harness, log) = harness_with_tables();
+    context_menu(&mut harness, "public.table_00003", "Edit Top 200 Rows");
+    let id = wait_edit(&mut harness);
+    {
+        let e = harness.state().edit_rows(id).unwrap();
+        assert_eq!(e.title(), "app_01 - public.table_00003");
+        assert_eq!(e.row_count(), 2);
+        assert_eq!(e.read_only_reason(), None);
+    }
+    assert!(
+        log.lock().unwrap()[1].starts_with("SELECT id, name FROM public.table_00003 LIMIT 200")
+    );
+    // Clica na célula, digita e Enter: a célula fecha, a seleção desce e
+    // a linha alterada vai ao banco pela chave.
+    harness.get_by_label("a").click();
+    harness.run();
+    harness.event(Event::Text("novo".into()));
+    harness.run();
+    harness.key_press(Key::Enter);
+    let id = wait_edit(&mut harness);
+    let update = log.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        update,
+        "UPDATE public.table_00003 SET name = 'novo' WHERE id = '1' RETURNING id, name"
+    );
+    let e = harness.state().edit_rows(id).unwrap();
+    assert_eq!(e.value(0, 1), Some("novo"));
+    assert_eq!(e.selected(), Some((1, 1)));
+    assert_eq!(e.message(), Some("1 row updated."));
 }
 
 #[test]
@@ -1035,4 +1120,127 @@ fn tasks_compare_schema_opens_with_the_database_as_source() {
     harness.get_by_label("Close").click();
     harness.run_steps(3);
     assert!(harness.state().schema_compare().is_none());
+}
+
+/// Responde todo "salvar resultados" com o mesmo arquivo.
+struct SaveResultsTo(std::path::PathBuf);
+
+impl pgstudio_ui_shell::documents::FileDialogs for SaveResultsTo {
+    fn save_path(&mut self, _: &str, _: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn open_path(&mut self) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn save_results_path(&mut self, _: &str) -> Option<std::path::PathBuf> {
+        Some(self.0.clone())
+    }
+}
+
+/// Conectado, com os resultados salvos sempre em `path`.
+fn harness_saving(path: &std::path::Path) -> Harness<'static, ShellApp> {
+    let log = Log::default();
+    let mut app = ShellApp::default()
+        .with_connector(Arc::new(FakeConnector(log)))
+        .with_file_dialogs(SaveResultsTo(path.to_path_buf()));
+    app.connect_to(
+        ConnectionSettings {
+            database: "loja".into(),
+            ..Default::default()
+        },
+        "secret".into(),
+    );
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    let start = Instant::now();
+    while harness.state().connection().is_none() {
+        harness.step();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    harness
+}
+
+fn temp_file(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("pgstudio-{}-{name}", std::process::id()))
+}
+
+#[test]
+fn results_to_file_writes_the_rows_without_keeping_them() {
+    let path = temp_file("results.csv");
+    let mut harness = harness_saving(&path);
+    let id = query_with(&mut harness, "rows 3");
+    harness.key_press_modifiers(Modifiers::CTRL | Modifiers::SHIFT, Key::F);
+    harness.run();
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    let exec = execution(&harness, id);
+    assert_eq!(exec.outcome(), Outcome::Succeeded);
+    assert!(exec.results.is_empty());
+    assert_eq!(exec.file(), Some(path.as_path()));
+    assert!(
+        exec.messages
+            .iter()
+            .any(|m| m.text == format!("The results were saved to {}.", path.display())),
+        "{:?}",
+        exec.messages
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "n,label\n0,row 0\n1,row 1\n2,row 2\n"
+    );
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn save_results_as_exports_the_grid_in_the_format_of_the_extension() {
+    let path = temp_file("results.json");
+    let mut harness = harness_saving(&path);
+    let id = query_with(&mut harness, "rows 2");
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    harness.run();
+    // Botão direito numa célula da grade (desenhada, sem nó de
+    // acessibilidade): pela posição.
+    let pos = execution(&harness, id).results[0]
+        .grid
+        .cell_center(pgstudio_result_grid::Cell { row: 1, col: 1 })
+        .unwrap();
+    for pressed in [true, false] {
+        harness.event(Event::PointerMoved(pos));
+        harness.event(Event::PointerButton {
+            pos,
+            button: eframe::egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    harness.run();
+    harness.get_by_label("Save Results As...").click();
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if !harness.state().is_exporting() && path.exists() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "never saved");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "[\n  {\"n\": \"0\", \"label\": \"row 0\"},\n  {\"n\": \"1\", \"label\": \"row 1\"}\n]\n"
+    );
+    assert!(
+        harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l == &format!("Saved 2 rows to {}.", path.display()))
+    );
+    std::fs::remove_file(&path).unwrap();
 }

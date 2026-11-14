@@ -21,6 +21,7 @@ pgstudio-result-grid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
+keyring.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
