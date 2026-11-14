@@ -30,6 +30,7 @@ const UI_DIRS: &[&str] = &[
     "crates/docking/src",
     "crates/diagram-engine/src",
     "crates/schema-model/src",
+    "crates/pg-metadata/src",
 ];
 
 /// Arquivos que não são interface (medição, dados de demonstração).
