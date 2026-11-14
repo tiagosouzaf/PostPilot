@@ -23,10 +23,33 @@ crates/pg-client/ conexão com o PostgreSQL (tokio-postgres, TLS com rustls)
 crates/pg-metadata/ catálogo do PostgreSQL para o Object Explorer
 crates/sql-editor/ editor de SQL: realce, números de linha, busca, Go To Line
 crates/result-grid/ buffer paginado, grade de resultados e resultados em texto
-xtask/            tarefas de desenvolvimento (`cargo xtask bench`)
+xtask/            tarefas de desenvolvimento (`cargo xtask bench`, `cargo xtask dist`)
+packaging/        ícone, atalho .desktop e textos dos pacotes de instalação
 ```
 
 Novas crates entram na fase do roteiro que as usa.
+
+## Instalação
+
+`cargo xtask dist` gera os pacotes em `target/packages/` (veja
+[Pacotes](#pacotes)):
+
+- **Ubuntu, Debian e derivados:** `sudo apt install ./pgstudio_<versão>_amd64.deb`.
+  O PGStudio aparece no menu de aplicativos; para remover,
+  `sudo apt remove pgstudio`.
+- **Outras distribuições Linux:** `chmod +x PGStudio-<versão>-x86_64.AppImage`
+  e execute. Sem FUSE (alguns containers), use
+  `./PGStudio-<versão>-x86_64.AppImage --appimage-extract-and-run`.
+- **Windows 10 e 11 (64 bits):** extraia o `.zip` e abra `pgstudio.exe`. Não
+  há instalador; o SmartScreen pode avisar porque o exe não é assinado ("Mais
+  informações" > "Executar assim mesmo").
+
+No Linux, o binário é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
+posteriores) e precisa de Vulkan ou OpenGL ES (o Mesa de qualquer desktop
+serve). Os pacotes foram testados em Ubuntu 22.04 e 24.04 limpos; no 20.04 o
+binário carrega, mas o renderizador por software do Mesa daquela versão é
+antigo demais para o wgpu (numa GPU de verdade deve abrir, mas não foi
+testado).
 
 ## Uso
 
@@ -187,6 +210,30 @@ em container, com TLS ligado.
 `cargo xtask bench` mede o tempo até o primeiro frame e a RAM em repouso contra
 as metas (inicialização < 1 s, RAM < 100 MB). Os números ficam em
 [`docs/benchmarks.md`](docs/benchmarks.md).
+
+### Pacotes
+
+`cargo xtask dist` compila no perfil `dist` (o `release` sem símbolos) e
+gera em `target/packages/`, com um `SHA256SUMS`:
+
+| Pacote | Ferramentas |
+| --- | --- |
+| `pgstudio_<versão>_amd64.deb` | `dpkg-deb` |
+| `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
+| `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
+
+O binário Linux sai ligado contra a glibc 2.31 quando há o
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
+(`cargo install cargo-zigbuild` e `pip install ziglang`); sem ele, ou com
+`--native`, sai um build comum, que só roda com a glibc da máquina que
+compilou ou mais nova.
+
+`--only deb,appimage,zip` escolhe os formatos e `--no-build` reaproveita os
+binários. No Ubuntu, as ferramentas vêm de
+`sudo apt install dpkg-dev squashfs-tools zip mingw-w64`. O ícone fica em
+`packaging/icons/` (gerado por `make_icon.py`); o exe do Windows o recebe pelo
+`windres` do MinGW. O `.msi` fica para quando houver uma máquina ou CI com
+Windows.
 
 ## Roteiro
 

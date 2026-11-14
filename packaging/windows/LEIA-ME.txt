@@ -1,0 +1,16 @@
+PGStudio {version} para Windows (64 bits)
+=======================================
+
+Para abrir: extraia a pasta inteira e dê dois cliques em pgstudio.exe.
+Não precisa instalar nada. As configurações ficam em
+%APPDATA%\PGStudio (conexões recentes sem senha, layout e keymap).
+
+Para criar um atalho no menu Iniciar, clique com o botão direito em
+pgstudio.exe > Mostrar mais opções > Fixar no Menu Iniciar.
+
+O Windows SmartScreen pode avisar que o app é de um editor desconhecido,
+porque o exe não é assinado. Clique em "Mais informações" e em
+"Executar assim mesmo".
+
+Licença: MIT ou Apache-2.0, à sua escolha (LICENSE-MIT e LICENSE-APACHE).
+Código-fonte: https://github.com/tiagosouzaf/postpilot

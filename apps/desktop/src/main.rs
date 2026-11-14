@@ -56,6 +56,10 @@
 //! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
 //! de medição não usam o cofre.
 
+// Sem console no Windows nos builds de release (os pacotes de `cargo xtask
+// dist`); em debug o console fica, para ver os logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use eframe::egui;
 use std::path::PathBuf;
 
@@ -73,6 +77,11 @@ use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
 
+/// Identificador do app no Wayland e no X11 (`WM_CLASS`).
+const APP_ID: &str = "pgstudio";
+/// Ícone da janela e da barra de tarefas (o mesmo dos pacotes).
+const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/pgstudio-256.png");
+
 fn main() -> eframe::Result {
     let screenshot: Option<PathBuf> = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
     let bench = std::env::var_os("PGSTUDIO_BENCH").is_some();
@@ -87,7 +96,14 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(pgstudio_core::window_title())
         .with_inner_size([1280.0, 800.0])
-        .with_min_inner_size(MIN_SIZE);
+        .with_min_inner_size(MIN_SIZE)
+        // Igual ao `StartupWMClass` e ao nome do .desktop dos pacotes Linux:
+        // é como o Wayland e o X11 ligam a janela ao ícone do menu.
+        .with_app_id(APP_ID);
+    match eframe::icon_data::from_png_bytes(ICON_PNG) {
+        Ok(icon) => viewport = viewport.with_icon(Arc::new(icon)),
+        Err(e) => eprintln!("could not load the window icon: {e}"),
+    }
     if let Some(window) = layout.as_ref().and_then(|l| l.saved.as_ref()?.window) {
         viewport = viewport
             .with_inner_size(window.size)
