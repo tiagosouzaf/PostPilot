@@ -697,6 +697,35 @@ impl ShellApp {
                         self.workspace.open(Panel::ActivityMonitor);
                         0
                     }
+                    Scenario::Edit => {
+                        let session = Arc::new(bench::SyntheticEditSession);
+                        self.open_edit_rows(session, 1, ctx)
+                    }
+                    Scenario::Export => {
+                        let id = self.documents.new_script(
+                            format!("-- {} synthetic rows\nselect *;\n", bench::EXPORT_ROWS),
+                            None,
+                        );
+                        let session: Arc<dyn pgstudio_core::query::QuerySession> =
+                            Arc::new(bench::SyntheticSession::new(bench::EXPORT_ROWS));
+                        let path = std::env::temp_dir()
+                            .join(format!("pgstudio-bench-{}.csv", std::process::id()));
+                        if let Some(doc) = self.documents.get_mut(id) {
+                            doc.session = Some(documents::Session(session.clone()));
+                            match execution::Execution::start_to_file(
+                                session,
+                                "select *".into(),
+                                0,
+                                &path,
+                                ctx,
+                            ) {
+                                Ok(exec) => doc.execution = Some(exec),
+                                Err(e) => eprintln!("bench: {e}"),
+                            }
+                        }
+                        self.activate_document(id);
+                        id
+                    }
                 };
                 run.phase = Phase::Loading {
                     since: std::time::Instant::now(),
@@ -728,6 +757,9 @@ impl ShellApp {
                         .activity
                         .as_ref()
                         .is_some_and(|a| a.snapshot().is_some()),
+                    Scenario::Edit => self.edit_rows.get(&doc).is_some_and(|e| !e.is_loading()),
+                    // Mede enquanto o arquivo é escrito.
+                    Scenario::Export => true,
                 };
                 if ready {
                     if !matches!(run.scenario, Scenario::Diagram | Scenario::DiagramLarge) {
@@ -870,6 +902,103 @@ impl ShellApp {
                                     (bench::percentile(&mut refresh, 95.0) * 100.0).round() / 100.0,
                                 ),
                                 ("drawn_max", run.drawn_max as f64),
+                            ]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
+                    }
+                }
+                Scenario::Edit => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let start = *run.scroll_start.get_or_insert_with(std::time::Instant::now);
+                    let done = start.elapsed().as_secs_f64() / bench::EDIT_SECONDS;
+                    match self.edit_rows.get_mut(&doc) {
+                        Some(e) if done < 1.0 => {
+                            if !e.is_saving() {
+                                // A gravação anterior voltou: conta a ida e
+                                // volta, vista frame a frame.
+                                if let Some(t) = run.refresh_start.take() {
+                                    run.edit_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                                }
+                                let edits = run.edit_ms.len();
+                                let rows = e.row_count().max(1);
+                                let row = edits % rows;
+                                let col = 1 + edits % (bench::EDIT_COLUMNS - 1);
+                                e.select(row, col, ctx);
+                                e.set_cell(row, col, Some(format!("edit {edits}")));
+                                e.select((row + 1) % rows, col, ctx);
+                                if e.is_saving() {
+                                    run.refresh_start = Some(std::time::Instant::now());
+                                }
+                            }
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        e => {
+                            let rows = e.map_or(0, |e| e.row_count());
+                            let mut saves = run.edit_ms.clone();
+                            let line = run.result_line(&[
+                                ("rows", rows as f64),
+                                ("saves", saves.len() as f64),
+                                (
+                                    "save_p95",
+                                    (bench::percentile(&mut saves, 95.0) * 100.0).round() / 100.0,
+                                ),
+                            ]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
+                    }
+                }
+                Scenario::Export => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let exec = self.documents.get(doc).and_then(|d| d.execution.as_ref());
+                    match exec {
+                        Some(e) if e.is_running() => {
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        e => {
+                            let ok = e.is_some_and(|e| {
+                                e.outcome() == execution::Outcome::Succeeded && e.results.is_empty()
+                            });
+                            let (bytes, rows) = e
+                                .and_then(|e| e.file())
+                                .map(|p| {
+                                    // Conta as linhas lendo aos pedaços, sem
+                                    // trazer o arquivo para a memória medida.
+                                    use std::io::BufRead;
+                                    let (mut bytes, mut lines) = (0, 0);
+                                    if let Ok(f) = std::fs::File::open(p) {
+                                        let mut r = std::io::BufReader::new(f);
+                                        loop {
+                                            let buf = match r.fill_buf() {
+                                                Ok(b) if !b.is_empty() => b,
+                                                _ => break,
+                                            };
+                                            lines += buf.iter().filter(|b| **b == b'\n').count();
+                                            let n = buf.len();
+                                            bytes += n;
+                                            r.consume(n);
+                                        }
+                                    }
+                                    let _ = std::fs::remove_file(p);
+                                    (bytes, lines.saturating_sub(1))
+                                })
+                                .unwrap_or((0, 0));
+                            let export_ms = e.map_or(0.0, |e| e.elapsed().as_secs_f64() * 1000.0);
+                            let line = run.result_line(&[
+                                ("rows", if ok { rows as f64 } else { 0.0 }),
+                                ("export_ms", export_ms.round()),
+                                ("mb", (bytes as f64 / 1e5).round() / 10.0),
                             ]);
                             bench_print(&line);
                             run.phase = Phase::Done;
