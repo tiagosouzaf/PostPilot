@@ -359,7 +359,7 @@ impl SecurityDialog {
         let mut request = self.step();
         let title = self.title();
         // Modal, como as janelas de propriedades do SSMS.
-        let modal = egui::Modal::new(egui::Id::new("security_properties")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("security_properties")).show(ctx, |ui| {
             ui.set_width(660.0);
             ui.heading(title);
             ui.separator();

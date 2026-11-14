@@ -593,7 +593,7 @@ impl SchemaCompare {
     /// scripts.
     pub fn show(&mut self, ctx: &egui::Context, dialogs: &mut dyn FileDialogs) -> Option<Request> {
         let mut request = self.step(ctx);
-        let modal = egui::Modal::new(egui::Id::new("schema_compare")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("schema_compare")).show(ctx, |ui| {
             ui.set_width(980.0);
             ui.heading("Schema Compare");
             ui.separator();

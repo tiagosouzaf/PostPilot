@@ -42,12 +42,26 @@ fn file_menu_lists_items() {
 #[test]
 fn view_menu_switches_to_dark_theme() {
     let mut harness = harness();
-    assert_eq!(harness.state().theme(), Theme::Light);
+    assert_eq!(harness.state().theme(), Theme::Dark, "o escuro é o padrão");
+    let ctx = harness.ctx.clone();
+    harness.state_mut().set_theme(&ctx, Theme::Light);
+    harness.run();
     harness.get_by_label("View").click();
     harness.run();
     harness.get_by_label("Color Theme ⏵").hover();
     harness.run();
     harness.get_by_label("Dark").click();
+    harness.run();
+    assert_eq!(harness.state().theme(), Theme::Dark);
+}
+
+#[test]
+fn menu_bar_button_toggles_the_theme() {
+    let mut harness = harness();
+    harness.get_by_label(egui_phosphor::regular::SUN).click();
+    harness.run();
+    assert_eq!(harness.state().theme(), Theme::Light);
+    harness.get_by_label(egui_phosphor::regular::MOON).click();
     harness.run();
     assert_eq!(harness.state().theme(), Theme::Dark);
 }
