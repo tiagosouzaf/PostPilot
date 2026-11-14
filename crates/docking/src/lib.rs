@@ -15,6 +15,7 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{
     DockArea, DockState, Node, NodeIndex, NodePath, Split, Style, SurfaceIndex, TabViewer, Tree,
 };
+use pgstudio_i18n::tr;
 use serde::{Deserialize, Serialize};
 
 /// Onde um painel mora no layout padrão e para onde volta ao ser reaberto.
@@ -923,14 +924,14 @@ impl<P: Pane> Workspace<P> {
                         ui.strong(&title);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if viewer.closeable(&pane)
-                                && ui.small_button("✕").on_hover_text("Close").clicked()
+                                && ui.small_button("✕").on_hover_text(tr("Close")).clicked()
                                 && viewer.on_close(&pane)
                             {
                                 requests.push(Request::Close(pane.clone()));
                             }
                             if ui
                                 .small_button(egui_phosphor::regular::PUSH_PIN_SLASH)
-                                .on_hover_text("Auto Hide (click to dock)")
+                                .on_hover_text(tr("Auto Hide (click to dock)"))
                                 .clicked()
                             {
                                 requests.push(Request::Dock(pane.clone()));
@@ -1094,7 +1095,7 @@ impl<P: Pane, V: PaneViewer<P>> TabViewer for Adapter<'_, P, V> {
     }
 
     fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut P, _path: NodePath) {
-        if tab.area() != Area::Document && ui.button("Auto Hide").clicked() {
+        if tab.area() != Area::Document && ui.button(tr("Auto Hide")).clicked() {
             self.requests.push(Request::AutoHide(tab.clone()));
             ui.close();
         }

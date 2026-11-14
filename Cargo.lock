@@ -3000,6 +3000,7 @@ dependencies = [
  "eframe",
  "egui-phosphor",
  "egui_dock",
+ "pgstudio-i18n",
  "serde",
  "serde_json",
 ]
@@ -3012,6 +3013,7 @@ dependencies = [
  "egui-phosphor",
  "egui_kittest",
  "pgstudio-core",
+ "pgstudio-i18n",
  "pgstudio-pg-client",
  "serde_json",
 ]
@@ -3063,6 +3065,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_kittest",
+ "pgstudio-i18n",
 ]
 
 [[package]]
@@ -3080,6 +3083,7 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "pgstudio-core",
+ "pgstudio-i18n",
 ]
 
 [[package]]

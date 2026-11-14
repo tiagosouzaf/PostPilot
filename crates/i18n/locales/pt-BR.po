@@ -1018,9 +1018,6 @@ msgstr "Pode fazer logon (LOGIN)"
 msgid "Compare Schema..."
 msgstr "Comparar Esquema..."
 
-msgid "Confirm password:"
-msgstr "Confirmar senha:"
-
 msgid "Connection limit:"
 msgstr "Limite de conexões:"
 
@@ -1281,3 +1278,491 @@ msgstr "Extensão"
 
 msgid "Role"
 msgstr "Role"
+
+# Consultas, resultados, plano, Monitor de Atividades, editor
+
+msgid "   Planning time: {planning} ms   Execution time: {execution} ms"
+msgstr "   Tempo de planejamento: {planning} ms   Tempo de execução: {execution} ms"
+
+msgid "(1 row affected)"
+msgstr "(1 linha afetada)"
+
+msgid "({rows} rows affected)"
+msgstr "({rows} linhas afetadas)"
+
+msgid "... and {n} more"
+msgstr "... e mais {n}"
+
+msgid "1 row"
+msgstr "1 linha"
+
+msgid "1 row deleted."
+msgstr "1 linha excluída."
+
+msgid "1 row inserted."
+msgstr "1 linha inserida."
+
+msgid "1 row updated."
+msgstr "1 linha atualizada."
+
+msgid "Active Sessions"
+msgstr "Sessões Ativas"
+
+msgid "Activity Monitor: {text}"
+msgstr "Monitor de Atividade: {text}"
+
+msgid "Actual Executions"
+msgstr "Execuções Reais"
+
+msgid "Actual Number of Rows"
+msgstr "Número Real de Linhas"
+
+msgid "Actual Time (ms)"
+msgstr "Tempo Real (ms)"
+
+msgid "Application"
+msgstr "Aplicativo"
+
+msgid "Are you sure you want to cancel the query running in process {pid}?"
+msgstr "Tem certeza de que deseja cancelar a consulta em execução no processo {pid}?"
+
+msgid "Are you sure you want to kill process {pid}? Its open transaction, if any, will be rolled back."
+msgstr "Tem certeza de que deseja finalizar o processo {pid}? A transação aberta, se houver, será revertida."
+
+msgid "Auto Hide (click to dock)"
+msgstr "Ocultar Automaticamente (clique para encaixar)"
+
+msgid "Average Time (ms)"
+msgstr "Tempo Médio (ms)"
+
+msgid "Blocked By"
+msgstr "Bloqueado Por"
+
+msgid "Blocking chains"
+msgstr "Cadeias de bloqueio"
+
+msgid "Blocks Hit"
+msgstr "Blocos em Cache"
+
+msgid "Blocks Read"
+msgstr "Blocos Lidos"
+
+msgid "COPY ... FROM STDIN with inline data can't be formatted."
+msgstr "COPY ... FROM STDIN com dados embutidos não pode ser formatado."
+
+msgid "Cache Hit %"
+msgstr "% de Acertos no Cache"
+
+msgid "Cancel Query"
+msgstr "Cancelar Consulta"
+
+msgid "Checking whether the results can be edited..."
+msgstr "Verificando se os resultados podem ser editados..."
+
+msgid "Click to go to the error in the editor."
+msgstr "Clique para ir até o erro no editor."
+
+msgid "Client"
+msgstr "Cliente"
+
+msgid "Close (Esc)"
+msgstr "Fechar (Esc)"
+
+msgid "Command"
+msgstr "Comando"
+
+msgid "Commands completed successfully."
+msgstr "Comandos concluídos com êxito."
+
+msgid "Connected."
+msgstr "Conectado."
+
+msgid "Copy Command"
+msgstr "Copiar Comando"
+
+msgid "Copy as INSERT"
+msgstr "Copiar como INSERT"
+
+msgid "Copy with Headers"
+msgstr "Copiar com Cabeçalhos"
+
+msgid "Cost: {cost} %"
+msgstr "Custo: {cost} %"
+
+msgid "Could not write the results to {path}: {error}"
+msgstr "Não foi possível gravar os resultados em {path}: {error}"
+
+msgid "DETAIL"
+msgstr "DETALHE"
+
+msgid "Data File I/O"
+msgstr "E/S de Arquivo de Dados"
+
+msgid "Database I/O (reads/sec)"
+msgstr "E/S do Banco de Dados (leituras/s)"
+
+msgid "Delete Row"
+msgstr "Excluir Linha"
+
+msgid "Delete Rows"
+msgstr "Excluir Linhas"
+
+msgid "Delete {n} Rows"
+msgstr "Excluir {n} Linhas"
+
+msgid "Deleting..."
+msgstr "Excluindo..."
+
+msgid "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. Delete removes the selected rows after confirmation."
+msgstr "Clique duas vezes em uma célula (ou pressione F2) para editá-la; Enter salva, Esc cancela. Delete remove as linhas selecionadas após confirmação."
+
+msgid "Duration"
+msgstr "Duração"
+
+msgid "Edit Cell"
+msgstr "Editar Célula"
+
+msgid "Edit Rows: the row was not committed. {error} Correct the values or press Esc to cancel the changes."
+msgstr "Editar Linhas: a linha não foi confirmada. {error} Corrija os valores ou pressione Esc para cancelar as alterações."
+
+msgid "Edit Rows: the row was not deleted. {error}"
+msgstr "Editar Linhas: a linha não foi excluída. {error}"
+
+msgid "Edit Rows: {error}"
+msgstr "Editar Linhas: {error}"
+
+msgid "Editing {table}"
+msgstr "Editando {table}"
+
+msgid "Enter a line number between 1 and {lines}."
+msgstr "Digite um número de linha entre 1 e {lines}."
+
+msgid "Estimated Number of Rows"
+msgstr "Número Estimado de Linhas"
+
+msgid "Estimated Operator Cost"
+msgstr "Custo Estimado do Operador"
+
+msgid "Estimated Subtree Cost"
+msgstr "Custo Estimado da Subárvore"
+
+msgid "Estimated rows differ from the actual rows by {ratio}x. The statistics may be out of date; try ANALYZE on the table."
+msgstr "As linhas estimadas diferem das linhas reais em {ratio}x. As estatísticas podem estar desatualizadas; experimente ANALYZE na tabela."
+
+msgid "Executing query..."
+msgstr "Executando consulta..."
+
+msgid "Execution plan"
+msgstr "Plano de execução"
+
+msgid "Executions"
+msgstr "Execuções"
+
+msgid "False"
+msgstr "Falso"
+
+msgid "Filter:"
+msgstr "Filtro:"
+
+msgid "Find Next"
+msgstr "Localizar Próxima"
+
+msgid "Find:"
+msgstr "Localizar:"
+
+msgid "Granted"
+msgstr "Concedido"
+
+msgid "HINT"
+msgstr "DICA"
+
+msgid "Head blocker {pid}: {what}"
+msgstr "Bloqueador principal {pid}: {what}"
+
+msgid "Incorrect syntax near ')'."
+msgstr "Sintaxe incorreta próxima a ')'."
+
+msgid "Kill Process"
+msgstr "Finalizar Processo"
+
+msgid "Line number (1 - {lines}):"
+msgstr "Número da linha (1 - {lines}):"
+
+msgid "Lock Type"
+msgstr "Tipo de Bloqueio"
+
+msgid "Locks"
+msgstr "Bloqueios"
+
+msgid "Match case"
+msgstr "Diferenciar maiúsculas/minúsculas"
+
+msgid "Messages"
+msgstr "Mensagens"
+
+msgid "Missing ')'."
+msgstr "Falta ')'."
+
+msgid "Missing end comment mark '*/'."
+msgstr "Falta a marca de fim de comentário '*/'."
+
+msgid "Mode"
+msgstr "Modo"
+
+msgid "Msg {code}, Level {level}"
+msgstr "Msg {code}, Nível {level}"
+
+msgid "Msg {code}, Level {level}, Line {line}, Column {col}"
+msgstr "Msg {code}, Nível {level}, Linha {line}, Coluna {col}"
+
+msgid "NULL"
+msgstr "NULL"
+
+msgid "No session is blocked."
+msgstr "Nenhuma sessão está bloqueada."
+
+msgid "No session is waiting."
+msgstr "Nenhuma sessão está aguardando."
+
+msgid "Object"
+msgstr "Objeto"
+
+msgid "Overview"
+msgstr "Visão Geral"
+
+msgid "Pause"
+msgstr "Pausar"
+
+msgid "Process ID"
+msgstr "ID do Processo"
+
+msgid "Process {pid} was killed."
+msgstr "O processo {pid} foi finalizado."
+
+msgid "Process {pid} was not found."
+msgstr "O processo {pid} não foi encontrado."
+
+msgid "Process {pid}: {error}"
+msgstr "Processo {pid}: {error}"
+
+msgid "Processes"
+msgstr "Processos"
+
+msgid "Query completed with errors."
+msgstr "Consulta concluída com erros."
+
+msgid "Query executed successfully."
+msgstr "Consulta executada com êxito."
+
+msgid "Query was canceled."
+msgstr "A consulta foi cancelada."
+
+msgid "Query was cancelled by user."
+msgstr "A consulta foi cancelada pelo usuário."
+
+msgid "Query {n}: Query cost (relative to the batch): {cost}%"
+msgstr "Consulta {n}: Custo da consulta (relativo ao lote): {cost}%"
+
+msgid "Read the rows again; unsaved changes are lost"
+msgstr "Lê as linhas novamente; alterações não salvas são perdidas"
+
+msgid "Reading the server activity..."
+msgstr "Lendo a atividade do servidor..."
+
+msgid "Recent Expensive Queries"
+msgstr "Consultas Dispendiosas Recentes"
+
+msgid "Refresh interval:"
+msgstr "Intervalo de atualização:"
+
+msgid "Resource Waits"
+msgstr "Esperas de Recursos"
+
+msgid "Rows"
+msgstr "Linhas"
+
+msgid "Save Results As..."
+msgstr "Salvar Resultados Como..."
+
+msgid "Saving..."
+msgstr "Salvando..."
+
+msgid "State"
+msgstr "Estado"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "System processes"
+msgstr "Processos do sistema"
+
+msgid "Temp Files (MB)"
+msgstr "Arquivos Temporários (MB)"
+
+msgid "The SQL couldn't be formatted without changing it."
+msgstr "O SQL não pôde ser formatado sem alterá-lo."
+
+msgid "The catalog read stopped."
+msgstr "A leitura do catálogo foi interrompida."
+
+msgid "The changes made by the statements were rolled back."
+msgstr "As alterações feitas pelas instruções foram revertidas."
+
+msgid "The command was canceled."
+msgstr "O comando foi cancelado."
+
+msgid "The query of process {pid} was canceled."
+msgstr "A consulta do processo {pid} foi cancelada."
+
+msgid "The results are read-only: the batch has more than one statement. Run the SELECT by itself to edit its results."
+msgstr "Os resultados são somente leitura: o lote tem mais de uma instrução. Execute o SELECT sozinho para editar seus resultados."
+
+msgid "The results are read-only: the query could not be described ({error})."
+msgstr "Os resultados são somente leitura: não foi possível descrever a consulta ({error})."
+
+msgid "The results are read-only: the query did not complete successfully."
+msgstr "Os resultados são somente leitura: a consulta não foi concluída com êxito."
+
+msgid "The results are read-only: the statement changes data."
+msgstr "Os resultados são somente leitura: a instrução altera dados."
+
+msgid "The results are read-only: the table no longer exists."
+msgstr "Os resultados são somente leitura: a tabela não existe mais."
+
+msgid "The results are read-only: they were produced by PostPilot, not by a query."
+msgstr "Os resultados são somente leitura: foram produzidos pelo PostPilot, não por uma consulta."
+
+msgid "The results are read-only: {display} is not a table."
+msgstr "Os resultados são somente leitura: {display} não é uma tabela."
+
+msgid "The results are read-only: {error}"
+msgstr "Os resultados são somente leitura: {error}"
+
+msgid "The results were saved to {path}."
+msgstr "Os resultados foram salvos em {path}."
+
+msgid "The row was not committed: {error}"
+msgstr "A linha não foi confirmada: {error}"
+
+msgid "The row was not deleted: {error}"
+msgstr "A linha não foi excluída: {error}"
+
+msgid "The row was not found; it may have been changed or deleted by another user."
+msgstr "A linha não foi encontrada; ela pode ter sido alterada ou excluída por outro usuário."
+
+msgid "The rows were not deleted. {error}"
+msgstr "As linhas não foram excluídas. {error}"
+
+msgid "The rows were not deleted: {error}"
+msgstr "As linhas não foram excluídas: {error}"
+
+msgid "The server did not return the activity data."
+msgstr "O servidor não retornou os dados de atividade."
+
+msgid "The table has no primary key, so its rows cannot be identified; the grid is read-only."
+msgstr "A tabela não tem chave primária, então suas linhas não podem ser identificadas; a grade é somente leitura."
+
+msgid "The table no longer exists."
+msgstr "A tabela não existe mais."
+
+msgid "The text was not found."
+msgstr "O texto não foi encontrado."
+
+msgid "The value was not saved. {error}"
+msgstr "O valor não foi salvo. {error}"
+
+msgid "The value was not saved: {error}"
+msgstr "O valor não foi salvo: {error}"
+
+msgid "Total Time (ms)"
+msgstr "Tempo Total (ms)"
+
+msgid "Total execution time: {time}"
+msgstr "Tempo total de execução: {time}"
+
+msgid "Transaction"
+msgstr "Transação"
+
+msgid "Transactions"
+msgstr "Transações"
+
+msgid "Transactions/sec"
+msgstr "Transações/s"
+
+msgid "True"
+msgstr "Verdadeiro"
+
+msgid "Unclosed quotation mark after the character string."
+msgstr "Aspas não fechadas após a cadeia de caracteres."
+
+msgid "Unclosed quotation mark after the identifier."
+msgstr "Aspas não fechadas após o identificador."
+
+msgid "Unterminated dollar-quoted string."
+msgstr "Cadeia entre cifrões não terminada."
+
+msgid "User"
+msgstr "Usuário"
+
+msgid "Wait Category"
+msgstr "Categoria de Espera"
+
+msgid "Wait Event"
+msgstr "Evento de Espera"
+
+msgid "Wait Resource"
+msgstr "Recurso de Espera"
+
+msgid "Wait Type"
+msgstr "Tipo de Espera"
+
+msgid "Waiting"
+msgstr "Aguardando"
+
+msgid "Waiting Sessions"
+msgstr "Sessões Aguardando"
+
+msgid "Warning: estimated rows differ from actual"
+msgstr "Aviso: as linhas estimadas diferem das reais"
+
+msgid "Warning: the results could not be paged to disk ({error}); they are kept in memory."
+msgstr "Aviso: não foi possível paginar os resultados em disco ({error}); eles são mantidos na memória."
+
+msgid "You are about to delete 1 row from {table}. Are you sure?"
+msgstr "Você está prestes a excluir 1 linha de {table}. Tem certeza?"
+
+msgid "You are about to delete 1 row. Are you sure?"
+msgstr "Você está prestes a excluir 1 linha. Tem certeza?"
+
+msgid "You are about to delete {count} rows from {table}. Are you sure?"
+msgstr "Você está prestes a excluir {count} linhas de {table}. Tem certeza?"
+
+msgid "pending changes"
+msgstr "alterações pendentes"
+
+msgid "pid, user, database, query..."
+msgstr "pid, usuário, banco de dados, consulta..."
+
+msgid "psql meta-commands (\\...) can't be formatted."
+msgstr "Metacomandos do psql (\\...) não podem ser formatados."
+
+msgid "the file is not valid UTF-8 text"
+msgstr "o arquivo não é texto UTF-8 válido"
+
+msgid "{actual} of {estimated} ({percent}%)"
+msgstr "{actual} de {estimated} ({percent}%)"
+
+msgid "{deleted} of {asked} rows deleted: the others were not found; they may have been changed or deleted by another user."
+msgstr "{deleted} de {asked} linhas excluídas: as outras não foram encontradas; elas podem ter sido alteradas ou excluídas por outro usuário."
+
+msgid "{n} rows deleted."
+msgstr "{n} linhas excluídas."
+
+msgid "{pid} waits: {what}"
+msgstr "{pid} aguarda: {what}"
+
+msgid "{rows} rows"
+msgstr "{rows} linhas"
+
+msgid "{visible} of {total} sessions"
+msgstr "{visible} de {total} sessões"
