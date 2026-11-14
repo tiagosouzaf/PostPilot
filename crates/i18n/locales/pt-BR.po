@@ -1309,7 +1309,7 @@ msgid "Active Sessions"
 msgstr "Sessões Ativas"
 
 msgid "Activity Monitor: {text}"
-msgstr "Monitor de Atividades: {text}"
+msgstr "Monitor de Atividade: {text}"
 
 msgid "Actual Executions"
 msgstr "Execuções Reais"

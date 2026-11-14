@@ -7,7 +7,6 @@
 //! editor; o grande (índice de linhas, tokens e histórico) fica no
 //! [`Buffer`], dentro do documento.
 
-use pgstudio_i18n::tr;
 use std::ops::Range;
 use std::sync::Arc;
 
