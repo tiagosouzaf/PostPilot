@@ -5,7 +5,7 @@
 use eframe::egui;
 use pgstudio_core::CommandId;
 use pgstudio_docking::{Area, Pane, PaneViewer, Workspace};
-use pgstudio_i18n::tr;
+use pgstudio_i18n::{tr, tr_noop};
 use pgstudio_object_explorer::{Event, ObjectExplorer, Properties};
 
 use crate::documents::Documents;
@@ -269,7 +269,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                                 row(ui, tr("Type"), node.kind.label());
                                 if let Some(Properties::Loaded(props)) = &props {
                                     for p in props {
-                                        row(ui, &p.name, &p.value);
+                                        row(ui, tr(&p.name), property_value(&p.value));
                                     }
                                 }
                                 row(ui, tr("Path"), &node.id.to_string());
@@ -424,4 +424,88 @@ fn editor_context_menu(
 
 pub fn editor_id(doc: u32) -> egui::Id {
     egui::Id::new(("query_editor", doc))
+}
+
+/// Nomes das propriedades que o `pgstudio-pg-metadata` devolve (os `AS
+/// "..."` das consultas de propriedades), para a janela Propriedades
+/// traduzir. O teste abaixo confere a lista com o SQL.
+#[allow(dead_code)]
+const PROPERTY_LABELS: &[&str] = &[
+    tr_noop("Arguments"),
+    tr_noop("Attributes"),
+    tr_noop("Base type"),
+    tr_noop("Cache"),
+    tr_noop("Checks"),
+    tr_noop("Collation"),
+    tr_noop("Connection limit"),
+    tr_noop("Create databases"),
+    tr_noop("Create roles"),
+    tr_noop("Cycle"),
+    tr_noop("Data type"),
+    tr_noop("Default version"),
+    tr_noop("Default"),
+    tr_noop("Definition"),
+    tr_noop("Description"),
+    tr_noop("Enabled"),
+    tr_noop("Encoding"),
+    tr_noop("Events"),
+    tr_noop("Function"),
+    tr_noop("Identity"),
+    tr_noop("Increment"),
+    tr_noop("Kind"),
+    tr_noop("Language"),
+    tr_noop("Level"),
+    tr_noop("Login"),
+    tr_noop("Maximum"),
+    tr_noop("Member of"),
+    tr_noop("Method"),
+    tr_noop("Minimum"),
+    tr_noop("Nullable"),
+    tr_noop("Owner"),
+    tr_noop("Populated"),
+    tr_noop("Primary key"),
+    tr_noop("Relocatable"),
+    tr_noop("Returns"),
+    tr_noop("Rows (estimate)"),
+    tr_noop("Schema"),
+    tr_noop("Security"),
+    tr_noop("Size"),
+    tr_noop("Start"),
+    tr_noop("Superuser"),
+    tr_noop("Table"),
+    tr_noop("Timing"),
+    tr_noop("Unique"),
+    tr_noop("Valid until"),
+    tr_noop("Validated"),
+    tr_noop("Values"),
+    tr_noop("Version"),
+    tr_noop("Volatility"),
+];
+
+/// Valor de uma propriedade, com `yes`/`no` traduzidos.
+fn property_value(value: &str) -> &str {
+    match value {
+        "yes" => tr("yes"),
+        "no" => tr("no"),
+        v => v,
+    }
+}
+
+#[cfg(test)]
+mod property_label_tests {
+    #[test]
+    fn every_property_label_is_listed() {
+        let sql = include_str!("../../pg-metadata/src/props.rs");
+        let mut rest = sql;
+        while let Some(i) = rest.find("AS \\\"") {
+            let tail = &rest[i + 5..];
+            let end = tail.find("\\\"").expect("alias sem fim");
+            let label = &tail[..end];
+            assert!(
+                super::PROPERTY_LABELS.contains(&label),
+                "propriedade {label:?} fora de PROPERTY_LABELS"
+            );
+            rest = &tail[end..];
+        }
+    }
 }

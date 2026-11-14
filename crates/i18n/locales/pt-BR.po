@@ -3526,3 +3526,306 @@ msgstr "{who}: você recusou executar o SQL."
 
 msgid "{who}: {tool} finished: {summary}"
 msgstr "{who}: {tool} concluído: {summary}"
+
+# Propriedades, erros do workspace, do git e do Designer de Consultas
+
+msgid "* together with other columns"
+msgstr "* junto com outras colunas"
+
+msgid "Arguments"
+msgstr "Argumentos"
+
+msgid "Base type"
+msgstr "Tipo base"
+
+msgid "Cache"
+msgstr "Cache"
+
+msgid "Checks"
+msgstr "Verificações"
+
+msgid "Collation"
+msgstr "Ordenação"
+
+msgid "Connection limit"
+msgstr "Limite de conexões"
+
+msgid "Cycle"
+msgstr "Ciclo"
+
+msgid "Data type"
+msgstr "Tipo de dados"
+
+msgid "Default"
+msgstr "Padrão"
+
+msgid "Default version"
+msgstr "Versão padrão"
+
+msgid "Definition"
+msgstr "Definição"
+
+msgid "Description"
+msgstr "Descrição"
+
+msgid "Enabled"
+msgstr "Habilitado"
+
+msgid "Encoding"
+msgstr "Codificação"
+
+msgid "Events"
+msgstr "Eventos"
+
+msgid "Identity"
+msgstr "Identidade"
+
+msgid "Increment"
+msgstr "Incremento"
+
+msgid "Kind"
+msgstr "Tipo"
+
+msgid "Language"
+msgstr "Linguagem"
+
+msgid "Level"
+msgstr "Nível"
+
+msgid "Maximum"
+msgstr "Máximo"
+
+msgid "Minimum"
+msgstr "Mínimo"
+
+msgid "Nullable"
+msgstr "Permite nulos"
+
+msgid "Owner"
+msgstr "Proprietário"
+
+msgid "Populated"
+msgstr "Populada"
+
+msgid "Primary key"
+msgstr "Chave primária"
+
+msgid "Relocatable"
+msgstr "Realocável"
+
+msgid "Returns"
+msgstr "Retorna"
+
+msgid "Rows (estimate)"
+msgstr "Linhas (estimativa)"
+
+msgid "Size"
+msgstr "Tamanho"
+
+msgid "Start"
+msgstr "Início"
+
+msgid "Timing"
+msgstr "Momento"
+
+msgid "Unique"
+msgstr "Exclusivo"
+
+msgid "Valid until"
+msgstr "Válido até"
+
+msgid "Validated"
+msgstr "Validada"
+
+msgid "Values"
+msgstr "Valores"
+
+msgid "Version"
+msgstr "Versão"
+
+msgid "Volatility"
+msgstr "Volatilidade"
+
+msgid "yes"
+msgstr "sim"
+
+msgid "no"
+msgstr "não"
+
+msgid "Could not create the workspace: {e}"
+msgstr "Não foi possível criar o workspace: {e}"
+
+msgid "Could not create {folder}: {e}"
+msgstr "Não foi possível criar {folder}: {e}"
+
+msgid "Could not read {file}: {e}"
+msgstr "Não foi possível ler {file}: {e}"
+
+msgid "Could not run git: {e}"
+msgstr "Não foi possível executar o git: {e}"
+
+msgid "Could not save {file}: {e}"
+msgstr "Não foi possível salvar {file}: {e}"
+
+msgid "FETCH FIRST (use LIMIT)"
+msgstr "FETCH FIRST (use LIMIT)"
+
+msgid "FOR UPDATE or FOR SHARE"
+msgstr "FOR UPDATE ou FOR SHARE"
+
+msgid "Fix the conflicts and Commit before pushing."
+msgstr "Resolva os conflitos e faça Commit antes do push."
+
+msgid "Git is not installed. Install git (on Windows, Git for Windows) to use source control."
+msgstr "O Git não está instalado. Instale o git (no Windows, o Git for Windows) para usar o controle de versão."
+
+msgid "Invalid key derivation settings: {e}"
+msgstr "Configuração de derivação de chave inválida: {e}"
+
+msgid "Key derivation failed: {e}"
+msgstr "Falha na derivação de chave: {e}"
+
+msgid "NULLS FIRST or NULLS LAST in ORDER BY"
+msgstr "NULLS FIRST ou NULLS LAST no ORDER BY"
+
+msgid "Only tables and views have rows to select."
+msgstr "Só tabelas e exibições têm linhas para selecionar."
+
+msgid "Pull found conflicts in {files}. Fix the files (look for <<<<<<<), then Commit."
+msgstr "O pull encontrou conflitos em {files}. Corrija os arquivos (procure por <<<<<<<) e faça Commit."
+
+msgid "ROLLUP, CUBE or GROUPING SETS"
+msgstr "ROLLUP, CUBE ou GROUPING SETS"
+
+msgid "Scripting foreign tables is not supported yet."
+msgstr "Ainda não é possível gerar script de tabelas estrangeiras."
+
+msgid "Scripting this kind of type is not supported."
+msgstr "Não é possível gerar script deste tipo de tipo."
+
+msgid "Select a single SELECT statement to design it."
+msgstr "Selecione uma única instrução SELECT para abri-la no designer."
+
+msgid "TOP (use LIMIT)"
+msgstr "TOP (use LIMIT)"
+
+msgid "The Query Designer can't show {what}."
+msgstr "O Designer de Consultas não consegue mostrar {what}."
+
+msgid "The column {c} exists in more than one table; qualify it with the table name."
+msgstr "A coluna {c} existe em mais de uma tabela; qualifique-a com o nome da tabela."
+
+msgid "The column {c} was not found."
+msgstr "A coluna {c} não foi encontrada."
+
+msgid "The git operation stopped unexpectedly."
+msgstr "A operação do git parou inesperadamente."
+
+msgid "The query combines results with {op}, which the Query Designer can't show."
+msgstr "A consulta combina resultados com {op}, que o Designer de Consultas não consegue mostrar."
+
+msgid "The query has a subquery, which the Query Designer can't show."
+msgstr "A consulta tem uma subconsulta, que o Designer de Consultas não consegue mostrar."
+
+msgid "The query uses a common table expression (WITH), which the Query Designer can't show."
+msgstr "A consulta usa uma expressão de tabela comum (WITH), que o Designer de Consultas não consegue mostrar."
+
+msgid "The selected text could not be parsed: {e}"
+msgstr "Não foi possível analisar o texto selecionado: {e}"
+
+msgid "The table {t} was not found in the database."
+msgstr "A tabela {t} não foi encontrada no banco de dados."
+
+msgid "The workspace already has {file}. Unlock it instead."
+msgstr "O workspace já tem {file}. Desbloqueie-o."
+
+msgid "The workspace has no remote. Use Source Control > Remote... to set the repository URL."
+msgstr "O workspace não tem remoto. Use Controle de Versão > Remoto... para definir a URL do repositório."
+
+msgid "The workspace is not under source control."
+msgstr "O workspace não está sob controle de versão."
+
+msgid "The workspace needs a name."
+msgstr "O workspace precisa de um nome."
+
+msgid "The {what} no longer exists. Refresh the Object Explorer."
+msgstr "O objeto ({what}) não existe mais. Atualize o Pesquisador de Objetos."
+
+msgid "This object cannot be scripted."
+msgstr "Não é possível gerar script deste objeto."
+
+msgid "This workspace was saved by a newer PostPilot (format {format}). Update PostPilot to open it."
+msgstr "Este workspace foi salvo por um PostPilot mais novo (formato {format}). Atualize o PostPilot para abri-lo."
+
+msgid "a function in FROM"
+msgstr "uma função no FROM"
+
+msgid "an outer JOIN without ON"
+msgstr "um JOIN externo sem ON"
+
+msgid "column aliases on a table"
+msgstr "aliases de coluna em uma tabela"
+
+msgid "parentheses around JOINs"
+msgstr "parênteses em volta de JOINs"
+
+msgid "the same column twice in ORDER BY"
+msgstr "a mesma coluna duas vezes no ORDER BY"
+
+msgid "this LIMIT"
+msgstr "este LIMIT"
+
+msgid "this kind of JOIN"
+msgstr "este tipo de JOIN"
+
+msgid "this kind of SELECT"
+msgstr "este tipo de SELECT"
+
+msgid "this kind of query"
+msgstr "este tipo de consulta"
+
+msgid "{file} is invalid: {e}"
+msgstr "{file} é inválido: {e}"
+
+msgid "constraint"
+msgstr "restrição"
+
+msgid "database"
+msgstr "banco de dados"
+
+msgid "extension"
+msgstr "extensão"
+
+msgid "function"
+msgstr "função"
+
+msgid "index"
+msgstr "índice"
+
+msgid "object"
+msgstr "objeto"
+
+msgid "sequence"
+msgstr "sequência"
+
+msgid "table"
+msgstr "tabela"
+
+msgid "trigger"
+msgstr "gatilho"
+
+msgid "type"
+msgstr "tipo"
+
+msgid "view"
+msgstr "exibição"
+
+# Workspace
+
+msgid "{folder} is not a PostPilot workspace (no {file}). Use New Workspace to create one."
+msgstr "{folder} não é um workspace do PostPilot (sem {file}). Use Novo Workspace para criar um."
+
+# Workspace
+
+msgid "{folder} already has a PostPilot workspace. Use Open Workspace."
+msgstr "{folder} já tem um workspace do PostPilot. Use Abrir Workspace."
