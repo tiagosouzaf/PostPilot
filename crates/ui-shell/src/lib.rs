@@ -6,6 +6,7 @@
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
 pub mod activity;
+pub mod backup;
 pub mod bench;
 pub mod connect;
 pub mod designer;
@@ -18,6 +19,7 @@ pub mod layout;
 pub mod menus;
 pub mod object_info;
 pub mod panels;
+pub mod pgtools;
 pub mod properties;
 pub mod query_designer;
 pub mod results;
@@ -73,6 +75,8 @@ pub struct ShellApp {
     activity: Option<activity::ActivityMonitor>,
     /// Janela de propriedades de segurança aberta.
     security: Option<properties::SecurityDialog>,
+    /// "Back Up Database" aberta.
+    backup: Option<backup::BackupDialog>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
@@ -100,6 +104,8 @@ pub struct ShellApp {
     connect_dialog: Option<ConnectDialog>,
     /// Servidor conectado no Object Explorer.
     connection: Option<Connected>,
+    /// Senha da conexão, só na memória, para pg_dump e pg_restore.
+    password: String,
     recent: RecentConnections,
     /// Executar a janela ativa assim que conectar (demonstração e
     /// screenshots).
@@ -202,8 +208,10 @@ impl Default for ShellApp {
             designers: Default::default(),
             diagrams: Default::default(),
             diagram_all_tables: false,
+            password: String::new(),
             activity: None,
             security: None,
+            backup: None,
             query_designer: None,
             design_query_on_open: false,
             query_on_open: None,
@@ -322,8 +330,9 @@ impl ShellApp {
         };
         let was_connecting = dialog.is_connecting();
         match dialog.poll() {
-            Some(connected) => {
+            Some((connected, password)) => {
                 self.connect_dialog = None;
+                self.password = password;
                 let name = connected.settings.server_name();
                 self.recent.remember(&connected.settings);
                 self.explorer.connect(connected.metadata.clone());
@@ -1164,6 +1173,7 @@ impl ShellApp {
                 }
                 self.explorer.disconnect();
                 self.catalogs.clear();
+                self.password.clear();
             }
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
@@ -1479,6 +1489,13 @@ impl ShellApp {
                 self.open_activity_monitor(ctx);
                 return;
             }
+            Event::BackUp(node) => {
+                match provider.database_of(&node) {
+                    Some(db) => self.open_backup(ctx, db),
+                    None => self.status = "Select a database to back up.".to_string(),
+                }
+                return;
+            }
             Event::Properties(node) => {
                 match provider.securable(&node) {
                     Some(target) => self.open_security(ctx, target),
@@ -1768,6 +1785,8 @@ impl ShellApp {
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
+            || self.security.is_some()
+            || self.backup.is_some()
         {
             Vec::new()
         } else {
@@ -1856,6 +1875,7 @@ impl ShellApp {
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
         self.security_window(&ctx);
+        self.backup_window(&ctx);
         self.connect_window(&ctx);
 
         if self.about_open {
@@ -2051,6 +2071,44 @@ impl ShellApp {
             .unwrap_or_else(|| c.settings.database.clone());
         let session = c.queries.open(&db);
         self.security = Some(properties::SecurityDialog::open(target, session, ctx));
+    }
+
+    /// Abre "Back Up Database" para `database`.
+    fn open_backup(&mut self, ctx: &egui::Context, database: String) {
+        let Some(c) = &self.connection else {
+            self.status = "Connect to a PostgreSQL server to back up a database.".to_string();
+            return;
+        };
+        let session = c.queries.open(&database);
+        self.backup = Some(backup::BackupDialog::open(
+            database,
+            c.settings.clone(),
+            self.password.clone(),
+            &c.server_version,
+            session,
+            ctx,
+        ));
+    }
+
+    /// "Back Up Database", para testes.
+    pub fn backup_dialog(&self) -> Option<&backup::BackupDialog> {
+        self.backup.as_ref()
+    }
+
+    /// "Back Up Database", mutável (testes).
+    pub fn backup_dialog_mut(&mut self) -> Option<&mut backup::BackupDialog> {
+        self.backup.as_mut()
+    }
+
+    fn backup_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.backup else {
+            return;
+        };
+        match dialog.show(ctx) {
+            None => {}
+            Some(backup::Request::Log(lines)) => self.output.extend(lines),
+            Some(backup::Request::Closed) => self.backup = None,
+        }
     }
 
     /// Janela de propriedades de segurança, para testes.

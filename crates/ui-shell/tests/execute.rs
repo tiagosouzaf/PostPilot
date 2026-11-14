@@ -962,3 +962,26 @@ fn permissions_without_changes_have_nothing_to_script() {
     assert!(harness.state().security_dialog().is_none());
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("BEGIN")));
 }
+
+#[test]
+fn tasks_back_up_opens_the_backup_window() {
+    let (mut harness, _) = harness_with_tables();
+    harness.get_by_label_contains(" app_01").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Tasks").hover();
+    harness.run();
+    harness.get_by_label("Back Up...").click();
+    harness.run_steps(4);
+    harness.get_by_label("Back Up Database - app_01");
+    let d = harness.state().backup_dialog().unwrap();
+    assert_eq!(d.options.database, "app_01");
+    assert!(d.options.file.ends_with("app_01.backup"));
+    // O servidor falso é 17.2: sem um pg_dump 17, a janela explica.
+    match d.tool() {
+        Ok(t) => assert!(t.version.0 >= 17),
+        Err(e) => assert!(e.contains("pg_dump"), "{e}"),
+    }
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(3);
+    assert!(harness.state().backup_dialog().is_none());
+}
