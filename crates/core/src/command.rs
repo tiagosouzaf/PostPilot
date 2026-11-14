@@ -88,6 +88,7 @@ commands! {
     Connect => "Query.Connect", "Connect…";
     Disconnect => "Query.Disconnect", "Disconnect";
     ChangeConnection => "Query.ChangeConnection", "Change Connection…";
+    ChangeDatabase => "Query.ChangeDatabase", "Change Database";
     Execute => "Query.Execute", "Execute";
     Parse => "Query.Parse", "Parse";
     DesignQuery => "Query.DesignQuery", "Design Query in Editor…";

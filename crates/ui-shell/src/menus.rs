@@ -119,6 +119,7 @@ pub const MENUS: &[Menu] = &[
                 "Connection",
                 &[I(Connect), I(Disconnect), I(ChangeConnection)],
             ),
+            I(ChangeDatabase),
             SEP,
             I(DesignQuery),
             SEP,
