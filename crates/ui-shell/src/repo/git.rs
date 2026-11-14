@@ -10,6 +10,7 @@
 //! Todas as chamadas podem demorar (rede), então a interface roda cada uma
 //! numa thread separada com [`Job`].
 
+use pgstudio_i18n::tr_noop;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -52,11 +53,11 @@ impl Change {
     /// Descrição curta, como no Team Explorer.
     pub fn kind(&self) -> &'static str {
         match self.code.as_str() {
-            "??" => "Added",
-            c if c.contains('D') => "Deleted",
-            c if c.contains('A') => "Added",
-            c if c.contains('R') => "Renamed",
-            _ => "Modified",
+            "??" => tr_noop("Added"),
+            c if c.contains('D') => tr_noop("Deleted"),
+            c if c.contains('A') => tr_noop("Added"),
+            c if c.contains('R') => tr_noop("Renamed"),
+            _ => tr_noop("Modified"),
         }
     }
 }

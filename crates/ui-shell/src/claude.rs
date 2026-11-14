@@ -12,6 +12,7 @@
 //! inteiro. Escrever no editor não pergunta: o texto entra selecionado e o
 //! Ctrl+Z desfaz. Cada chamada deixa uma linha na janela Output.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -174,9 +175,9 @@ impl ShellApp {
         if on {
             self.start_claude_code(ctx);
         } else if self.claude.listener.take().is_some() {
-            self.status = "Claude Code can no longer reach PostPilot.".to_string();
+            self.status = tr("Claude Code can no longer reach PostPilot.").to_string();
             self.output
-                .push("Claude Code: access turned off.".to_string());
+                .push(tr("Claude Code: access turned off.").to_string());
         }
         if let Some(path) = &self.claude.settings {
             let text = serde_json::to_string_pretty(&Settings {
@@ -198,21 +199,21 @@ impl ShellApp {
             return;
         }
         let Some(path) = self.claude.endpoint.clone() else {
-            self.status = "Claude Code access is not available in this mode.".to_string();
+            self.status = tr("Claude Code access is not available in this mode.").to_string();
             return;
         };
         let client = self.automation(ctx);
         match Listener::start(client, path) {
             Ok(l) => {
-                self.output.push(format!(
-                    "Claude Code: access on. Add it once with: claude mcp add postpilot -- postpilot mcp (channel {})",
-                    l.path().display()
+                self.output.push(trf!(
+                    "Claude Code: access on. Add it once with: claude mcp add postpilot -- postpilot mcp (channel {channel})",
+                    channel = l.path().display()
                 ));
-                self.status = "Claude Code can now use PostPilot.".to_string();
+                self.status = tr("Claude Code can now use PostPilot.").to_string();
                 self.claude.listener = Some(l);
             }
             Err(e) => {
-                let text = format!("Could not turn on Claude Code access: {e}");
+                let text = trf!("Could not turn on Claude Code access: {e}", e = e);
                 self.output.push(text.clone());
                 self.status = text;
             }
@@ -232,15 +233,15 @@ impl ShellApp {
         ui.separator();
         let busy = l.running() > 0 || self.claude.is_confirming();
         let text = if busy {
-            "Claude Code: working"
+            tr("Claude Code: working")
         } else {
-            "Claude Code: on"
+            tr("Claude Code: on")
         };
         ui.label(egui::RichText::new(text).color(color))
-            .on_hover_text(format!(
-                "Claude Code can use PostPilot through `postpilot mcp`. {} call(s) so far. \
+            .on_hover_text(trf!(
+                "Claude Code can use PostPilot through `postpilot mcp`. {calls} call(s) so far. \
              Turn it off in Tools > Allow Claude Code (MCP).",
-                l.calls()
+                calls = l.calls()
             ));
     }
 
@@ -259,19 +260,19 @@ impl ShellApp {
             return;
         };
         if !run {
-            self.output.push(format!(
-                "{}: you declined to run the SQL.",
-                c.origin.label()
+            self.output.push(trf!(
+                "{who}: you declined to run the SQL.",
+                who = c.origin.label()
             ));
             c.action.responder().send(Reply::error(
                 "The user declined to run this SQL in PostPilot.",
             ));
             return;
         }
-        self.output.push(format!(
-            "{}: you allowed: {}",
-            c.origin.label(),
-            one_line(&c.sql)
+        self.output.push(trf!(
+            "{who}: you allowed: {sql}",
+            who = c.origin.label(),
+            sql = one_line(&c.sql)
         ));
         match c.action {
             Confirmed::Sql {
@@ -405,8 +406,11 @@ impl ShellApp {
                 if safety.is_read_only() {
                     let collector = Collector::new(max_rows).wrapped();
                     let batch = read_only_batch(&sql);
-                    self.output
-                        .push(format!("{who}: run_query (read only): {}", one_line(&sql)));
+                    self.output.push(trf!(
+                        "{who}: run_query (read only): {sql}",
+                        who = who,
+                        sql = one_line(&sql)
+                    ));
                     self.claude_run_sql(
                         ctx,
                         origin,
@@ -418,15 +422,20 @@ impl ShellApp {
                         responder,
                     );
                 } else {
-                    self.output.push(format!(
-                        "{who}: run_query needs your confirmation: {}",
-                        one_line(&sql)
+                    self.output.push(trf!(
+                        "{who}: run_query needs your confirmation: {sql}",
+                        who = who,
+                        sql = one_line(&sql)
                     ));
                     self.claude.confirms.push_back(Confirmation {
                         origin,
                         sql,
                         safety,
-                        target: format!("{}, database {}", target.key, target.database),
+                        target: trf!(
+                            "{server}, database {database}",
+                            server = target.key,
+                            database = target.database
+                        ),
                         action: Confirmed::Sql {
                             queries: target.queries,
                             database: target.database,
@@ -455,8 +464,11 @@ impl ShellApp {
                             .get(id)
                             .map(|d| d.name().to_string())
                             .unwrap_or_default();
-                        self.output
-                            .push(format!("{who}: edited {title} (Ctrl+Z undoes it)"));
+                        self.output.push(trf!(
+                            "{who}: edited {title} (Ctrl+Z undoes it)",
+                            who = who,
+                            title = title
+                        ));
                         self.claude_edit_window(ctx, id, &text, mode)
                     }
                     Err(e) => Reply::error(e),
@@ -480,7 +492,8 @@ impl ShellApp {
                             .get(id)
                             .map(|d| d.name().to_string())
                             .unwrap_or_default();
-                        self.output.push(format!("{who}: opened {title}"));
+                        self.output
+                            .push(trf!("{who}: opened {title}", who = who, title = title));
                         Reply::ok(&json!({
                             "window": id,
                             "title": title,
@@ -514,21 +527,26 @@ impl ShellApp {
                 }
                 let safety = classify(&sql);
                 if safety.is_read_only() {
-                    self.output
-                        .push(format!("{who}: executing {} (read only)", doc.name()));
+                    self.output.push(trf!(
+                        "{who}: executing {title} (read only)",
+                        who = who,
+                        title = doc.name()
+                    ));
                     self.claude_start_window(ctx, id, max_rows, responder, origin);
                 } else {
-                    let target = format!(
-                        "query window {} ({})",
-                        doc.name(),
-                        self.document_servers()
+                    let target = trf!(
+                        "query window {title} ({server})",
+                        title = doc.name(),
+                        server = self
+                            .document_servers()
                             .get(&id)
                             .cloned()
                             .unwrap_or_default()
                     );
-                    self.output.push(format!(
-                        "{who}: executing {} needs your confirmation",
-                        doc.name()
+                    self.output.push(trf!(
+                        "{who}: executing {title} needs your confirmation",
+                        who = who,
+                        title = doc.name()
                     ));
                     self.claude.confirms.push_back(Confirmation {
                         origin,
@@ -627,10 +645,11 @@ impl ShellApp {
                         is_error: collector.failed(),
                     };
                     if let Some(done) = &done {
-                        let _ = done.send(format!(
-                            "{}: {tool} finished: {}",
-                            origin.label(),
-                            collector.summary()
+                        let _ = done.send(trf!(
+                            "{who}: {tool} finished: {summary}",
+                            who = origin.label(),
+                            tool = tool,
+                            summary = collector.summary()
                         ));
                     }
                     responder.send(reply);
@@ -695,10 +714,10 @@ impl ShellApp {
                 Some(_) if !w.armed => Reply::error("The user did not execute the query window."),
                 Some(exec) => {
                     let v = execution_json(exec, w.max_rows);
-                    self.output.push(format!(
-                        "{}: execution finished: {}",
-                        w.origin.label(),
-                        exec.outcome().label()
+                    self.output.push(trf!(
+                        "{who}: execution finished: {outcome}",
+                        who = w.origin.label(),
+                        outcome = exec.outcome().label()
                     ));
                     Reply {
                         is_error: v.get("error").is_some(),
@@ -719,9 +738,9 @@ impl ShellApp {
         let pending = self.claude.confirms.len();
         let modal = crate::theme::modal(egui::Id::new("claude_confirm")).show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.heading(format!("{} wants to run SQL", c.origin.label()));
+            ui.heading(trf!("{who} wants to run SQL", who = c.origin.label()));
             ui.label(c.safety.describe());
-            ui.label(format!("Where: {}", c.target));
+            ui.label(trf!("Where: {target}", target = c.target));
             ui.add_space(6.0);
             egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color)
@@ -740,14 +759,14 @@ impl ShellApp {
                         });
                 });
             if pending > 1 {
-                ui.label(format!("{} more request(s) waiting.", pending - 1));
+                ui.label(trf!("{n} more request(s) waiting.", n = pending - 1));
             }
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Don't Run").clicked() {
+                if ui.button(tr("Don't Run")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Run").clicked() {
+                if ui.button(tr("Run")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -915,7 +934,7 @@ impl ShellApp {
             });
         let last = d.execution.as_ref().map(|e| {
             json!({
-                "outcome": e.outcome().label(),
+                "outcome": e.outcome().english_label(),
                 "result_sets": e.results.len(),
                 "rows": e.total_rows(),
                 "errors": e.messages.iter().filter(|m| m.kind == MessageKind::Error).map(|m| m.text.clone()).collect::<Vec<_>>(),
@@ -1042,7 +1061,7 @@ fn execution_json(exec: &Execution, max_rows: usize) -> Value {
         .map(|m| m.text.clone())
         .collect();
     let mut v = json!({
-        "outcome": exec.outcome().label(),
+        "outcome": exec.outcome().english_label(),
         "database": exec.database,
         "elapsed_ms": exec.elapsed().as_millis() as u64,
         "results": results,
