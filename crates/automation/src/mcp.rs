@@ -264,6 +264,8 @@ mod tests {
             if tool == "run_query" {
                 // Espera a chamada rápida terminar, como uma confirmação.
                 let _ = rx.lock().unwrap().recv();
+                // A rápida já devolveu; dá tempo de ela escrever a resposta.
+                std::thread::sleep(std::time::Duration::from_millis(300));
             } else {
                 let _ = tx.send(());
             }

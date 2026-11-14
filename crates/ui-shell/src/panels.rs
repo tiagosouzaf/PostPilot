@@ -30,6 +30,8 @@ pub enum Panel {
     RegisteredServers,
     /// Workspace Explorer (Ctrl+Alt+L), como o Solution Explorer.
     WorkspaceExplorer,
+    /// Conversa com o Claude (marco 7.4).
+    Claude,
 }
 
 impl Panel {
@@ -51,6 +53,7 @@ impl Panel {
             Panel::EditRows(_) => "Edit Rows",
             Panel::RegisteredServers => "Registered Servers",
             Panel::WorkspaceExplorer => "Workspace Explorer",
+            Panel::Claude => "Claude",
         }
     }
 }
@@ -61,7 +64,7 @@ impl Pane for Panel {
             Panel::ObjectExplorer | Panel::RegisteredServers | Panel::WorkspaceExplorer => {
                 Area::Left
             }
-            Panel::Properties => Area::Right,
+            Panel::Properties | Panel::Claude => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
             | Panel::TableDesigner(_)
@@ -137,6 +140,10 @@ pub struct Viewer<'a> {
     pub workspace_panel: &'a mut crate::repo::panel::WorkspacePanel,
     /// Pedidos do Workspace Explorer.
     pub workspace_actions: Vec<crate::repo::panel::Action>,
+    /// Painel do Claude.
+    pub claude_panel: &'a mut crate::claude_panel::ClaudePanel,
+    /// Pedidos do painel do Claude.
+    pub claude_actions: Vec<crate::claude_panel::PanelAction>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -236,6 +243,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::WorkspaceExplorer => {
                 let actions = self.workspace_panel.show(ui, self.secrets);
                 self.workspace_actions.extend(actions);
+            }
+            Panel::Claude => {
+                let actions = self.claude_panel.show(ui);
+                self.claude_actions.extend(actions);
             }
             Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {

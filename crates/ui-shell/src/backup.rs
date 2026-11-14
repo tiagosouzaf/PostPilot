@@ -1,6 +1,7 @@
 //! "Back Up Database" (Tasks > Back Up...): as opções do `pg_dump`, o
 //! progresso e o cancelamento, numa janela como a do SSMS.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,11 +28,11 @@ impl Format {
     pub const ALL: [Format; 3] = [Format::Custom, Format::Plain, Format::Directory];
 
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Format::Custom => "Custom (pg_restore)",
             Format::Plain => "Plain SQL script",
             Format::Directory => "Directory",
-        }
+        })
     }
 
     fn flag(self) -> &'static str {
@@ -61,11 +62,11 @@ pub enum Content {
 
 impl Content {
     pub fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Content::Full => "Schema and data",
             Content::SchemaOnly => "Schema only",
             Content::DataOnly => "Data only",
-        }
+        })
     }
 }
 
@@ -258,10 +259,10 @@ impl BackupDialog {
             return Some(e.clone());
         }
         if self.options.file.trim().is_empty() {
-            return Some("Choose the destination file.".into());
+            return Some(tr("Choose the destination file.").into());
         }
         if self.choose_tables && self.options.tables.is_empty() {
-            return Some("Select at least one table, or back up the whole database.".into());
+            return Some(tr("Select at least one table, or back up the whole database.").into());
         }
         None
     }
@@ -282,16 +283,16 @@ impl BackupDialog {
             Ok(run) => {
                 self.phase = Phase::Running(run);
                 Some(Request::Log(vec![
-                    format!(
-                        "Back Up: {} to {}",
-                        self.options.database,
-                        self.options.file.trim()
+                    trf!(
+                        "Back Up: {database} to {file}",
+                        database = self.options.database,
+                        file = self.options.file.trim()
                     ),
                     format!("  {line}"),
                 ]))
             }
             Err(e) => {
-                self.error = Some(format!("pg_dump could not start: {e}"));
+                self.error = Some(trf!("pg_dump could not start: {e}", e = e));
                 None
             }
         }
@@ -329,8 +330,11 @@ impl BackupDialog {
         }
         if let Some(r) = done {
             log.push(match &r {
-                Ok(()) => format!("Back Up: completed ({}).", self.options.file.trim()),
-                Err(e) => format!("Back Up: failed ({e})."),
+                Ok(()) => trf!(
+                    "Back Up: completed ({file}).",
+                    file = self.options.file.trim()
+                ),
+                Err(e) => trf!("Back Up: failed ({e}).", e = e),
             });
             self.phase = Phase::Done(r);
         }
@@ -342,7 +346,10 @@ impl BackupDialog {
         let mut request = self.step();
         let modal = crate::theme::modal(egui::Id::new("backup_dialog")).show(ctx, |ui| {
             ui.set_width(640.0);
-            ui.heading(format!("Back Up Database - {}", self.options.database));
+            ui.heading(trf!(
+                "Back Up Database - {database}",
+                database = self.options.database
+            ));
             ui.separator();
             let editing = matches!(self.phase, Phase::Editing);
             ui.add_enabled_ui(editing, |ui| self.form(ui));
@@ -352,20 +359,23 @@ impl BackupDialog {
                 Phase::Running(_) => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Backing up...");
+                        ui.label(tr("Backing up..."));
                     });
                 }
                 Phase::Done(Ok(())) => {
                     ui.label(format!(
-                        "{} The backup of {} completed.",
+                        "{} {}",
                         egui_phosphor::regular::CHECK_CIRCLE,
-                        self.options.database
+                        trf!(
+                            "The backup of {database} completed.",
+                            database = self.options.database
+                        )
                     ));
                 }
                 Phase::Done(Err(e)) => {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        format!("The backup failed: {e}"),
+                        trf!("The backup failed: {e}", e = e),
                     );
                 }
             }
@@ -388,17 +398,21 @@ impl BackupDialog {
                 .phase
             {
                 Phase::Editing => {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         request = Some(Request::Closed);
                     }
                     let ok = self.tool.is_ok();
-                    if ui.add_enabled(ok, egui::Button::new("OK")).clicked() {
+                    if ui.add_enabled(ok, egui::Button::new(tr("OK"))).clicked() {
                         request = self.start(ctx).or(request.take());
                     }
                     if ui
                         .add_enabled(
                             ok,
-                            egui::Button::new(format!("{} Script", egui_phosphor::regular::SCROLL)),
+                            egui::Button::new(format!(
+                                "{} {}",
+                                egui_phosphor::regular::SCROLL,
+                                tr("Script")
+                            )),
                         )
                         .clicked()
                         && let Some(line) = self.command_line()
@@ -407,17 +421,17 @@ impl BackupDialog {
                         self.error = None;
                         self.progress = vec![line];
                         request = Some(Request::Log(vec![
-                            "Back Up: command line copied to the clipboard.".into(),
+                            tr("Back Up: command line copied to the clipboard.").into(),
                         ]));
                     }
                 }
                 Phase::Running(_) => {
-                    if ui.button("Stop").clicked() {
+                    if ui.button(tr("Stop")).clicked() {
                         self.cancel();
                     }
                 }
                 Phase::Done(_) => {
-                    if ui.button("Close").clicked() {
+                    if ui.button(tr("Close")).clicked() {
                         request = Some(Request::Closed);
                     }
                 }
@@ -434,23 +448,23 @@ impl BackupDialog {
             .num_columns(2)
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
-                ui.label("Database:");
+                ui.label(tr("Database:"));
                 ui.label(&self.options.database);
                 ui.end_row();
-                ui.label("pg_dump:");
+                ui.label(tr("pg_dump:"));
                 match &self.tool {
                     Ok(t) => ui.label(format!("{} ({})", t.path.display(), t.version_text())),
                     Err(e) => ui.colored_label(ui.visuals().warn_fg_color, e),
                 };
                 ui.end_row();
-                ui.label("Backup type:");
+                ui.label(tr("Backup type:"));
                 ui.horizontal(|ui| {
                     for c in [Content::Full, Content::SchemaOnly, Content::DataOnly] {
                         ui.radio_value(&mut self.options.content, c, c.label());
                     }
                 });
                 ui.end_row();
-                ui.label("Format:");
+                ui.label(tr("Format:"));
                 let before = self.options.format;
                 egui::ComboBox::from_id_salt("backup_format")
                     .selected_text(self.options.format.label())
@@ -465,14 +479,14 @@ impl BackupDialog {
                     self.options.file = default_file(&self.options.database, self.options.format);
                 }
                 ui.end_row();
-                ui.label("Back up to:");
+                ui.label(tr("Back up to:"));
                 ui.add(egui::TextEdit::singleline(&mut self.options.file).desired_width(440.0));
                 ui.end_row();
             });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.choose_tables, false, "Whole database");
-            ui.radio_value(&mut self.choose_tables, true, "Selected tables");
+            ui.radio_value(&mut self.choose_tables, false, tr("Whole database"));
+            ui.radio_value(&mut self.choose_tables, true, tr("Selected tables"));
         });
         if self.choose_tables {
             match &self.tables {
@@ -480,7 +494,7 @@ impl BackupDialog {
                     ui.spinner();
                 }
                 Some(tables) if tables.is_empty() => {
-                    ui.weak("The database has no tables.");
+                    ui.weak(tr("The database has no tables."));
                 }
                 Some(tables) => {
                     egui::ScrollArea::vertical()

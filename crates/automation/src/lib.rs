@@ -12,6 +12,7 @@
 //! PGStudio com o SQL. O que volta para o Claude passa pelo
 //! [`collect::Collector`], com limite de linhas e de bytes.
 
+pub mod agent;
 pub mod catalog;
 pub mod collect;
 pub mod endpoint;

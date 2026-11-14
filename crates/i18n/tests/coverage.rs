@@ -20,13 +20,6 @@ use pgstudio_i18n::{Language, catalog_keys, has_translation};
 const PENDING: &[&str] = &[
     "crates/ui-shell/src/update.rs",
     "crates/ui-shell/src/claude.rs",
-    "crates/ui-shell/src/backup.rs",
-    "crates/ui-shell/src/designer/dialogs.rs",
-    "crates/ui-shell/src/designer/mod.rs",
-    "crates/ui-shell/src/diagrams.rs",
-    "crates/ui-shell/src/query_designer.rs",
-    "crates/ui-shell/src/restore.rs",
-    "crates/ui-shell/src/schema_compare.rs",
 ];
 
 /// Pastas com código da interface.
@@ -39,6 +32,7 @@ const UI_DIRS: &[&str] = &[
     "crates/execution-plan/src",
     "crates/docking/src",
     "crates/diagram-engine/src",
+    "crates/schema-model/src",
 ];
 
 /// Arquivos que não são interface (medição, dados de demonstração).

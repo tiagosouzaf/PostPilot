@@ -2465,3 +2465,939 @@ msgstr "{path} já tem um workspace do PostPilot. Use Abrir Workspace."
 
 msgid "{path} is not a PostPilot workspace (no {file}). Use New Workspace to create one."
 msgstr "{path} não é um workspace do PostPilot (sem {file}). Use Novo Workspace para criar um."
+# Designer de Tabelas, diagramas e Designer de Consultas
+
+msgid "(Name)"
+msgstr "(Nome)"
+
+msgid "(default name)"
+msgstr "(nome padrão)"
+
+msgid "(new)"
+msgstr "(novo)"
+
+msgid "(none)"
+msgstr "(nenhum)"
+
+msgid "A column typed by hand: lower(name), price * 2, count(*)"
+msgstr "Uma coluna digitada à mão: lower(name), price * 2, count(*)"
+
+msgid "A constraint named {name} already exists."
+msgstr "Já existe uma restrição chamada {name}."
+
+msgid "A relationship needs the same number of columns on both sides."
+msgstr "Uma relação precisa do mesmo número de colunas nos dois lados."
+
+msgid "A table named {schema}.{name} already exists."
+msgstr "Já existe uma tabela chamada {schema}.{name}."
+
+msgid "A table needs at least one column."
+msgstr "Uma tabela precisa de pelo menos uma coluna."
+
+msgid "Add"
+msgstr "Adicionar"
+
+msgid "Add Check Constraint"
+msgstr "Adicionar Restrição de Verificação"
+
+msgid "Add Column"
+msgstr "Adicionar Coluna"
+
+msgid "Add Column {name}"
+msgstr "Adicionar Coluna {name}"
+
+msgid "Add Expression"
+msgstr "Adicionar Expressão"
+
+msgid "Add Index {name}"
+msgstr "Adicionar Índice {name}"
+
+msgid "Add Or Column"
+msgstr "Adicionar Coluna Ou"
+
+msgid "Add Relationship"
+msgstr "Adicionar Relação"
+
+msgid "Add Table"
+msgstr "Adicionar Tabela"
+
+msgid "Add Table {name}"
+msgstr "Adicionar Tabela {name}"
+
+msgid "Add Table..."
+msgstr "Adicionar Tabela..."
+
+msgid "Add Unique Key"
+msgstr "Adicionar Chave Exclusiva"
+
+msgid "Add column"
+msgstr "Adicionar coluna"
+
+msgid "Add tables of the database to the diagram"
+msgstr "Adiciona tabelas do banco de dados ao diagrama"
+
+msgid "Alias"
+msgstr "Alias"
+
+msgid "Allow Nulls"
+msgstr "Permitir Nulos"
+
+msgid "An index named {name} already exists in {schema}."
+msgstr "Já existe um índice chamado {name} em {schema}."
+
+msgid "An index needs at least one column."
+msgstr "Um índice precisa de pelo menos uma coluna."
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Arrange Tables"
+msgstr "Organizar Tabelas"
+
+msgid "Ascending"
+msgstr "Crescente"
+
+msgid "Avg"
+msgstr "Média"
+
+msgid "Change Check Constraint {name}"
+msgstr "Alterar Restrição de Verificação {name}"
+
+msgid "Change Column {name}"
+msgstr "Alterar Coluna {name}"
+
+msgid "Change Index {name}"
+msgstr "Alterar Índice {name}"
+
+msgid "Change Relationship {name}"
+msgstr "Alterar Relação {name}"
+
+msgid "Change Unique Key {name}"
+msgstr "Alterar Chave Exclusiva {name}"
+
+msgid "Check Constraints"
+msgstr "Restrições de Verificação"
+
+msgid "Check columns to select them; drag a column onto another to join."
+msgstr "Marque as colunas para selecioná-las; arraste uma coluna sobre outra para fazer a junção."
+
+msgid "Choose Add to create one."
+msgstr "Escolha Adicionar para criar uma."
+
+msgid "Choose at least one column."
+msgstr "Escolha pelo menos uma coluna."
+
+msgid "Clear"
+msgstr "Limpar"
+
+msgid "Close Without Saving"
+msgstr "Fechar Sem Salvar"
+
+msgid "Column Name"
+msgstr "Nome da Coluna"
+
+msgid "Column Properties"
+msgstr "Propriedades da Coluna"
+
+msgid "Column {column} will be deleted from {table}."
+msgstr "A coluna {column} será excluída de {table}."
+
+msgid "Column {c} does not exist in {table}."
+msgstr "A coluna {c} não existe em {table}."
+
+msgid "Column {name} already exists."
+msgstr "A coluna {name} já existe."
+
+msgid "Column {name} is in the primary key and cannot allow nulls."
+msgstr "A coluna {name} faz parte da chave primária e não pode permitir nulos."
+
+msgid "Columns (foreign key → primary key):"
+msgstr "Colunas (chave estrangeira → chave primária):"
+
+msgid "Columns (names or expressions):"
+msgstr "Colunas (nomes ou expressões):"
+
+msgid "Columns:"
+msgstr "Colunas:"
+
+msgid "Computed Column Specification"
+msgstr "Especificação de Coluna Computada"
+
+msgid "Constraint {name} does not exist."
+msgstr "A restrição {name} não existe."
+
+msgid "Could not write {path}: {e}"
+msgstr "Não foi possível gravar {path}: {e}"
+
+msgid "Count"
+msgstr "Contagem"
+
+msgid "Create a table in the database (applied on Save)"
+msgstr "Cria uma tabela no banco de dados (aplicada ao Salvar)"
+
+msgid "Data Type"
+msgstr "Tipo de Dados"
+
+msgid "Data might be lost converting column {column} of {table} from {from} to {to}."
+msgstr "Pode haver perda de dados ao converter a coluna {column} de {table} de {from} para {to}."
+
+msgid "Data types"
+msgstr "Tipos de dados"
+
+msgid "Database Diagram {number}: {count} statement(s) applied to {database}"
+msgstr "Diagrama de Banco de Dados {number}: {count} instrução(ões) aplicada(s) em {database}"
+
+msgid "Default Value or Binding"
+msgstr "Valor ou Associação Padrão"
+
+msgid "Delete Column"
+msgstr "Excluir Coluna"
+
+msgid "Delete Column {name}"
+msgstr "Excluir Coluna {name}"
+
+msgid "Delete Constraint {name}"
+msgstr "Excluir Restrição {name}"
+
+msgid "Delete Index {name}"
+msgstr "Excluir Índice {name}"
+
+msgid "Delete Table {name}"
+msgstr "Excluir Tabela {name}"
+
+msgid "Descending"
+msgstr "Decrescente"
+
+msgid "Distinct"
+msgstr "Distinto"
+
+msgid "Do you want to save anyway?"
+msgstr "Deseja salvar mesmo assim?"
+
+msgid "Expression"
+msgstr "Expressão"
+
+msgid "Filter"
+msgstr "Filtro"
+
+msgid "Filter (WHERE)"
+msgstr "Filtro (WHERE)"
+
+msgid "Foreign Key Relationships"
+msgstr "Relações de Chave Estrangeira"
+
+msgid "Foreign Key Table"
+msgstr "Tabela de Chave Estrangeira"
+
+msgid "Generate Change Script"
+msgstr "Gerar Script de Alteração"
+
+msgid "Group By"
+msgstr "Agrupar por"
+
+msgid "Identity Specification"
+msgstr "Especificação de Identidade"
+
+msgid "Index {name} does not exist."
+msgstr "O índice {name} não existe."
+
+msgid "Indexes/Keys"
+msgstr "Índices/Chaves"
+
+msgid "Is Unique"
+msgstr "É Exclusivo"
+
+msgid "Joins:"
+msgstr "Junções:"
+
+msgid "Limit"
+msgstr "Limite"
+
+msgid "Loading table..."
+msgstr "Carregando tabela..."
+
+msgid "Loading tables of {database}..."
+msgstr "Carregando tabelas de {database}..."
+
+msgid "Loading tables..."
+msgstr "Carregando tabelas..."
+
+msgid "Max"
+msgstr "Máx"
+
+msgid "Method"
+msgstr "Método"
+
+msgid "Min"
+msgstr "Mín"
+
+msgid "New Table"
+msgstr "Nova Tabela"
+
+msgid "No columns yet: check them in the tables above."
+msgstr "Nenhuma coluna ainda: marque-as nas tabelas acima."
+
+msgid "No tables to add."
+msgstr "Nenhuma tabela para adicionar."
+
+msgid "Not connected."
+msgstr "Não conectado."
+
+msgid "Nothing to redo."
+msgstr "Nada para refazer."
+
+msgid "Nothing to undo."
+msgstr "Nada para desfazer."
+
+msgid "Nothing was saved (the changes were rolled back): {e}"
+msgstr "Nada foi salvo (as alterações foram revertidas): {e}"
+
+msgid "Nothing was saved."
+msgstr "Nada foi salvo."
+
+msgid "Nothing was saved. The database refused the changes: {error}"
+msgstr "Nada foi salvo. O banco de dados recusou as alterações: {error}"
+
+msgid "On Delete"
+msgstr "Ao Excluir"
+
+msgid "On Update"
+msgstr "Ao Atualizar"
+
+msgid "Or..."
+msgstr "Ou..."
+
+msgid "Primary Key"
+msgstr "Chave Primária"
+
+msgid "Primary Key Table"
+msgstr "Tabela de Chave Primária"
+
+msgid "Query Designer"
+msgstr "Designer de Consultas"
+
+msgid "Redo {label}"
+msgstr "Refazer {label}"
+
+msgid "Relationships"
+msgstr "Relações"
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "Remove Primary Key"
+msgstr "Remover Chave Primária"
+
+msgid "Remove Table"
+msgstr "Remover Tabela"
+
+msgid "Remove from Diagram"
+msgstr "Remover do Diagrama"
+
+msgid "Remove from the grid"
+msgstr "Remover da grade"
+
+msgid "Rename Column {name}"
+msgstr "Renomear Coluna {name}"
+
+msgid "Rename Table {name}"
+msgstr "Renomear Tabela {name}"
+
+msgid "Save Change Script"
+msgstr "Salvar Script de Alteração"
+
+msgid "Save Diagram"
+msgstr "Salvar Diagrama"
+
+msgid "Saved to {path}."
+msgstr "Salvo em {path}."
+
+msgid "Saving the diagram runs these statements in one transaction:"
+msgstr "Salvar o diagrama executa estas instruções em uma transação:"
+
+msgid "Saving these changes might lose data:"
+msgstr "Salvar estas alterações pode causar perda de dados:"
+
+msgid "Select a column."
+msgstr "Selecione uma coluna."
+
+msgid "Selected:"
+msgstr "Selecionado:"
+
+msgid "Set Primary Key"
+msgstr "Definir Chave Primária"
+
+msgid "Sort Order"
+msgstr "Ordem de Classificação"
+
+msgid "Sort Type"
+msgstr "Tipo de Classificação"
+
+msgid "Sum"
+msgstr "Soma"
+
+msgid "Table Designer: saved {name}."
+msgstr "Designer de Tabelas: {name} salva."
+
+msgid "Table Designer: {name} was not saved: {e}"
+msgstr "Designer de Tabelas: {name} não foi salva: {e}"
+
+msgid "Table {schema}.{table} does not exist."
+msgstr "A tabela {schema}.{table} não existe."
+
+msgid "Table {table} will be deleted."
+msgstr "A tabela {table} será excluída."
+
+msgid "Table:"
+msgstr "Tabela:"
+
+msgid "The changes could not be saved."
+msgstr "Não foi possível salvar as alterações."
+
+msgid "The check expression is empty."
+msgstr "A expressão de verificação está vazia."
+
+msgid "The column no longer exists."
+msgstr "A coluna não existe mais."
+
+msgid "The data type is empty."
+msgstr "O tipo de dados está vazio."
+
+msgid "The model could not be loaded."
+msgstr "Não foi possível carregar o modelo."
+
+msgid "The name is empty."
+msgstr "O nome está vazio."
+
+msgid "The save was interrupted."
+msgstr "O salvamento foi interrompido."
+
+msgid "The snapshot is damaged ({e})."
+msgstr "O instantâneo está danificado ({e})."
+
+msgid "The snapshot was saved by a newer PostPilot (format {format})."
+msgstr "O instantâneo foi salvo por um PostPilot mais novo (formato {format})."
+
+msgid "The table could not be loaded."
+msgstr "Não foi possível carregar a tabela."
+
+msgid "The table is not loaded."
+msgstr "A tabela não está carregada."
+
+msgid "The table stays in the database"
+msgstr "A tabela continua no banco de dados"
+
+msgid "The tables could not be loaded."
+msgstr "Não foi possível carregar as tabelas."
+
+msgid "There are no changes to save."
+msgstr "Não há alterações para salvar."
+
+msgid "There are no changes to the database."
+msgstr "Não há alterações no banco de dados."
+
+msgid "These statements run in one transaction when the diagram is saved:"
+msgstr "Estas instruções são executadas em uma transação quando o diagrama é salvo:"
+
+msgid "These statements run in one transaction when {name} is saved:"
+msgstr "Estas instruções são executadas em uma transação quando {name} é salva:"
+
+msgid "These tables no longer exist and were left out: {tables}"
+msgstr "Estas tabelas não existem mais e foram deixadas de fora: {tables}"
+
+msgid "This is not a schema snapshot ({e})."
+msgstr "Este não é um instantâneo de esquema ({e})."
+
+msgid "Undo {label}"
+msgstr "Desfazer {label}"
+
+msgid "Unique Key"
+msgstr "Chave Exclusiva"
+
+msgid "Unsaved Changes"
+msgstr "Alterações Não Salvas"
+
+msgid "Unsorted"
+msgstr "Não classificado"
+
+msgid "Use Add Table to add tables to the query."
+msgstr "Use Adicionar Tabela para incluir tabelas na consulta."
+
+msgid "Use rename to change a column's name."
+msgstr "Use renomear para alterar o nome de uma coluna."
+
+msgid "Validation Warnings"
+msgstr "Avisos de Validação"
+
+msgid "Where"
+msgstr "Where"
+
+msgid "Zoom to Fit"
+msgstr "Ajustar à Janela"
+
+msgid "all rows from both"
+msgstr "todas as linhas de ambas"
+
+msgid "all rows from {a}"
+msgstr "todas as linhas de {a}"
+
+msgid "all rows from {b}"
+msgstr "todas as linhas de {b}"
+
+msgid "expression"
+msgstr "expressão"
+
+msgid "matching rows"
+msgstr "linhas correspondentes"
+
+msgid "new column"
+msgstr "nova coluna"
+
+msgid "{name} is longer than 63 bytes."
+msgstr "{name} tem mais de 63 bytes."
+
+msgid "{n} selected"
+msgstr "{n} selecionado(s)"
+
+msgid "{tables} tables, {relationships} relationships"
+msgstr "{tables} tabelas, {relationships} relações"
+
+msgid "{title} has changes that were not saved. Close it anyway?"
+msgstr "{title} tem alterações que não foram salvas. Fechar mesmo assim?"
+
+msgid "The diagram is empty. Use Add Table to show tables of the database, or New Table to create one."
+msgstr "O diagrama está vazio. Use Adicionar Tabela para mostrar tabelas do banco de dados ou Nova Tabela para criar uma."
+
+msgid "The selection stays in the editor; OK adds the designed query after it."
+msgstr "A seleção permanece no editor; OK adiciona a consulta criada depois dela."
+
+msgid "Another column of criteria: each column is ANDed, and the columns are ORed"
+msgstr "Outra coluna de critérios: cada coluna é combinada com AND, e as colunas entre si com OR"
+
+# Designer de Consultas
+
+msgid "e.g. > 10"
+msgstr "ex.: > 10"
+# Painel do Claude (marco 7.4)
+msgid "Claude"
+msgstr "Claude"
+
+msgid "Model: {model}"
+msgstr "Modelo: {model}"
+
+msgid "New chat"
+msgstr "Nova conversa"
+
+msgid "Start a new conversation"
+msgstr "Começar uma conversa nova"
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Ask about your databases, or ask for a query. Claude sees your servers, schema and query windows through PostPilot, and asks before changing anything."
+msgstr "Pergunte sobre seus bancos ou peça uma consulta. O Claude vê seus servidores, o esquema e as janelas de consulta pelo PostPilot, e pergunta antes de alterar qualquer coisa."
+
+msgid "Claude is working…"
+msgstr "O Claude está trabalhando…"
+
+msgid "Message Claude"
+msgstr "Mensagem para o Claude"
+
+msgid "Enter sends; Shift+Enter starts a new line"
+msgstr "Enter envia; Shift+Enter quebra a linha"
+
+msgid "Send"
+msgstr "Enviar"
+
+msgid "Uses your Claude Code sign-in. What Claude reads is sent to Anthropic."
+msgstr "Usa o login do seu Claude Code. O que o Claude lê é enviado à Anthropic."
+
+msgid "Insert into the active query window"
+msgstr "Inserir na janela de consulta ativa"
+
+msgid "Claude Code reported an error: {text}"
+msgstr "O Claude Code informou um erro: {text}"
+
+msgid "Claude Code stopped before answering. If it asks you to sign in, run `claude` in a terminal once."
+msgstr "O Claude Code parou antes de responder. Se ele pedir login, rode `claude` uma vez num terminal."
+
+msgid "Stopped."
+msgstr "Parado."
+
+msgid "Open a query window first, then press Insert again."
+msgstr "Abra uma janela de consulta e clique em Inserir de novo."
+
+msgid "Could not talk to Claude Code: {error}"
+msgstr "Não foi possível falar com o Claude Code: {error}"
+
+msgid "Could not open the local channel for Claude: {error}"
+msgstr "Não foi possível abrir o canal local para o Claude: {error}"
+
+msgid "Could not find the PostPilot program: {error}"
+msgstr "Não foi possível encontrar o programa do PostPilot: {error}"
+
+msgid "Could not start Claude Code ({program}): {error}"
+msgstr "Não foi possível iniciar o Claude Code ({program}): {error}"
+
+msgid "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path."
+msgstr "O Claude Code não foi encontrado. Instale-o (https://claude.com/claude-code), rode `claude` uma vez num terminal para fazer login e tente de novo. Se ele está instalado em outro lugar, ponha o caminho em PGSTUDIO_CLAUDE."
+
+msgid "Listed servers"
+msgstr "Listou os servidores"
+
+msgid "Listed databases"
+msgstr "Listou os bancos"
+
+msgid "Listed objects"
+msgstr "Listou os objetos"
+
+msgid "Read table"
+msgstr "Leu a tabela"
+
+msgid "Read function"
+msgstr "Leu a função"
+
+msgid "Ran query"
+msgstr "Rodou a consulta"
+
+msgid "Listed query windows"
+msgstr "Listou as janelas de consulta"
+
+msgid "Read query window"
+msgstr "Leu a janela de consulta"
+
+msgid "Edited query window"
+msgstr "Editou a janela de consulta"
+
+msgid "Opened query window"
+msgstr "Abriu uma janela de consulta"
+
+msgid "Executed query window"
+msgstr "Executou a janela de consulta"
+
+msgid "Read results"
+msgstr "Leu os resultados"
+
+# Backup, restauração e Schema Compare (lado da comparação)
+
+msgctxt "side"
+msgid "source"
+msgstr "de origem"
+
+msgctxt "side"
+msgid "target"
+msgstr "de destino"
+
+# Backup, restauração e Comparação de Esquemas
+
+msgid "A snapshot file cannot be changed."
+msgstr "Um arquivo de instantâneo não pode ser alterado."
+
+msgid "All"
+msgstr "Todos"
+
+msgid "Apply {count} statements to {target} in one transaction?"
+msgstr "Aplicar {count} instruções em {target} em uma transação?"
+
+msgid "Applying..."
+msgstr "Aplicando..."
+
+msgid "Back Up Database - {database}"
+msgstr "Fazer Backup do Banco de Dados - {database}"
+
+msgid "Back Up: command line copied to the clipboard."
+msgstr "Backup: linha de comando copiada para a área de transferência."
+
+msgid "Back Up: completed ({file})."
+msgstr "Backup: concluído ({file})."
+
+msgid "Back Up: failed ({e})."
+msgstr "Backup: falhou ({e})."
+
+msgid "Back Up: {database} to {file}"
+msgstr "Backup: {database} para {file}"
+
+msgid "Back up to:"
+msgstr "Fazer backup em:"
+
+msgid "Backing up..."
+msgstr "Fazendo backup..."
+
+msgid "Backup file:"
+msgstr "Arquivo de backup:"
+
+msgid "Backup type:"
+msgstr "Tipo de backup:"
+
+msgid "Browse..."
+msgstr "Procurar..."
+
+msgid "Choose a database to save as a snapshot."
+msgstr "Escolha um banco de dados para salvar como instantâneo."
+
+msgid "Choose a database to save."
+msgstr "Escolha um banco de dados para salvar."
+
+msgid "Choose the backup file."
+msgstr "Escolha o arquivo de backup."
+
+msgid "Choose the destination database."
+msgstr "Escolha o banco de dados de destino."
+
+msgid "Choose the destination file."
+msgstr "Escolha o arquivo de destino."
+
+msgid "Choose the source and the target and press Compare."
+msgstr "Escolha a origem e o destino e pressione Comparar."
+
+msgid "Choose the {what} database."
+msgstr "Escolha o banco de dados {what}."
+
+msgid "Choose the {what} snapshot file."
+msgstr "Escolha o arquivo de instantâneo {what}."
+
+msgid "Compare"
+msgstr "Comparar"
+
+msgid "Comparing..."
+msgstr "Comparando..."
+
+msgid "Contents: {chosen} of {total} items selected"
+msgstr "Conteúdo: {chosen} de {total} itens selecionados"
+
+msgid "Custom (pg_restore)"
+msgstr "Personalizado (pg_restore)"
+
+msgid "Data only"
+msgstr "Somente dados"
+
+msgid "Database named in the file (--create)"
+msgstr "Banco de dados indicado no arquivo (--create)"
+
+msgid "Destination:"
+msgstr "Destino:"
+
+msgid "Different"
+msgstr "Diferente"
+
+msgid "Directory"
+msgstr "Diretório"
+
+msgid "Do not restore the owners (--no-owner)"
+msgstr "Não restaurar os proprietários (--no-owner)"
+
+msgid "Drop the objects before recreating them (--clean)"
+msgstr "Descartar os objetos antes de recriá-los (--clean)"
+
+msgid "Enter the {what} database."
+msgstr "Informe o banco de dados {what}."
+
+msgid "Existing database"
+msgstr "Banco de dados existente"
+
+msgid "File (.{extension})"
+msgstr "Arquivo (.{extension})"
+
+msgid "Format:"
+msgstr "Formato:"
+
+msgid "Generate Script"
+msgstr "Gerar Script"
+
+msgid "List Contents"
+msgstr "Listar Conteúdo"
+
+msgid "List the contents of the file first."
+msgstr "Liste o conteúdo do arquivo primeiro."
+
+msgid "Login"
+msgstr "Logon"
+
+msgid "Name the new database."
+msgstr "Dê um nome ao novo banco de dados."
+
+msgid "New database"
+msgstr "Novo banco de dados"
+
+msgid "None"
+msgstr "Nenhum"
+
+msgid "Nothing was changed: {e}"
+msgstr "Nada foi alterado: {e}"
+
+msgid "Only in source"
+msgstr "Somente na origem"
+
+msgid "Only in target"
+msgstr "Somente no destino"
+
+msgid "Options:"
+msgstr "Opções:"
+
+msgid "Other server"
+msgstr "Outro servidor"
+
+msgid "Plain SQL script"
+msgstr "Script SQL simples"
+
+msgid "Reading the backup file..."
+msgstr "Lendo o arquivo de backup..."
+
+msgid "Restore Database"
+msgstr "Restaurar Banco de Dados"
+
+msgid "Restore in a single transaction"
+msgstr "Restaurar em uma única transação"
+
+msgid "Restore: command line copied to the clipboard."
+msgstr "Restauração: linha de comando copiada para a área de transferência."
+
+msgid "Restore: completed."
+msgstr "Restauração: concluída."
+
+msgid "Restore: failed ({e})."
+msgstr "Restauração: falhou ({e})."
+
+msgid "Restore: {e}"
+msgstr "Restauração: {e}"
+
+msgid "Restore: {file} to {database}"
+msgstr "Restauração: {file} para {database}"
+
+msgid "Restoring..."
+msgstr "Restaurando..."
+
+msgid "Save Snapshot..."
+msgstr "Salvar Instantâneo..."
+
+msgid "Saved the snapshot of {line}."
+msgstr "Instantâneo de {line} salvo."
+
+msgid "Saving the snapshot..."
+msgstr "Salvando o instantâneo..."
+
+msgid "Schema Compare"
+msgstr "Comparação de Esquemas"
+
+msgid "Schema Compare: applied {count} statements to {label}."
+msgstr "Comparação de Esquemas: {count} instruções aplicadas em {label}."
+
+msgid "Schema Compare: changes that make {target} like {source}."
+msgstr "Comparação de Esquemas: alterações que deixam {target} igual a {source}."
+
+msgid "Schema Compare: failed ({e})."
+msgstr "Comparação de Esquemas: falhou ({e})."
+
+msgid "Schema Compare: saved the snapshot of {line}."
+msgstr "Comparação de Esquemas: instantâneo de {line} salvo."
+
+msgid "Schema Compare: the changes were rolled back ({e})."
+msgstr "Comparação de Esquemas: as alterações foram revertidas ({e})."
+
+msgid "Schema Compare: the script was saved to {path}."
+msgstr "Comparação de Esquemas: o script foi salvo em {path}."
+
+msgid "Schema Compare: {source} to {target}: {differences} differences, {equal} equal."
+msgstr "Comparação de Esquemas: {source} com {target}: {differences} diferenças, {equal} iguais."
+
+msgid "Schema and data"
+msgstr "Esquema e dados"
+
+msgid "Schema only"
+msgstr "Somente esquema"
+
+msgid "Select a difference to see its script."
+msgstr "Selecione uma diferença para ver o script."
+
+msgid "Select at least one difference."
+msgstr "Selecione pelo menos uma diferença."
+
+msgid "Select at least one item to restore."
+msgstr "Selecione pelo menos um item para restaurar."
+
+msgid "Select at least one table, or back up the whole database."
+msgstr "Selecione pelo menos uma tabela ou faça backup do banco de dados inteiro."
+
+msgid "Selected tables"
+msgstr "Tabelas selecionadas"
+
+msgid "Server name"
+msgstr "Nome do servidor"
+
+msgid "Snapshot file"
+msgstr "Arquivo de instantâneo"
+
+msgid "Source:"
+msgstr "Origem:"
+
+msgid "Target:"
+msgstr "Destino:"
+
+msgid "The backup failed: {e}"
+msgstr "O backup falhou: {e}"
+
+msgid "The backup of {database} completed."
+msgstr "O backup de {database} foi concluído."
+
+msgid "The changes were applied to {label}."
+msgstr "As alterações foram aplicadas em {label}."
+
+msgid "The database has no tables."
+msgstr "O banco de dados não tem tabelas."
+
+msgid "The file could not be read ({e})."
+msgstr "Não foi possível ler o arquivo ({e})."
+
+msgid "The list of items could not be written: {e}"
+msgstr "Não foi possível gravar a lista de itens: {e}"
+
+msgid "The restore failed: {e}"
+msgstr "A restauração falhou: {e}"
+
+msgid "The schemas are equal ({count} objects compared)."
+msgstr "Os esquemas são iguais ({count} objetos comparados)."
+
+msgid "The script was saved to {path}."
+msgstr "O script foi salvo em {path}."
+
+msgid "The snapshot was not saved: {e}"
+msgstr "O instantâneo não foi salvo: {e}"
+
+msgid "The source and the target are the same database."
+msgstr "A origem e o destino são o mesmo banco de dados."
+
+msgid "The target is a snapshot file; generate a script instead."
+msgstr "O destino é um arquivo de instantâneo; gere um script."
+
+msgid "This build cannot connect to other servers."
+msgstr "Esta versão não pode se conectar a outros servidores."
+
+msgid "Whole database"
+msgstr "Banco de dados inteiro"
+
+msgid "custom or directory backup"
+msgstr "backup personalizado ou de diretório"
+
+msgid "pg_dump could not start: {e}"
+msgstr "Não foi possível iniciar o pg_dump: {e}"
+
+msgid "pg_dump:"
+msgstr "pg_dump:"
+
+msgid "pg_restore could not start: {e}"
+msgstr "Não foi possível iniciar o pg_restore: {e}"
+
+msgid "pg_restore:"
+msgstr "pg_restore:"
+
+msgid "the database named in the file"
+msgstr "o banco de dados indicado no arquivo"
+
+msgid "{differences} differences, {selected} selected ({equal} objects equal)"
+msgstr "{differences} diferenças, {selected} selecionadas ({equal} objetos iguais)"
+
+msgid "{source} to {file}"
+msgstr "{source} para {file}"
+
+msgid "{what} server: {e}"
+msgstr "Servidor {what}: {e}"

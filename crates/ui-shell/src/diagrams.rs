@@ -9,6 +9,7 @@
 //! aplicar no banco numa transação, e grava o diagrama (quais tabelas, onde
 //! e o zoom) num arquivo `.pgsdiagram`, que File > Open abre de novo.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -396,7 +397,7 @@ impl DiagramView {
                 Ok(Err(e)) => self.state = State::Failed(e.0),
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
-                    self.state = State::Failed("The model could not be loaded.".to_string());
+                    self.state = State::Failed(tr("The model could not be loaded.").to_string());
                 }
             }
         }
@@ -406,10 +407,13 @@ impl DiagramView {
                     self.base = model.clone();
                     self.doc.history.clear();
                     self.log.push(format!(
-                        "-- Database Diagram {}: {} statement(s) applied to {}",
-                        self.number,
-                        ddl.len(),
-                        self.database
+                        "-- {}",
+                        trf!(
+                            "Database Diagram {number}: {count} statement(s) applied to {database}",
+                            number = self.number,
+                            count = ddl.len(),
+                            database = self.database
+                        )
                     ));
                     self.log.extend(ddl.iter().cloned());
                     self.refresh.clone_from(&self.node);
@@ -417,15 +421,15 @@ impl DiagramView {
                     self.write_file();
                 }
                 Ok(Err(e)) => {
-                    self.notice = Some(Notice::Error(format!(
-                        "Nothing was saved. The database refused the changes: {}",
-                        e.0
+                    self.notice = Some(Notice::Error(trf!(
+                        "Nothing was saved. The database refused the changes: {error}",
+                        error = e.0
                     )));
                     self.saving = None;
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
-                    self.notice = Some(Notice::Error("The save was interrupted.".into()));
+                    self.notice = Some(Notice::Error(tr("The save was interrupted.").into()));
                     self.saving = None;
                 }
             }
@@ -474,9 +478,9 @@ impl DiagramView {
         };
         self.diagram.keep_camera();
         if !missing.is_empty() {
-            self.notice = Some(Notice::Info(format!(
-                "These tables no longer exist and were left out: {}",
-                missing.join(", ")
+            self.notice = Some(Notice::Info(trf!(
+                "These tables no longer exist and were left out: {tables}",
+                tables = missing.join(", ")
             )));
         }
     }
@@ -713,7 +717,7 @@ impl DiagramView {
             return;
         }
         let Some(provider) = self.provider.clone() else {
-            self.notice = Some(Notice::Error("Not connected.".into()));
+            self.notice = Some(Notice::Error(tr("Not connected.").into()));
             return;
         };
         let (tx, rx) = channel();
@@ -724,7 +728,7 @@ impl DiagramView {
             let _ = tx.send(provider.apply_ddl(&db, &statements));
             repaint.request_repaint();
         });
-        self.notice = Some(Notice::Info("Saving...".into()));
+        self.notice = Some(Notice::Info(tr("Saving...").into()));
         self.saving = Some((rx, self.doc.model.clone(), script.statements));
     }
 
@@ -736,12 +740,16 @@ impl DiagramView {
         match std::fs::write(path, text) {
             Ok(()) => {
                 self.layout_dirty = false;
-                self.notice = Some(Notice::Info(format!("Saved to {}.", path.display())));
+                self.notice = Some(Notice::Info(trf!(
+                    "Saved to {path}.",
+                    path = path.display()
+                )));
             }
             Err(e) => {
-                self.notice = Some(Notice::Error(format!(
-                    "Could not write {}: {e}",
-                    path.display()
+                self.notice = Some(Notice::Error(trf!(
+                    "Could not write {path}: {e}",
+                    path = path.display(),
+                    e = e
                 )));
             }
         }
@@ -775,7 +783,7 @@ impl DiagramView {
             State::Loading(_) => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Loading tables...");
+                    ui.label(tr("Loading tables..."));
                 });
                 return;
             }
@@ -802,10 +810,10 @@ impl DiagramView {
         if self.diagram.nodes.is_empty() {
             ui.add_space(20.0);
             ui.vertical_centered(|ui| {
-                ui.weak(
+                ui.weak(tr(
                     "The diagram is empty. Use Add Table to show tables of the database, \
                      or New Table to create one.",
-                );
+                ));
             });
         } else {
             self.diagram.show(ui);
@@ -831,15 +839,15 @@ impl DiagramView {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button(format!("{} Add Table...", icon::PLUS))
-                .on_hover_text("Add tables of the database to the diagram")
+                .button(format!("{} {}", icon::PLUS, tr("Add Table...")))
+                .on_hover_text(tr("Add tables of the database to the diagram"))
                 .clicked()
             {
                 self.open_picker();
             }
             if ui
-                .button(format!("{} New Table", icon::TABLE))
-                .on_hover_text("Create a table in the database (applied on Save)")
+                .button(format!("{} {}", icon::TABLE, tr("New Table")))
+                .on_hover_text(tr("Create a table in the database (applied on Save)"))
                 .clicked()
             {
                 self.new_table();
@@ -848,7 +856,7 @@ impl DiagramView {
             if ui
                 .add_enabled(
                     selected,
-                    egui::Button::new(format!("{} Add Column", icon::COLUMNS)),
+                    egui::Button::new(format!("{} {}", icon::COLUMNS, tr("Add Column"))),
                 )
                 .clicked()
             {
@@ -857,9 +865,9 @@ impl DiagramView {
             if ui
                 .add_enabled(
                     selected,
-                    egui::Button::new(format!("{} Remove from Diagram", icon::X)),
+                    egui::Button::new(format!("{} {}", icon::X, tr("Remove from Diagram"))),
                 )
-                .on_hover_text("The table stays in the database")
+                .on_hover_text(tr("The table stays in the database"))
                 .clicked()
             {
                 self.remove_selected();
@@ -871,13 +879,13 @@ impl DiagramView {
                 undo.is_some(),
                 egui::Button::new(icon::ARROW_COUNTER_CLOCKWISE),
             );
-            if b.on_hover_text(format!("Undo {}", undo.unwrap_or_default()))
+            if b.on_hover_text(trf!("Undo {label}", label = undo.unwrap_or_default()))
                 .clicked()
             {
                 self.undo();
             }
             let b = ui.add_enabled(redo.is_some(), egui::Button::new(icon::ARROW_CLOCKWISE));
-            if b.on_hover_text(format!("Redo {}", redo.unwrap_or_default()))
+            if b.on_hover_text(trf!("Redo {label}", label = redo.unwrap_or_default()))
                 .clicked()
             {
                 self.redo();
@@ -887,7 +895,7 @@ impl DiagramView {
             if ui
                 .add_enabled(
                     has,
-                    egui::Button::new(format!("{} Arrange Tables", icon::GRID_FOUR)),
+                    egui::Button::new(format!("{} {}", icon::GRID_FOUR, tr("Arrange Tables"))),
                 )
                 .clicked()
             {
@@ -897,7 +905,7 @@ impl DiagramView {
             if ui
                 .add_enabled(
                     has,
-                    egui::Button::new(format!("{} Zoom to Fit", icon::CORNERS_OUT)),
+                    egui::Button::new(format!("{} {}", icon::CORNERS_OUT, tr("Zoom to Fit"))),
                 )
                 .clicked()
             {
@@ -906,15 +914,15 @@ impl DiagramView {
             ui.label(format!("{:.0}%", self.diagram.camera.zoom * 100.0));
             ui.add_space(6.0);
             if ui
-                .button(format!("{} Generate Change Script", icon::SCROLL))
+                .button(format!("{} {}", icon::SCROLL, tr("Generate Change Script")))
                 .clicked()
             {
                 self.generate_change_script();
             }
-            ui.weak(format!(
-                "{} tables, {} relationships",
-                self.diagram.nodes.len(),
-                self.diagram.edges.len()
+            ui.weak(trf!(
+                "{tables} tables, {relationships} relationships",
+                tables = self.diagram.nodes.len(),
+                relationships = self.diagram.edges.len()
             ));
         });
     }
@@ -943,7 +951,7 @@ impl DiagramView {
         };
         let save = script.save;
         let mut text = if script.statements.is_empty() {
-            "-- There are no changes to the database.".to_string()
+            format!("-- {}", tr("There are no changes to the database."))
         } else {
             script.statements.join("\n")
         };
@@ -951,14 +959,14 @@ impl DiagramView {
         let modal = crate::theme::modal(egui::Id::new(("diagram_script", id))).show(ctx, |ui| {
             ui.set_width(560.0);
             ui.heading(if save {
-                "Save Diagram"
+                tr("Save Diagram")
             } else {
-                "Save Change Script"
+                tr("Save Change Script")
             });
             ui.label(if save {
-                "Saving the diagram runs these statements in one transaction:"
+                tr("Saving the diagram runs these statements in one transaction:")
             } else {
-                "These statements run in one transaction when the diagram is saved:"
+                tr("These statements run in one transaction when the diagram is saved:")
             });
             egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
                 ui.add(
@@ -970,13 +978,13 @@ impl DiagramView {
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if save {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         answer = Some(false);
                     }
-                    if ui.button("Save").clicked() {
+                    if ui.button(tr("Save")).clicked() {
                         answer = Some(true);
                     }
-                } else if ui.button("Close").clicked() {
+                } else if ui.button(tr("Close")).clicked() {
                     answer = Some(false);
                 }
             });
@@ -997,17 +1005,17 @@ impl DiagramView {
         let title = self.title();
         let modal = crate::theme::modal(egui::Id::new(("diagram_close", id))).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.heading("Unsaved Changes");
-            ui.label(format!(
-                "{} has changes that were not saved. Close it anyway?",
-                title.trim_end_matches('*')
+            ui.heading(tr("Unsaved Changes"));
+            ui.label(trf!(
+                "{title} has changes that were not saved. Close it anyway?",
+                title = title.trim_end_matches('*')
             ));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Close Without Saving").clicked() {
+                if ui.button(tr("Close Without Saving")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -1032,9 +1040,9 @@ pub(crate) fn table_picker(
     let mut answer = None;
     let modal = crate::theme::modal(id).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.heading("Add Table");
+        ui.heading(tr("Add Table"));
         ui.horizontal(|ui| {
-            ui.label("Filter:");
+            ui.label(tr("Filter:"));
             let filter =
                 ui.add(egui::TextEdit::singleline(&mut picker.filter).desired_width(f32::INFINITY));
             if !picker.focused {
@@ -1060,25 +1068,28 @@ pub(crate) fn table_picker(
                     }
                 });
             if candidates.is_empty() {
-                ui.weak("No tables to add.");
+                ui.weak(tr("No tables to add."));
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("Select All").clicked() {
+            if ui.button(tr("Select All")).clicked() {
                 picker.checked.extend(candidates.iter().map(|(t, _)| *t));
             }
-            if ui.button("Clear").clicked() {
+            if ui.button(tr("Clear")).clicked() {
                 picker.checked.clear();
             }
-            ui.weak(format!("{} selected", picker.checked.len()));
+            ui.weak(trf!("{n} selected", n = picker.checked.len()));
         });
         ui.add_space(6.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Close").clicked() {
+            if ui.button(tr("Close")).clicked() {
                 answer = Some(false);
             }
             let n = picker.checked.len();
-            if ui.add_enabled(n > 0, egui::Button::new("Add")).clicked() {
+            if ui
+                .add_enabled(n > 0, egui::Button::new(tr("Add")))
+                .clicked()
+            {
                 answer = Some(true);
             }
         });
