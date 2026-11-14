@@ -43,6 +43,9 @@ commands! {
     NewQuery => "File.NewQuery", "Query with Current Connection";
     NewDatabaseEngineQuery => "File.NewDatabaseEngineQuery", "Database Engine Query";
     OpenFile => "File.OpenFile", "File…";
+    NewWorkspace => "File.NewWorkspace", "Workspace…";
+    OpenWorkspace => "File.OpenWorkspace", "Workspace…";
+    CloseWorkspace => "File.CloseWorkspace", "Close Workspace";
     CloseDocument => "File.Close", "Close";
     Save => "File.Save", "Save";
     SaveAs => "File.SaveAs", "Save As…";
@@ -72,6 +75,7 @@ commands! {
     ObjectExplorer => "View.ObjectExplorer", "Object Explorer";
     ObjectExplorerDetails => "View.ObjectExplorerDetails", "Object Explorer Details";
     RegisteredServers => "View.RegisteredServers", "Registered Servers";
+    WorkspaceExplorer => "View.WorkspaceExplorer", "Workspace Explorer";
     TemplateExplorer => "View.TemplateExplorer", "Template Explorer";
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";
@@ -107,7 +111,7 @@ commands! {
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";
     // Help
     ViewHelp => "Help.ViewHelp", "View Help";
-    About => "Help.About", "About PGStudio";
+    About => "Help.About", "About PostPilot";
 }
 
 impl CommandId {

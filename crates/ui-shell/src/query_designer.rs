@@ -10,8 +10,13 @@
 //!
 //! É de mão dupla (marco 5.5): com um SELECT selecionado no editor, o
 //! designer abre com ele montado ([`read`]) e o OK troca a seleção pelo SQL
-//! novo. O que ele não sabe mostrar (CTE, subconsulta, UNION, LEFT JOIN...)
-//! vira um aviso, e aí o OK põe a consulta depois da seleção, sem apagá-la.
+//! novo. O que ele não sabe mostrar (CTE, subconsulta, UNION...) vira um
+//! aviso, e aí o OK põe a consulta depois da seleção, sem apagá-la.
+//!
+//! Desde o marco 6.1 ele também desenha o que o SSMS desenha: JOINs
+//! externos (as propriedades do JOIN, "all rows from"), DISTINCT, LIMIT (o
+//! Top do SSMS), HAVING (filtro numa coluna agregada), OR (as colunas Or...
+//! da grade), expressões no lugar de colunas e `count(*)`.
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -35,14 +40,81 @@ pub struct QueryTable {
     pub alias: String,
 }
 
-/// Um `INNER JOIN` entre as tabelas `left` e `right` (índices em
-/// [`Query::tables`]), com os pares de colunas (esquerda,
-/// direita).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Um JOIN entre as tabelas `left` e `right` (índices em
+/// [`Query::tables`]), com os pares de colunas (esquerda, direita).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Join {
     pub left: usize,
     pub right: usize,
     pub on: Vec<(String, String)>,
+    /// "Select All Rows from" a tabela `left` (como nas propriedades do
+    /// JOIN no SSMS).
+    pub all_left: bool,
+    /// "Select All Rows from" a tabela `right`.
+    pub all_right: bool,
+}
+
+impl Join {
+    /// O tipo do JOIN no SQL, que entra na tabela que vem depois no FROM.
+    pub fn kind(&self) -> JoinKind {
+        let (all_first, all_second) = if self.left < self.right {
+            (self.all_left, self.all_right)
+        } else {
+            (self.all_right, self.all_left)
+        };
+        match (all_first, all_second) {
+            (false, false) => JoinKind::Inner,
+            (true, false) => JoinKind::Left,
+            (false, true) => JoinKind::Right,
+            (true, true) => JoinKind::Full,
+        }
+    }
+
+    /// Muda os "all rows from" para dar o tipo `kind`, em relação à ordem
+    /// das tabelas no FROM.
+    pub fn set_kind(&mut self, kind: JoinKind) {
+        let (first, second) = match kind {
+            JoinKind::Inner => (false, false),
+            JoinKind::Left => (true, false),
+            JoinKind::Right => (false, true),
+            JoinKind::Full => (true, true),
+        };
+        if self.left < self.right {
+            (self.all_left, self.all_right) = (first, second);
+        } else {
+            (self.all_right, self.all_left) = (first, second);
+        }
+    }
+}
+
+/// O tipo de um JOIN, em relação à ordem das tabelas no FROM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JoinKind {
+    #[default]
+    Inner,
+    /// Todas as linhas da tabela que vem antes.
+    Left,
+    /// Todas as linhas da tabela que vem depois.
+    Right,
+    Full,
+}
+
+impl JoinKind {
+    pub const ALL: [JoinKind; 4] = [
+        JoinKind::Inner,
+        JoinKind::Left,
+        JoinKind::Right,
+        JoinKind::Full,
+    ];
+
+    pub fn sql(self) -> &'static str {
+        match self {
+            JoinKind::Inner => "INNER JOIN",
+            JoinKind::Left => "LEFT JOIN",
+            JoinKind::Right => "RIGHT JOIN",
+            JoinKind::Full => "FULL JOIN",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -81,10 +153,13 @@ pub enum Aggregate {
     Max,
     /// Só filtra (vai para o WHERE), fora do GROUP BY e da saída.
     Where,
+    /// Vai para a saída como está, fora do GROUP BY: uma expressão que já
+    /// agrega (`sum(a) / count(*)`), como o "Expression" do SSMS.
+    Expression,
 }
 
 impl Aggregate {
-    pub const ALL: [Aggregate; 7] = [
+    pub const ALL: [Aggregate; 8] = [
         Aggregate::GroupBy,
         Aggregate::Count,
         Aggregate::Sum,
@@ -92,6 +167,7 @@ impl Aggregate {
         Aggregate::Min,
         Aggregate::Max,
         Aggregate::Where,
+        Aggregate::Expression,
     ];
 
     pub fn label(self) -> &'static str {
@@ -103,12 +179,13 @@ impl Aggregate {
             Aggregate::Min => "Min",
             Aggregate::Max => "Max",
             Aggregate::Where => "Where",
+            Aggregate::Expression => "Expression",
         }
     }
 
     fn function(self) -> Option<&'static str> {
         match self {
-            Aggregate::GroupBy | Aggregate::Where => None,
+            Aggregate::GroupBy | Aggregate::Where | Aggregate::Expression => None,
             Aggregate::Count => Some("count"),
             Aggregate::Sum => Some("sum"),
             Aggregate::Avg => Some("avg"),
@@ -132,8 +209,45 @@ pub struct Row {
     /// Ordem entre as colunas ordenadas (1 primeiro); 0 segue a da grade.
     pub sort_order: u32,
     /// Condição do WHERE: `> 10`, `LIKE 'a%'`; sem operador vira `= ...`.
+    /// Numa coluna agregada (Count, Sum...), vai para o HAVING.
     pub filter: String,
+    /// As colunas Or... da grade: cada coluna de critérios é um grupo
+    /// ligado por AND, e os grupos se ligam por OR.
+    pub or: Vec<String>,
     pub aggregate: Aggregate,
+    /// `column` é uma expressão SQL (`lower(nome)`, `*`), não uma coluna
+    /// de `table`, que fica sem uso.
+    pub expression: bool,
+}
+
+impl Row {
+    /// O critério da coluna `k` da grade (0 é Filter, 1 o primeiro Or...).
+    pub fn criterion(&self, k: usize) -> &str {
+        match k {
+            0 => &self.filter,
+            k => self.or.get(k - 1).map_or("", String::as_str),
+        }
+    }
+
+    /// O critério da coluna `k`, para escrever.
+    pub fn criterion_mut(&mut self, k: usize) -> &mut String {
+        if k == 0 {
+            return &mut self.filter;
+        }
+        if self.or.len() < k {
+            self.or.resize(k, String::new());
+        }
+        &mut self.or[k - 1]
+    }
+
+    fn has_criteria(&self) -> bool {
+        !self.filter.trim().is_empty() || self.or.iter().any(|c| !c.trim().is_empty())
+    }
+
+    /// Filtro que vai para o HAVING (coluna agregada), não para o WHERE.
+    fn in_having(&self, group_by: bool) -> bool {
+        group_by && !matches!(self.aggregate, Aggregate::GroupBy | Aggregate::Where)
+    }
 }
 
 /// As consultas montadas pelo designer, sem a parte de tela (para testar).
@@ -144,6 +258,12 @@ pub struct Query {
     pub rows: Vec<Row>,
     /// Group By ligado: cada linha ganha um [`Aggregate`].
     pub group_by: bool,
+    /// `SELECT DISTINCT` ("Distinct Values" no SSMS).
+    pub distinct: bool,
+    /// `LIMIT n` (o "Top" do SSMS).
+    pub limit: Option<u64>,
+    /// Quantas colunas Or... a grade mostra.
+    pub or_columns: usize,
 }
 
 impl Query {
@@ -174,6 +294,7 @@ impl Query {
                         left: i,
                         right: new,
                         on: on.collect(),
+                        ..Default::default()
                     });
                 }
             }
@@ -184,6 +305,7 @@ impl Query {
                         left: i,
                         right: new,
                         on: on.collect(),
+                        ..Default::default()
                     });
                 }
             }
@@ -203,8 +325,8 @@ impl Query {
             j.left = fix(j.left);
             j.right = fix(j.right);
         }
-        self.rows.retain(|r| r.table != i);
-        for r in &mut self.rows {
+        self.rows.retain(|r| r.expression || r.table != i);
+        for r in self.rows.iter_mut().filter(|r| !r.expression) {
             r.table = fix(r.table);
         }
     }
@@ -241,6 +363,30 @@ impl Query {
             left,
             right,
             on: vec![pair],
+            ..Default::default()
+        });
+    }
+
+    /// Muda o tipo do JOIN `j` e dos outros que entram na mesma tabela
+    /// (eles saem juntos no mesmo `ON`).
+    pub fn set_join_kind(&mut self, j: usize, kind: JoinKind) {
+        let Some(at) = self.joins.get(j).map(|j| j.left.max(j.right)) else {
+            return;
+        };
+        for join in &mut self.joins {
+            if join.left.max(join.right) == at {
+                join.set_kind(kind);
+            }
+        }
+    }
+
+    /// Acrescenta uma linha de expressão (a coluna digitada à mão).
+    pub fn add_expression(&mut self, expression: &str) {
+        self.rows.push(Row {
+            column: expression.to_string(),
+            output: true,
+            expression: true,
+            ..Default::default()
         });
     }
 
@@ -250,11 +396,11 @@ impl Query {
         match self
             .rows
             .iter()
-            .position(|r| r.table == table && r.column == column)
+            .position(|r| !r.expression && r.table == table && r.column == column)
         {
             Some(i) if self.rows[i].output => {
                 let r = &self.rows[i];
-                if r.filter.trim().is_empty() && r.sort == SortType::Unsorted {
+                if !r.has_criteria() && r.sort == SortType::Unsorted {
                     self.rows.remove(i);
                 } else {
                     self.rows[i].output = false;
@@ -274,10 +420,13 @@ impl Query {
     pub fn is_output(&self, table: usize, column: &str) -> bool {
         self.rows
             .iter()
-            .any(|r| r.table == table && r.column == column && r.output)
+            .any(|r| !r.expression && r.table == table && r.column == column && r.output)
     }
 
     fn column_ref(&self, r: &Row) -> String {
+        if r.expression {
+            return r.column.trim().to_string();
+        }
         format!(
             "{}.{}",
             quote_ident(&self.tables[r.table].alias),
@@ -294,14 +443,63 @@ impl Query {
         }
     }
 
+    /// Linhas com coluna (as de expressão vazia ficam de fora).
+    fn live_rows(&self) -> impl Iterator<Item = (usize, &Row)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| !(r.expression && r.column.trim().is_empty()))
+    }
+
+    /// Quantas colunas de critério a grade tem (Filter mais as Or...).
+    pub fn criteria_columns(&self) -> usize {
+        let used = self.rows.iter().map(|r| r.or.len()).max().unwrap_or(0);
+        1 + self.or_columns.max(used)
+    }
+
+    /// As condições de um WHERE ou HAVING: cada coluna de critérios vira
+    /// um grupo ligado por AND, e os grupos se ligam por OR.
+    fn criteria(&self, having: bool, and: &str, or: &str) -> Option<String> {
+        let groups: Vec<Vec<String>> = (0..self.criteria_columns())
+            .map(|k| {
+                self.live_rows()
+                    .filter(|(_, r)| r.in_having(self.group_by) == having)
+                    .filter(|(_, r)| !r.criterion(k).trim().is_empty())
+                    .map(|(_, r)| {
+                        let subject = if having {
+                            self.expr(r)
+                        } else {
+                            self.column_ref(r)
+                        };
+                        format!("{subject} {}", condition(r.criterion(k)))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|g| !g.is_empty())
+            .collect();
+        match groups.as_slice() {
+            [] => None,
+            [only] => Some(only.join(and)),
+            _ => Some(
+                groups
+                    .iter()
+                    .map(|g| format!("({})", g.join(" AND ")))
+                    .collect::<Vec<_>>()
+                    .join(or),
+            ),
+        }
+    }
+
     /// O SQL da consulta.
     pub fn sql(&self, model: &Model) -> String {
         let mut out = String::from("SELECT ");
+        if self.distinct {
+            out.push_str("DISTINCT ");
+        }
         let select: Vec<String> = self
-            .rows
-            .iter()
-            .filter(|r| r.output && !(self.group_by && r.aggregate == Aggregate::Where))
-            .map(|r| {
+            .live_rows()
+            .filter(|(_, r)| r.output && !(self.group_by && r.aggregate == Aggregate::Where))
+            .map(|(_, r)| {
                 let e = self.expr(r);
                 match r.alias.trim() {
                     "" => e,
@@ -327,10 +525,13 @@ impl Query {
                 continue;
             }
             // Condições com as tabelas que já vieram antes desta.
-            let on: Vec<String> = self
+            let joins: Vec<&Join> = self
                 .joins
                 .iter()
                 .filter(|j| j.left.max(j.right) == i)
+                .collect();
+            let on: Vec<String> = joins
+                .iter()
                 .flat_map(|j| {
                     j.on.iter().map(|(l, r)| {
                         format!(
@@ -346,33 +547,32 @@ impl Query {
             if on.is_empty() {
                 out.push_str(&format!("\n    CROSS JOIN {item}"));
             } else {
-                out.push_str(&format!("\n    INNER JOIN {item} ON {}", on.join(" AND ")));
+                let kind = joins.first().map(|j| j.kind()).unwrap_or_default();
+                out.push_str(&format!(
+                    "\n    {} {item} ON {}",
+                    kind.sql(),
+                    on.join(" AND ")
+                ));
             }
         }
-        let filters: Vec<String> = self
-            .rows
-            .iter()
-            .filter(|r| !r.filter.trim().is_empty())
-            .map(|r| format!("{} {}", self.column_ref(r), condition(&r.filter)))
-            .collect();
-        if !filters.is_empty() {
-            out.push_str(&format!("\nWHERE {}", filters.join("\n  AND ")));
+        if let Some(w) = self.criteria(false, "\n  AND ", "\n   OR ") {
+            out.push_str(&format!("\nWHERE {w}"));
         }
         if self.group_by {
             let groups: Vec<String> = self
-                .rows
-                .iter()
-                .filter(|r| r.aggregate == Aggregate::GroupBy)
-                .map(|r| self.column_ref(r))
+                .live_rows()
+                .filter(|(_, r)| r.aggregate == Aggregate::GroupBy)
+                .map(|(_, r)| self.column_ref(r))
                 .collect();
             if !groups.is_empty() {
                 out.push_str(&format!("\nGROUP BY {}", groups.join(", ")));
             }
+            if let Some(h) = self.criteria(true, "\n   AND ", "\n    OR ") {
+                out.push_str(&format!("\nHAVING {h}"));
+            }
         }
         let mut sorted: Vec<(usize, &Row)> = self
-            .rows
-            .iter()
-            .enumerate()
+            .live_rows()
             .filter(|(_, r)| r.sort != SortType::Unsorted)
             .collect();
         sorted.sort_by_key(|(i, r)| {
@@ -399,6 +599,9 @@ impl Query {
                 .collect();
             out.push_str(&format!("\nORDER BY {}", items.join(", ")));
         }
+        if let Some(n) = self.limit {
+            out.push_str(&format!("\nLIMIT {n}"));
+        }
         out.push(';');
         out
     }
@@ -408,7 +611,7 @@ impl Query {
 fn condition(filter: &str) -> String {
     let f = filter.trim();
     let lower = f.to_lowercase();
-    let has_operator = ["=", "<", ">", "!"].iter().any(|op| f.starts_with(op))
+    let has_operator = ["=", "<", ">", "!", "~"].iter().any(|op| f.starts_with(op))
         || ["like ", "ilike ", "in ", "in(", "is ", "between ", "not "]
             .iter()
             .any(|op| lower.starts_with(op));
@@ -649,7 +852,10 @@ impl QueryDesigner {
             .iter()
             .filter(|j| j.left < self.diagram.nodes.len() && j.right < self.diagram.nodes.len())
             .map(|j| Edge {
-                name: String::new(),
+                name: match j.kind() {
+                    JoinKind::Inner => String::new(),
+                    k => k.sql().to_string(),
+                },
                 from: j.right,
                 to: j.left,
             })
@@ -708,10 +914,36 @@ impl QueryDesigner {
                             remove = selected;
                         }
                         ui.checkbox(&mut self.query.group_by, "Group By");
-                        ui.weak(
-                            "Check columns to select them; drag a column onto another to join.",
-                        );
+                        ui.checkbox(&mut self.query.distinct, "Distinct");
+                        let mut limited = self.query.limit.is_some();
+                        if ui.checkbox(&mut limited, "Limit").changed() {
+                            self.query.limit = limited.then_some(100);
+                        }
+                        if let Some(n) = &mut self.query.limit {
+                            ui.add(egui::DragValue::new(n).range(0..=u64::MAX));
+                        }
+                        ui.separator();
+                        if ui
+                            .button(format!("{} Add Expression", icon::FUNCTION))
+                            .on_hover_text(
+                                "A column typed by hand: lower(name), price * 2, count(*)",
+                            )
+                            .clicked()
+                        {
+                            self.query.add_expression("");
+                        }
+                        if ui
+                            .button(format!("{} Add Or Column", icon::PLUS))
+                            .on_hover_text(
+                                "Another column of criteria: each column is ANDed, \
+                                 and the columns are ORed",
+                            )
+                            .clicked()
+                        {
+                            self.query.or_columns = self.query.criteria_columns();
+                        }
                     });
+                    ui.weak("Check columns to select them; drag a column onto another to join.");
                     let height = (ctx.content_rect().height() * 0.35).clamp(160.0, 320.0);
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
@@ -723,6 +955,7 @@ impl QueryDesigner {
                             }
                         });
                     });
+                    self.joins(ui);
                     self.grid(ui);
                     ui.add_space(4.0);
                     let mut sql = self.sql();
@@ -806,10 +1039,52 @@ impl QueryDesigner {
         }
     }
 
+    /// Os JOINs, cada um com o tipo (as propriedades do JOIN no SSMS:
+    /// "Select All Rows from" cada tabela).
+    fn joins(&mut self, ui: &mut egui::Ui) {
+        if self.query.joins.is_empty() {
+            return;
+        }
+        let mut change = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Joins:");
+            for (j, join) in self.query.joins.iter().enumerate() {
+                let (first, second) = (join.left.min(join.right), join.left.max(join.right));
+                let a = &self.query.tables[first].alias;
+                let b = &self.query.tables[second].alias;
+                let label = |k: JoinKind| match k {
+                    JoinKind::Inner => format!("{a} \u{2194} {b}: matching rows"),
+                    JoinKind::Left => format!("{a} \u{2194} {b}: all rows from {a}"),
+                    JoinKind::Right => format!("{a} \u{2194} {b}: all rows from {b}"),
+                    JoinKind::Full => format!("{a} \u{2194} {b}: all rows from both"),
+                };
+                let current = join.kind();
+                egui::ComboBox::from_id_salt(("qd_join", j))
+                    .selected_text(label(current))
+                    .show_ui(ui, |ui| {
+                        for k in JoinKind::ALL {
+                            if ui
+                                .selectable_label(k == current, label(k))
+                                .on_hover_text(k.sql())
+                                .clicked()
+                            {
+                                change = Some((j, k));
+                            }
+                        }
+                    });
+            }
+        });
+        if let Some((j, k)) = change {
+            self.query.set_join_kind(j, k);
+            self.rebuild();
+        }
+    }
+
     /// A grade de colunas.
     fn grid(&mut self, ui: &mut egui::Ui) {
         let tables: Vec<String> = self.query.tables.iter().map(|t| t.alias.clone()).collect();
         let group_by = self.query.group_by;
+        let criteria = self.query.criteria_columns();
         let mut delete = None;
         let mut changed = false;
         egui::ScrollArea::vertical()
@@ -819,7 +1094,7 @@ impl QueryDesigner {
             .show(ui, |ui| {
                 egui::Grid::new("query_designer_columns")
                     .striped(true)
-                    .num_columns(9)
+                    .num_columns(8 + criteria)
                     .show(ui, |ui| {
                         for h in [
                             "Column",
@@ -832,19 +1107,36 @@ impl QueryDesigner {
                         ] {
                             ui.strong(h);
                         }
+                        for _ in 1..criteria {
+                            ui.strong("Or...");
+                        }
                         if group_by {
                             ui.strong("Group By");
                         }
                         ui.label("");
                         ui.end_row();
                         for (i, r) in self.query.rows.iter_mut().enumerate() {
-                            ui.label(&r.column);
+                            if r.expression {
+                                ui.add_sized(
+                                    [140.0, 20.0],
+                                    egui::TextEdit::singleline(&mut r.column)
+                                        .id(egui::Id::new(("qd_expression", i)))
+                                        .code_editor()
+                                        .hint_text("expression"),
+                                );
+                            } else {
+                                ui.label(&r.column);
+                            }
                             ui.add_sized(
                                 [90.0, 20.0],
                                 egui::TextEdit::singleline(&mut r.alias)
                                     .id(egui::Id::new(("qd_alias", i))),
                             );
-                            ui.label(tables.get(r.table).map_or("", String::as_str));
+                            ui.label(if r.expression {
+                                ""
+                            } else {
+                                tables.get(r.table).map_or("", String::as_str)
+                            });
                             changed |= ui.checkbox(&mut r.output, "").changed();
                             egui::ComboBox::from_id_salt(("qd_sort", i))
                                 .selected_text(r.sort.label())
@@ -867,6 +1159,13 @@ impl QueryDesigner {
                                     .id(egui::Id::new(("qd_filter", i)))
                                     .hint_text("e.g. > 10"),
                             );
+                            for k in 1..criteria {
+                                ui.add_sized(
+                                    [110.0, 20.0],
+                                    egui::TextEdit::singleline(r.criterion_mut(k))
+                                        .id(egui::Id::new(("qd_or", i, k))),
+                                );
+                            }
                             if group_by {
                                 egui::ComboBox::from_id_salt(("qd_group", i))
                                     .selected_text(r.aggregate.label())
@@ -982,7 +1281,8 @@ mod tests {
             [Join {
                 left: 0,
                 right: 1,
-                on: vec![("cliente_id".into(), "id".into())]
+                on: vec![("cliente_id".into(), "id".into())],
+                ..Default::default()
             }]
         );
         q.toggle_column(1, "nome");

@@ -1,6 +1,6 @@
 # Medições
 
-Números do `pgstudio` contra as metas do projeto. Gerados com
+Números do `postpilot` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
 vezes e mede dez cenários
 (`--scenario startup|grid|intellisense|diagram|diagram2000|designer|plan|activity|edit|export|all`,
@@ -380,6 +380,37 @@ sem GPU), 3 execuções de cada cenário (`cargo xtask bench --runs 3 --idle 10
   marcos anteriores com llvmpipe).
 - **Windows não foi medido:** os cenários `edit` e `export` numa máquina
   Windows completam a tabela.
+
+### Marco 6.8 (wgpu contra glow, sem GPU)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + Mesa por
+software), 1 execução de cada cenário e 5 s em repouso, com o roteiro de
+[`na-sua-maquina.md`](na-sua-maquina.md) (`cargo xtask bench --markdown`,
+depois o mesmo com `PGSTUDIO_RENDERER=glow`). Uma execução só serve para
+comparar os dois renderizadores no mesmo container, não para fechar metas.
+
+| Cenário | Meta | wgpu (Vulkan, lavapipe) | glow (OpenGL, llvmpipe) |
+| --- | --- | --- | --- |
+| Até o primeiro frame | < 1 s | 208 ms ✅ | 290 ms ✅ |
+| RAM em repouso | < 100 MB | 137.0 MB ❌ | 125.8 MB ❌ |
+| Grade: frame rolando (p95) | < 20 ms | 19.0 ms ✅ | 12.8 ms ✅ |
+| Diagrama 500: frame (p95) | < 20 ms | 19.5 ms ✅ | 14.4 ms ✅ |
+| Diagrama 2.000: frame (p95) | < 20 ms | 24.4 ms ❌ | 19.8 ms ✅ |
+| Table Designer: frame (p95) | < 20 ms | 17.8 ms ✅ | 14.1 ms ✅ |
+| Plano 2.000 nós: frame (p95) | < 20 ms | 15.4 ms ✅ | 10.3 ms ✅ |
+| Activity Monitor: frame (p95) | < 20 ms | 16.1 ms ✅ | 12.1 ms ✅ |
+| Edição na grade: frame (p95) | < 20 ms | 17.8 ms ✅ | 12.1 ms ✅ |
+| Exportação: frame (p95) | < 20 ms | 24.8 ms ❌ | 13.5 ms ✅ |
+
+- **Sem GPU, o glow é mais rápido em todos os cenários com frame** (3 a 11
+  ms a menos de p95) e usa 11 MB a menos em repouso; com ele, todas as metas
+  de frame passam neste container. A CPU da interface é a mesma nos dois
+  (menos de 1 ms por frame): a diferença é só o driver por software.
+- **Isso não decide o padrão.** Numa GPU de verdade os dois devem ficar presos
+  ao vsync, e o wgpu é o caminho testado desde a Fase 0. A comparação que
+  decide é a do roteiro na máquina com GPU; se lá o glow também gastar menos
+  RAM, vale trocar o padrão no Linux.
+- **RAM em repouso** continua acima de 100 MB nos dois sem GPU.
 
 ## Como ler
 

@@ -2,11 +2,14 @@
 //! selecionado no editor com o `sqlparser` e monta a [`Query`] a partir
 //! dele (tabelas, JOINs, colunas, WHERE, GROUP BY e ORDER BY).
 //!
+//! Desde o marco 6.1 lê também JOINs externos, DISTINCT, LIMIT, HAVING,
+//! OR (nas colunas Or... da grade), expressões e `count(*)`.
+//!
 //! O que o designer não sabe desenhar vira um [`ReadError`] em vez de ser
-//! carregado pela metade: CTE, subconsulta e UNION têm aviso próprio; LEFT
-//! JOIN, DISTINCT, LIMIT, HAVING, OR e expressões que não são colunas, o
-//! genérico [`ReadError::Unsupported`]. Assim o OK nunca troca a seleção
-//! por uma consulta que faz outra coisa.
+//! carregado pela metade: CTE, subconsulta e UNION têm aviso próprio; o
+//! resto (USING, OFFSET, DISTINCT ON, NULLS FIRST...), o genérico
+//! [`ReadError::Unsupported`]. Assim o OK nunca troca a seleção por uma
+//! consulta que faz outra coisa.
 
 use std::fmt;
 use std::ops::ControlFlow;
@@ -15,13 +18,14 @@ use pgstudio_core::metadata::Model;
 use pgstudio_core::schema::Id;
 use sqlparser::ast::{
     BinaryOperator, Distinct, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr,
-    Ident, InTarget, JoinConstraint, JoinOperator, ObjectName, OrderByKind, OrderBySort, Select,
-    SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Value, visit_expressions,
+    Ident, InTarget, JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind,
+    OrderBySort, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Value,
+    visit_expressions,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
-use super::{Aggregate, Query, QueryTable, Row, SortType, condition};
+use super::{Aggregate, JoinKind, Query, QueryTable, Row, SortType, condition};
 
 /// Por que o SQL não pôde ser carregado no designer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,8 +119,28 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
     if found.is_break() {
         return Err(ReadError::Subquery);
     }
-    if query.limit_clause.is_some() || query.fetch.is_some() {
-        return unsupported("LIMIT, OFFSET or FETCH");
+    let limit = match &query.limit_clause {
+        None => None,
+        Some(LimitClause::LimitOffset {
+            limit: Some(Expr::Value(v)),
+            offset: None,
+            limit_by,
+        }) if limit_by.is_empty() => match &v.value {
+            Value::Number(n, _) => match n.parse::<u64>() {
+                Ok(n) => Some(n),
+                Err(_) => return unsupported(format!("LIMIT {n}")),
+            },
+            _ => return unsupported("this LIMIT"),
+        },
+        Some(LimitClause::LimitOffset {
+            offset: Some(_), ..
+        }) => {
+            return unsupported("OFFSET");
+        }
+        Some(_) => return unsupported("this LIMIT"),
+    };
+    if query.fetch.is_some() {
+        return unsupported("FETCH FIRST (use LIMIT)");
     }
     if !query.locks.is_empty() {
         return unsupported("FOR UPDATE or FOR SHARE");
@@ -136,6 +160,8 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
         names: Vec::new(),
         grouped: Vec::new(),
     };
+    r.query.limit = limit;
+    r.query.distinct = matches!(select.distinct, Some(Distinct::Distinct));
     for from in &select.from {
         r.from(from)?;
     }
@@ -146,9 +172,7 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
         items.push(r.item(item)?);
     }
     if let Some(selection) = &select.selection {
-        for c in conjuncts(selection) {
-            r.filter(c)?;
-        }
+        r.criteria(selection, false)?;
     }
     match &select.group_by {
         GroupByExpr::Expressions(exprs, modifiers) => {
@@ -163,6 +187,10 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
             }
         }
         GroupByExpr::All(_) => return unsupported("GROUP BY ALL"),
+    }
+    if let Some(having) = &select.having {
+        r.query.group_by = true;
+        r.criteria(having, true)?;
     }
     if let Some(order_by) = &query.order_by {
         if order_by.interpolate.is_some() {
@@ -191,39 +219,96 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
     }
     let Reader { query, grouped, .. } = r;
     let mut query = query;
-    if query.rows.iter().any(|r| r.aggregate != Aggregate::GroupBy) {
+    query.or_columns = query.rows.iter().map(|r| r.or.len()).max().unwrap_or(0);
+    if query
+        .rows
+        .iter()
+        .any(|r| !matches!(r.aggregate, Aggregate::GroupBy) || (r.expression && r.column == "*"))
+    {
         query.group_by = true;
     }
-    // Com Group By, as colunas que só filtram ficam fora do GROUP BY.
     if query.group_by {
+        let mut split = Vec::new();
         for row in &mut query.rows {
-            if !row.output
-                && row.sort == SortType::Unsorted
-                && !row.filter.is_empty()
-                && !grouped.contains(&(row.table, row.column.clone()))
-            {
+            if row.aggregate != Aggregate::GroupBy || grouped.contains(&key(row)) {
+                continue;
+            }
+            if !row.output && row.sort == SortType::Unsorted && row.has_criteria() {
+                // Só filtra: fica fora do GROUP BY.
                 row.aggregate = Aggregate::Where;
+            } else if row.output {
+                // Na saída sem estar no GROUP BY: uma expressão que já
+                // agrega, ou uma coluna que depende da chave. O filtro dela,
+                // se houver, vai para uma linha Where à parte.
+                row.aggregate = Aggregate::Expression;
+                if row.has_criteria() {
+                    split.push(Row {
+                        table: row.table,
+                        column: row.column.clone(),
+                        expression: row.expression,
+                        filter: std::mem::take(&mut row.filter),
+                        or: std::mem::take(&mut row.or),
+                        aggregate: Aggregate::Where,
+                        ..Default::default()
+                    });
+                }
             }
         }
+        query.rows.extend(split);
     }
     Ok(query)
 }
 
+/// Identidade de uma linha: (é expressão, tabela, coluna ou texto).
+fn key(r: &Row) -> (bool, usize, String) {
+    if r.expression {
+        (true, 0, r.column.clone())
+    } else {
+        (false, r.table, r.column.clone())
+    }
+}
+
+/// O que uma expressão do SQL vira numa linha da grade.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Subject {
+    Column(usize, String),
+    Expression(String),
+}
+
+impl Subject {
+    fn row(&self) -> Row {
+        match self {
+            Subject::Column(table, column) => Row {
+                table: *table,
+                column: column.clone(),
+                ..Default::default()
+            },
+            Subject::Expression(text) => Row {
+                column: text.clone(),
+                expression: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn matches(&self, r: &Row) -> bool {
+        match self {
+            Subject::Column(t, c) => !r.expression && r.table == *t && &r.column == c,
+            Subject::Expression(text) => r.expression && &r.column == text,
+        }
+    }
+}
+
 /// Partes do SELECT que o designer não tem como mostrar.
 fn check_select(s: &Select) -> Result<(), ReadError> {
-    match &s.distinct {
-        None => {}
-        Some(Distinct::On(_)) => return unsupported("DISTINCT ON"),
-        Some(_) => return unsupported("DISTINCT"),
+    if let Some(Distinct::On(_)) = &s.distinct {
+        return unsupported("DISTINCT ON");
     }
     if s.top.is_some() {
-        return unsupported("TOP");
+        return unsupported("TOP (use LIMIT)");
     }
     if s.into.is_some() {
         return unsupported("SELECT INTO");
-    }
-    if s.having.is_some() {
-        return unsupported("HAVING");
     }
     if !s.named_window.is_empty() {
         return unsupported("WINDOW");
@@ -261,6 +346,23 @@ fn conjuncts(e: &Expr) -> Vec<&Expr> {
     }
 }
 
+/// Os termos de um `a OR b OR c` (os parênteses em volta saem).
+fn disjuncts(e: &Expr) -> Vec<&Expr> {
+    match e {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Or,
+            right,
+        } => {
+            let mut v = disjuncts(left);
+            v.extend(disjuncts(right));
+            v
+        }
+        Expr::Nested(inner) => disjuncts(inner),
+        e => vec![e],
+    }
+}
+
 /// Nome como o PostgreSQL entende: sem aspas, em minúsculas.
 fn name(ident: &Ident) -> String {
     match ident.quote_style {
@@ -283,26 +385,14 @@ fn column_parts(e: &Expr) -> Option<Vec<String>> {
     }
 }
 
-/// Quantas colunas a expressão cita.
-fn column_count(e: &Expr) -> usize {
-    let mut n = 0;
-    let _ = visit_expressions(e, |e| {
-        if matches!(e, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) {
-            n += 1;
-        }
-        ControlFlow::<()>::Continue(())
-    });
-    n
-}
-
 struct Reader<'a> {
     model: &'a Model,
     query: Query,
     /// Como cada tabela é citada nas colunas: (esquema, nome) se veio sem
     /// apelido, para aceitar `esquema.tabela.coluna`.
     names: Vec<Option<(String, String)>>,
-    /// Colunas citadas no GROUP BY.
-    grouped: Vec<(usize, String)>,
+    /// Colunas e expressões citadas no GROUP BY (veja [`key`]).
+    grouped: Vec<(bool, usize, String)>,
 }
 
 impl Reader<'_> {
@@ -310,30 +400,36 @@ impl Reader<'_> {
         self.table(&from.relation)?;
         for join in &from.joins {
             let right = self.table(&join.relation)?;
-            match &join.join_operator {
-                JoinOperator::Join(c) | JoinOperator::Inner(c) => match c {
-                    JoinConstraint::On(on) => {
-                        for e in conjuncts(on) {
-                            if !self.join_condition(e, Some(right))? {
-                                return unsupported(format!("the join condition {e}"));
-                            }
+            let (kind, constraint) = match &join.join_operator {
+                JoinOperator::Join(c) | JoinOperator::Inner(c) => (JoinKind::Inner, c),
+                JoinOperator::Left(c) | JoinOperator::LeftOuter(c) => (JoinKind::Left, c),
+                JoinOperator::Right(c) | JoinOperator::RightOuter(c) => (JoinKind::Right, c),
+                JoinOperator::FullOuter(c) => (JoinKind::Full, c),
+                JoinOperator::CrossJoin(JoinConstraint::None) => continue,
+                _ => return unsupported("this kind of JOIN"),
+            };
+            match constraint {
+                JoinConstraint::On(on) => {
+                    for e in conjuncts(on) {
+                        if !self.join_condition(e, Some(right))? {
+                            return unsupported(format!("the join condition {e}"));
                         }
                     }
-                    JoinConstraint::None => {}
-                    JoinConstraint::Using(_) | JoinConstraint::UsingAlias(..) => {
-                        return unsupported("JOIN ... USING");
-                    }
-                    JoinConstraint::Natural => return unsupported("NATURAL JOIN"),
-                },
-                JoinOperator::CrossJoin(JoinConstraint::None) => {}
-                JoinOperator::Left(_) | JoinOperator::LeftOuter(_) => {
-                    return unsupported("LEFT JOIN (only INNER JOIN)");
                 }
-                JoinOperator::Right(_) | JoinOperator::RightOuter(_) => {
-                    return unsupported("RIGHT JOIN (only INNER JOIN)");
+                JoinConstraint::None if kind == JoinKind::Inner => continue,
+                JoinConstraint::None => return unsupported("an outer JOIN without ON"),
+                JoinConstraint::Using(_) | JoinConstraint::UsingAlias(..) => {
+                    return unsupported("JOIN ... USING");
                 }
-                JoinOperator::FullOuter(_) => return unsupported("FULL JOIN (only INNER JOIN)"),
-                _ => return unsupported("this kind of JOIN"),
+                JoinConstraint::Natural => return unsupported("NATURAL JOIN"),
+            }
+            if let Some(j) = self
+                .query
+                .joins
+                .iter()
+                .position(|j| j.left.max(j.right) == right)
+            {
+                self.query.set_join_kind(j, kind);
             }
         }
         Ok(())
@@ -468,44 +564,73 @@ impl Reader<'_> {
         }
     }
 
-    /// `count(coluna)` e companhia: (agregação, tabela, coluna).
-    fn aggregate(&self, e: &Expr) -> Result<Option<(Aggregate, usize, String)>, ReadError> {
+    /// Confere que toda coluna citada em `e` existe; devolve quantas são.
+    fn check_columns(&self, e: &Expr) -> Result<usize, ReadError> {
+        let mut n = 0;
+        let mut error = None;
+        let _ = visit_expressions(e, |e| {
+            if matches!(e, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) {
+                match self.column(e) {
+                    Ok(_) => n += 1,
+                    Err(err) => {
+                        error = Some(err);
+                        return ControlFlow::Break(());
+                    }
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        match error {
+            Some(e) => Err(e),
+            None => Ok(n),
+        }
+    }
+
+    /// A coluna, ou a expressão como texto (com as colunas conferidas).
+    fn subject(&self, e: &Expr) -> Result<Subject, ReadError> {
+        if let Some((t, c)) = self.column(e)? {
+            return Ok(Subject::Column(t, c));
+        }
+        self.check_columns(e)?;
+        Ok(Subject::Expression(e.to_string()))
+    }
+
+    /// `count(coluna)`, `sum(expressão)`, `count(*)`: (agregação, o que
+    /// agrega).
+    fn aggregate(&self, e: &Expr) -> Result<Option<(Aggregate, Subject)>, ReadError> {
         let Expr::Function(f) = e else {
             return Ok(None);
         };
-        let aggregate = match object_name(&f.name).as_deref() {
-            Some([n]) => match n.as_str() {
-                "count" => Aggregate::Count,
-                "sum" => Aggregate::Sum,
-                "avg" => Aggregate::Avg,
-                "min" => Aggregate::Min,
-                "max" => Aggregate::Max,
-                _ => return Ok(None),
-            },
+        let parts = object_name(&f.name);
+        let Some([function]) = parts.as_deref() else {
+            return Ok(None);
+        };
+        let aggregate = match function.as_str() {
+            "count" => Aggregate::Count,
+            "sum" => Aggregate::Sum,
+            "avg" => Aggregate::Avg,
+            "min" => Aggregate::Min,
+            "max" => Aggregate::Max,
             _ => return Ok(None),
         };
         let FunctionArguments::List(list) = &f.args else {
             return Ok(None);
         };
-        let [FunctionArg::Unnamed(FunctionArgExpr::Expr(arg))] = list.args.as_slice() else {
-            if list
-                .args
-                .iter()
-                .any(|a| matches!(a, FunctionArg::Unnamed(FunctionArgExpr::Wildcard)))
-            {
-                return unsupported("count(*) (pick a column to count)");
+        let (subject, arg) = match list.args.as_slice() {
+            [FunctionArg::Unnamed(FunctionArgExpr::Wildcard)] if aggregate == Aggregate::Count => {
+                (Subject::Expression("*".into()), "*".to_string())
             }
-            return Ok(None);
+            [FunctionArg::Unnamed(FunctionArgExpr::Expr(arg))] => {
+                (self.subject(arg)?, arg.to_string())
+            }
+            _ => return Ok(None),
         };
-        let Some((table, column)) = self.column(arg)? else {
+        // DISTINCT, FILTER, OVER e afins mudam o texto: esses viram
+        // expressão.
+        if f.to_string().to_lowercase() != format!("{function}({arg})").to_lowercase() {
             return Ok(None);
-        };
-        // DISTINCT, FILTER, OVER e afins mudam o texto: só o simples passa.
-        let plain = format!("{}({arg})", object_name(&f.name).unwrap_or_default()[0]);
-        if f.to_string().to_lowercase() != plain.to_lowercase() {
-            return unsupported(format!("{e}"));
         }
-        Ok(Some((aggregate, table, column)))
+        Ok(Some((aggregate, subject)))
     }
 
     /// Um item da lista do SELECT; devolve o índice da linha (`None` no
@@ -524,28 +649,22 @@ impl Reader<'_> {
             SelectItem::UnnamedExpr(e) => (e, String::new()),
             SelectItem::ExprWithAlias { expr, alias } => (expr, name(alias)),
         };
-        let (table, column, aggregate) = if let Some((t, c)) = self.column(expr)? {
-            (t, c, Aggregate::GroupBy)
-        } else if let Some((a, t, c)) = self.aggregate(expr)? {
-            (t, c, a)
-        } else {
-            return unsupported(format!(
-                "the expression {expr} (only columns and aggregates)"
-            ));
+        let (subject, aggregate) = match self.aggregate(expr)? {
+            Some((a, s)) => (s, a),
+            None => (self.subject(expr)?, Aggregate::GroupBy),
         };
         self.query.rows.push(Row {
-            table,
-            column,
             alias,
             output: true,
             aggregate,
-            ..Default::default()
+            ..subject.row()
         });
         Ok(Some(self.query.rows.len() - 1))
     }
 
     /// `a.x = b.y` vira JOIN; `true` se era isso. Com `right`, uma das duas
-    /// colunas tem de ser da tabela do JOIN.
+    /// colunas tem de ser da tabela do JOIN. No WHERE (`right` vazio), não
+    /// entra num JOIN externo, onde mudaria o resultado: fica como filtro.
     fn join_condition(&mut self, e: &Expr, right: Option<usize>) -> Result<bool, ReadError> {
         let Expr::BinaryOp {
             left: l,
@@ -561,16 +680,66 @@ impl Reader<'_> {
         if lt == rt || right.is_some_and(|t| lt != t && rt != t) {
             return Ok(false);
         }
+        let at = lt.max(rt);
+        if right.is_none()
+            && self
+                .query
+                .joins
+                .iter()
+                .any(|j| j.left.max(j.right) == at && j.kind() != JoinKind::Inner)
+        {
+            return Ok(false);
+        }
         self.query.add_join(lt, &lc, rt, &rc);
         Ok(true)
     }
 
-    /// Um termo do WHERE: JOIN entre colunas ou filtro de uma coluna.
-    fn filter(&mut self, e: &Expr) -> Result<(), ReadError> {
-        if self.join_condition(e, None)? {
-            return Ok(());
+    /// Um WHERE ou HAVING: os termos ligados por AND vão para a coluna
+    /// Filter; um termo `p OR q` espalha os outros por uma coluna de
+    /// critérios para cada lado (`(c AND p) OR (c AND q)`).
+    fn criteria(&mut self, e: &Expr, having: bool) -> Result<(), ReadError> {
+        let mut common = Vec::new();
+        let mut or: Option<Vec<&Expr>> = None;
+        for c in conjuncts(e) {
+            if !having && self.join_condition(c, None)? {
+                continue;
+            }
+            let d = disjuncts(c);
+            if d.len() > 1 {
+                if or.is_some() {
+                    return unsupported(format!("more than one group of OR in {e}"));
+                }
+                or = Some(d);
+            } else {
+                common.push(c);
+            }
         }
-        let subject = match e {
+        let groups: Vec<Vec<&Expr>> = match or {
+            None => vec![common],
+            Some(d) => d
+                .into_iter()
+                .map(|d| {
+                    let mut g = common.clone();
+                    g.extend(conjuncts(d));
+                    g
+                })
+                .collect(),
+        };
+        for (k, group) in groups.iter().enumerate() {
+            for c in group {
+                if disjuncts(c).len() > 1 {
+                    return unsupported(format!("the condition {c} (OR inside OR)"));
+                }
+                self.criterion(c, k, having)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Um termo do WHERE ou do HAVING, na coluna de critérios `k`.
+    fn criterion(&mut self, e: &Expr, k: usize, having: bool) -> Result<(), ReadError> {
+        let place = if having { "HAVING" } else { "WHERE" };
+        let left = match e {
             Expr::BinaryOp { left, .. } => left,
             Expr::Like { expr, .. }
             | Expr::ILike { expr, .. }
@@ -589,53 +758,67 @@ impl Reader<'_> {
             | Expr::IsNotFalse(expr)
             | Expr::IsDistinctFrom(expr, _)
             | Expr::IsNotDistinctFrom(expr, _) => expr,
-            _ => return unsupported(format!("the condition {e} in WHERE")),
+            _ => return unsupported(format!("the condition {e} in {place}")),
         };
-        let Some((table, column)) = self.column(subject)? else {
-            return unsupported(format!("the condition {e} in WHERE"));
-        };
-        // O resto do termo, depois da coluna, é o filtro da grade.
+        // O resto do termo, depois da coluna, é o critério da grade.
         let text = e.to_string();
         let filter = text
-            .strip_prefix(&subject.to_string())
+            .strip_prefix(&left.to_string())
             .map(str::trim)
             .unwrap_or_default();
-        if filter.is_empty() || column_count(e) != 1 || condition(filter) != filter {
-            return unsupported(format!("the condition {e} in WHERE"));
+        if filter.is_empty() || condition(filter) != filter {
+            return unsupported(format!("the condition {e} in {place}"));
         }
+        self.check_columns(e)?;
+        let (subject, aggregate) = if having {
+            match self.aggregate(left)? {
+                Some((a, s)) => (s, a),
+                None => match self.subject(left)? {
+                    s @ Subject::Expression(_) => (s, Aggregate::Expression),
+                    Subject::Column(..) => {
+                        return unsupported(format!(
+                            "the condition {e} in HAVING (move it to WHERE)"
+                        ));
+                    }
+                },
+            }
+        } else {
+            if self.check_columns(left)? == 0 {
+                return unsupported(format!("the condition {e} in WHERE"));
+            }
+            (self.subject(left)?, Aggregate::GroupBy)
+        };
         let free = self.query.rows.iter().position(|r| {
-            r.table == table
-                && r.column == column
-                && r.filter.is_empty()
-                && r.aggregate == Aggregate::GroupBy
+            subject.matches(r) && r.criterion(k).is_empty() && r.aggregate == aggregate
         });
-        match free {
-            Some(i) => self.query.rows[i].filter = filter.to_string(),
-            None => self.query.rows.push(Row {
-                table,
-                column,
-                filter: filter.to_string(),
-                ..Default::default()
-            }),
-        }
+        let row = match free {
+            Some(i) => i,
+            None => {
+                self.query.rows.push(Row {
+                    aggregate,
+                    ..subject.row()
+                });
+                self.query.rows.len() - 1
+            }
+        };
+        *self.query.rows[row].criterion_mut(k) = filter.to_string();
         Ok(())
     }
 
     fn group(&mut self, e: &Expr) -> Result<(), ReadError> {
-        let Some((table, column)) = self.column(e)? else {
-            return unsupported(format!("{e} in GROUP BY (only columns)"));
-        };
-        let known =
-            self.query.rows.iter().any(|r| {
-                r.table == table && r.column == column && r.aggregate == Aggregate::GroupBy
-            });
-        self.grouped.push((table, column.clone()));
+        if self.aggregate(e)?.is_some() {
+            return unsupported(format!("{e} in GROUP BY"));
+        }
+        let subject = self.subject(e)?;
+        let known = self
+            .query
+            .rows
+            .iter()
+            .any(|r| subject.matches(r) && r.aggregate == Aggregate::GroupBy);
+        let row = subject.row();
+        self.grouped.push(key(&row));
         if !known {
-            self.query.rows.push(Row {
-                table,
-                column,
-                ..Default::default()
-            });
+            self.query.rows.push(row);
         }
         Ok(())
     }
@@ -667,14 +850,17 @@ impl Reader<'_> {
                 return Ok(row);
             }
         }
-        let (table, column, aggregate) = if let Some((t, c)) = self.column(e)? {
-            (t, c, Aggregate::GroupBy)
-        } else if let Some((a, t, c)) = self.aggregate(e)? {
-            (t, c, a)
-        } else {
-            return unsupported(format!("{e} in ORDER BY (only columns and aggregates)"));
+        let (subject, aggregate) = match self.aggregate(e)? {
+            Some((a, s)) => (s, a),
+            None => {
+                let s = self.subject(e)?;
+                if matches!(&s, Subject::Expression(_)) && self.check_columns(e)? == 0 {
+                    return unsupported(format!("{e} in ORDER BY"));
+                }
+                (s, Aggregate::GroupBy)
+            }
         };
-        let same = |r: &Row| r.table == table && r.column == column && r.aggregate == aggregate;
+        let same = |r: &Row| subject.matches(r) && r.aggregate == aggregate;
         let row = self
             .query
             .rows
@@ -688,10 +874,8 @@ impl Reader<'_> {
             });
         Ok(row.unwrap_or_else(|| {
             self.query.rows.push(Row {
-                table,
-                column,
                 aggregate,
-                ..Default::default()
+                ..subject.row()
             });
             self.query.rows.len() - 1
         }))
@@ -782,7 +966,8 @@ mod tests {
             [Join {
                 left: 1,
                 right: 0,
-                on: vec![("cliente_id".into(), "id".into())]
+                on: vec![("cliente_id".into(), "id".into())],
+                ..Default::default()
             }]
         );
         let rows: Vec<_> = q
@@ -879,21 +1064,21 @@ mod tests {
     #[test]
     fn what_the_designer_cannot_show_is_refused() {
         for sql in [
-            "SELECT * FROM cliente LEFT JOIN pedido ON pedido.cliente_id = cliente.id",
             "SELECT * FROM cliente JOIN pedido USING (id)",
             "SELECT * FROM cliente JOIN pedido ON pedido.cliente_id > cliente.id",
-            "SELECT * FROM cliente LIMIT 10",
-            "SELECT DISTINCT nome FROM cliente",
-            "SELECT * FROM cliente WHERE id = 1 OR id = 2",
-            "SELECT id + 1 FROM cliente",
-            "SELECT lower(nome) FROM cliente",
-            "SELECT count(*) FROM cliente",
-            "SELECT count(DISTINCT nome) FROM cliente",
-            "SELECT nome FROM cliente GROUP BY nome HAVING count(id) > 1",
-            "SELECT * FROM cliente WHERE nome ~ 'a'",
+            "SELECT * FROM cliente LEFT JOIN pedido ON pedido.total > 0",
+            "SELECT * FROM cliente NATURAL JOIN pedido",
+            "SELECT * FROM cliente LIMIT 10 OFFSET 5",
+            "SELECT * FROM cliente FETCH FIRST 3 ROWS ONLY",
+            "SELECT DISTINCT ON (nome) nome FROM cliente",
+            "SELECT * FROM cliente WHERE (id = 1 OR id = 2) AND (nome = 'a' OR nome = 'b')",
+            "SELECT nome FROM cliente GROUP BY nome HAVING nome = 'a'",
             "SELECT * FROM cliente WHERE 1 = id",
+            "SELECT * FROM cliente WHERE lower(nome)",
             "SELECT * FROM cliente ORDER BY nome NULLS FIRST",
+            "SELECT * FROM cliente ORDER BY 1 + 1",
             "SELECT c.* FROM cliente c",
+            "SELECT count(*) FROM cliente GROUP BY count(*)",
         ] {
             assert!(
                 matches!(err(sql), ReadError::Unsupported(_)),
@@ -913,8 +1098,203 @@ mod tests {
             ReadError::UnknownColumn(_)
         ));
         assert!(matches!(
+            err("SELECT lower(x) FROM cliente"),
+            ReadError::UnknownColumn(_)
+        ));
+        assert!(matches!(
+            err("SELECT * FROM cliente WHERE nome > x"),
+            ReadError::UnknownColumn(_)
+        ));
+        assert!(matches!(
             err("SELECT nome FROM cliente, produto"),
             ReadError::AmbiguousColumn(_)
         ));
+    }
+
+    /// Lê `sql` e devolve o SQL que o designer gera dele; o SQL gerado,
+    /// lido de novo, tem de voltar igual.
+    fn designed(sql: &str) -> String {
+        let (m, ..) = shop();
+        let q = read(sql, &m).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        let out = q.sql(&m);
+        let back = read(&out, &m).unwrap_or_else(|e| panic!("{out}: {e}"));
+        assert_eq!(back.sql(&m), out, "round trip of {sql}");
+        out
+    }
+
+    #[test]
+    fn outer_joins() {
+        assert_eq!(
+            designed(
+                "select c.nome, p.total from cliente c \
+                 left join pedido p on p.cliente_id = c.id"
+            ),
+            "SELECT c.nome,\n       p.total\n\
+             FROM public.cliente AS c\n    \
+             LEFT JOIN public.pedido AS p ON p.cliente_id = c.id;"
+        );
+        assert!(
+            designed(
+                "SELECT * FROM pedido RIGHT OUTER JOIN cliente ON cliente.id = pedido.cliente_id"
+            )
+            .contains("RIGHT JOIN public.cliente ON cliente.id = pedido.cliente_id")
+        );
+        assert!(
+            designed("SELECT * FROM cliente FULL JOIN pedido ON pedido.cliente_id = cliente.id")
+                .contains("FULL JOIN public.pedido")
+        );
+        // Igualdade no WHERE com a tabela de um LEFT JOIN não vira JOIN
+        // (mudaria o resultado): fica como filtro.
+        let (m, ..) = shop();
+        let q = read(
+            "SELECT * FROM cliente LEFT JOIN pedido ON pedido.cliente_id = cliente.id \
+             WHERE pedido.id = cliente.id",
+            &m,
+        )
+        .unwrap();
+        assert_eq!(q.joins.len(), 1);
+        assert_eq!(q.joins[0].on.len(), 1);
+        assert_eq!(q.joins[0].kind(), crate::query_designer::JoinKind::Left);
+        assert!(q.sql(&m).contains("WHERE pedido.id = cliente.id"));
+    }
+
+    #[test]
+    fn distinct_limit_and_regex() {
+        assert_eq!(
+            designed("SELECT DISTINCT nome FROM cliente WHERE nome ~ 'a' ORDER BY nome LIMIT 5"),
+            "SELECT DISTINCT cliente.nome\nFROM public.cliente\n\
+             WHERE cliente.nome ~ 'a'\nORDER BY cliente.nome\nLIMIT 5;"
+        );
+    }
+
+    #[test]
+    fn having_and_count_star() {
+        assert_eq!(
+            designed(
+                "SELECT c.nome, count(*) AS pedidos, sum(p.total) FROM cliente c \
+                 JOIN pedido p ON p.cliente_id = c.id WHERE p.total > 0 \
+                 GROUP BY c.nome HAVING count(*) > 1 AND sum(p.total) >= 100 \
+                 ORDER BY count(*) DESC"
+            ),
+            "SELECT c.nome,\n       count(*) AS pedidos,\n       sum(p.total)\n\
+             FROM public.cliente AS c\n    \
+             INNER JOIN public.pedido AS p ON p.cliente_id = c.id\n\
+             WHERE p.total > 0\n\
+             GROUP BY c.nome\n\
+             HAVING count(*) > 1\n   AND sum(p.total) >= 100\n\
+             ORDER BY count(*) DESC;"
+        );
+        assert_eq!(
+            designed("SELECT count(*) FROM pedido"),
+            "SELECT count(*)\nFROM public.pedido;"
+        );
+    }
+
+    #[test]
+    fn or_spreads_over_the_or_columns() {
+        let (m, ..) = shop();
+        let q = read(
+            "SELECT nome FROM cliente WHERE nome = 'Ana' OR nome = 'Bia' OR id > 10",
+            &m,
+        )
+        .unwrap();
+        assert_eq!(q.or_columns, 2);
+        assert_eq!(q.rows.len(), 2, "{:?}", q.rows);
+        assert_eq!(q.rows[0].filter, "= 'Ana'");
+        assert_eq!(q.rows[0].or, ["= 'Bia'"]);
+        assert_eq!(q.rows[1].or, ["", "> 10"]);
+        assert_eq!(
+            designed("SELECT nome FROM cliente WHERE nome = 'Ana' OR nome = 'Bia' OR id > 10"),
+            "SELECT cliente.nome\nFROM public.cliente\n\
+             WHERE (cliente.nome = 'Ana')\n   OR (cliente.nome = 'Bia')\n   OR (cliente.id > 10);"
+        );
+        // Um termo comum vai para todas as colunas.
+        assert_eq!(
+            designed("SELECT * FROM cliente WHERE id > 0 AND (nome LIKE 'A%' OR nome IS NULL)"),
+            "SELECT *\nFROM public.cliente\n\
+             WHERE (cliente.id > 0 AND cliente.nome LIKE 'A%')\n   \
+             OR (cliente.id > 0 AND cliente.nome IS NULL);"
+        );
+    }
+
+    #[test]
+    fn expressions_take_the_place_of_columns() {
+        assert_eq!(
+            designed(
+                "SELECT lower(c.nome) AS n, p.total * 2 FROM cliente c, pedido p \
+                 WHERE p.cliente_id = c.id AND lower(c.nome) LIKE 'a%' ORDER BY lower(c.nome)"
+            ),
+            "SELECT lower(c.nome) AS n,\n       p.total * 2\n\
+             FROM public.cliente AS c\n    \
+             INNER JOIN public.pedido AS p ON p.cliente_id = c.id\n\
+             WHERE lower(c.nome) LIKE 'a%'\n\
+             ORDER BY lower(c.nome);"
+        );
+        // Uma expressão que agrega fica fora do GROUP BY (Expression), e
+        // count(DISTINCT ...) também é expressão.
+        let (m, ..) = shop();
+        let q = read(
+            "SELECT cliente.nome, sum(total) / count(*) AS media, count(DISTINCT pedido.id) \
+             FROM cliente JOIN pedido ON pedido.cliente_id = cliente.id GROUP BY cliente.nome",
+            &m,
+        )
+        .unwrap();
+        assert_eq!(q.rows[1].aggregate, Aggregate::Expression);
+        assert_eq!(q.rows[2].aggregate, Aggregate::Expression);
+        let sql = q.sql(&m);
+        assert!(sql.contains("GROUP BY cliente.nome;"), "{sql}");
+        assert!(sql.contains("sum(total) / count(*) AS media"), "{sql}");
+        // Agrupar por expressão.
+        assert!(
+            designed("SELECT lower(nome), count(id) FROM cliente GROUP BY lower(nome)")
+                .contains("GROUP BY lower(nome)")
+        );
+    }
+
+    #[test]
+    fn everything_the_designer_draws_round_trips() {
+        let (m, cliente, pedido, produto) = shop();
+        let mut q = Query::default();
+        q.add_table(&m, cliente);
+        q.add_table(&m, pedido);
+        q.add_table(&m, produto);
+        q.set_join_kind(0, crate::query_designer::JoinKind::Left);
+        q.distinct = true;
+        q.limit = Some(20);
+        q.group_by = true;
+        q.toggle_column(0, "nome");
+        q.toggle_column(1, "total");
+        q.rows[1].aggregate = Aggregate::Sum;
+        q.rows[1].filter = "> 100".into();
+        q.rows[1].sort = SortType::Descending;
+        q.add_expression("count(*)");
+        q.rows[2].aggregate = Aggregate::Expression;
+        q.add_expression("upper(cliente.nome)");
+        q.rows[3].output = false;
+        q.rows[3].aggregate = Aggregate::Where;
+        q.rows[3].filter = "LIKE 'A%'".into();
+        *q.rows[3].criterion_mut(1) = "LIKE 'B%'".into();
+        q.or_columns = 1;
+        let sql = q.sql(&m);
+        assert_eq!(
+            sql,
+            "SELECT DISTINCT cliente.nome,\n       sum(pedido.total),\n       count(*)\n\
+             FROM public.cliente\n    \
+             LEFT JOIN public.pedido ON cliente.id = pedido.cliente_id\n    \
+             CROSS JOIN public.produto\n\
+             WHERE (upper(cliente.nome) LIKE 'A%')\n   OR (upper(cliente.nome) LIKE 'B%')\n\
+             GROUP BY cliente.nome\n\
+             HAVING sum(pedido.total) > 100\n\
+             ORDER BY sum(pedido.total) DESC\n\
+             LIMIT 20;"
+        );
+        let back = read(&sql, &m).unwrap();
+        assert_eq!(back.sql(&m), sql);
+        // Tirar a tabela não leva as expressões.
+        q.remove_table(2);
+        assert_eq!(q.rows.iter().filter(|r| r.expression).count(), 2);
+        // Uma expressão vazia não entra no SQL.
+        q.add_expression("  ");
+        assert!(!q.sql(&m).contains("  ,"));
     }
 }
