@@ -1,0 +1,14 @@
+[package]
+name = "pgstudio-schema-model"
+description = "Modelo do schema em memória do PGStudio: tabelas, colunas e constraints, edições com undo/redo e o DDL que leva o banco ao modelo."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+
+[lints]
+workspace = true

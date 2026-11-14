@@ -23,6 +23,7 @@
 //! expandido ganha uma conexão própria, aberta na primeira vez e reusada.
 //! Schemas do sistema (`pg_*`, `information_schema`) ficam de fora.
 
+mod model;
 mod path;
 mod script;
 

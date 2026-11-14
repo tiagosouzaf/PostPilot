@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 pgstudio-core.workspace = true
 pgstudio-pg-client.workspace = true
+pgstudio-schema-model.workspace = true
 tokio-postgres.workspace = true
 
 [lints]
