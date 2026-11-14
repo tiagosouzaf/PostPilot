@@ -95,6 +95,8 @@ pub struct Viewer<'a> {
     pub explorer_events: Vec<Event>,
     /// Documentos com alterações cujo fechamento foi pedido pela aba.
     pub close_requests: Vec<u32>,
+    /// "Save Results As...": janela e índice do resultado.
+    pub save_results: Vec<(u32, usize)>,
     /// Cores do editor de SQL (seguem o tema).
     pub editor_colors: pgstudio_sql_editor::Colors,
     /// Servidor e usuário, para a faixa de status das janelas de consulta.
@@ -264,6 +266,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .min_size(90.0)
                         .show(ui, |ui| crate::results::show(ui, *id, exec, &self.server))
                         .inner;
+                    if let Some(i) = action.save_results {
+                        self.save_results.push((*id, i));
+                    }
                     if let Some(pos) = action.jump_to {
                         pgstudio_sql_editor::set_selection(ui.ctx(), editor_id(*id), (pos, pos));
                         doc.editor.focus_editor();

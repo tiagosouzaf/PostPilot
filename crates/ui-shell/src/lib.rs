@@ -79,6 +79,8 @@ pub struct ShellApp {
     diagram_all_tables: bool,
     /// Activity Monitor aberto.
     activity: Option<activity::ActivityMonitor>,
+    /// "Save Results As" em andamento: a mensagem chega no fim.
+    exports: Vec<std::sync::mpsc::Receiver<String>>,
     /// Janelas Edit Top N Rows, pelo número.
     edit_rows: std::collections::BTreeMap<u32, edit_rows::EditRows>,
     next_edit_rows: u32,
@@ -239,6 +241,7 @@ impl Default for ShellApp {
             diagram_all_tables: false,
             password: String::new(),
             activity: None,
+            exports: Vec::new(),
             edit_rows: std::collections::BTreeMap::new(),
             next_edit_rows: 0,
             security: None,
@@ -1134,6 +1137,7 @@ impl ShellApp {
                 | CancelQuery
                 | ResultsToText
                 | ResultsToGrid
+                | ResultsToFile
                 | DesignQuery
                 | ActivityMonitor
                 | SchemaCompare
@@ -1315,11 +1319,11 @@ impl ShellApp {
                 }
             }
             CommandId::CancelQuery => self.cancel_query(),
-            CommandId::ResultsToText | CommandId::ResultsToGrid => {
-                let mode = if cmd == CommandId::ResultsToText {
-                    execution::ResultsMode::Text
-                } else {
-                    execution::ResultsMode::Grid
+            CommandId::ResultsToText | CommandId::ResultsToGrid | CommandId::ResultsToFile => {
+                let mode = match cmd {
+                    CommandId::ResultsToText => execution::ResultsMode::Text,
+                    CommandId::ResultsToFile => execution::ResultsMode::File,
+                    _ => execution::ResultsMode::Grid,
                 };
                 match self.active_doc.and_then(|id| self.documents.get_mut(id)) {
                     Some(doc) => doc.results_mode = mode,
@@ -1451,6 +1455,23 @@ impl ShellApp {
 
     /// Começa a execução na sessão (já aberta) da janela `id`.
     fn launch(&mut self, ctx: &egui::Context, id: u32, sql: String, offset: usize, kind: Run) {
+        // Results to File: pergunta o arquivo antes de rodar.
+        let to_file = matches!(kind, Run::Results)
+            && self
+                .documents
+                .get(id)
+                .is_some_and(|d| d.results_mode == execution::ResultsMode::File);
+        let file = if to_file {
+            match self.dialogs.save_results_path("Results.csv") {
+                Some(path) => Some(path),
+                None => {
+                    self.status = "Query canceled: no file chosen for the results.".to_string();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
@@ -1458,7 +1479,20 @@ impl ShellApp {
             return;
         };
         let exec = match kind {
-            Run::Results => Some(execution::Execution::start(session, sql, offset, ctx)),
+            Run::Results => match &file {
+                Some(path) => {
+                    match execution::Execution::start_to_file(session, sql, offset, path, ctx) {
+                        Ok(exec) => Some(exec),
+                        Err(e) => {
+                            let text = format!("Could not create {}: {e}", path.display());
+                            self.output.push(text.clone());
+                            self.status = text;
+                            return;
+                        }
+                    }
+                }
+                None => Some(execution::Execution::start(session, sql, offset, ctx)),
+            },
             Run::EstimatedPlan => execution::Execution::start_plan(session, sql, offset, ctx),
             Run::ActualPlan { roll_back } => {
                 execution::Execution::start_actual_plan(session, sql, offset, roll_back, ctx)
@@ -1473,6 +1507,73 @@ impl ShellApp {
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
+    }
+
+    /// "Save Results As...": pergunta o arquivo e exporta o resultado `i`
+    /// da janela `doc` numa thread, no formato da extensão.
+    fn save_results_as(&mut self, ctx: &egui::Context, doc: u32, i: usize) {
+        let Some(set) = self
+            .documents
+            .get(doc)
+            .and_then(|d| d.execution.as_ref())
+            .and_then(|e| e.results.get(i))
+        else {
+            return;
+        };
+        let store = set.shared_store();
+        let rows = set.len();
+        let Some(path) = self.dialogs.save_results_path("Results.csv") else {
+            return;
+        };
+        let format = pgstudio_result_grid::export::Format::from_path(&path);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        self.status = format!("Saving results to {}...", path.display());
+        std::thread::spawn(move || {
+            let result = std::fs::File::create(&path).and_then(|f| {
+                pgstudio_result_grid::export::write_rows(
+                    &store,
+                    0..rows,
+                    format,
+                    pgstudio_result_grid::grid::INSERT_TABLE,
+                    std::io::BufWriter::new(f),
+                )
+            });
+            let text = match result {
+                Ok(n) => format!(
+                    "Saved {n} row{} to {}.",
+                    if n == 1 { "" } else { "s" },
+                    path.display()
+                ),
+                Err(e) => format!("Could not save the results to {}: {e}", path.display()),
+            };
+            let _ = tx.send(text);
+            ctx.request_repaint();
+        });
+        self.exports.push(rx);
+    }
+
+    /// Recebe o fim dos "Save Results As" em andamento.
+    fn export_step(&mut self) {
+        let mut i = 0;
+        while i < self.exports.len() {
+            match self.exports[i].try_recv() {
+                Ok(text) => {
+                    self.status = text.clone();
+                    self.output.push(text);
+                    self.exports.remove(i);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => i += 1,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.exports.remove(i);
+                }
+            }
+        }
+    }
+
+    /// Exportações em andamento (testes).
+    pub fn is_exporting(&self) -> bool {
+        !self.exports.is_empty()
     }
 
     /// Pergunta antes do plano real de comandos que alteram dados, com a
@@ -2040,6 +2141,7 @@ impl ShellApp {
                     commands: Vec::new(),
                     explorer_events: Vec::new(),
                     close_requests: Vec::new(),
+                    save_results: Vec::new(),
                     editor_colors: match self.theme {
                         Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
@@ -2058,10 +2160,14 @@ impl ShellApp {
                 registered_actions = viewer.registered_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
+                let save_results = viewer.save_results;
                 for id in viewer.close_requests {
                     self.workspace.open(Panel::Query(id));
                     self.active_doc = Some(id);
                     self.request_close(vec![id], false);
+                }
+                for (doc, i) in save_results {
+                    self.save_results_as(ui.ctx(), doc, i);
                 }
             });
         if let Some(i) = activate {
@@ -2069,6 +2175,7 @@ impl ShellApp {
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
+        self.export_step();
         self.designer_step();
         self.diagram_step();
         self.activity_step(&ctx);
@@ -2657,6 +2764,7 @@ impl ShellApp {
                             (cmd, mode),
                             (CommandId::ResultsToText, Some(execution::ResultsMode::Text))
                                 | (CommandId::ResultsToGrid, Some(execution::ResultsMode::Grid))
+                                | (CommandId::ResultsToFile, Some(execution::ResultsMode::File))
                         );
                     let mut button = egui::Button::new(cmd.label()).selected(selected);
                     if let Some(s) = self.keymap.shortcut_for(cmd) {
@@ -2777,6 +2885,7 @@ impl ShellApp {
                 .edit_rows
                 .values()
                 .any(|e| e.is_loading() || e.is_saving())
+            || !self.exports.is_empty()
             || self.query_designer.as_ref().is_some_and(|q| q.is_loading());
         // Conta os frames parados: o que acabou de aparecer (um diálogo
         // modal entra com fade) precisa de alguns frames para assentar.
