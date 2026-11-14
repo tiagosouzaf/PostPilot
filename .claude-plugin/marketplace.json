@@ -1,0 +1,17 @@
+{
+  "name": "postpilot",
+  "owner": {
+    "name": "Tiago de Souza"
+  },
+  "metadata": {
+    "description": "Claude Code plugin for PostPilot, the desktop PostgreSQL manager."
+  },
+  "plugins": [
+    {
+      "name": "postpilot",
+      "source": "./claude-plugin",
+      "description": "Use PostPilot from Claude Code: servers, catalog, query windows, results, and confirmed changes.",
+      "category": "database"
+    }
+  ]
+}
