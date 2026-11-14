@@ -54,7 +54,7 @@ pub fn all() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "list_servers",
-            description: "List the PostgreSQL servers connected in PGStudio's Object Explorer, \
+            description: "List the PostgreSQL servers connected in PostPilot's Object Explorer, \
                 with the active one marked. Start here to know what you can query.",
             input_schema: schema(json!({}), &[]),
             read_only: true,
@@ -118,7 +118,7 @@ pub fn all() -> Vec<ToolSpec> {
                 rows as JSON. Read-only SQL (SELECT, WITH, EXPLAIN without ANALYZE, SHOW) runs \
                 right away inside a READ ONLY transaction with a 60 s timeout. Anything that \
                 can change data, schema or the session (INSERT, UPDATE, DELETE, DDL, EXPLAIN \
-                ANALYZE of a change, ...) shows a confirmation dialog in PGStudio with the full \
+                ANALYZE of a change, ...) shows a confirmation dialog in PostPilot with the full \
                 SQL, and runs only if the user clicks Run; if they decline, you get an error \
                 saying so. Results are capped (max_rows per result, 64 KB in total). To show \
                 SQL to the user instead of running it, use edit_query_window.",

@@ -45,6 +45,7 @@ commands! {
     OpenFile => "File.OpenFile", "File…";
     NewWorkspace => "File.NewWorkspace", "Workspace…";
     OpenWorkspace => "File.OpenWorkspace", "Workspace…";
+    CloneWorkspace => "File.CloneWorkspace", "Clone Workspace…";
     CloseWorkspace => "File.CloseWorkspace", "Close Workspace";
     CloseDocument => "File.Close", "Close";
     Save => "File.Save", "Save";
@@ -71,6 +72,7 @@ commands! {
     UncommentSelection => "Edit.UncommentSelection", "Uncomment Selection";
     MakeUppercase => "Edit.MakeUppercase", "Make Uppercase";
     MakeLowercase => "Edit.MakeLowercase", "Make Lowercase";
+    FormatDocument => "Edit.FormatDocument", "Format Document";
     // View
     ObjectExplorer => "View.ObjectExplorer", "Object Explorer";
     ObjectExplorerDetails => "View.ObjectExplorerDetails", "Object Explorer Details";
@@ -87,6 +89,7 @@ commands! {
     Connect => "Query.Connect", "Connect…";
     Disconnect => "Query.Disconnect", "Disconnect";
     ChangeConnection => "Query.ChangeConnection", "Change Connection…";
+    ChangeDatabase => "Query.ChangeDatabase", "Change Database";
     Execute => "Query.Execute", "Execute";
     Parse => "Query.Parse", "Parse";
     DesignQuery => "Query.DesignQuery", "Design Query in Editor…";
@@ -100,6 +103,7 @@ commands! {
     QueryOptions => "Query.Options", "Query Options…";
     // Tools
     SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
+    ClaudeCodeAccess => "Tools.ClaudeCodeAccess", "Allow Claude Code (MCP)";
     Options => "Tools.Options", "Options…";
     // Window
     NewHorizontalTabGroup => "Window.NewHorizontalTabGroup", "New Horizontal Tab Group";

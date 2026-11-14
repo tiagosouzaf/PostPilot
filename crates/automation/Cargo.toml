@@ -12,6 +12,9 @@ pgstudio-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true
+# Segredo do canal local com o `postpilot mcp` (marco 7.2); já vem no
+# Cargo.lock por outras dependências.
+getrandom = "0.3"
 
 [lints]
 workspace = true
