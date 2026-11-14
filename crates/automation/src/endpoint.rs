@@ -142,6 +142,12 @@ impl Listener {
     /// Começa a escutar e grava o arquivo do canal em `path`. As chamadas
     /// vão para `client`, com origem [`Origin::Mcp`].
     pub fn start(client: Client, path: PathBuf) -> std::io::Result<Listener> {
+        Self::start_as(client, path, Origin::Mcp)
+    }
+
+    /// Como [`Listener::start`], com as chamadas marcadas com `origin` (o
+    /// painel do Claude usa um canal próprio, com [`Origin::Panel`]).
+    pub fn start_as(client: Client, path: PathBuf, origin: Origin) -> std::io::Result<Listener> {
         let socket = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let addr = socket.local_addr()?;
         let token = new_token()?;
@@ -166,7 +172,9 @@ impl Listener {
                     let Ok(stream) = stream else { continue };
                     let (client, token, calls, running) =
                         (client.clone(), token.clone(), c.clone(), r.clone());
-                    std::thread::spawn(move || serve(stream, &client, &token, &calls, &running));
+                    std::thread::spawn(move || {
+                        serve(stream, &client, &token, origin, &calls, &running)
+                    });
                 }
             })?;
         Ok(Listener {
@@ -221,6 +229,7 @@ fn serve(
     stream: TcpStream,
     client: &Client,
     token: &str,
+    origin: Origin,
     calls: &AtomicUsize,
     running: &AtomicUsize,
 ) {
@@ -241,7 +250,7 @@ fn serve(
     }
     calls.fetch_add(1, Ordering::SeqCst);
     running.fetch_add(1, Ordering::SeqCst);
-    let reply = client.call(&request.tool, request.args, Origin::Mcp);
+    let reply = client.call(&request.tool, request.args, origin);
     running.fetch_sub(1, Ordering::SeqCst);
     let response = Response {
         text: reply.text,
