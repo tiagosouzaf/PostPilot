@@ -1153,8 +1153,9 @@ impl EditRows {
                                                 };
                                                 if ui
                                                     .button(format!(
-                                                        "{} {label}",
-                                                        icon::BRACKETS_CURLY
+                                                        "{} {}",
+                                                        icon::BRACKETS_CURLY,
+                                                        pgstudio_i18n::tr(label)
                                                     ))
                                                     .clicked()
                                                 {
@@ -1205,15 +1206,37 @@ impl EditRows {
         }
     }
 
+    /// A linha a excluir como `chave = valor` (a linha nova, que não está
+    /// no banco, não tem o que mostrar).
+    pub fn confirm_row_text(&self, row: usize) -> Option<String> {
+        let table = self.table.as_ref()?;
+        let r = self.rows.get(row).filter(|r| !r.new)?;
+        Some(
+            table
+                .columns
+                .iter()
+                .zip(&r.original)
+                .filter(|(c, _)| c.key)
+                .map(|(c, v)| format!("{} = {}", c.name, v.as_deref().unwrap_or("NULL")))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
     fn confirm_window(&mut self, ctx: &egui::Context) {
         if self.confirm_delete.is_none() {
             return;
         }
         let mut answer = None;
+        let row = self.confirm_delete.and_then(|r| self.confirm_row_text(r));
         let modal = crate::theme::modal(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading("Delete Row");
             ui.label("You are about to delete 1 row. Are you sure?");
+            if let Some(row) = &row {
+                ui.add_space(4.0);
+                ui.label(RichText::new(row).monospace());
+            }
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("No").clicked() {
@@ -1249,7 +1272,7 @@ const GONE: &str = "The row was not found; it may have been changed or deleted b
 
 /// Roda `sql` e chama `done` uma vez com as linhas do último resultado
 /// (ou o erro) e o número de linhas que o último comando leu ou alterou.
-fn run(
+pub(crate) fn run(
     session: &Arc<dyn QuerySession>,
     sql: String,
     ctx: &egui::Context,

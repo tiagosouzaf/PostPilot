@@ -7,6 +7,7 @@
 
 use eframe::egui::{self, FontId, RichText};
 use egui_phosphor::regular as icon;
+use pgstudio_i18n::tr;
 
 /// Um exemplo do guia.
 #[derive(Clone, Copy, Debug)]
@@ -365,7 +366,7 @@ impl JsonGuide {
         }
         let mut insert = None;
         let mut open = true;
-        egui::Window::new("JSON Query Guide")
+        egui::Window::new(tr("JSON Query Guide"))
             .id(egui::Id::new("json_guide"))
             .open(&mut open)
             .collapsible(false)
@@ -384,7 +385,7 @@ impl JsonGuide {
                         ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
                             for (i, t) in TOPICS.iter().enumerate() {
-                                if ui.selectable_label(self.topic == i, t.title).clicked() {
+                                if ui.selectable_label(self.topic == i, tr(t.title)).clicked() {
                                     self.topic = i;
                                 }
                             }
@@ -396,9 +397,9 @@ impl JsonGuide {
                     .auto_shrink(false)
                     .show(ui, |ui| {
                         ui.add_space(4.0);
-                        ui.heading(topic.title);
+                        ui.heading(tr(topic.title));
                         ui.add_space(4.0);
-                        ui.label(topic.intro);
+                        ui.label(tr(topic.intro));
                         ui.add_space(10.0);
                         for (i, e) in topic.examples.iter().enumerate() {
                             ui.push_id(i, |ui| {
@@ -424,22 +425,26 @@ fn example(
 ) -> Option<String> {
     let mut insert = None;
     ui.horizontal(|ui| {
-        ui.label(RichText::new(e.title).strong());
+        ui.label(RichText::new(tr(e.title)).strong());
         if let Some(v) = e.since {
+            // i18n-ignore
             ui.label(RichText::new(format!("PostgreSQL {v}+")).small().weak());
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let r = ui.add_enabled(
                 can_insert,
-                egui::Button::new(format!("{} Insert", icon::ARROW_SQUARE_IN)).small(),
+                egui::Button::new(format!("{} {}", icon::ARROW_SQUARE_IN, tr("Insert"))).small(),
             );
-            if r.on_hover_text("Put this SQL in the query window.")
-                .on_disabled_hover_text("Open a query window first.")
+            if r.on_hover_text(tr("Put this SQL in the query window."))
+                .on_disabled_hover_text(tr("Open a query window first."))
                 .clicked()
             {
                 insert = Some(e.sql.to_string());
             }
-            if ui.small_button(format!("{} Copy", icon::COPY)).clicked() {
+            if ui
+                .small_button(format!("{} {}", icon::COPY, tr("Copy")))
+                .clicked()
+            {
                 ui.ctx().copy_text(e.sql.to_string());
             }
         });
@@ -454,13 +459,28 @@ fn example(
             ui.set_width(ui.available_width());
             ui.add(egui::Label::new(job).selectable(true));
         });
-    ui.label(RichText::new(format!("{} {}", icon::ARROW_RIGHT, e.result)).weak());
+    ui.label(RichText::new(format!("{} {}", icon::ARROW_RIGHT, tr(e.result))).weak());
     insert
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn topics_and_titles_have_portuguese_translations() {
+        use pgstudio_i18n::{Language, has_translation};
+        for t in TOPICS {
+            let mut texts = vec![t.title, t.intro];
+            texts.extend(t.examples.iter().map(|e| e.title));
+            for text in texts {
+                assert!(
+                    has_translation(Language::PortugueseBrazil, None, text),
+                    "sem tradução em locales/pt-BR.po: {text:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn every_topic_has_examples_with_sql() {

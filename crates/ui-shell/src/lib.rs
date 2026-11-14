@@ -23,19 +23,23 @@ pub mod keys;
 pub mod layout;
 pub mod menus;
 pub mod object_info;
+pub mod options;
 pub mod panels;
 pub mod pgtools;
+pub mod preferences;
 pub mod properties;
 pub mod query_designer;
 pub mod registered;
 pub mod repo;
 pub mod restore;
+pub mod result_edit;
 pub mod results;
 pub mod schema_compare;
 pub mod secrets;
 pub mod security;
 pub mod servers;
 pub mod theme;
+pub mod update;
 
 /// Ações do menu de contexto do Object Explorer.
 pub use pgstudio_object_explorer::Event as ExplorerEvent;
@@ -45,6 +49,7 @@ use std::path::PathBuf;
 use eframe::egui::{self, RichText};
 use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
 use pgstudio_core::{APP_NAME, CommandId, Theme, VERSION};
+use pgstudio_i18n::{tr, trf};
 
 use connect::{ConnectDialog, DialogAction, RecentConnections};
 use documents::{Documents, FileDialogs, NoDialogs};
@@ -57,6 +62,7 @@ use pgstudio_object_explorer::ObjectExplorer;
 use pgstudio_object_explorer::fake::FakeProvider;
 use std::sync::Arc;
 
+/// "Ready" (passa por `tr` ao exibir).
 const READY: &str = "Ready";
 
 /// Linha que o modo de medição escreve quando o primeiro frame foi exibido.
@@ -66,8 +72,15 @@ pub const BENCH_FIRST_FRAME: &str = "pgstudio-bench: first-frame";
 pub struct ShellApp {
     theme: Theme,
     about_open: bool,
+    /// Tools > Options aberto.
+    options: Option<options::OptionsDialog>,
+    /// Preferências em uso e o arquivo delas (sem arquivo nos testes).
+    preferences: preferences::Preferences,
+    preferences_store: Option<preferences::PreferencesStore>,
     /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
     renderer: Option<String>,
+    /// Versão nova: checagem, janela "Check for Updates" e instalação.
+    updater: update::Updater,
     keymap: Keymap,
     chords: ChordMatcher,
     status: String,
@@ -274,10 +287,14 @@ impl Default for ShellApp {
         Self {
             theme: Theme::default(),
             about_open: false,
+            options: None,
+            preferences: preferences::Preferences::default(),
+            preferences_store: None,
             renderer: None,
+            updater: update::Updater::default(),
             keymap: Keymap::ssms(),
             chords: ChordMatcher::default(),
-            status: READY.to_string(),
+            status: tr(READY).to_string(),
             last_command: None,
             workspace: panels::default_layout(),
             output: Vec::new(),
@@ -444,17 +461,20 @@ impl ShellApp {
                 self.recent.remember(&connected.settings);
                 self.explorer.connect(connected.metadata.clone());
                 self.workspace.open(Panel::ObjectExplorer);
-                self.output.push(format!(
-                    "Connected to {name} (PostgreSQL {}) as {}.",
-                    connected.server_version, connected.settings.user
+                self.output.push(trf!(
+                    "Connected to {name} (PostgreSQL {version}) as {user}.",
+                    name = name,
+                    version = connected.server_version,
+                    user = connected.settings.user
                 ));
-                self.status = format!("Connected to {name}.");
+                self.status = trf!("Connected to {name}.", name = name);
                 self.connection = Some(connected);
                 self.catalogs.clear();
             }
             None if was_connecting => {
                 if let Some(error) = dialog.error() {
-                    self.output.push(format!("Connection failed: {error}"));
+                    self.output
+                        .push(trf!("Connection failed: {error}", error = error));
                 }
             }
             None => {}
@@ -480,8 +500,8 @@ impl ShellApp {
     pub fn connection_label(&self) -> String {
         match &self.connection {
             Some(c) => format!("{} ({})", c.settings.server_name(), c.settings.user),
-            None if self.explorer.is_connected() => "Demo server".to_string(),
-            None => "Not connected".to_string(),
+            None if self.explorer.is_connected() => tr("Demo server").to_string(),
+            None => tr("Not connected").to_string(),
         }
     }
 
@@ -517,7 +537,8 @@ impl ShellApp {
         if let Some(error) = &store.error {
             eprintln!("layout: {}: {error}", store.path().display());
             self.status =
-                "The saved window layout could not be read; using the default layout.".to_string();
+                tr("The saved window layout could not be read; using the default layout.")
+                    .to_string();
         }
         self.layout_store = Some(store);
         self
@@ -589,7 +610,7 @@ impl ShellApp {
     pub fn open_file(&mut self, path: &std::path::Path) -> bool {
         if path.extension().is_some_and(|e| e == diagrams::EXTENSION) {
             let Some(provider) = self.explorer.provider() else {
-                self.status = "Connect to the server of the diagram first.".to_string();
+                self.status = tr("Connect to the server of the diagram first.").to_string();
                 return false;
             };
             return match self.diagrams.open_file(provider, path) {
@@ -598,7 +619,11 @@ impl ShellApp {
                     true
                 }
                 Err(e) => {
-                    self.status = format!("Could not open {}: {e}", path.display());
+                    self.status = trf!(
+                        "Could not open {path}: {error}",
+                        path = path.display(),
+                        error = e
+                    );
                     false
                 }
             };
@@ -610,7 +635,11 @@ impl ShellApp {
                 true
             }
             Err(e) => {
-                self.status = format!("Could not open {}: {e}", path.display());
+                self.status = trf!(
+                    "Could not open {path}: {error}",
+                    path = path.display(),
+                    error = e
+                );
                 false
             }
         }
@@ -640,6 +669,86 @@ impl ShellApp {
     pub fn with_renderer(mut self, renderer: impl Into<String>) -> Self {
         self.renderer = Some(renderer.into());
         self
+    }
+
+    /// Usa estas preferências e grava as mudanças de Tools > Options no
+    /// arquivo. Quem chama já aplicou o idioma (`Preferences::apply`) antes
+    /// de criar o app, para o primeiro "Ready" sair no idioma certo.
+    pub fn with_preferences(
+        mut self,
+        store: Option<preferences::PreferencesStore>,
+        prefs: preferences::Preferences,
+    ) -> Self {
+        if let Some(e) = store.as_ref().and_then(|s| s.error.as_ref()) {
+            eprintln!("preferences: {e}");
+            self.status =
+                tr("The saved options could not be read; using the defaults.").to_string();
+        }
+        self.preferences = prefs;
+        self.preferences_store = store;
+        self
+    }
+
+    /// Preferências em uso.
+    pub fn preferences(&self) -> &preferences::Preferences {
+        &self.preferences
+    }
+
+    /// Se Tools > Options está aberto.
+    pub fn options_open(&self) -> bool {
+        self.options.is_some()
+    }
+
+    fn options_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.options else {
+            return;
+        };
+        match dialog.show(ctx) {
+            options::Action::None => {}
+            options::Action::Cancel => self.options = None,
+            options::Action::Apply(prefs) => {
+                self.options = None;
+                prefs.apply();
+                if prefs.theme() != self.theme {
+                    self.set_theme(ctx, prefs.theme());
+                }
+                self.save_preferences(prefs);
+            }
+        }
+    }
+
+    /// Guarda as preferências e grava no arquivo, se houver.
+    fn save_preferences(&mut self, prefs: preferences::Preferences) {
+        if let Some(store) = &self.preferences_store
+            && let Err(e) = store.save(&prefs)
+        {
+            self.status = trf!(
+                "Could not save the options to {path}: {error}",
+                path = store.path().display(),
+                error = e
+            );
+        }
+        self.preferences = prefs;
+    }
+
+    /// Troca o tema pelo menu ou pela toolbar e lembra a escolha.
+    fn choose_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        self.set_theme(ctx, theme);
+        let mut prefs = self.preferences.clone();
+        prefs.theme = preferences::ThemeSetting(Some(theme));
+        self.save_preferences(prefs);
+    }
+
+    /// Liga a checagem de versão nova (e já checa, se estiver na hora).
+    pub fn with_updater(mut self, ctx: &egui::Context, mut updater: update::Updater) -> Self {
+        updater.check_if_due(ctx);
+        self.updater = updater;
+        self
+    }
+
+    /// A atualização do app, para testes.
+    pub fn updater_mut(&mut self) -> &mut update::Updater {
+        &mut self.updater
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -1304,6 +1413,8 @@ impl ShellApp {
                 | ThemeDark
                 | FullScreen
                 | About
+                | Options
+                | CheckForUpdates
                 | ObjectExplorer
                 | PropertiesWindow
                 | Output
@@ -1352,7 +1463,7 @@ impl ShellApp {
     /// Executa um comando, venha ele de menu, toolbar ou atalho.
     pub fn execute(&mut self, ctx: &egui::Context, cmd: CommandId) {
         self.last_command = Some(cmd);
-        self.status = READY.to_string();
+        self.status = tr(READY).to_string();
         let mut available = Self::is_available(cmd);
         match cmd {
             // F5 no Object Explorer atualiza o nó selecionado, como no SSMS.
@@ -1362,13 +1473,13 @@ impl ShellApp {
                 available = true;
                 match self.explorer.selected().map(|n| n.id.clone()) {
                     Some(id) => self.explorer.refresh(&id),
-                    None => self.status = "Select a node to refresh.".to_string(),
+                    None => self.status = tr("Select a node to refresh.").to_string(),
                 }
             }
             CommandId::Exit => {
                 let dirty = self.documents.dirty();
                 if self.ask_dirty_designer() {
-                    self.status = "Save or discard the table changes first.".to_string();
+                    self.status = tr("Save or discard the table changes first.").to_string();
                 } else if dirty.is_empty() {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1380,14 +1491,18 @@ impl ShellApp {
                     });
                 }
             }
-            CommandId::ThemeLight => self.set_theme(ctx, Theme::Light),
-            CommandId::ThemeDark => self.set_theme(ctx, Theme::Dark),
+            CommandId::ThemeLight => self.choose_theme(ctx, Theme::Light),
+            CommandId::ThemeDark => self.choose_theme(ctx, Theme::Dark),
             CommandId::FullScreen => {
                 let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
             }
             CommandId::About => self.about_open = true,
             CommandId::JsonGuide => self.json_guide.open = true,
+            CommandId::Options => {
+                self.options = Some(options::OptionsDialog::new(&self.preferences));
+            }
+            CommandId::CheckForUpdates => self.updater.check_now(ctx),
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
@@ -1434,7 +1549,7 @@ impl ShellApp {
                     {
                         self.workspace.auto_hide(&p);
                     }
-                    _ => self.status = "Select a tool window to auto hide.".to_string(),
+                    _ => self.status = tr("Select a tool window to auto hide.").to_string(),
                 }
             }
             CommandId::AutoHideAll => self.workspace.auto_hide_all(),
@@ -1463,7 +1578,7 @@ impl ShellApp {
                 if self.database_picker().enabled {
                     self.open_database_list = true;
                 } else if self.active_doc.is_none() {
-                    self.status = "No query window is open.".to_string();
+                    self.status = tr("No query window is open.").to_string();
                 }
             }
             CommandId::OpenFile => {
@@ -1511,7 +1626,7 @@ impl ShellApp {
                 Some(id) => {
                     self.save(id, cmd == CommandId::SaveAs);
                 }
-                None => self.status = "No query window is open.".to_string(),
+                None => self.status = tr("No query window is open.").to_string(),
             },
             CommandId::SaveAll => {
                 for id in self.documents.dirty() {
@@ -1522,7 +1637,7 @@ impl ShellApp {
             }
             CommandId::CloseDocument => match self.active_doc {
                 Some(id) => self.request_close(vec![id], false),
-                None => self.status = "No query window is open.".to_string(),
+                None => self.status = tr("No query window is open.").to_string(),
             },
             CommandId::CloseAllDocuments => self.request_close(self.documents.ids(), false),
             CommandId::CommentSelection
@@ -1533,7 +1648,7 @@ impl ShellApp {
             | CommandId::CompleteWord
             | CommandId::GoTo => match self.active_doc {
                 Some(id) => self.editor_command(ctx, id, cmd),
-                None => self.status = "No query window is open.".to_string(),
+                None => self.status = tr("No query window is open.").to_string(),
             },
             CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx, Ask::Run),
@@ -1544,12 +1659,12 @@ impl ShellApp {
                     Some(doc) => {
                         doc.actual_plan = !doc.actual_plan;
                         self.status = if doc.actual_plan {
-                            "The actual execution plan will be included (the next run uses EXPLAIN ANALYZE).".to_string()
+                            tr("The actual execution plan will be included (the next run uses EXPLAIN ANALYZE).").to_string()
                         } else {
-                            "The actual execution plan will not be included.".to_string()
+                            tr("The actual execution plan will not be included.").to_string()
                         };
                     }
-                    None => self.status = "No query window is open.".to_string(),
+                    None => self.status = tr("No query window is open.").to_string(),
                 }
             }
             CommandId::CancelQuery => self.cancel_query(),
@@ -1561,7 +1676,7 @@ impl ShellApp {
                 };
                 match self.active_doc.and_then(|id| self.documents.get_mut(id)) {
                     Some(doc) => doc.results_mode = mode,
-                    None => self.status = "No query window is open.".to_string(),
+                    None => self.status = tr("No query window is open.").to_string(),
                 }
             }
             CommandId::ConnectObjectExplorer => {
@@ -1571,8 +1686,10 @@ impl ShellApp {
             CommandId::DisconnectObjectExplorer => {
                 if let Some(c) = self.connection.take() {
                     self.databases.forget(&servers::server_key(&c.settings));
-                    self.output
-                        .push(format!("Disconnected from {}.", c.settings.server_name()));
+                    self.output.push(trf!(
+                        "Disconnected from {server}.",
+                        server = c.settings.server_name()
+                    ));
                 }
                 self.explorer.disconnect();
                 self.catalogs.clear();
@@ -1596,19 +1713,19 @@ impl ShellApp {
                 ) {
                     (Some(provider), Some(db)) => {
                         self.catalogs.refresh(&db, &provider, ctx);
-                        self.status = "Refreshing local cache...".to_string();
+                        self.status = tr("Refreshing local cache...").to_string();
                     }
-                    _ => self.status = "Connect to a server to use IntelliSense.".to_string(),
+                    _ => self.status = tr("Connect to a server to use IntelliSense.").to_string(),
                 }
             }
             _ => {
-                self.status = format!("\"{}\" is not available yet.", cmd.label());
+                self.status = trf!("\"{command}\" is not available yet.", command = cmd.label());
             }
         }
         let note = if available {
             String::new()
         } else {
-            " (not available yet)".to_string()
+            format!(" {}", tr("(not available yet)"))
         };
         self.output.push(format!("> {}{note}", cmd.label()));
     }
@@ -1619,20 +1736,20 @@ impl ShellApp {
     /// as informações do objeto selecionado ou sob o cursor.
     fn execute_query(&mut self, ctx: &egui::Context, ask: Ask) {
         let Some(id) = self.active_doc else {
-            self.status = "No query window is open.".to_string();
+            self.status = tr("No query window is open.").to_string();
             return;
         };
         self.activate_server_of(id);
         let queries = match &self.connection {
             Some(c) => (c.queries.clone(), c.settings.database.clone()),
             None if self.connector.is_none() && self.explorer.is_connected() => (
-                Arc::new(pgstudio_core::query::Offline(
+                Arc::new(pgstudio_core::query::Offline(tr(
                     "The demo server cannot run queries. Connect to a PostgreSQL server.",
-                )) as Arc<dyn pgstudio_core::query::QueryService>,
+                ))) as Arc<dyn pgstudio_core::query::QueryService>,
                 "postgres".to_string(),
             ),
             None => {
-                self.status = "Connect to a server to run queries.".to_string();
+                self.status = tr("Connect to a server to run queries.").to_string();
                 self.open_connect_dialog();
                 return;
             }
@@ -1641,7 +1758,7 @@ impl ShellApp {
             return;
         };
         if doc.execution.as_ref().is_some_and(|e| e.is_running()) {
-            self.status = "A query is already executing in this window.".to_string();
+            self.status = tr("A query is already executing in this window.").to_string();
             return;
         }
         let editor = panels::editor_id(id);
@@ -1663,7 +1780,7 @@ impl ShellApp {
                 Some(n) if !n.is_empty() => (object_info::info_sql(&n), 0),
                 _ => {
                     self.status =
-                        "Select an object name, or place the cursor on one, for Object Information."
+                        tr("Select an object name, or place the cursor on one, for Object Information.")
                             .to_string();
                     return;
                 }
@@ -1705,10 +1822,13 @@ impl ShellApp {
                 .get(id)
                 .is_some_and(|d| d.results_mode == execution::ResultsMode::File);
         let file = if to_file {
-            match self.dialogs.save_results_path("Results.csv") {
+            match self
+                .dialogs
+                .save_results_path(&format!("{}.csv", tr("Results")))
+            {
                 Some(path) => Some(path),
                 None => {
-                    self.status = "Query canceled: no file chosen for the results.".to_string();
+                    self.status = tr("Query canceled: no file chosen for the results.").to_string();
                     return;
                 }
             }
@@ -1727,7 +1847,11 @@ impl ShellApp {
                     match execution::Execution::start_to_file(session, sql, offset, path, ctx) {
                         Ok(exec) => Some(exec),
                         Err(e) => {
-                            let text = format!("Could not create {}: {e}", path.display());
+                            let text = trf!(
+                                "Could not create {path}: {error}",
+                                path = path.display(),
+                                error = e
+                            );
                             self.output.push(text.clone());
                             self.status = text;
                             return;
@@ -1743,7 +1867,7 @@ impl ShellApp {
             Run::ObjectInfo => Some(execution::Execution::start_generated(session, sql, ctx)),
         };
         let Some(mut exec) = exec else {
-            self.status = "There is no statement to show a plan for.".to_string();
+            self.status = tr("There is no statement to show a plan for.").to_string();
             return;
         };
         exec.mode = doc.results_mode;
@@ -1765,13 +1889,16 @@ impl ShellApp {
         };
         let store = set.shared_store();
         let rows = set.len();
-        let Some(path) = self.dialogs.save_results_path("Results.csv") else {
+        let Some(path) = self
+            .dialogs
+            .save_results_path(&format!("{}.csv", tr("Results")))
+        else {
             return;
         };
         let format = pgstudio_result_grid::export::Format::from_path(&path);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
-        self.status = format!("Saving results to {}...", path.display());
+        self.status = trf!("Saving results to {path}...", path = path.display());
         std::thread::spawn(move || {
             let result = std::fs::File::create(&path).and_then(|f| {
                 pgstudio_result_grid::export::write_rows(
@@ -1783,12 +1910,13 @@ impl ShellApp {
                 )
             });
             let text = match result {
-                Ok(n) => format!(
-                    "Saved {n} row{} to {}.",
-                    if n == 1 { "" } else { "s" },
-                    path.display()
+                Ok(1) => trf!("Saved 1 row to {path}.", path = path.display()),
+                Ok(n) => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                Err(e) => trf!(
+                    "Could not save the results to {path}: {error}",
+                    path = path.display(),
+                    error = e
                 ),
-                Err(e) => format!("Could not save the results to {}: {e}", path.display()),
             };
             let _ = tx.send(text);
             ctx.request_repaint();
@@ -1828,20 +1956,20 @@ impl ShellApp {
         let mut answer: Option<Option<bool>> = None;
         let modal = crate::theme::modal(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.heading("Include Actual Execution Plan");
-            ui.label(
+            ui.heading(tr("Include Actual Execution Plan"));
+            ui.label(tr(
                 "The actual plan is collected with EXPLAIN ANALYZE, which runs the statements. \
                  This batch changes data (INSERT, UPDATE, DELETE or MERGE).",
-            );
+            ));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(None);
                 }
-                if ui.button("Run and Keep Changes").clicked() {
+                if ui.button(tr("Run and Keep Changes")).clicked() {
                     answer = Some(Some(false));
                 }
-                if ui.button("Run and Roll Back").clicked() {
+                if ui.button(tr("Run and Roll Back")).clicked() {
                     answer = Some(Some(true));
                 }
             });
@@ -1861,7 +1989,7 @@ impl ShellApp {
                 pending.offset,
                 Run::ActualPlan { roll_back },
             ),
-            None => self.status = "The query was not executed.".to_string(),
+            None => self.status = tr("The query was not executed.").to_string(),
         }
     }
 
@@ -1875,9 +2003,9 @@ impl ShellApp {
         match running {
             Some(e) => {
                 e.cancel();
-                self.status = "Canceling query...".to_string();
+                self.status = tr("Canceling query...").to_string();
             }
-            None => self.status = "No query is executing.".to_string(),
+            None => self.status = tr("No query is executing.").to_string(),
         }
     }
 
@@ -1976,8 +2104,9 @@ impl ShellApp {
             if exec.is_running() {
                 return false;
             }
+            // Sem resultado (erro na consulta) não há o que abrir.
             let Some(set) = exec.results.first() else {
-                return false;
+                return true;
             };
             let mut store = set.store();
             let cols = store.columns().len();
@@ -2116,7 +2245,7 @@ impl ShellApp {
                         let id = self.designers.open(provider, target, node, ctx);
                         self.workspace.open(Panel::TableDesigner(id));
                     }
-                    None => self.status = "This object cannot be designed.".to_string(),
+                    None => self.status = tr("This object cannot be designed.").to_string(),
                 }
                 return;
             }
@@ -2131,7 +2260,7 @@ impl ShellApp {
             Event::BackUp(node) => {
                 match provider.database_of(&node) {
                     Some(db) => self.open_backup(ctx, db),
-                    None => self.status = "Select a database to back up.".to_string(),
+                    None => self.status = tr("Select a database to back up.").to_string(),
                 }
                 return;
             }
@@ -2160,7 +2289,7 @@ impl ShellApp {
                         let id = self.diagrams.open(provider, db, Some(node), all, ctx);
                         self.workspace.open(Panel::Diagram(id));
                     }
-                    None => self.status = "Select a database to diagram.".to_string(),
+                    None => self.status = tr("Select a database to diagram.").to_string(),
                 }
                 return;
             }
@@ -2187,7 +2316,7 @@ impl ShellApp {
             let _ = tx.send(provider.script(&node, action));
             repaint.request_repaint();
         });
-        self.status = "Generating script...".to_string();
+        self.status = tr("Generating script...").to_string();
         self.scripts.push(PendingScript {
             rx,
             database,
@@ -2207,7 +2336,7 @@ impl ShellApp {
                     continue;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(
-                    pgstudio_core::metadata::MetadataError("Script generation failed.".into()),
+                    pgstudio_core::metadata::MetadataError(tr("Script generation failed.").into()),
                 ),
             };
             let pending = self.scripts.remove(i);
@@ -2215,7 +2344,7 @@ impl ShellApp {
                 Ok(sql) => {
                     let id = self.documents.new_script(sql, pending.database);
                     self.activate_document(id);
-                    self.status = "Ready".to_string();
+                    self.status = tr("Ready").to_string();
                     if pending.run {
                         self.execute_query(ctx, Ask::Run);
                     }
@@ -2228,7 +2357,7 @@ impl ShellApp {
                     }
                 }
                 Err(e) => {
-                    self.output.push(format!("Script failed: {e}"));
+                    self.output.push(trf!("Script failed: {error}", error = e));
                     self.status = e.to_string();
                 }
             }
@@ -2258,17 +2387,19 @@ impl ShellApp {
         for loaded in self.catalogs.poll() {
             match loaded.result {
                 Ok(n) => {
-                    self.output.push(format!(
-                        "IntelliSense: {n} objects loaded from {}.",
-                        loaded.database
+                    self.output.push(trf!(
+                        "IntelliSense: {n} objects loaded from {database}.",
+                        n = n,
+                        database = loaded.database
                     ));
-                    if self.status == "Refreshing local cache..." {
-                        self.status = "Local cache refreshed.".to_string();
+                    if self.status == tr("Refreshing local cache...") {
+                        self.status = tr("Local cache refreshed.").to_string();
                     }
                 }
-                Err(e) => self.output.push(format!(
-                    "IntelliSense could not read the catalog of {}: {e}",
-                    loaded.database
+                Err(e) => self.output.push(trf!(
+                    "IntelliSense could not read the catalog of {database}: {error}",
+                    database = loaded.database,
+                    error = e
                 )),
             }
         }
@@ -2317,14 +2448,16 @@ impl ShellApp {
             CommandId::FormatDocument => {
                 let options = pgstudio_sql_editor::format::FormatOptions::default();
                 match pgstudio_sql_editor::format_selection(ctx, editor, &mut doc.text, &options) {
-                    Ok(()) => self.status = "Formatted.".to_string(),
+                    Ok(()) => self.status = tr("Formatted.").to_string(),
                     Err(e) => {
                         if let Some(at) = e.at {
                             let at = pgstudio_sql_editor::edit::char_of(&doc.text, at);
                             doc.editor.mark_error(at, e.message.clone());
                         }
-                        self.status =
-                            format!("Couldn't format the SQL: {e} The text was not changed.");
+                        self.status = trf!(
+                            "Couldn't format the SQL: {error} The text was not changed.",
+                            error = e
+                        );
                     }
                 }
                 doc.editor.focus_editor();
@@ -2359,12 +2492,16 @@ impl ShellApp {
         };
         match doc.save_to(&path) {
             Ok(()) => {
-                self.status = "Item(s) Saved".to_string();
+                self.status = tr("Item(s) Saved").to_string();
                 self.after_save(&path, link);
                 true
             }
             Err(e) => {
-                self.status = format!("Could not save {}: {e}", path.display());
+                self.status = trf!(
+                    "Could not save {path}: {error}",
+                    path = path.display(),
+                    error = e
+                );
                 false
             }
         }
@@ -2431,7 +2568,7 @@ impl ShellApp {
         let modal = crate::theme::modal(egui::Id::new("save_changes")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(APP_NAME);
-            ui.label("Save changes to the following items?");
+            ui.label(tr("Save changes to the following items?"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 for name in &names {
@@ -2440,13 +2577,13 @@ impl ShellApp {
             });
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(Answer::Cancel);
                 }
-                if ui.button("No").clicked() {
+                if ui.button(tr("No")).clicked() {
                     answer = Some(Answer::No);
                 }
-                if ui.button("Yes").clicked() {
+                if ui.button(tr("Yes")).clicked() {
                     answer = Some(Answer::Yes);
                 }
             });
@@ -2491,6 +2628,7 @@ impl ShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             } else if self.allow_close || dirty.is_empty() {
                 self.save_layout();
+                self.updater.on_close();
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 if self.confirm.is_none() {
@@ -2506,7 +2644,7 @@ impl ShellApp {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 for menu in MENUS {
-                    ui.menu_button(menu.title, |ui| {
+                    ui.menu_button(tr(menu.title), |ui| {
                         self.menu_entries(ui, menu.entries, &mut commands);
                     });
                 }
@@ -2620,10 +2758,11 @@ impl ShellApp {
         self.restore_window(&ctx);
         self.compare_window(&ctx);
         self.connect_window(&ctx);
+        self.options_window(&ctx);
 
         if self.about_open {
             let mut open = true;
-            egui::Window::new(format!("About {APP_NAME}"))
+            egui::Window::new(trf!("About {app}", app = APP_NAME))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -2631,15 +2770,17 @@ impl ShellApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
-                    ui.label(format!("Version {VERSION}"));
+                    ui.label(trf!("Version {version}", version = VERSION));
                     if let Some(renderer) = &self.renderer {
-                        ui.label(format!("Renderer: {renderer}"));
+                        ui.label(trf!("Renderer: {renderer}", renderer = renderer));
                     }
-                    ui.label("PostgreSQL management studio.");
-                    ui.label("Licensed under MIT or Apache-2.0.");
+                    ui.label(tr("PostgreSQL management studio."));
+                    ui.label(tr("Licensed under MIT or Apache-2.0."));
+                    self.updater.about_line(ui, &ctx);
                 });
             self.about_open = open;
         }
+        commands.extend(self.updater.window(&ctx));
 
         for cmd in commands {
             self.execute(&ctx, cmd);
@@ -2698,15 +2839,15 @@ impl ShellApp {
     /// Abre o Query Designer para a janela de consulta ativa.
     fn open_query_designer(&mut self, ctx: &egui::Context) {
         let Some(doc) = self.active_doc else {
-            self.status = "Open a query window to design a query.".to_string();
+            self.status = tr("Open a query window to design a query.").to_string();
             return;
         };
         let Some(provider) = self.explorer.provider() else {
-            self.status = "Connect to a server to design a query.".to_string();
+            self.status = tr("Connect to a server to design a query.").to_string();
             return;
         };
         let Some(db) = self.document_database(doc) else {
-            self.status = "Choose a database for the query window first.".to_string();
+            self.status = tr("Choose a database for the query window first.").to_string();
             return;
         };
         let selected = self
@@ -2861,7 +3002,7 @@ impl ShellApp {
     pub fn insert_sql(&mut self, ctx: &egui::Context, doc: u32, sql: &str) {
         let editor = panels::editor_id(doc);
         let Some(d) = self.documents.get_mut(doc) else {
-            self.status = "The query window was closed.".to_string();
+            self.status = tr("The query window was closed.").to_string();
             return;
         };
         let selection = pgstudio_sql_editor::selection(ctx, editor).unwrap_or_else(|| {
@@ -2901,7 +3042,7 @@ impl ShellApp {
     fn open_activity_monitor(&mut self, ctx: &egui::Context) {
         if self.activity.is_none() {
             let Some(c) = &self.connection else {
-                self.status = "Connect to a server to open the Activity Monitor.".to_string();
+                self.status = tr("Connect to a server to open the Activity Monitor.").to_string();
                 if !self.explorer.is_connected() {
                     self.open_connect_dialog();
                 }
@@ -2911,9 +3052,9 @@ impl ShellApp {
             let mut monitor = activity::ActivityMonitor::new(session, c.settings.server_name());
             monitor.refresh(ctx);
             self.activity = Some(monitor);
-            self.output.push(format!(
-                "Activity Monitor: monitoring {}.",
-                c.settings.server_name()
+            self.output.push(trf!(
+                "Activity Monitor: monitoring {server}.",
+                server = c.settings.server_name()
             ));
         }
         self.workspace.open(Panel::ActivityMonitor);
@@ -2923,7 +3064,7 @@ impl ShellApp {
     /// sessão no banco do objeto (ou no da conexão, para roles).
     fn open_security(&mut self, ctx: &egui::Context, target: pgstudio_core::metadata::Securable) {
         let Some(c) = &self.connection else {
-            self.status = "Connect to a PostgreSQL server to edit security.".to_string();
+            self.status = tr("Connect to a PostgreSQL server to edit security.").to_string();
             return;
         };
         let db = target
@@ -2937,7 +3078,7 @@ impl ShellApp {
     /// Abre "Back Up Database" para `database`.
     fn open_backup(&mut self, ctx: &egui::Context, database: String) {
         let Some(c) = &self.connection else {
-            self.status = "Connect to a PostgreSQL server to back up a database.".to_string();
+            self.status = tr("Connect to a PostgreSQL server to back up a database.").to_string();
             return;
         };
         let session = c.queries.open(&database);
@@ -2976,7 +3117,7 @@ impl ShellApp {
     /// banco novo).
     fn open_restore(&mut self, ctx: &egui::Context, database: Option<String>) {
         let Some(c) = &self.connection else {
-            self.status = "Connect to a PostgreSQL server to restore a database.".to_string();
+            self.status = tr("Connect to a PostgreSQL server to restore a database.").to_string();
             return;
         };
         let session = c.queries.open(&c.settings.database);
@@ -2998,7 +3139,7 @@ impl ShellApp {
     /// Abre "Schema Compare"; `source` é a origem sugerida.
     fn open_compare(&mut self, ctx: &egui::Context, source: Option<String>) {
         let Some(c) = &self.connection else {
-            self.status = "Connect to a PostgreSQL server to compare schemas.".to_string();
+            self.status = tr("Connect to a PostgreSQL server to compare schemas.").to_string();
             return;
         };
         let mut dialog = schema_compare::SchemaCompare::open(
@@ -3038,12 +3179,13 @@ impl ShellApp {
                 self.compare = None;
                 let id = self.documents.new_script(sql, Some(db));
                 self.activate_document(id);
-                self.output
-                    .push("Schema Compare: the script was opened in a new query window.".into());
+                self.output.push(
+                    tr("Schema Compare: the script was opened in a new query window.").into(),
+                );
             }
             Some(schema_compare::Request::Applied(db, lines)) => {
                 self.output.extend(lines);
-                self.status = format!("The changes were applied to {db}.");
+                self.status = trf!("The changes were applied to {database}.", database = db);
                 self.explorer
                     .refresh(&pgstudio_core::metadata::NodeId(format!(
                         "server/Databases/{db}"
@@ -3072,7 +3214,7 @@ impl ShellApp {
             Some(restore::Request::Log(lines)) => self.output.extend(lines),
             Some(restore::Request::Restored(lines)) => {
                 self.output.extend(lines);
-                self.status = "The restore completed.".to_string();
+                self.status = tr("The restore completed.").to_string();
                 self.explorer
                     .refresh(&pgstudio_core::metadata::NodeId("server/Databases".into()));
             }
@@ -3107,12 +3249,12 @@ impl ShellApp {
                 let id = self.documents.new_script(sql, db);
                 self.activate_document(id);
                 self.output
-                    .push("Security: the changes were scripted to a new query window.".into());
+                    .push(tr("Security: the changes were scripted to a new query window.").into());
             }
             Some(properties::Request::Applied(log)) => {
                 self.security = None;
                 self.output.extend(log);
-                self.status = "The changes were applied.".to_string();
+                self.status = tr("The changes were applied.").to_string();
                 if roles {
                     self.explorer.refresh(&pgstudio_core::metadata::NodeId(
                         "server/Security/Roles".into(),
@@ -3264,12 +3406,17 @@ impl ShellApp {
             match self.chords.feed(&self.keymap, chord) {
                 Match::Command(cmd) => commands.push(cmd),
                 Match::Pending(first) => {
-                    self.status =
-                        format!("({first}) was pressed. Waiting for second key of chord...");
+                    self.status = trf!(
+                        "({first}) was pressed. Waiting for second key of chord...",
+                        first = first
+                    );
                 }
                 Match::Unbound(first, second) => {
-                    self.status =
-                        format!("The key combination ({first}, {second}) is not a command.");
+                    self.status = trf!(
+                        "The key combination ({first}, {second}) is not a command.",
+                        first = first,
+                        second = second
+                    );
                 }
                 Match::None => {}
             }
@@ -3313,7 +3460,7 @@ impl ShellApp {
                     }
                 }
                 Entry::Submenu { label, entries } => {
-                    ui.menu_button(label, |ui| self.menu_entries(ui, entries, clicked));
+                    ui.menu_button(tr(label), |ui| self.menu_entries(ui, entries, clicked));
                 }
                 Entry::Separator => {
                     ui.separator();
@@ -3358,7 +3505,7 @@ impl ShellApp {
                         let caption = if text.is_empty() {
                             icon.to_string()
                         } else {
-                            format!("{icon} {text}")
+                            format!("{icon} {}", tr(text))
                         };
                         let tip = match self.keymap.shortcut_for(command) {
                             Some(s) => format!("{} ({s})", command.label()),
@@ -3380,11 +3527,11 @@ impl ShellApp {
                     }
                     Tool::Database => {
                         let tip = match self.keymap.shortcut_for(CommandId::ChangeDatabase) {
-                            Some(s) => format!("Available Databases ({s})"),
-                            None => "Available Databases".to_string(),
+                            Some(s) => format!("{} ({s})", tr("Available Databases")),
+                            None => tr("Available Databases").to_string(),
                         };
                         let shown = if picker.current.is_empty() {
-                            "(no database)"
+                            tr("(no database)")
                         } else {
                             picker.current.as_str()
                         };
@@ -3408,7 +3555,7 @@ impl ShellApp {
                                         }
                                     }
                                     if picker.loading {
-                                        ui.weak("Loading...");
+                                        ui.weak(tr("Loading..."));
                                     } else if let Some(e) = picker.error {
                                         ui.weak(e);
                                     }
@@ -3431,7 +3578,7 @@ impl ShellApp {
         });
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
         let color = theme::palette(self.theme).on_status_bar;
         let connection = self.connection_label();
         let cursor = self
@@ -3441,13 +3588,18 @@ impl ShellApp {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&self.status).color(color));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // i18n-ignore
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
+                self.updater.status_badge(ui, color);
                 ui.label(RichText::new(connection).color(color));
                 self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {
                     ui.separator();
-                    ui.label(RichText::new(format!("Ln {line}   Col {col}")).color(color));
+                    ui.label(
+                        RichText::new(trf!("Ln {line}   Col {col}", line = line, col = col))
+                            .color(color),
+                    );
                 }
             });
         });

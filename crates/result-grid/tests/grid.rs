@@ -269,11 +269,74 @@ fn clicks(h: &mut Harness<'static, App>, pos: eframe::egui::Pos2, count: usize) 
     h.run();
 }
 
+/// O que a grade pediu, frame a frame, numa grade editável.
+#[derive(Default)]
+struct Edits {
+    commits: Vec<(Cell, Option<String>)>,
+    deletes: Vec<std::ops::Range<u64>>,
+    refused: usize,
+}
+
+struct EditApp {
+    store: ResultStore,
+    state: GridState,
+    edits: Edits,
+}
+
+/// Grade de `small()` com `id` e `nome` editáveis e `email` como JSON.
+fn edit_harness(editable: Vec<bool>) -> Harness<'static, EditApp> {
+    let state = GridState {
+        editable,
+        json_columns: vec![false, false, true],
+        ..GridState::default()
+    };
+    Harness::builder().with_size([900.0, 500.0]).build_ui_state(
+        |ui, app: &mut EditApp| {
+            let out = grid::show(ui, ui.id().with("grid"), &mut app.store, &mut app.state);
+            if let Some(c) = out.commit {
+                app.edits.commits.push(c);
+            }
+            if let Some(d) = out.delete_rows {
+                app.edits.deletes.push(d);
+            }
+            app.edits.refused += usize::from(out.edit_refused);
+        },
+        EditApp {
+            store: small(),
+            state,
+            edits: Edits::default(),
+        },
+    )
+}
+
+fn double_click(h: &mut Harness<'static, EditApp>, pos: eframe::egui::Pos2) {
+    // O harness entrega cada clique num frame, com o relógio andando.
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 10.0);
+    h.hover_at(pos);
+    h.run();
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(eframe::egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+    }
+    h.run();
+}
+
 #[test]
 fn json_cells_open_by_double_click_button_and_enter() {
     let mut h = harness(json_store());
     h.run();
-    assert_eq!(h.state().state.json_columns, [false, true, false]);
+    let s = &h.state().state;
+    assert_eq!(
+        [s.is_json(0), s.is_json(1), s.is_json(2)],
+        [false, true, false]
+    );
     // Fora das colunas JSON o duplo clique não pede nada.
     let p = h
         .state()
@@ -306,4 +369,120 @@ fn json_cells_open_by_double_click_button_and_enter() {
     h.key_press(Key::Enter);
     h.run();
     assert_eq!(h.state().open_json, Some(Cell { row: 2, col: 1 }));
+}
+
+fn cell_at(h: &Harness<'static, EditApp>, row: u64, col: usize) -> eframe::egui::Pos2 {
+    h.state().state.cell_center(Cell { row, col }).unwrap()
+}
+
+#[test]
+fn double_click_edits_in_place_and_enter_commits() {
+    let mut h = edit_harness(vec![true, true, false]);
+    h.run();
+    let p = cell_at(&h, 1, 1);
+    double_click(&mut h, p);
+    let editing = h.state().state.editing.clone().expect("editing");
+    assert_eq!(editing.cell, Cell { row: 1, col: 1 });
+    assert_eq!(editing.text, "Bruno");
+    // Apaga o texto e digita outro.
+    for _ in 0..5 {
+        h.key_press(Key::Backspace);
+    }
+    h.event(eframe::egui::Event::Text("Beto".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().state.editing.is_none());
+    assert_eq!(
+        h.state().edits.commits,
+        vec![(Cell { row: 1, col: 1 }, Some("Beto".into()))]
+    );
+}
+
+#[test]
+fn escape_cancels_and_unchanged_text_commits_nothing() {
+    let mut h = edit_harness(vec![true, true, false]);
+    h.run();
+    let p = cell_at(&h, 0, 1);
+    double_click(&mut h, p);
+    h.event(eframe::egui::Event::Text("xyz".into()));
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    assert!(h.state().state.editing.is_none());
+    // F2 edita a célula do cursor; Enter sem mudar não grava nada.
+    h.key_press(Key::F2);
+    h.run();
+    h.run();
+    assert!(h.state().state.editing.is_some());
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().edits.commits.is_empty());
+}
+
+#[test]
+fn read_only_columns_and_json_do_not_edit() {
+    // `id` só leitura: dois cliques avisam o motivo.
+    let mut h = edit_harness(vec![false, true, false]);
+    h.run();
+    let p = cell_at(&h, 0, 0);
+    double_click(&mut h, p);
+    assert!(h.state().state.editing.is_none());
+    assert_eq!(h.state().edits.refused, 1);
+    // Coluna JSON: o duplo clique é do visualizador, sem edição nem aviso.
+    let p = cell_at(&h, 0, 2);
+    double_click(&mut h, p);
+    assert!(h.state().state.editing.is_none());
+    assert_eq!(h.state().edits.refused, 1);
+}
+
+#[test]
+fn delete_asks_for_the_selected_rows_but_not_whole_columns() {
+    let mut h = edit_harness(vec![true, true, false]);
+    h.run();
+    let p = cell_at(&h, 0, 1);
+    click_edit(&mut h, p, Modifiers::NONE);
+    let p = cell_at(&h, 2, 1);
+    click_edit(&mut h, p, Modifiers::SHIFT);
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(h.state().edits.deletes, vec![0..3]);
+    // Coluna inteira selecionada: Delete não pede nada.
+    let header = h.state().state.header_center(1).unwrap();
+    click_edit(&mut h, header, Modifiers::NONE);
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(h.state().edits.deletes.len(), 1);
+}
+
+#[test]
+fn a_read_only_grid_refuses_delete() {
+    let mut h = edit_harness(Vec::new());
+    h.run();
+    let p = cell_at(&h, 0, 1);
+    click_edit(&mut h, p, Modifiers::NONE);
+    h.key_press(Key::Delete);
+    h.run();
+    assert!(h.state().edits.deletes.is_empty());
+    assert_eq!(h.state().edits.refused, 1);
+}
+
+fn click_edit(h: &mut Harness<'static, EditApp>, pos: eframe::egui::Pos2, modifiers: Modifiers) {
+    h.hover_at(pos);
+    h.run();
+    for pressed in [true, false] {
+        h.event_modifiers(
+            eframe::egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers,
+            },
+            modifiers,
+        );
+    }
+    h.run();
 }

@@ -16,6 +16,7 @@ use eframe::egui::{
 };
 use egui_phosphor::regular as icon;
 use pgstudio_core::catalog::quote_ident;
+use pgstudio_i18n::tr;
 use pgstudio_result_grid::json::{self, Node, ParseError, Step};
 
 /// Tabela das consultas montadas (o resultado não diz de que tabela veio).
@@ -390,7 +391,11 @@ impl JsonViewer {
         let pretty = value.pretty();
         JsonViewer {
             id,
-            title: format!("JSON Viewer - {column} (row {})", row + 1),
+            title: pgstudio_i18n::trf!(
+                "JSON Viewer - {column} (row {row})",
+                column = column,
+                row = row + 1
+            ),
             column: column.to_string(),
             root: value,
             pretty,
@@ -415,7 +420,11 @@ impl JsonViewer {
             Err(_) => text.to_string(),
         };
         let mut v = Self::new(id, column, row as u64, root);
-        v.title = format!("Edit JSON - {column} (row {})", row + 1);
+        v.title = pgstudio_i18n::trf!(
+            "Edit JSON - {column} (row {row})",
+            column = column,
+            row = row + 1
+        );
         v.kind = kind;
         v.can_insert = false;
         v.tab = Tab::Text;
@@ -517,38 +526,47 @@ impl JsonViewer {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, action: &mut Option<ViewerAction>) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, Tab::Tree, format!("{} Tree", icon::TREE_VIEW));
-            ui.selectable_value(&mut self.tab, Tab::Text, format!("{} Text", icon::BRACKETS_CURLY));
+            ui.selectable_value(&mut self.tab, Tab::Tree, format!("{} {}", icon::TREE_VIEW, tr("Tree")));
+            ui.selectable_value(&mut self.tab, Tab::Text, format!("{} {}", icon::BRACKETS_CURLY, tr("Text")));
             ui.separator();
             if ui
-                .button(format!("{} Copy", icon::COPY))
-                .on_hover_text("Copy the formatted JSON.")
+                .button(format!("{} {}", icon::COPY, tr("Copy")))
+                .on_hover_text(tr("Copy the formatted JSON."))
                 .clicked()
             {
                 ui.ctx().copy_text(self.current_pretty());
             }
             if ui
-                .button("Copy compact")
-                .on_hover_text("Copy the JSON in one line.")
+                .button(tr("Copy compact"))
+                .on_hover_text(tr("Copy the JSON in one line."))
                 .clicked()
             {
                 ui.ctx().copy_text(self.root.compact());
             }
             if self.tab == Tab::Tree {
                 ui.separator();
-                if ui.button("Expand all").clicked() {
+                // Só ícones: em português os textos não cabem na barra.
+                if ui
+                    .button(icon::ARROWS_OUT_SIMPLE)
+                    .on_hover_text(tr("Expand all"))
+                    .clicked()
+                {
                     self.generation += 1;
                     self.expand_all = Some(true);
                 }
-                if ui.button("Collapse all").clicked() {
+                if ui
+                    .button(icon::ARROWS_IN_SIMPLE)
+                    .on_hover_text(tr("Collapse all"))
+                    .clicked()
+                {
                     self.generation += 1;
                     self.expand_all = Some(false);
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(format!("{} JSON Query Guide", icon::QUESTION))
-                    .on_hover_text("How to query json and jsonb, with examples.")
+                    .button(format!("{} {}", icon::QUESTION, tr("JSON Query Guide")))
+                    .on_hover_text(tr("How to query json and jsonb, with examples."))
                     .clicked()
                 {
                     *action = Some(ViewerAction::Guide);
@@ -562,9 +580,8 @@ impl JsonViewer {
                     })
                     .response
                     .on_hover_text(
-                        "Column type. json has no @> or SQL/JSON path, so the queries cast it to jsonb.",
+                        tr("Column type. json has no @> or SQL/JSON path, so the queries cast it to jsonb."),
                     );
-                ui.label("Column type:");
                 ui.separator();
             });
         });
@@ -670,28 +687,42 @@ impl JsonViewer {
                 Some(e) => {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        format!("{} {e}", icon::WARNING_CIRCLE),
+                        format!(
+                            "{} {}",
+                            icon::WARNING_CIRCLE,
+                            pgstudio_i18n::trf!(
+                                "{message} (line {line}, column {column})",
+                                message = tr(&e.message),
+                                line = e.line,
+                                column = e.column
+                            )
+                        ),
                     );
                 }
                 None => {
-                    ui.label(RichText::new(format!("{} Valid JSON", icon::CHECK_CIRCLE)).weak());
+                    ui.label(
+                        RichText::new(format!("{} {}", icon::CHECK_CIRCLE, tr("Valid JSON")))
+                            .weak(),
+                    );
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     *action = Some(ViewerAction::Close);
                 }
                 let valid = self.error.is_none();
                 if ui
-                    .add_enabled(valid, egui::Button::new("OK"))
-                    .on_disabled_hover_text("Fix the JSON first.")
+                    .add_enabled(valid, egui::Button::new(tr("OK")))
+                    .on_disabled_hover_text(tr("Fix the JSON first."))
                     .clicked()
                     && let Some(value) = self.ok_value()
                 {
                     // Vazio é NULL; o resto vai compacto, como o jsonb guarda.
                     *action = Some(ViewerAction::Save(value));
                 }
-                if ui.add_enabled(valid, egui::Button::new("Format")).clicked()
+                if ui
+                    .add_enabled(valid, egui::Button::new(tr("Format")))
+                    .clicked()
                     && let Some(text) = &mut self.edit
                 {
                     *text = self.pretty.clone();
@@ -703,7 +734,9 @@ impl JsonViewer {
 
     fn tree(&mut self, ui: &mut egui::Ui, colors: &JsonColors, font: &FontId) {
         if self.edit.is_some() && self.error.is_some() {
-            ui.label("The JSON has errors. Fix it in the Text tab to see the tree.");
+            ui.label(tr(
+                "The JSON has errors. Fix it in the Text tab to see the tree.",
+            ));
             return;
         }
         let mut clicked = None;
@@ -797,9 +830,9 @@ impl JsonViewer {
                 }
                 if children.len() > TREE_CHILDREN_LIMIT {
                     ui.label(
-                        RichText::new(format!(
-                            "… {} more (see the Text tab)",
-                            children.len() - TREE_CHILDREN_LIMIT
+                        RichText::new(pgstudio_i18n::trf!(
+                            "… {n} more (see the Text tab)",
+                            n = children.len() - TREE_CHILDREN_LIMIT
                         ))
                         .weak(),
                     );
@@ -815,7 +848,7 @@ impl JsonViewer {
     ) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Query this value").strong());
+            ui.label(RichText::new(tr("Query this value")).strong());
             let node = self.root.get(&self.selected).unwrap_or(&self.root);
             ui.label(
                 RichText::new(format!(
@@ -827,8 +860,9 @@ impl JsonViewer {
             );
         });
         ui.label(
-            RichText::new(format!(
-                "Click a node in the tree to build its query. Replace {TABLE_PLACEHOLDER} with your table."
+            RichText::new(pgstudio_i18n::trf!(
+                "Click a node in the tree to build its query. Replace {table} with your table.",
+                table = TABLE_PLACEHOLDER
             ))
             .weak(),
         );
@@ -841,19 +875,22 @@ impl JsonViewer {
                 for (i, e) in self.expressions().into_iter().enumerate() {
                     ui.push_id(i, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(e.label).weak());
+                            ui.label(RichText::new(tr(e.label)).weak());
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if self.can_insert
                                         && ui
-                                            .small_button("Insert")
-                                            .on_hover_text("Put this SQL in the query window.")
+                                            .small_button(tr("Insert"))
+                                            .on_hover_text(tr("Put this SQL in the query window."))
                                             .clicked()
                                     {
                                         *action = Some(ViewerAction::Insert(e.sql.clone()));
                                     }
-                                    if ui.small_button(format!("{} Copy", icon::COPY)).clicked() {
+                                    if ui
+                                        .small_button(format!("{} {}", icon::COPY, tr("Copy")))
+                                        .clicked()
+                                    {
                                         ui.ctx().copy_text(e.sql.clone());
                                     }
                                 },
@@ -972,6 +1009,39 @@ mod tests {
         let labels: Vec<_> = e.iter().map(|e| e.label).collect();
         assert_eq!(labels, ["One row per key", "Keys", "Formatted text"]);
         assert_eq!(e[1].sql, "jsonb_object_keys(t.data)");
+    }
+
+    #[test]
+    fn expression_labels_have_portuguese_translations() {
+        use pgstudio_i18n::{Language, has_translation};
+        let root = json::parse(r#"{"a":[{"b":"x","n":1,"t":true}],"o":{}}"#).unwrap();
+        let mut labels = Vec::new();
+        for path in [
+            vec![],
+            vec![k("a")],
+            vec![k("a"), Step::Index(0), k("b")],
+            vec![k("a"), Step::Index(0), k("n")],
+            vec![k("o")],
+            vec![k("o"), k("missing")],
+        ] {
+            let Some(node) = root.get(&path) else {
+                continue;
+            };
+            for kind in [JsonKind::Jsonb, JsonKind::Json] {
+                labels.extend(
+                    expressions("c", &path, node, kind)
+                        .into_iter()
+                        .map(|e| e.label),
+                );
+            }
+        }
+        labels.push("Rows that contain this value (uses a GIN index)");
+        for label in labels {
+            assert!(
+                has_translation(Language::PortugueseBrazil, None, label),
+                "sem tradução em locales/pt-BR.po: {label:?}"
+            );
+        }
     }
 
     #[test]

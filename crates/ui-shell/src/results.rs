@@ -13,6 +13,8 @@ use crate::execution::{
 };
 use pgstudio_result_grid::{grid, text};
 
+use crate::result_edit::{ResultEditor, Status};
+
 /// O que o usuário pediu no painel.
 #[derive(Default)]
 pub struct Action {
@@ -59,7 +61,12 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
     match tab {
         Tab::Results => match exec.mode {
             ResultsMode::Grid | ResultsMode::File => {
-                (action.save_results, action.open_json) = grids(ui, doc, &mut exec.results);
+                let mut log = Vec::new();
+                (action.save_results, action.open_json) =
+                    grids(ui, doc, &mut exec.results, &mut log);
+                for text in log {
+                    exec.push_info(text);
+                }
             }
             ResultsMode::Text => text_results(ui, doc, &mut exec.results),
         },
@@ -188,6 +195,7 @@ fn grids(
     ui: &mut egui::Ui,
     doc: u32,
     sets: &mut [ResultSet],
+    log: &mut Vec<String>,
 ) -> (Option<usize>, Option<(usize, pgstudio_result_grid::Cell)>) {
     let mut save = None;
     let mut json = None;
@@ -202,11 +210,23 @@ fn grids(
                 let size = egui::vec2(ui.available_width(), each);
                 ui.allocate_ui(size, |ui| {
                     ui.set_min_size(size);
-                    let (store, state) = set.parts();
+                    let id = grid_id(doc, i);
+                    let editor = &mut set.editor;
+                    let store = set.store.clone();
+                    let state = &mut set.grid;
                     let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
-                    let out = grid::show(ui, grid_id(doc, i), &mut store, state);
+                    if let Some(editor) = editor.as_mut() {
+                        editor.step(&mut store, state);
+                        edit_strip(ui, editor);
+                    }
+                    let out = grid::show(ui, id, &mut store, state);
                     if out.save_as {
                         save = Some(i);
+                    }
+                    if let Some(editor) = editor.as_mut() {
+                        editor.handle(&out, &mut store, state);
+                        editor.confirm_window(ui.ctx(), &mut store, id);
+                        log.extend(editor.take_log());
                     }
                     if let Some(cell) = out.open_json {
                         json = Some((i, cell));
@@ -215,6 +235,38 @@ fn grids(
             }
         });
     (save, json)
+}
+
+/// Linha acima da grade com a situação da edição: a tabela editável e
+/// o que aconteceu por último, ou por que o resultado é só leitura (depois
+/// que o usuário tentou editar).
+fn edit_strip(ui: &mut egui::Ui, editor: &ResultEditor) {
+    let message = editor.message();
+    let editable = editor
+        .target()
+        .filter(|_| *editor.status() == Status::Editable);
+    if message.is_none() && editable.is_none() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        if let Some(t) = editable {
+            ui.label(RichText::new(icons::PENCIL_SIMPLE).weak())
+                .on_hover_text(
+                    "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. \
+                     Delete removes the selected rows after confirmation.",
+                );
+            ui.weak(format!("Editing {}", t.display));
+            if message.is_some() {
+                ui.separator();
+            }
+        }
+        if editor.is_busy() && editable.is_some() {
+            ui.spinner();
+        }
+        if let Some(m) = message {
+            ui.add(egui::Label::new(m).truncate());
+        }
+    });
 }
 
 /// Linhas do modo texto de um resultado: cabeçalho, traços, linhas, uma

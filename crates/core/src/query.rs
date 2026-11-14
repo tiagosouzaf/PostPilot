@@ -31,6 +31,29 @@ pub trait QuerySession: Send + Sync {
 
     /// Banco da sessão.
     fn database(&self) -> String;
+
+    /// De onde vem cada coluna do resultado de `sql` (um comando só), sem
+    /// rodar nada: o servidor prepara o comando e diz, para cada coluna,
+    /// a tabela e o número da coluna nela (`None` para expressões). Serve
+    /// para saber se a grade do resultado pode ser editada. Por padrão a
+    /// sessão não sabe dizer.
+    fn describe(&self, sql: String, done: DescribeDone) {
+        let _ = sql;
+        done(Err("The session cannot describe queries.".to_string()));
+    }
+}
+
+/// Recebe a resposta de [`QuerySession::describe`]. É chamado de outra
+/// thread.
+pub type DescribeDone = Box<dyn FnOnce(Result<Vec<Option<ColumnSource>>, String>) + Send>;
+
+/// Coluna de tabela de onde sai uma coluna de um resultado.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ColumnSource {
+    /// `oid` da tabela.
+    pub table: u32,
+    /// `attnum` da coluna na tabela.
+    pub column: i16,
 }
 
 /// O que aconteceu durante uma execução.

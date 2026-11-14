@@ -186,7 +186,11 @@ fn json_columns_are_recognized_but_postgres_arrays_are_not() {
         .execution
         .as_ref()
         .unwrap();
-    assert_eq!(exec.results[0].grid.json_columns, [false, true, false]);
+    let g = &exec.results[0].grid;
+    assert_eq!(
+        [g.is_json(0), g.is_json(1), g.is_json(2)],
+        [false, true, false]
+    );
 }
 
 #[test]
