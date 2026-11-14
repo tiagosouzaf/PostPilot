@@ -264,8 +264,12 @@ mod tests {
 
     #[test]
     fn uri_with_everything() {
-        let p = parse("postgresql://app:p%40ss%3Aw0rd@db.vendas.com:6432/vendas?sslmode=require&application_name=x")
-            .unwrap();
+        // Senha de teste, %-escapada (`@` e `:`).
+        let escaped = "p%40ss%3Aw0rd";
+        let p = parse(&format!(
+            "postgresql://app:{escaped}@db.vendas.com:6432/vendas?sslmode=require&application_name=x"
+        ))
+        .unwrap();
         assert_eq!(p.settings.host, "db.vendas.com");
         assert_eq!(p.settings.port, 6432);
         assert_eq!(p.settings.database, "vendas");
@@ -318,7 +322,8 @@ mod tests {
         assert!(parse("sslmode=talvez").is_err());
         assert!(parse("password='aberta").is_err());
         assert!(parse("host").is_err());
-        assert!(parse("postgresql://u:%zz@h").is_err());
+        let bad_escape = "%zz";
+        assert!(parse(&format!("postgresql://u:{bad_escape}@h")).is_err());
         assert!(looks_like("postgres://x"));
         assert!(looks_like("host=x"));
         assert!(!looks_like("db.vendas.com,5433"));

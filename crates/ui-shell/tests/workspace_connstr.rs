@@ -142,9 +142,9 @@ fn pasted_connection_string_fills_the_dialog_and_the_password_goes_to_the_vault(
         d.connection_string = "postgresql://h:abc".into();
         assert!(d.apply_connection_string().is_err());
         assert!(d.connection_error().is_some());
+        let escaped = DB_PASSWORD.replace('@', "%40").replace(':', "%3A");
         d.connection_string =
-            "postgresql://app:p%40ss%3Aw0rd-do-banco@db.vendas.com:6432/vendas?sslmode=require"
-                .into();
+            format!("postgresql://app:{escaped}@db.vendas.com:6432/vendas?sslmode=require");
         d.apply_connection_string().unwrap();
         assert_eq!(d.server, "db.vendas.com,6432");
         assert_eq!(d.user, "app");
