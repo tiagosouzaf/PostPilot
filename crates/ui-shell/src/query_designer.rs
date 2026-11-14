@@ -6,8 +6,12 @@
 //! FKs com as que já estão viram JOINs, e arrastar uma coluna até outra
 //! cria um JOIN novo. Embaixo, a grade de colunas (apelido, saída,
 //! ordenação, filtro e agrupamento) e o SQL gerado, que vai para o editor
-//! no OK. É de mão única: o designer gera o SQL, não lê o que já está no
-//! editor.
+//! no OK.
+//!
+//! É de mão dupla (marco 5.5): com um SELECT selecionado no editor, o
+//! designer abre com ele montado ([`read`]) e o OK troca a seleção pelo SQL
+//! novo. O que ele não sabe mostrar (CTE, subconsulta, UNION, LEFT JOIN...)
+//! vira um aviso, e aí o OK põe a consulta depois da seleção, sem apagá-la.
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -19,6 +23,8 @@ use pgstudio_core::schema::{Id, quote_ident};
 use pgstudio_diagram_engine::{Diagram, DiagramEvent, Edge, Node, NodeColumn};
 
 use crate::diagrams::{Picker, table_picker};
+
+pub mod read;
 
 /// Uma tabela na consulta (a mesma tabela pode entrar duas vezes, com
 /// apelidos diferentes).
@@ -73,16 +79,19 @@ pub enum Aggregate {
     Avg,
     Min,
     Max,
+    /// Só filtra (vai para o WHERE), fora do GROUP BY e da saída.
+    Where,
 }
 
 impl Aggregate {
-    pub const ALL: [Aggregate; 6] = [
+    pub const ALL: [Aggregate; 7] = [
         Aggregate::GroupBy,
         Aggregate::Count,
         Aggregate::Sum,
         Aggregate::Avg,
         Aggregate::Min,
         Aggregate::Max,
+        Aggregate::Where,
     ];
 
     pub fn label(self) -> &'static str {
@@ -93,12 +102,13 @@ impl Aggregate {
             Aggregate::Avg => "Avg",
             Aggregate::Min => "Min",
             Aggregate::Max => "Max",
+            Aggregate::Where => "Where",
         }
     }
 
     fn function(self) -> Option<&'static str> {
         match self {
-            Aggregate::GroupBy => None,
+            Aggregate::GroupBy | Aggregate::Where => None,
             Aggregate::Count => Some("count"),
             Aggregate::Sum => Some("sum"),
             Aggregate::Avg => Some("avg"),
@@ -290,7 +300,7 @@ impl Query {
         let select: Vec<String> = self
             .rows
             .iter()
-            .filter(|r| r.output)
+            .filter(|r| r.output && !(self.group_by && r.aggregate == Aggregate::Where))
             .map(|r| {
                 let e = self.expr(r);
                 match r.alias.trim() {
@@ -430,6 +440,12 @@ pub struct QueryDesigner {
     /// Ao carregar, põe todas as tabelas e marca a segunda coluna de cada
     /// (screenshots).
     all_tables: bool,
+    /// SQL selecionado no editor, lido quando as tabelas chegarem.
+    source: Option<String>,
+    /// A seleção virou a consulta: o OK troca a seleção pelo SQL novo.
+    replaces: bool,
+    /// Por que a seleção não pôde ser lida.
+    notice: Option<String>,
 }
 
 impl QueryDesigner {
@@ -457,7 +473,30 @@ impl QueryDesigner {
             picker: None,
             result: None,
             all_tables: false,
+            source: None,
+            replaces: true,
+            notice: None,
         }
+    }
+
+    /// Abre com o SQL selecionado no editor montado (se o designer souber
+    /// mostrá-lo; senão, com um aviso).
+    pub fn with_sql(mut self, sql: String) -> Self {
+        if !sql.trim().is_empty() {
+            self.source = Some(sql);
+        }
+        self
+    }
+
+    /// O OK troca a seleção do editor (em vez de pôr a consulta depois
+    /// dela).
+    pub fn replaces_selection(&self) -> bool {
+        self.replaces
+    }
+
+    /// Aviso de que a seleção não pôde ser lida.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     /// Ao carregar, põe todas as tabelas sem perguntar (screenshots).
@@ -504,7 +543,16 @@ impl QueryDesigner {
             Ok(Ok(model)) => {
                 self.model = model;
                 self.state = State::Ready;
-                if self.all_tables {
+                if let Some(sql) = self.source.take() {
+                    match read::read(&sql, &self.model) {
+                        Ok(query) => self.query = query,
+                        Err(e) => {
+                            self.replaces = false;
+                            self.notice = Some(e.to_string());
+                        }
+                    }
+                    self.rebuild();
+                } else if self.all_tables {
                     let ids: Vec<Id> = self.model.tables.iter().map(|t| t.id).collect();
                     for id in ids {
                         if let Some(i) = self.query.add_table(&self.model, id)
@@ -635,6 +683,16 @@ impl QueryDesigner {
                     );
                 }
                 State::Ready => {
+                    if let Some(notice) = &self.notice {
+                        ui.colored_label(
+                            ui.visuals().warn_fg_color,
+                            format!(
+                                "{} {notice} The selection stays in the editor; OK adds the \
+                                 designed query after it.",
+                                icon::WARNING
+                            ),
+                        );
+                    }
                     ui.horizontal(|ui| {
                         if ui.button(format!("{} Add Table...", icon::PLUS)).clicked() {
                             open_picker = true;
@@ -847,6 +905,18 @@ impl QueryDesigner {
 /// seleção do texto inserido.
 pub fn insert(text: &mut String, (a, b): (usize, usize), sql: &str) -> (usize, usize) {
     let (a, b) = (a.min(b), a.max(b));
+    replace(text, (a, b), sql)
+}
+
+/// Põe `sql` numa linha nova logo depois da seleção, sem apagá-la, e
+/// devolve a seleção do texto inserido.
+pub fn insert_after(text: &mut String, (a, b): (usize, usize), sql: &str) -> (usize, usize) {
+    let end = a.max(b);
+    let (start, _) = replace(text, (end, end), &format!("\n{sql}"));
+    (start + 1, start + 1 + sql.chars().count())
+}
+
+fn replace(text: &mut String, (a, b): (usize, usize), sql: &str) -> (usize, usize) {
     let start = text.char_indices().nth(a).map_or(text.len(), |(i, _)| i);
     let end = text.char_indices().nth(b).map_or(text.len(), |(i, _)| i);
     text.replace_range(start..end, sql);
@@ -860,7 +930,7 @@ mod tests {
     use pgstudio_core::schema::{Column, ForeignKey};
 
     /// cliente <- pedido (cliente_id), produto solto.
-    fn shop() -> (Model, Id, Id, Id) {
+    pub(super) fn shop() -> (Model, Id, Id, Id) {
         let mut d = Document::default();
         let cliente = d.add_table("public", "cliente").unwrap();
         let pedido = d.add_table("public", "pedido").unwrap();
@@ -1013,5 +1083,13 @@ mod tests {
         assert_eq!(sel, (7, 16));
         let mut t = String::new();
         assert_eq!(insert(&mut t, (0, 0), "x"), (0, 1));
+    }
+
+    #[test]
+    fn insert_after_keeps_the_selection() {
+        let mut t = "WITH x AS (SELECT 1) SELECT * FROM x;".to_string();
+        let sel = insert_after(&mut t, (37, 0), "SELECT 1;");
+        assert_eq!(t, "WITH x AS (SELECT 1) SELECT * FROM x;\nSELECT 1;");
+        assert_eq!(sel, (38, 47));
     }
 }
