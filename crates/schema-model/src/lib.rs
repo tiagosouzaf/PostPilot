@@ -16,8 +16,9 @@
 
 pub mod diff;
 pub mod edit;
+mod ident;
 
-pub use pgstudio_core::catalog::quote_ident;
+pub use ident::quote_ident;
 
 /// Identificador estável de uma tabela ou coluna.
 pub type Id = u64;

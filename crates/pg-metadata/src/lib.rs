@@ -33,7 +33,8 @@ use std::sync::{Arc, Mutex};
 use pgstudio_core::catalog::{self, Catalog, Column, RelationKind, Schema};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
+    DesignTarget, Folder, MetadataError, MetadataProvider, Model, NodeId, NodeKind, ObjectNode,
+    ScriptAction,
 };
 use pgstudio_pg_client::{DbRuntime, PgQueryService, Session, describe};
 use tokio_postgres::Row;
@@ -547,6 +548,34 @@ impl MetadataProvider for CatalogExplorer {
 
     fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
         self.script_for(node, action)
+    }
+
+    fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {
+        match Path::parse(node) {
+            Path::SchemaFolder(database, schema, Folder::Tables) => Some(DesignTarget {
+                database,
+                schema,
+                table: None,
+            }),
+            Path::Table(database, oid) => Some(DesignTarget {
+                database,
+                schema: String::new(),
+                table: Some(u64::from(oid)),
+            }),
+            _ => None,
+        }
+    }
+
+    fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
+        self.read_model(database)
+    }
+
+    fn apply_ddl(&self, database: &str, statements: &[String]) -> Result<(), MetadataError> {
+        self.run_ddl(database, statements)
+    }
+
+    fn type_names(&self, database: &str) -> Result<Vec<String>, MetadataError> {
+        self.read_type_names(database)
     }
 }
 

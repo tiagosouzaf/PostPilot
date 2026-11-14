@@ -1,7 +1,7 @@
 //! O [`Model`] do schema-model lido do `pg_catalog`, e o DDL aplicado de
 //! volta numa transação.
 
-use pgstudio_core::metadata::MetadataError;
+use pgstudio_core::metadata::{COMMON_TYPES, MetadataError};
 use pgstudio_pg_client::describe;
 use pgstudio_schema_model::{
     Action, Check, Column, ForeignKey, Identity, Index, Key, Model, Table,
@@ -54,12 +54,20 @@ mod sql {
         WHERE i.indrelid = ANY($1) AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k \
             WHERE k.conindid = i.indexrelid AND k.conrelid = i.indrelid) \
         ORDER BY i.indrelid, c.relname";
+
+    /// Enums, domínios e tipos compostos dos schemas de usuário.
+    pub const TYPES: &str = "SELECT pg_catalog.format_type(t.oid, NULL) \
+        FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+        AND (t.typtype IN ('e', 'd') OR (t.typtype = 'c' AND EXISTS (SELECT 1 \
+            FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))) \
+        ORDER BY 1";
 }
 
 impl CatalogExplorer {
     /// O modelo das tabelas dos schemas de usuário de `db`. Ids das tabelas
     /// são os oids; das colunas, `oid << 16 | attnum`, únicos no modelo.
-    pub fn load_model(&self, db: &str) -> Result<Model, MetadataError> {
+    pub(crate) fn read_model(&self, db: &str) -> Result<Model, MetadataError> {
         let mut tables: Vec<Table> = self
             .query(db, sql::TABLES, &[])?
             .iter()
@@ -158,9 +166,20 @@ impl CatalogExplorer {
         Ok(Model::new(tables))
     }
 
+    /// Tipos comuns mais os do banco, em ordem alfabética.
+    pub(crate) fn read_type_names(&self, db: &str) -> Result<Vec<String>, MetadataError> {
+        let mut names: Vec<String> = COMMON_TYPES.iter().map(|t| (*t).to_string()).collect();
+        for r in self.query(db, sql::TYPES, &[])? {
+            names.push(r.get(0));
+        }
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
     /// Roda os comandos numa transação: ou tudo entra, ou nada. O erro diz
     /// qual comando falhou.
-    pub fn apply_ddl(&self, db: &str, statements: &[String]) -> Result<(), MetadataError> {
+    pub(crate) fn run_ddl(&self, db: &str, statements: &[String]) -> Result<(), MetadataError> {
         let session = self.session(db)?;
         let client = session.client();
         self.runtime.block_on(async {

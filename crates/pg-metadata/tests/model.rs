@@ -5,6 +5,7 @@
 //! os testes só avisam.
 
 use pgstudio_core::connection::{ConnectionSettings, SslMode};
+use pgstudio_core::metadata::MetadataProvider;
 use pgstudio_pg_client::{DbRuntime, Session};
 use pgstudio_pg_metadata::CatalogExplorer;
 use pgstudio_schema_model::edit::Document;
@@ -32,6 +33,7 @@ fn server() -> Option<(ConnectionSettings, String)> {
 
 const SCHEMA: &str = r#"
 CREATE SCHEMA loja;
+CREATE TYPE loja.status AS ENUM ('novo', 'pago');
 CREATE TABLE loja.cliente (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email text NOT NULL,
@@ -188,6 +190,9 @@ fn the_catalog_becomes_a_model() {
             columns: vec!["email".into()]
         }]
     );
+    let types = db.explorer.type_names(&db.name).unwrap();
+    assert!(types.iter().any(|t| t == "loja.status"), "{types:?}");
+    assert!(types.iter().any(|t| t == "integer"), "{types:?}");
     // Nada a fazer entre o banco e ele mesmo, e recarregar dá o mesmo.
     assert!(diff(&m, &m).is_empty());
     assert_eq!(db.load(), m);
