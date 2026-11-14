@@ -3,6 +3,9 @@
 //! - `.deb` (Debian, Ubuntu e derivados), montado com `dpkg-deb`;
 //! - AppImage (qualquer Linux x86-64), o runtime tipo 2 do projeto AppImage
 //!   seguido de um squashfs feito com `mksquashfs`;
+//! - `.pkg.tar.zst` (Arch Linux e derivados), montado com o `bsdtar` como o
+//!   `makepkg` faz; o `packaging/arch/PKGBUILD` gera o mesmo a partir do
+//!   código;
 //! - `.zip` para Windows, compilado de forma cruzada com o MinGW
 //!   (`x86_64-pc-windows-gnu`) quando o host não é Windows.
 //!
@@ -22,11 +25,14 @@ Gera os pacotes de instalação em target/packages/:
   appimage  PGStudio-<versão>-x86_64.AppImage (precisa do mksquashfs, do
             pacote squashfs-tools; baixa o runtime do AppImage na primeira
             vez, ou use APPIMAGE_RUNTIME=caminho)
+  arch      pgstudio-<versão>-1-x86_64.pkg.tar.zst (precisa do bsdtar, do
+            pacote libarchive-tools no Ubuntu; no Arch já vem). Instale com
+            sudo pacman -U; ou compile com o makepkg em packaging/arch/
   zip       PGStudio-<versão>-windows-x86_64.zip (no Linux, compila para
             x86_64-pc-windows-gnu: rustup target add x86_64-pc-windows-gnu
             e o pacote mingw-w64)
 
-No Linux, o padrão são os três; no Windows, só o zip.
+No Linux, o padrão são os quatro; no Windows, só o zip.
 
 O binário Linux é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
 mais novos) com o cargo-zigbuild (cargo install cargo-zigbuild e
@@ -34,7 +40,7 @@ pip install ziglang). Sem ele, ou com --native, sai um build comum, que só
 roda com a glibc da máquina que compilou ou mais nova.
 
 Opções:
-  --only F    só estes formatos, separados por vírgula (deb,appimage,zip)
+  --only F    só estes formatos, separados por vírgula (deb,appimage,arch,zip)
   --no-build  não recompila; usa os binários do perfil dist que já existem
   --native    compila o binário Linux sem o cargo-zigbuild";
 
@@ -68,27 +74,51 @@ const DEB_DEPENDS: &[&str] = &[
 /// arquivo. Um desktop já tem; um container mínimo, não.
 const DEB_RECOMMENDS: &[&str] = &["mesa-vulkan-drivers | libegl-mesa0", "xdg-desktop-portal"];
 
+/// As mesmas dependências, com os nomes do Arch (e do `PKGBUILD`).
+const ARCH_DEPENDS: &[&str] = &[
+    "glibc",
+    "gcc-libs",
+    "hicolor-icon-theme",
+    "libxkbcommon",
+    "libxkbcommon-x11",
+    "libx11",
+    "libxcursor",
+    "libxrandr",
+    "libxi",
+    "wayland",
+    "libglvnd",
+    "vulkan-icd-loader",
+];
+const ARCH_OPTDEPENDS: &[&str] = &[
+    "vulkan-driver: renderização por Vulkan (sem ele, usa OpenGL ES)",
+    "xdg-desktop-portal: diálogos de abrir e salvar arquivo",
+];
+/// Revisão do pacote Arch (o `pkgrel`).
+const ARCH_PKGREL: u32 = 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Deb,
     AppImage,
+    Arch,
     Zip,
 }
 
 impl Format {
-    const ALL: [Format; 3] = [Format::Deb, Format::AppImage, Format::Zip];
+    const ALL: [Format; 4] = [Format::Deb, Format::AppImage, Format::Arch, Format::Zip];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
             "deb" => Some(Format::Deb),
             "appimage" => Some(Format::AppImage),
+            "arch" => Some(Format::Arch),
             "zip" => Some(Format::Zip),
             _ => None,
         }
     }
 
     fn needs_linux_binary(self) -> bool {
-        matches!(self, Format::Deb | Format::AppImage)
+        matches!(self, Format::Deb | Format::AppImage | Format::Arch)
     }
 }
 
@@ -133,7 +163,7 @@ pub fn parse(args: &[String]) -> Result<DistArgs, String> {
         }
     }
     if cfg!(windows) && out.formats.iter().any(|f| f.needs_linux_binary()) {
-        return Err("o .deb e o AppImage só são gerados no Linux".into());
+        return Err("o .deb, o AppImage e o pacote do Arch só são gerados no Linux".into());
     }
     Ok(out)
 }
@@ -189,6 +219,9 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
         }
         if args.formats.contains(&Format::AppImage) {
             made.push(build_appimage(root, &out, &exe)?);
+        }
+        if args.formats.contains(&Format::Arch) {
+            made.push(build_arch(root, &out, &exe)?);
         }
     }
     if args.formats.contains(&Format::Zip) {
@@ -521,6 +554,85 @@ fn appimage_runtime(out: &Path) -> Result<PathBuf, String> {
     Ok(cached)
 }
 
+/// O `.PKGINFO` do pacote Arch.
+pub fn arch_pkginfo(version: &str, size: u64, builddate: u64) -> String {
+    let mut s = format!(
+        "# Gerado por cargo xtask dist\n\
+         pkgname = pgstudio\n\
+         pkgbase = pgstudio\n\
+         xdata = pkgtype=pkg\n\
+         pkgver = {version}-{ARCH_PKGREL}\n\
+         pkgdesc = PostgreSQL management studio inspired by SSMS\n\
+         url = https://github.com/tiagosouzaf/postpilot\n\
+         builddate = {builddate}\n\
+         packager = PGStudio <https://github.com/tiagosouzaf/postpilot>\n\
+         size = {size}\n\
+         arch = x86_64\n\
+         license = MIT OR Apache-2.0\n"
+    );
+    for d in ARCH_DEPENDS {
+        let _ = writeln!(s, "depend = {d}");
+    }
+    for d in ARCH_OPTDEPENDS {
+        let _ = writeln!(s, "optdepend = {d}");
+    }
+    s
+}
+
+fn build_arch(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
+    let stage = out.join("arch-root");
+    fresh_dir(&stage)?;
+    install_usr(root, &stage.join("usr"), exe)?;
+    let licenses = stage.join("usr/share/licenses/pgstudio");
+    for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        copy(&root.join(file), &licenses.join(file))?;
+    }
+    let size = size_kib(&stage) * 1024;
+    let builddate = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    write(
+        &stage.join(".PKGINFO"),
+        arch_pkginfo(version(), size, builddate),
+    )?;
+    // Como o makepkg: primeiro o .MTREE (o pacman confere os arquivos com
+    // ele), depois o pacote, com dono root.
+    let owner = [
+        "--uid", "0", "--gid", "0", "--uname", "root", "--gname", "root",
+    ];
+    run_tool(
+        Command::new("bsdtar")
+            .env("LANG", "C")
+            .args(owner)
+            .args([
+                "-czf",
+                ".MTREE",
+                "--format=mtree",
+                "--options=!all,use-set,type,uid,gid,mode,time,size,sha256,link",
+                ".PKGINFO",
+                "usr",
+            ])
+            .current_dir(&stage),
+        "instale o bsdtar (libarchive-tools no Ubuntu)",
+    )?;
+    let pkg = out.join(format!(
+        "pgstudio-{}-{ARCH_PKGREL}-x86_64.pkg.tar.zst",
+        version()
+    ));
+    run_tool(
+        Command::new("bsdtar")
+            .env("LANG", "C")
+            .args(owner)
+            .args(["--zstd", "-cf"])
+            .arg(&pkg)
+            .args([".MTREE", ".PKGINFO", "usr"])
+            .current_dir(&stage),
+        "instale o bsdtar (libarchive-tools no Ubuntu)",
+    )?;
+    io(std::fs::remove_dir_all(&stage), &stage)?;
+    Ok(pkg)
+}
+
 fn build_appimage(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
     let appdir = out.join("PGStudio.AppDir");
     fresh_dir(&appdir)?;
@@ -675,6 +787,7 @@ mod tests {
         assert!(args("--only").is_err());
         assert!(args("--only ,").is_err());
         assert!(args("--only rpm").is_err());
+        assert_eq!(args("--only arch").unwrap().formats, vec![Format::Arch]);
         assert!(args("--fast").is_err());
     }
 
@@ -703,6 +816,39 @@ mod tests {
         }
         assert!(c.ends_with('\n'));
         assert!(deb_control("1", 1, None).contains("Depends: libc6, "));
+    }
+
+    #[test]
+    fn pkginfo_lists_version_size_and_dependencies() {
+        let p = arch_pkginfo("1.2.3", 4096, 1_700_000_000);
+        assert!(p.contains("\npkgver = 1.2.3-1\n"));
+        assert!(p.contains("\nsize = 4096\n"));
+        assert!(p.contains("\nbuilddate = 1700000000\n"));
+        assert!(p.contains("\ndepend = libxkbcommon-x11\n"));
+        assert!(p.contains("\noptdepend = xdg-desktop-portal: "));
+        assert!(p.ends_with('\n'));
+    }
+
+    /// O `PKGBUILD` e o pacote do xtask têm de concordar na versão e nas
+    /// dependências.
+    #[test]
+    fn pkgbuild_matches_the_xtask_package() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let pkgbuild = std::fs::read_to_string(root.join("packaging/arch/PKGBUILD")).unwrap();
+        assert!(pkgbuild.contains(&format!("\npkgver={}\n", version())));
+        assert!(pkgbuild.contains(&format!("\npkgrel={ARCH_PKGREL}\n")));
+        let array = |name: &str| -> Vec<String> {
+            let start = pkgbuild.find(&format!("\n{name}=(")).unwrap() + name.len() + 3;
+            // O array fecha com `)` sozinho numa linha.
+            let end = start + pkgbuild[start..].find("\n)").unwrap();
+            pkgbuild[start..end]
+                .lines()
+                .map(|l| l.trim().trim_matches('\'').to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+        assert_eq!(array("depends"), ARCH_DEPENDS);
+        assert_eq!(array("optdepends"), ARCH_OPTDEPENDS);
     }
 
     #[test]
