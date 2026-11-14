@@ -1,6 +1,6 @@
 [package]
 name = "pgstudio-desktop"
-description = "Aplicativo desktop do PGStudio."
+description = "Aplicativo desktop do PostPilot."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "pgstudio"
+name = "postpilot"
 path = "src/main.rs"
 
 [dependencies]

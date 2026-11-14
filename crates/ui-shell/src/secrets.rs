@@ -17,7 +17,11 @@ use std::sync::{Arc, Mutex};
 use pgstudio_core::connection::ConnectionSettings;
 
 /// Nome do serviço com que as senhas ficam no cofre.
-pub const SERVICE: &str = "PGStudio";
+pub const SERVICE: &str = "PostPilot";
+
+/// Serviço do nome antigo do app. Uma senha que só existe nele é copiada
+/// para [`SERVICE`] na primeira leitura.
+pub const LEGACY_SERVICE: &str = "PGStudio";
 
 /// O cofre falhou ou não existe.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,26 +55,47 @@ pub fn password_key(settings: &ConnectionSettings) -> String {
 #[derive(Clone, Debug)]
 pub struct KeyringStore {
     service: String,
+    legacy: Option<String>,
 }
 
 impl Default for KeyringStore {
     fn default() -> Self {
         KeyringStore {
             service: SERVICE.into(),
+            legacy: Some(LEGACY_SERVICE.into()),
         }
     }
 }
 
 impl KeyringStore {
-    /// Cofre com outro nome de serviço (testes).
+    /// Cofre com outro nome de serviço (testes), sem o serviço antigo.
     pub fn with_service(service: impl Into<String>) -> Self {
         KeyringStore {
             service: service.into(),
+            legacy: None,
         }
     }
 
     fn entry(&self, key: &str) -> Result<keyring::Entry, SecretError> {
         keyring::Entry::new(&self.service, key).map_err(explain)
+    }
+
+    /// Senha guardada pelo app com o nome antigo; copiada para o serviço
+    /// novo, para a próxima leitura já achar lá.
+    fn get_legacy(&self, key: &str) -> Result<Option<String>, SecretError> {
+        let Some(legacy) = &self.legacy else {
+            return Ok(None);
+        };
+        let entry = keyring::Entry::new(legacy, key).map_err(explain)?;
+        match entry.get_password() {
+            Ok(p) => {
+                // Se a cópia falhar, a senha antiga continua servindo.
+                let _ = self.set(key, &p);
+                Ok(Some(p))
+            }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(explain(e)),
+        }
     }
 }
 
@@ -87,7 +112,7 @@ impl SecretStore for KeyringStore {
     fn get(&self, key: &str) -> Result<Option<String>, SecretError> {
         match self.entry(key)?.get_password() {
             Ok(p) => Ok(Some(p)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => self.get_legacy(key),
             Err(e) => Err(explain(e)),
         }
     }
@@ -98,9 +123,18 @@ impl SecretStore for KeyringStore {
 
     fn delete(&self, key: &str) -> Result<(), SecretError> {
         match self.entry(key)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(explain(e)),
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(explain(e)),
         }
+        // Senão a leitura seguinte traria de volta a senha do nome antigo.
+        if let Some(legacy) = &self.legacy {
+            let entry = keyring::Entry::new(legacy, key).map_err(explain)?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(e) => return Err(explain(e)),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -263,7 +297,7 @@ mod tests {
     /// sem travar nem entrar em pânico. Com cofre, a senha vai e volta.
     #[test]
     fn keyring_works_or_fails_cleanly() {
-        let store = KeyringStore::with_service("PGStudio-test");
+        let store = KeyringStore::with_service("PostPilot-test");
         let key = format!("test@localhost:{}", std::process::id());
         let no_bus =
             cfg!(target_os = "linux") && std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none();
@@ -279,5 +313,28 @@ mod tests {
                 assert!(store.get(&key).is_err());
             }
         }
+    }
+
+    /// Uma senha guardada com o nome antigo do app aparece no novo, e
+    /// esquecer apaga as duas.
+    #[test]
+    fn legacy_passwords_migrate_and_are_forgotten() {
+        let old = KeyringStore::with_service("PGStudio-legacy-test");
+        let new = KeyringStore {
+            service: "PostPilot-legacy-test".into(),
+            legacy: Some("PGStudio-legacy-test".into()),
+        };
+        let key = format!("legacy@localhost:{}", std::process::id());
+        if old.set(&key, "pw").is_err() {
+            // Sem cofre (CI, contêiner): nada a migrar.
+            assert!(new.get(&key).is_err());
+            return;
+        }
+        assert_eq!(new.get(&key).unwrap().as_deref(), Some("pw"));
+        let copied = KeyringStore::with_service("PostPilot-legacy-test");
+        assert_eq!(copied.get(&key).unwrap().as_deref(), Some("pw"));
+        new.delete(&key).unwrap();
+        assert_eq!(new.get(&key).unwrap(), None);
+        assert_eq!(old.get(&key).unwrap(), None);
     }
 }

@@ -8,6 +8,7 @@
 pub mod activity;
 pub mod backup;
 pub mod bench;
+pub mod claude;
 pub mod connect;
 pub mod databases;
 pub mod designer;
@@ -25,6 +26,7 @@ pub mod pgtools;
 pub mod properties;
 pub mod query_designer;
 pub mod registered;
+pub mod repo;
 pub mod restore;
 pub mod results;
 pub mod schema_compare;
@@ -157,6 +159,10 @@ pub struct ShellApp {
     secrets: Option<Arc<dyn secrets::SecretStore>>,
     /// Janela Registered Servers.
     registered: registered::RegisteredPanel,
+    /// Workspace Explorer e o workspace aberto.
+    workspace_panel: repo::panel::WorkspacePanel,
+    /// Arquivo onde fica o caminho do último workspace aberto.
+    workspace_memory: Option<PathBuf>,
     /// Outros servidores conectados no Object Explorer.
     servers: servers::Servers,
     /// Servidor de cada janela de consulta (pela chave do servidor).
@@ -166,6 +172,8 @@ pub struct ShellApp {
     /// (Registered Servers > Connect > New Query).
     new_query_on_connect: Option<String>,
     selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
+    /// Ponte com o Claude (MCP e painel): pedidos e confirmações.
+    claude: claude::Bridge,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -174,7 +182,8 @@ struct PendingScript {
     database: Option<String>,
     /// Executar ao abrir (Select Top, Edit Top).
     run: bool,
-    /// Edit Top: avisa que a grade ainda não edita.
+    /// Edit Top numa view ou view materializada: avisa que só tabelas
+    /// editam na grade e que as linhas ficam só leitura.
     read_only: bool,
 }
 
@@ -310,10 +319,13 @@ impl Default for ShellApp {
             bench_run: None,
             secrets: None,
             registered: Default::default(),
+            workspace_panel: Default::default(),
+            workspace_memory: None,
             servers: Default::default(),
             doc_servers: Default::default(),
             last_active_doc: None,
             new_query_on_connect: None,
+            claude: Default::default(),
         }
     }
 }
@@ -581,6 +593,7 @@ impl ShellApp {
         }
         match self.documents.open(path) {
             Ok(id) => {
+                self.connect_linked_query(id);
                 self.activate_document(id);
                 true
             }
@@ -1285,6 +1298,10 @@ impl ShellApp {
                 | ConnectObjectExplorer
                 | DisconnectObjectExplorer
                 | RegisteredServers
+                | WorkspaceExplorer
+                | NewWorkspace
+                | OpenWorkspace
+                | CloseWorkspace
                 | NewQuery
                 | ChangeDatabase
                 | OpenFile
@@ -1541,6 +1558,10 @@ impl ShellApp {
                 self.promote_next_server();
             }
             CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
+            CommandId::WorkspaceExplorer => self.workspace.open(Panel::WorkspaceExplorer),
+            CommandId::NewWorkspace => self.ask_new_workspace(),
+            CommandId::OpenWorkspace => self.ask_open_workspace(),
+            CommandId::CloseWorkspace => self.close_workspace(),
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
@@ -2172,12 +2193,14 @@ impl ShellApp {
                 None => return false,
             },
         };
+        let link = self.link_before_save(id, &path);
         let Some(doc) = self.documents.get_mut(id) else {
             return false;
         };
         match doc.save_to(&path) {
             Ok(()) => {
                 self.status = "Item(s) Saved".to_string();
+                self.after_save(&path, link);
                 true
             }
             Err(e) => {
@@ -2282,6 +2305,7 @@ impl ShellApp {
         self.connect_step();
         self.expand_step();
         self.execution_step(&ctx);
+        self.claude_step(&ctx);
         self.intellisense_step(&ctx);
         self.databases_step();
         self.script_step(&ctx);
@@ -2289,6 +2313,7 @@ impl ShellApp {
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
             || self.db_switch.as_ref().is_some_and(|p| p.probe.is_none())
+            || self.claude.is_confirming()
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
             || self.security.is_some()
             || self.backup.is_some()
@@ -2348,6 +2373,7 @@ impl ShellApp {
         let doc_servers = self.document_servers();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
+        let mut workspace_actions = Vec::new();
         let mut activate = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
@@ -2378,10 +2404,13 @@ impl ShellApp {
                     secrets: self.secrets.as_ref(),
                     activate_server: None,
                     registered_actions: Vec::new(),
+                    workspace_panel: &mut self.workspace_panel,
+                    workspace_actions: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
                 activate = viewer.activate_server;
                 registered_actions = viewer.registered_actions;
+                workspace_actions = viewer.workspace_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 let save_results = viewer.save_results;
@@ -2399,6 +2428,7 @@ impl ShellApp {
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
+        self.workspace_step(&ctx, workspace_actions);
         self.export_step();
         self.designer_step();
         self.diagram_step();
@@ -2413,6 +2443,7 @@ impl ShellApp {
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
         self.database_switch_window(&ctx);
+        self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
         self.backup_window(&ctx);
         self.restore_window(&ctx);
