@@ -158,7 +158,9 @@ fn wait(harness: &mut Harness<'static, ShellApp>, id: u32) {
             .get(id)
             .and_then(|d| d.execution.as_ref())
             .is_some_and(|e| e.is_running());
-        if !running {
+        // O catálogo do IntelliSense chega por outra thread e pede um frame
+        // novo; espera ele também para o `run` abaixo não pegar o meio.
+        if !running && !harness.state().is_loading_catalog() {
             break;
         }
         assert!(
@@ -491,12 +493,16 @@ fn harness_with_tables() -> (Harness<'static, ShellApp>, Log) {
     (harness, log)
 }
 
-/// Roda frames até uma janela de consulta nova abrir.
+/// Roda frames até uma janela de consulta nova abrir e o catálogo dela
+/// chegar.
 fn wait_document(harness: &mut Harness<'static, ShellApp>) -> u32 {
     let start = Instant::now();
     loop {
         harness.step();
-        if let Some(id) = harness.state().active_document() {
+        if let Some(id) = harness.state().active_document()
+            && harness.state().catalog_for(id).is_some()
+            && !harness.state().is_loading_catalog()
+        {
             return id;
         }
         assert!(
