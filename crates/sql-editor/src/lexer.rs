@@ -399,6 +399,29 @@ pub fn tokenize(text: &str) -> Vec<Token> {
     tokens
 }
 
+/// Os comandos de `text`, separados por `;` fora de strings, comentários e
+/// corpos `$$`: o intervalo (em bytes) de cada um, do primeiro ao último
+/// token que não é espaço nem comentário, sem o `;`. Trechos só com espaço e
+/// comentários ficam de fora.
+pub fn statements(text: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut current: Option<Range<usize>> = None;
+    for t in tokenize(text) {
+        match t.kind {
+            TokenKind::Whitespace | TokenKind::Comment => {}
+            TokenKind::Punctuation if &text[t.range.clone()] == ";" => {
+                out.extend(current.take());
+            }
+            _ => match &mut current {
+                Some(r) => r.end = t.range.end,
+                None => current = Some(t.range.clone()),
+            },
+        }
+    }
+    out.extend(current);
+    out
+}
+
 /// Refaz `tokens` depois de trocar `removed` bytes em `at` por `inserted`
 /// bytes; `text` já é o texto novo. Só relê do começo da linha da edição
 /// até um ponto depois dela em que os tokens voltam a coincidir.
@@ -652,6 +675,22 @@ impl Lexer<'_> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn statements_split_on_semicolons_outside_strings() {
+        let text = "SELECT ';' AS a; -- só comentário ;\n  ;\nCREATE FUNCTION f() AS $$ SELECT 1; $$ LANGUAGE sql  \n/* fim */";
+        let parts: Vec<&str> = statements(text).into_iter().map(|r| &text[r]).collect();
+        assert_eq!(
+            parts,
+            [
+                "SELECT ';' AS a",
+                "CREATE FUNCTION f() AS $$ SELECT 1; $$ LANGUAGE sql"
+            ]
+        );
+        assert!(statements("  -- nada\n").is_empty());
+        assert_eq!(statements("SELECT 1"), vec![0..8_usize]);
+    }
+
     use super::*;
     use TokenKind::*;
 

@@ -1,0 +1,21 @@
+[package]
+name = "pgstudio-execution-plan"
+description = "Planos de execução do PGStudio: lê o EXPLAIN (FORMAT JSON) do PostgreSQL e desenha o plano como no SSMS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui-phosphor.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+pgstudio-core.workspace = true
+pgstudio-pg-client.workspace = true
+
+[lints]
+workspace = true

@@ -69,6 +69,8 @@ pub struct ShellApp {
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
     design_query_on_open: bool,
+    /// Texto e comando para a próxima janela de "New Query" (screenshots).
+    query_on_open: Option<(String, CommandId)>,
     /// Janela de consulta ativa (a última que teve foco).
     active_doc: Option<u32>,
     focus_editor: Option<u32>,
@@ -162,6 +164,7 @@ impl Default for ShellApp {
             diagram_all_tables: false,
             query_designer: None,
             design_query_on_open: false,
+            query_on_open: None,
             active_doc: None,
             focus_editor: None,
             dialogs: Box::new(NoDialogs),
@@ -561,7 +564,7 @@ impl ShellApp {
                             )));
                         }
                         self.activate_document(id);
-                        self.execute_query(ctx);
+                        self.execute_query(ctx, false);
                         id
                     }
                     Scenario::IntelliSense => {
@@ -913,6 +916,7 @@ impl ShellApp {
                 | CompleteWord
                 | RefreshLocalCache
                 | Execute
+                | EstimatedPlan
                 | CancelQuery
                 | ResultsToText
                 | ResultsToGrid
@@ -1068,7 +1072,8 @@ impl ShellApp {
                 None => self.status = "No query window is open.".to_string(),
             },
             CommandId::DesignQuery => self.open_query_designer(ctx),
-            CommandId::Execute => self.execute_query(ctx),
+            CommandId::Execute => self.execute_query(ctx, false),
+            CommandId::EstimatedPlan => self.execute_query(ctx, true),
             CommandId::CancelQuery => self.cancel_query(),
             CommandId::ResultsToText | CommandId::ResultsToGrid => {
                 let mode = if cmd == CommandId::ResultsToText {
@@ -1119,8 +1124,9 @@ impl ShellApp {
     }
 
     /// F5: roda a seleção (ou o documento inteiro) na conexão da janela de
-    /// consulta ativa.
-    fn execute_query(&mut self, ctx: &egui::Context) {
+    /// consulta ativa. Com `plan` (Ctrl+L), pede só o plano estimado de
+    /// cada comando, sem rodar nada.
+    fn execute_query(&mut self, ctx: &egui::Context, plan: bool) {
         let Some(id) = self.active_doc else {
             self.status = "No query window is open.".to_string();
             return;
@@ -1162,7 +1168,17 @@ impl ShellApp {
             })
             .0
             .clone();
-        let mut exec = execution::Execution::start(session, sql, offset, ctx);
+        let mut exec = if plan {
+            match execution::Execution::start_plan(session, sql, offset, ctx) {
+                Some(exec) => exec,
+                None => {
+                    self.status = "There is no statement to show a plan for.".to_string();
+                    return;
+                }
+            }
+        } else {
+            execution::Execution::start(session, sql, offset, ctx)
+        };
         exec.mode = doc.results_mode;
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
@@ -1206,7 +1222,7 @@ impl ShellApp {
     fn execution_step(&mut self, ctx: &egui::Context) {
         if self.run_on_connect && self.connection.is_some() && self.active_doc.is_some() {
             self.run_on_connect = false;
-            self.execute_query(ctx);
+            self.execute_query(ctx, false);
         }
         let active = self.active_doc;
         for id in self.documents.ids() {
@@ -1270,10 +1286,15 @@ impl ShellApp {
         let (node, action, run, read_only) = match event {
             Event::NewQuery(node) => {
                 let db = provider.database_of(&node);
-                let id = self.documents.new_script(String::new(), db);
+                let pending = self.query_on_open.take();
+                let text = pending.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+                let id = self.documents.new_script(text, db);
                 self.activate_document(id);
                 if std::mem::take(&mut self.design_query_on_open) {
                     self.open_query_designer(ctx);
+                }
+                if let Some((_, cmd)) = pending {
+                    self.execute(ctx, cmd);
                 }
                 return;
             }
@@ -1339,7 +1360,7 @@ impl ShellApp {
                     self.activate_document(id);
                     self.status = "Ready".to_string();
                     if pending.run {
-                        self.execute_query(ctx);
+                        self.execute_query(ctx, false);
                     }
                     if pending.read_only {
                         self.output.push(
@@ -1747,6 +1768,13 @@ impl ShellApp {
     /// (screenshots).
     pub fn with_design_query_on_open(mut self) -> Self {
         self.design_query_on_open = true;
+        self
+    }
+
+    /// A próxima janela aberta por "New Query" já vem com `text` e roda
+    /// `cmd` (screenshots).
+    pub fn with_query_on_open(mut self, text: String, cmd: CommandId) -> Self {
+        self.query_on_open = Some((text, cmd));
         self
     }
 

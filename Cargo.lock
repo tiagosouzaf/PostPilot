@@ -2616,6 +2616,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-execution-plan"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui-phosphor",
+ "egui_kittest",
+ "pgstudio-core",
+ "pgstudio-pg-client",
+ "serde_json",
+]
+
+[[package]]
 name = "pgstudio-object-explorer"
 version = "0.1.0"
 dependencies = [
@@ -2680,6 +2692,7 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-diagram-engine",
  "pgstudio-docking",
+ "pgstudio-execution-plan",
  "pgstudio-object-explorer",
  "pgstudio-result-grid",
  "pgstudio-sql-editor",

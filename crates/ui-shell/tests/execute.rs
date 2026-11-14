@@ -75,6 +75,20 @@ impl QuerySession for FakeSession {
                 sink(QueryEvent::Finished { canceled: false });
                 return;
             }
+            if sql.starts_with("EXPLAIN") && !sql.contains("bad") {
+                // Um plano por comando, com o custo crescendo.
+                for (i, _) in sql.split(";\n").enumerate() {
+                    let json = format!(
+                        r#"[{{"Plan": {{"Node Type": "Seq Scan", "Relation Name": "t{i}", "Total Cost": {}.0, "Plan Rows": 10}}}}]"#,
+                        i + 1
+                    );
+                    sink(QueryEvent::Columns(vec!["QUERY PLAN".into()]));
+                    sink(QueryEvent::Row(vec![Some(json)]));
+                    sink(QueryEvent::CommandComplete { rows: 1 });
+                }
+                sink(QueryEvent::Finished { canceled: false });
+                return;
+            }
             if let Some(b) = sql.find("bad") {
                 sink(QueryEvent::Error(ServerMessage {
                     severity: "ERROR".into(),
@@ -235,6 +249,76 @@ fn f5_runs_the_whole_query_and_shows_results() {
         "{t:?}"
     );
     harness.get_by_label("(1 row affected)");
+}
+
+#[test]
+fn ctrl_l_shows_the_estimated_plan_of_each_statement() {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, "select 1;\n-- comentário\nselect 2;");
+    harness.key_press_modifiers(Modifiers::CTRL, Key::L);
+    wait(&mut harness, id);
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["EXPLAIN (FORMAT JSON) select 1;\nEXPLAIN (FORMAT JSON) select 2".to_string()]
+    );
+    let exec = execution(&harness, id);
+    assert!(exec.is_plan());
+    assert_eq!(exec.outcome(), Outcome::Succeeded);
+    assert!(exec.results.is_empty());
+    assert_eq!(exec.plans.len(), 2);
+    assert_eq!(exec.plans[1].0.statement, "select 2");
+    assert_eq!(exec.tab, Tab::Plan);
+    harness.get_by_label("Query 1: Query cost (relative to the batch): 33%");
+    harness.get_by_label("Query 2: Query cost (relative to the batch): 67%");
+    harness.get(by().label_contains("Execution plan"));
+    harness.get_by_label("Seq Scan, t0, Cost: 100 %");
+}
+
+#[test]
+fn ctrl_l_errors_point_into_the_document() {
+    let (mut harness, _) = harness_with(true);
+    let id = query_with(&mut harness, "select 1;\nselect bad from t;");
+    harness.key_press_modifiers(Modifiers::CTRL, Key::L);
+    wait(&mut harness, id);
+    let exec = execution(&harness, id);
+    assert_eq!(exec.outcome(), Outcome::Failed);
+    assert_eq!(exec.tab, Tab::Messages);
+    let error = exec
+        .messages
+        .iter()
+        .find(|m| m.kind == MessageKind::Error)
+        .unwrap();
+    assert_eq!(error.position, Some(17));
+    assert!(
+        error
+            .text
+            .starts_with("Msg 42703, Level ERROR, Line 2, Column 8"),
+        "{}",
+        error.text
+    );
+}
+
+#[test]
+fn ctrl_l_without_statements_only_warns() {
+    let (mut harness, log) = harness_with(true);
+    let id = query_with(&mut harness, "-- nada aqui");
+    harness.key_press_modifiers(Modifiers::CTRL, Key::L);
+    harness.run();
+    assert!(log.lock().unwrap().is_empty());
+    assert!(
+        harness
+            .state()
+            .documents()
+            .get(id)
+            .unwrap()
+            .execution
+            .is_none()
+    );
+    assert_eq!(
+        harness.state().status(),
+        "There is no statement to show a plan for."
+    );
 }
 
 #[test]
