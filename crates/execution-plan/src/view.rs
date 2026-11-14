@@ -2,12 +2,18 @@
 //! um ícone por operação com o nome, a tabela e o custo embaixo, e setas
 //! dos filhos para o pai, mais grossas quanto mais linhas passam.
 //!
-//! O layout é calculado uma vez por plano; a cada frame só os nós e setas
-//! que caem na área visível são desenhados.
+//! O layout, os textos de cada nó, as frações de custo e a espessura das
+//! setas são calculados uma vez por plano. A cada frame só os nós e setas
+//! que caem na área visível são desenhados, e os textos já diagramados
+//! (galleys) de um nó são reaproveitados enquanto o tamanho da fonte não
+//! muda.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2,
-    vec2,
+    self, Align2, Color32, CornerRadius, FontId, Galley, Pos2, Rect, Sense, Stroke, StrokeKind,
+    Vec2, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -35,6 +41,62 @@ pub struct PlanView {
     pub scroll_to: Option<Vec2>,
     /// Nós desenhados no último frame.
     drawn: usize,
+    /// Nós em ordem de altura, para achar os visíveis sem passar por todos.
+    by_y: Vec<usize>,
+    /// Textos de cada nó, montados uma vez.
+    texts: Vec<NodeText>,
+    /// Espessura da seta que sai de cada nó.
+    widths: Vec<f32>,
+    /// Galleys dos nós desenhados no último frame.
+    galleys: HashMap<usize, NodeGalleys>,
+}
+
+/// O que um nó escreve, montado uma vez por plano.
+#[derive(Clone, Debug)]
+struct NodeText {
+    /// O que o nó diz a leitores de tela.
+    label: String,
+    icon: &'static str,
+    warning: bool,
+    /// Linhas embaixo do ícone; `true` nas que vão em cor fraca.
+    lines: Vec<(String, bool)>,
+}
+
+/// Tamanhos de fonte (pixels inteiros) de um zoom: o do ícone, o do
+/// aviso, o das linhas e se as linhas aparecem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sizes {
+    icon: u16,
+    warning: u16,
+    text: u16,
+    lines: bool,
+}
+
+impl Sizes {
+    fn at(zoom: f32) -> Self {
+        let px = |s: f32| (s * zoom).round().max(6.0) as u16;
+        Sizes {
+            icon: px(22.0),
+            warning: px(14.0),
+            text: px(11.0),
+            // Abaixo de 45% as linhas teriam menos de 5 px.
+            lines: zoom >= 0.45,
+        }
+    }
+}
+
+/// Textos de um nó já diagramados num tamanho de fonte. A cor fica de
+/// fora (`Color32::PLACEHOLDER`) e entra na hora de desenhar, então trocar
+/// o tema não invalida nada.
+#[derive(Clone, Debug)]
+struct NodeGalleys {
+    /// Para que zoom os textos servem.
+    sizes: Sizes,
+    icon: Arc<Galley>,
+    warning: Option<Arc<Galley>>,
+    lines: Vec<Arc<Galley>>,
+    /// Quais linhas vão em cor fraca.
+    weak: Vec<bool>,
 }
 
 impl PlanView {
@@ -74,6 +136,11 @@ impl PlanView {
             2.0 * MARGIN + columns as f32 * NODE_WIDTH + (columns - 1) as f32 * GAP_X,
             2.0 * MARGIN + next_row.max(1) as f32 * (NODE_HEIGHT + GAP_Y) - GAP_Y,
         );
+        let mut by_y: Vec<usize> = (0..n).collect();
+        by_y.sort_by(|&a, &b| positions[a].y.total_cmp(&positions[b].y));
+        let shares = cost_shares(plan);
+        let texts = (0..n).map(|id| node_text(plan, id, shares[id])).collect();
+        let widths = plan.nodes.iter().map(arrow_width).collect();
         PlanView {
             positions,
             size,
@@ -81,6 +148,10 @@ impl PlanView {
             selected: None,
             scroll_to: None,
             drawn: 0,
+            by_y,
+            texts,
+            widths,
+            galleys: HashMap::new(),
         }
     }
 
@@ -150,15 +221,25 @@ impl PlanView {
             if !trunk.intersects(clip) {
                 continue;
             }
-            let mut widest = 0.0f32;
-            for &child in &node.children {
+            // Os filhos ficam em linhas crescentes: só os que caem na
+            // altura visível são percorridos.
+            let widest = node
+                .children
+                .iter()
+                .map(|&c| self.widths[c])
+                .fold(0.0f32, f32::max)
+                * zoom.max(0.5);
+            let child_y = |c: usize| arrow_y(to_screen(self.node_rect(c)));
+            let start = node
+                .children
+                .partition_point(|&c| child_y(c) + 8.0 < clip.top());
+            for &child in &node.children[start..] {
                 let c = to_screen(self.node_rect(child));
                 let y = arrow_y(c);
-                let width = arrow_width(&plan.nodes[child]) * zoom.max(0.5);
-                widest = widest.max(width);
-                if y + 8.0 < clip.top() || y - 8.0 > clip.bottom() {
-                    continue;
+                if y - 8.0 > clip.bottom() {
+                    break;
                 }
+                let width = self.widths[child] * zoom.max(0.5);
                 painter.line_segment([pos2(c.left(), y), pos2(mid, y)], Stroke::new(width, line));
             }
             let top = end.y.max(clip.top() - 8.0);
@@ -181,30 +262,31 @@ impl PlanView {
 
         let mut drawn = 0;
         let mut clicked = None;
-        for id in 0..plan.nodes.len() {
-            let r = to_screen(self.node_rect(id));
+        // Nós cuja altura cruza a área visível (o resto nem é olhado).
+        let top = (clip.top() - origin.y) / zoom - NODE_HEIGHT;
+        let bottom = (clip.bottom() - origin.y) / zoom;
+        let first = self.by_y.partition_point(|&i| self.positions[i].y < top);
+        let last = self
+            .by_y
+            .partition_point(|&i| self.positions[i].y <= bottom);
+        let sizes = Sizes::at(zoom);
+        let mut visible = Vec::with_capacity(last.saturating_sub(first));
+        let (by_y, texts, cache) = (&self.by_y, &self.texts, &mut self.galleys);
+        let positions = &self.positions;
+        for &id in &by_y[first..last.max(first)] {
+            let r = to_screen(Rect::from_min_size(
+                positions[id],
+                vec2(NODE_WIDTH, NODE_HEIGHT),
+            ));
             if !r.intersects(clip) {
                 continue;
             }
             drawn += 1;
+            visible.push(id);
             let response = ui.interact(r, ui.id().with(("plan_node", id)), Sense::click());
-            // Para leitores de tela (e testes): o que o nó diz.
-            let node = &plan.nodes[id];
-            let label = format!(
-                "{}{}, Cost: {:.0} %{}",
-                node.title(),
-                node.subtitle()
-                    .map(|s| format!(", {s}"))
-                    .unwrap_or_default(),
-                plan.cost_share(id) * 100.0,
-                if plan.misestimate(id).is_some() {
-                    ", Warning: estimated rows differ from actual"
-                } else {
-                    ""
-                }
-            );
+            let text = &texts[id];
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone())
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text.label.clone())
             });
             let selected = self.selected == Some(id);
             if selected || response.hovered() {
@@ -215,11 +297,25 @@ impl PlanView {
                 };
                 painter.rect_filled(r, CornerRadius::same(4), fill);
             }
-            paint_node(painter, r, zoom, plan, id, &visuals);
+            let galleys = match cache.get(&id) {
+                Some(g) if g.sizes == sizes => g,
+                _ => {
+                    let g = layout_node(painter, text, sizes);
+                    cache.insert(id, g);
+                    &cache[&id]
+                }
+            };
+            paint_node(painter, r, zoom, galleys, &visuals);
             if response.clicked() {
                 clicked = Some(id);
             }
             response.on_hover_ui(|ui| tooltip(ui, plan, id));
+        }
+        // Só fica guardado o que está na tela.
+        if self.galleys.len() > visible.len() {
+            visible.sort_unstable();
+            self.galleys
+                .retain(|id, _| visible.binary_search(id).is_ok());
         }
         if let Some(id) = clicked {
             self.selected = Some(id);
@@ -234,15 +330,89 @@ fn arrow_width(node: &Node) -> f32 {
     (1.0 + (rows + 1.0).log10() as f32).clamp(1.0, 8.0)
 }
 
-fn paint_node(
-    painter: &egui::Painter,
-    r: Rect,
-    zoom: f32,
-    plan: &Plan,
-    id: usize,
-    v: &egui::Visuals,
-) {
+/// Fração do custo de cada nó, numa passada só (`Plan::cost_share` soma
+/// o plano inteiro a cada chamada).
+fn cost_shares(plan: &Plan) -> Vec<f64> {
+    let own: Vec<f64> = (0..plan.nodes.len()).map(|i| plan.own_cost(i)).collect();
+    let sum: f64 = own.iter().sum();
+    own.iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if sum > 0.0 {
+                c / sum
+            } else if i == 0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// Os textos do nó `id`, montados uma vez por plano.
+fn node_text(plan: &Plan, id: usize, share: f64) -> NodeText {
     let node = &plan.nodes[id];
+    let warning = plan.misestimate(id).is_some();
+    let title = node.title();
+    let subtitle = node.subtitle();
+    let label = format!(
+        "{title}{}, Cost: {:.0} %{}",
+        subtitle
+            .as_deref()
+            .map(|s| format!(", {s}"))
+            .unwrap_or_default(),
+        share * 100.0,
+        if warning {
+            ", Warning: estimated rows differ from actual"
+        } else {
+            ""
+        }
+    );
+    let width_chars = ((NODE_WIDTH - 8.0) / 6.0) as usize;
+    let mut lines = vec![(truncate(&title, width_chars), false)];
+    if let Some(s) = subtitle {
+        lines.push((truncate(&s, width_chars), true));
+    }
+    lines.push((format!("Cost: {:.0} %", share * 100.0), false));
+    if let Some(a) = node.actual_total_rows() {
+        let est = node.plan_rows * node.actual.map_or(1.0, |a| a.loops);
+        let pct = if est > 0.0 { a / est * 100.0 } else { 0.0 };
+        let rows = format!("{} of {} ({pct:.0}%)", count(a), count(est));
+        lines.push((truncate(&rows, width_chars), true));
+    }
+    NodeText {
+        label,
+        icon: operator_icon(&node.kind),
+        warning,
+        lines,
+    }
+}
+
+/// Diagrama os textos de um nó nos tamanhos de um zoom. Com o zoom
+/// afastado as linhas embaixo do ícone não aparecem e nem são
+/// diagramadas.
+fn layout_node(painter: &egui::Painter, text: &NodeText, sizes: Sizes) -> NodeGalleys {
+    let galley = |s: &str, size: u16| {
+        let font = FontId::proportional(f32::from(size));
+        painter.layout_no_wrap(s.to_owned(), font, Color32::PLACEHOLDER)
+    };
+    NodeGalleys {
+        sizes,
+        icon: galley(text.icon, sizes.icon),
+        warning: text.warning.then(|| galley(icon::WARNING, sizes.warning)),
+        lines: if sizes.lines {
+            text.lines
+                .iter()
+                .map(|(l, _)| galley(l, sizes.text))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        weak: text.lines.iter().map(|&(_, w)| w).collect(),
+    }
+}
+
+fn paint_node(painter: &egui::Painter, r: Rect, zoom: f32, g: &NodeGalleys, v: &egui::Visuals) {
     let text = v.text_color();
     let weak = v.weak_text_color();
     let icon_rect = Rect::from_center_size(
@@ -256,46 +426,25 @@ fn paint_node(
         Stroke::new(1.0, weak),
         StrokeKind::Inside,
     );
-    painter.text(
-        icon_rect.center(),
-        Align2::CENTER_CENTER,
-        operator_icon(&node.kind),
-        FontId::proportional((22.0 * zoom).round().max(6.0)),
-        text,
-    );
-    if plan.misestimate(id).is_some() {
-        painter.text(
-            icon_rect.right_top() + vec2(2.0 * zoom, -2.0 * zoom),
-            Align2::CENTER_CENTER,
-            icon::WARNING,
-            FontId::proportional((14.0 * zoom).round().max(6.0)),
-            v.warn_fg_color,
-        );
+    let place = |galley: &Arc<Galley>, anchor: Align2, pos: Pos2, color: Color32| {
+        let rect = anchor.anchor_size(pos, galley.size());
+        painter.galley(rect.min, galley.clone(), color);
+    };
+    place(&g.icon, Align2::CENTER_CENTER, icon_rect.center(), text);
+    if let Some(w) = &g.warning {
+        let pos = icon_rect.right_top() + vec2(2.0 * zoom, -2.0 * zoom);
+        place(w, Align2::CENTER_CENTER, pos, v.warn_fg_color);
     }
-    if zoom < 0.45 {
-        return;
-    }
-    let size = (11.0 * zoom).round().max(6.0);
-    let width_chars = ((NODE_WIDTH - 8.0) / 6.0) as usize;
-    let mut lines: Vec<(String, Color32)> = vec![(node.title(), text)];
-    if let Some(s) = node.subtitle() {
-        lines.push((s, weak));
-    }
-    lines.push((format!("Cost: {:.0} %", plan.cost_share(id) * 100.0), text));
-    if let Some(a) = node.actual_total_rows() {
-        let est = node.plan_rows * node.actual.map_or(1.0, |a| a.loops);
-        let pct = if est > 0.0 { a / est * 100.0 } else { 0.0 };
-        lines.push((format!("{} of {} ({pct:.0}%)", count(a), count(est)), weak));
-    }
+    // As linhas fracas são as que `node_text` marcou; a ordem é a mesma.
+    let size = f32::from(g.sizes.text);
     let mut y = icon_rect.bottom() + 4.0 * zoom;
-    for (line, color) in lines {
-        painter.text(
-            pos2(r.center().x, y),
-            Align2::CENTER_TOP,
-            truncate(&line, width_chars),
-            FontId::proportional(size),
-            color,
-        );
+    for (i, galley) in g.lines.iter().enumerate() {
+        let color = if g.weak.get(i).copied().unwrap_or(false) {
+            weak
+        } else {
+            text
+        };
+        place(galley, Align2::CENTER_TOP, pos2(r.center().x, y), color);
         y += (size + 2.0).max(8.0);
     }
 }
@@ -467,5 +616,30 @@ mod tests {
         *harness.state_mut() = view;
         harness.run();
         assert!(harness.state().drawn() > drawn);
+    }
+
+    #[test]
+    fn text_is_laid_out_once_and_only_for_what_is_on_screen() {
+        let plan = parse(&chain(5, 200), "").unwrap().remove(0);
+        let view = PlanView::new(&plan);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(|ui, view: &mut PlanView| view.show(ui, &plan, "plan"), view);
+        harness.run();
+        let drawn = harness.state().drawn();
+        assert_eq!(harness.state().galleys.len(), drawn);
+        let first = harness.state().galleys[&0].clone();
+        assert_eq!(first.lines.len(), 2, "título e custo");
+        harness.run();
+        // Mesmo zoom: o mesmo galley, sem diagramar de novo.
+        assert!(Arc::ptr_eq(&first.icon, &harness.state().galleys[&0].icon));
+        // Afastado as linhas somem; de volta, voltam.
+        harness.state_mut().zoom = 0.4;
+        harness.run();
+        assert!(harness.state().galleys[&0].lines.is_empty());
+        assert!(harness.state().galleys.len() <= harness.state().drawn());
+        harness.state_mut().zoom = 1.0;
+        harness.run();
+        assert_eq!(harness.state().galleys[&0].lines.len(), 2);
     }
 }

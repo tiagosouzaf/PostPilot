@@ -247,17 +247,15 @@ impl Plan {
 
 /// Custo relativo de cada plano no lote ("Query cost (relative to the
 /// batch)" do SSMS), somando 1.
-pub fn batch_shares(plans: &[Plan]) -> Vec<f64> {
-    let total: f64 = plans.iter().map(Plan::total_cost).sum();
-    plans
+/// Recebe referências para não obrigar quem chama a copiar os planos (a
+/// aba do plano chama a cada frame).
+pub fn batch_shares<'a>(plans: impl IntoIterator<Item = &'a Plan>) -> Vec<f64> {
+    let costs: Vec<f64> = plans.into_iter().map(Plan::total_cost).collect();
+    let total: f64 = costs.iter().sum();
+    let n = costs.len() as f64;
+    costs
         .iter()
-        .map(|p| {
-            if total > 0.0 {
-                p.total_cost() / total
-            } else {
-                1.0 / plans.len() as f64
-            }
-        })
+        .map(|c| if total > 0.0 { c / total } else { 1.0 / n })
         .collect()
 }
 

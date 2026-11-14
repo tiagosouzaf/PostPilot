@@ -66,10 +66,7 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
 /// Os planos do Ctrl+L, um embaixo do outro, cada um com o cabeçalho do
 /// SSMS: número, custo relativo ao lote e o comando.
 fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
-    let shares = {
-        let plans: Vec<_> = exec.plans.iter().map(|(p, _)| p.clone()).collect();
-        pgstudio_execution_plan::batch_shares(&plans)
-    };
+    let shares = pgstudio_execution_plan::batch_shares(exec.plans.iter().map(|(p, _)| p));
     let count = exec.plans.len();
     let height = (ui.available_height() / count as f32).max(180.0);
     egui::ScrollArea::vertical()
