@@ -63,6 +63,8 @@ pub enum Event {
     /// Tasks > Restore... num banco, ou "Restore Database..." na pasta
     /// Databases (banco novo).
     Restore(NodeId),
+    /// Tasks > Compare Schema... num banco (ele é a origem).
+    CompareSchema(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -412,6 +414,11 @@ impl ObjectExplorer {
                                             }
                                             if ui.button("Restore...").clicked() {
                                                 events.push(Event::Restore(node.id.clone()));
+                                                ui.close();
+                                            }
+                                            ui.separator();
+                                            if ui.button("Compare Schema...").clicked() {
+                                                events.push(Event::CompareSchema(node.id.clone()));
                                                 ui.close();
                                             }
                                         });

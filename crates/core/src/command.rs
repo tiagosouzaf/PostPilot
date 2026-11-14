@@ -95,6 +95,7 @@ commands! {
     ObjectInfo => "Query.ObjectInfo", "Object Information";
     QueryOptions => "Query.Options", "Query Options…";
     // Tools
+    SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
     Options => "Tools.Options", "Options…";
     // Window
     NewHorizontalTabGroup => "Window.NewHorizontalTabGroup", "New Horizontal Tab Group";

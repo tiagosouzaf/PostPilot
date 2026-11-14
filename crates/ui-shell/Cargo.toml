@@ -24,6 +24,7 @@ serde_json.workspace = true
 [dev-dependencies]
 egui_kittest.workspace = true
 pgstudio-pg-client.workspace = true
+pgstudio-pg-metadata.workspace = true
 
 [lints]
 workspace = true

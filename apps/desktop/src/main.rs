@@ -36,7 +36,8 @@
 //!   abre o Activity Monitor e `properties`, as propriedades de segurança
 //!   (Permissions ou Role Properties), `backup`, o "Back Up Database", e
 //!   `restore`, o "Restore Database" (com `PGSTUDIO_RESTORE_FILE`, já
-//!   listando o arquivo).
+//!   listando o arquivo). `compare` abre o "Schema Compare" com o banco
+//!   como origem (com `PGSTUDIO_COMPARE=origem,destino`, já comparando os dois).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -159,12 +160,18 @@ fn main() -> eframe::Result {
                     "properties" => Event::Properties,
                     "backup" => Event::BackUp,
                     "restore" => Event::Restore,
+                    "compare" => Event::CompareSchema,
                     "querydesign" | "plan" | "actualplan" | "info" => Event::NewQuery,
                     _ => |n| Event::Script(n, ScriptAction::Drop),
                 };
                 app = app.with_selected_action(make);
                 if action == "querydesign" {
                     app = app.with_design_query_on_open();
+                }
+                if let Ok(pair) = std::env::var("PGSTUDIO_COMPARE")
+                    && let Some((source, target)) = pair.split_once(',')
+                {
+                    app = app.with_compare(source.into(), target.into());
                 }
                 if let Ok(file) = std::env::var("PGSTUDIO_RESTORE_FILE") {
                     app = app.with_restore_file(file);

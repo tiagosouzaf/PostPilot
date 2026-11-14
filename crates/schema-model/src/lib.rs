@@ -8,6 +8,8 @@
 //!   ela nas chaves e nas FKs de outras tabelas que apontam para ela).
 //! - [`diff`]: o DDL que leva o banco de um modelo ao outro, na ordem em que
 //!   o PostgreSQL aceita.
+//! - [`compare`]: o Schema Compare, que alinha as tabelas de dois bancos
+//!   pelo nome e usa o [`diff`] para levar um ao outro.
 //!
 //! Tabelas e colunas têm um [`Id`] estável: o do catálogo (oid da tabela,
 //! número da coluna) ou um novo, de [`Model::new_id`]. É por ele que o diff
@@ -16,6 +18,7 @@
 
 use std::sync::Arc;
 
+pub mod compare;
 pub mod diff;
 pub mod edit;
 mod ident;

@@ -2695,6 +2695,7 @@ dependencies = [
  "pgstudio-execution-plan",
  "pgstudio-object-explorer",
  "pgstudio-pg-client",
+ "pgstudio-pg-metadata",
  "pgstudio-result-grid",
  "pgstudio-sql-editor",
  "serde",
