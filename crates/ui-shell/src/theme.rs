@@ -211,7 +211,7 @@ pub fn dialog_frame(style: &egui::Style) -> egui::Frame {
         .corner_radius(CornerRadius::same(WINDOW_RADIUS))
 }
 
-/// Um diálogo modal com o estilo do PGStudio. Use no lugar de
+/// Um diálogo modal com o estilo do PostPilot. Use no lugar de
 /// `egui::Modal::new`.
 pub fn modal(id: egui::Id) -> ModalBuilder {
     ModalBuilder(egui::Modal::new(id))

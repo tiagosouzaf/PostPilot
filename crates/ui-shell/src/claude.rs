@@ -594,7 +594,7 @@ impl ShellApp {
         };
         let mut answer = None;
         let pending = self.claude.confirms.len();
-        let modal = egui::Modal::new(egui::Id::new("claude_confirm")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("claude_confirm")).show(ctx, |ui| {
             ui.set_width(560.0);
             ui.heading(format!("{} wants to run SQL", c.origin.label()));
             ui.label(c.safety.describe());

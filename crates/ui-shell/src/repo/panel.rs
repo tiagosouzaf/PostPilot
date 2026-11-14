@@ -244,7 +244,7 @@ impl WorkspacePanel {
         let mut ok = None;
         let mut cancel = false;
         if let Some(dialog) = &mut self.new_folder {
-            egui::Modal::new(egui::Id::new("workspace_new_folder")).show(ctx, |ui| {
+            crate::theme::modal(egui::Id::new("workspace_new_folder")).show(ctx, |ui| {
                 ui.set_width(320.0);
                 ui.heading("New Folder");
                 ui.label("Folder name:");
