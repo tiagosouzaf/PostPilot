@@ -3,6 +3,10 @@
 //! Uso: `postpilot [--renderer wgpu|glow] [arquivo.sql ...]` abre os arquivos
 //! em janelas de consulta.
 //!
+//! `postpilot mcp` não abre janela: é o servidor MCP do Claude Code, por
+//! stdio, que repassa as chamadas para o PostPilot aberto (veja
+//! `pgstudio_automation::mcp`). Uso: `claude mcp add postpilot -- postpilot mcp`.
+//!
 //! `--renderer` escolhe o renderizador gráfico (veja o módulo `renderer`):
 //! `wgpu` (o padrão) ou `glow` (OpenGL). Sem escolha, o app tenta o wgpu e
 //! reabre com o glow se ele falhar.
@@ -28,6 +32,8 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
+//! - `PGSTUDIO_DATABASES=1`: abre a lista de bancos da toolbar (Ctrl+U)
+//!   quando a janela de consulta ativa estiver pronta.
 //! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign|plan|actualplan|info|activity|properties|backup`:
 //!   depois de
 //!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
@@ -57,7 +63,7 @@
 //!   abre a janela (para screenshots).
 //! - `PGSTUDIO_WORKSPACE=pasta`: abre este workspace (veja
 //!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
-//!   lembrado em `<config>/PGStudio/workspace.txt`.
+//!   lembrado em `<config>/PostPilot/workspace.txt`.
 //!
 //! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
 //! servidores registrados em `<config>/PostPilot/registered_servers.json`,
@@ -95,6 +101,9 @@ const APP_ID: &str = "postpilot";
 const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/postpilot-256.png");
 
 fn main() -> std::process::ExitCode {
+    if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
+        return pgstudio_automation::mcp::serve_stdio();
+    }
     let launch = renderer::Launch::parse(
         std::env::args_os().skip(1),
         std::env::var(renderer::ENV).ok().as_deref(),
@@ -232,13 +241,27 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
             }
+            // Claude Code pelo MCP (Tools > Allow Claude Code), fora dos
+            // modos de screenshot e medição, a menos que o canal seja dado.
+            let explicit_endpoint = std::env::var_os(pgstudio_automation::endpoint::ENV).is_some();
+            if (screenshot.is_none() && !bench) || explicit_endpoint {
+                if let (Some(endpoint), Some(dir)) =
+                    (pgstudio_automation::endpoint::default_path(), config_dir())
+                {
+                    let settings = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("claude.json");
+                    app = app.with_claude_code(&cc.egui_ctx, endpoint, settings);
+                }
+            }
             if let Some(root) = std::env::var_os("PGSTUDIO_WORKSPACE").map(PathBuf::from) {
                 app.open_workspace(&root);
             } else if screenshot.is_none()
                 && !bench
                 && let Some(dir) = config_dir()
             {
-                app = app.with_workspace_memory(dir.join("PGStudio").join("workspace.txt"));
+                app = app.with_workspace_memory(
+                    dir.join(pgstudio_core::CONFIG_DIR_NAME)
+                        .join("workspace.txt"),
+                );
             }
             if !demo {
                 match DbRuntime::new() {
@@ -264,6 +287,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             }
             if std::env::var_os("PGSTUDIO_LIST_MEMBERS").is_some() {
                 app = app.with_list_members_on_load();
+            }
+            if std::env::var_os("PGSTUDIO_DATABASES").is_some() {
+                app = app.with_database_list_on_load();
             }
             if let Ok(action) = std::env::var("PGSTUDIO_ACTION") {
                 use pgstudio_core::metadata::ScriptAction;

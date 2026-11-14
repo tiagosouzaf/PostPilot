@@ -155,6 +155,17 @@ Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
 (Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
 trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
+Format Document (Shift+Alt+F ou Ctrl+Shift+I, como no VS Code, ou Ctrl+K, Ctrl+D,
+como no Visual Studio; também em Edit > Advanced e no menu de contexto do editor)
+formata o SQL: cada cláusula numa linha, colunas do `SELECT` e condições do
+`WHERE` uma por linha, subconsultas e `CASE` indentados e palavras-chave em
+maiúsculas. Com seleção, formata só as linhas selecionadas; sem, o script
+inteiro. Ctrl+Z desfaz a formatação de uma vez. O formatador só mexe nos espaços
+e na caixa das palavras-chave: comentários, strings, nomes entre aspas e corpos
+`$$` ficam como estão, e o resultado é conferido token a token contra o
+original. SQL com string, comentário ou parêntese sem fecho fica como está, com o
+motivo na status bar.
+
 O IntelliSense lê o catálogo do banco (schemas, tabelas, views, colunas e
 funções) em segundo plano, na primeira vez que uma janela de consulta precisa
 dele, e guarda em cache; Ctrl+Shift+R (Edit > IntelliSense > Refresh Local
