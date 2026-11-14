@@ -8,6 +8,7 @@
 //! cache. Assim a memória fica limitada pelo orçamento, não pelo tamanho do
 //! resultado.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -36,6 +37,12 @@ pub struct ResultStore {
     cache: Vec<(usize, PageData)>,
     /// Erro ao usar o arquivo temporário; daí em diante tudo fica em memória.
     spill_error: Option<String>,
+    /// Valores trocados depois da leitura (edição na grade), pela linha
+    /// guardada e a coluna. As páginas não mudam.
+    edits: HashMap<(u64, usize), Option<String>>,
+    /// Linhas guardadas que saíram do resultado (excluídas na grade), em
+    /// ordem.
+    removed: Vec<u64>,
 }
 
 enum Page {
@@ -190,6 +197,8 @@ impl ResultStore {
             spill: None,
             cache: Vec::new(),
             spill_error: None,
+            edits: HashMap::new(),
+            removed: Vec::new(),
         }
     }
 
@@ -197,13 +206,46 @@ impl ResultStore {
         &self.columns
     }
 
-    /// Linhas guardadas.
+    /// Linhas do resultado (as guardadas menos as removidas).
     pub fn len(&self) -> u64 {
-        self.rows
+        self.rows - self.removed.len() as u64
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rows == 0
+        self.len() == 0
+    }
+
+    /// Linha guardada que aparece como a linha `row` do resultado.
+    fn stored_row(&self, row: u64) -> u64 {
+        let mut stored = row;
+        for &r in &self.removed {
+            if r <= stored {
+                stored += 1;
+            } else {
+                break;
+            }
+        }
+        stored
+    }
+
+    /// Troca o valor de uma célula (depois de gravado no banco).
+    pub fn set_cell(&mut self, row: u64, col: usize, value: Option<String>) {
+        if col >= self.columns.len() || row >= self.len() {
+            return;
+        }
+        let stored = self.stored_row(row);
+        self.edits.insert((stored, col), value);
+    }
+
+    /// Tira a linha `row` do resultado (excluída no banco); as de baixo
+    /// sobem uma posição.
+    pub fn remove_row(&mut self, row: u64) {
+        if row >= self.len() {
+            return;
+        }
+        let stored = self.stored_row(row);
+        let at = self.removed.partition_point(|&r| r < stored);
+        self.removed.insert(at, stored);
     }
 
     /// Bytes de linhas em memória agora (páginas, página aberta e cache).
@@ -261,8 +303,16 @@ impl ResultStore {
     /// Valor da célula; `None` para NULL ou fora do resultado. Pode ler do
     /// disco, por isso pede `&mut`.
     pub fn cell(&mut self, row: u64, col: usize) -> Option<&str> {
-        if col >= self.columns.len() || row >= self.rows {
+        if col >= self.columns.len() || row >= self.len() {
             return None;
+        }
+        let row = if self.removed.is_empty() {
+            row
+        } else {
+            self.stored_row(row)
+        };
+        if self.edits.contains_key(&(row, col)) {
+            return self.edits.get(&(row, col)).and_then(|v| v.as_deref());
         }
         let page = (row / PAGE_ROWS as u64) as usize;
         let local = (row % PAGE_ROWS as u64) as usize;
@@ -345,6 +395,30 @@ mod tests {
 
     fn cols(n: usize) -> Vec<String> {
         (0..n).map(|i| format!("c{i}")).collect()
+    }
+
+    #[test]
+    fn edits_and_removed_rows_change_what_is_read() {
+        let mut s = ResultStore::new(cols(2));
+        for i in 0..5 {
+            s.push(&[Some(i.to_string()), None]);
+        }
+        s.set_cell(1, 1, Some("x".into()));
+        s.remove_row(0);
+        // A antiga linha 1 agora é a 0, com o valor trocado.
+        assert_eq!(s.len(), 4);
+        assert_eq!(s.row(0), vec![Some("1".into()), Some("x".into())]);
+        s.remove_row(1);
+        assert_eq!(s.cell(1, 0), Some("3"));
+        s.set_cell(1, 1, Some("y".into()));
+        s.set_cell(0, 0, None);
+        assert_eq!(s.row(0), vec![None, Some("x".into())]);
+        assert_eq!(s.row(1), vec![Some("3".into()), Some("y".into())]);
+        assert_eq!(s.cell(3, 0), None);
+        s.remove_row(0);
+        s.remove_row(0);
+        assert_eq!(s.row(0), vec![Some("4".into()), None]);
+        assert_eq!(s.len(), 1);
     }
 
     #[test]

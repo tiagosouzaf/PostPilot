@@ -15,6 +15,7 @@ members = [
     "crates/execution-plan",
     "crates/automation",
     "crates/updater",
+    "crates/i18n",
     "xtask",
 ]
 exclude = ["spikes"]
@@ -40,6 +41,7 @@ pgstudio-diagram-engine = { path = "crates/diagram-engine" }
 pgstudio-execution-plan = { path = "crates/execution-plan" }
 pgstudio-automation = { path = "crates/automation" }
 pgstudio-updater = { path = "crates/updater" }
+pgstudio-i18n = { path = "crates/i18n" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -49,6 +51,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Idioma do sistema para a interface (GetUserDefaultLocaleName / LANG).
+sys-locale = "0.3"
 # Lê o SELECT do editor no Query Designer (marco 5.5).
 sqlparser = { version = "0.64", features = ["visitor"] }
 # PostgreSQL (Fase 2). tokio-postgres em vez de SQLx: vários comandos por

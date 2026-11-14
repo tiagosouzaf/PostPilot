@@ -2965,6 +2965,7 @@ dependencies = [
 name = "pgstudio-core"
 version = "0.1.0"
 dependencies = [
+ "pgstudio-i18n",
  "pgstudio-schema-model",
  "serde",
  "serde_json",
@@ -2977,6 +2978,7 @@ dependencies = [
  "eframe",
  "pgstudio-automation",
  "pgstudio-core",
+ "pgstudio-i18n",
  "pgstudio-pg-metadata",
  "pgstudio-ui-shell",
  "rfd",
@@ -3012,6 +3014,13 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-pg-client",
  "serde_json",
+]
+
+[[package]]
+name = "pgstudio-i18n"
+version = "0.1.0"
+dependencies = [
+ "sys-locale",
 ]
 
 [[package]]
@@ -3089,6 +3098,7 @@ dependencies = [
  "pgstudio-diagram-engine",
  "pgstudio-docking",
  "pgstudio-execution-plan",
+ "pgstudio-i18n",
  "pgstudio-object-explorer",
  "pgstudio-pg-client",
  "pgstudio-pg-metadata",
@@ -4185,6 +4195,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

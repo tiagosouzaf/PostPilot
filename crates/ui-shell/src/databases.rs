@@ -5,6 +5,7 @@
 //! No PostgreSQL uma conexão fica num banco só; trocar o banco da janela
 //! fecha a conexão dela, e a próxima execução abre outra no banco novo.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -305,13 +306,13 @@ impl crate::ShellApp {
             return;
         }
         if doc.execution.as_ref().is_some_and(|e| e.is_running()) {
-            self.status = "Cannot change the database while a query is executing.".to_string();
+            self.status = tr("Cannot change the database while a query is executing.").to_string();
             return;
         }
         match doc.session.as_ref().map(|s| s.0.clone()) {
             None => self.switch_database(id, &database),
             Some(session) => {
-                self.status = format!("Changing database to {database}...");
+                self.status = trf!("Changing database to {database}...", database = database);
                 self.db_switch = Some(crate::PendingSwitch {
                     doc: id,
                     database,
@@ -328,7 +329,7 @@ impl crate::ShellApp {
             return;
         };
         if doc.execution.as_ref().is_some_and(|e| e.is_running()) {
-            self.status = "Cannot change the database while a query is executing.".to_string();
+            self.status = tr("Cannot change the database while a query is executing.").to_string();
             return;
         }
         doc.session = None;
@@ -339,7 +340,10 @@ impl crate::ShellApp {
         }
         // Como no SSMS, o cursor volta para o editor.
         self.focus_editor = Some(id);
-        let text = format!("Changed database context to '{database}'.");
+        let text = trf!(
+            "Changed database context to '{database}'.",
+            database = database
+        );
         self.output.push(format!("{}: {text}", doc.name()));
         self.status = text;
     }
@@ -361,17 +365,19 @@ impl crate::ShellApp {
         let mut answer: Option<bool> = None;
         let modal = crate::theme::modal(egui::Id::new("change_database_tx")).show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.heading("Change Database");
-            ui.label(format!(
+            ui.heading(tr("Change Database"));
+            ui.label(trf!(
                 "{name} has an open transaction. Changing to {database} closes this \
-                 window's connection, and PostgreSQL rolls the transaction back."
+                 window's connection, and PostgreSQL rolls the transaction back.",
+                name = name,
+                database = database
             ));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     answer = Some(false);
                 }
-                if ui.button("Roll Back and Change").clicked() {
+                if ui.button(tr("Roll Back and Change")).clicked() {
                     answer = Some(true);
                 }
             });
@@ -386,7 +392,7 @@ impl crate::ShellApp {
         if answer {
             self.switch_database(pending.doc, &pending.database);
         } else {
-            self.status = "The database was not changed.".to_string();
+            self.status = tr("The database was not changed.").to_string();
         }
     }
 }

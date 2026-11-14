@@ -26,8 +26,13 @@ macro_rules! commands {
                 }
             }
 
-            /// Texto exibido em menus e dicas (em inglês, como no SSMS).
+            /// Texto exibido em menus e dicas, no idioma da interface.
             pub fn label(self) -> &'static str {
+                pgstudio_i18n::tr(self.english_label())
+            }
+
+            /// Texto em inglês, a chave da tradução.
+            pub fn english_label(self) -> &'static str {
                 match self {
                     $(CommandId::$variant => $label,)*
                 }
@@ -140,6 +145,18 @@ mod tests {
         for &cmd in CommandId::ALL {
             assert!(seen.insert(cmd.name()), "nome repetido: {}", cmd.name());
             assert_eq!(CommandId::from_name(cmd.name()), Some(cmd));
+        }
+    }
+
+    #[test]
+    fn every_label_has_a_portuguese_translation() {
+        use pgstudio_i18n::{Language, has_translation};
+        for &cmd in CommandId::ALL {
+            assert!(
+                has_translation(Language::PortugueseBrazil, None, cmd.english_label()),
+                "sem tradução em locales/pt-BR.po: {:?}",
+                cmd.english_label()
+            );
         }
     }
 

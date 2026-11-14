@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 pgstudio-core.workspace = true
+pgstudio-i18n.workspace = true
 pgstudio-ui-shell.workspace = true
 pgstudio-automation.workspace = true
 pgstudio-pg-metadata.workspace = true
