@@ -18,7 +18,9 @@
 
 use std::collections::HashMap;
 
-use crate::{Column, ForeignKey, Id, Key, Model, Table, idents, qualified, quote_ident};
+use crate::{
+    Column, ForeignKey, Id, Key, Model, Table, idents, qualified, quote_ident, rename_in_expr,
+};
 
 /// Comandos SQL, cada um terminado em `;`, que levam o banco de `old` a
 /// `new`. Vazio se não há diferença.
@@ -39,6 +41,9 @@ pub fn diff(old: &Model, new: &Model) -> Vec<String> {
             continue;
         };
         let q = o.qualified();
+        // Constraints e índices comparados como ficam depois de renomear
+        // as colunas: o PostgreSQL renomeia neles sozinho.
+        let o = &with_renames(o, n, old, new);
         // 1. O que sai ou muda, na tabela com o nome antigo.
         for fk in &o.foreign_keys {
             let same = n.foreign_keys.iter().find(|f| f.name == fk.name);
@@ -192,6 +197,67 @@ pub fn diff(old: &Model, new: &Model) -> Vec<String> {
     }
 
     out.into_statements()
+}
+
+/// Nomes novos das colunas renomeadas de `o` (que virou `n`).
+fn renames(o: &Table, n: &Table) -> HashMap<String, String> {
+    o.columns
+        .iter()
+        .filter_map(|oc| {
+            let nc = n.column_by_id(oc.id)?;
+            (nc.name != oc.name).then(|| (oc.name.clone(), nc.name.clone()))
+        })
+        .collect()
+}
+
+/// `o` com as colunas renomeadas como em `n` dentro das chaves, checks,
+/// índices e FKs (as próprias e as colunas de destino delas). Os nomes
+/// das colunas não mudam aqui: o diff das colunas é feito antes.
+fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
+    let own = renames(o, n);
+    let mut t = o.clone();
+    let names = |cols: &mut Vec<String>, map: &HashMap<String, String>| {
+        for c in cols.iter_mut() {
+            if let Some(new) = map.get(c) {
+                c.clone_from(new);
+            }
+        }
+    };
+    let exprs = |e: &mut String, map: &HashMap<String, String>| {
+        for (from, to) in map {
+            *e = rename_in_expr(e, from, to);
+        }
+    };
+    if !own.is_empty() {
+        for k in t.primary_key.iter_mut().chain(t.uniques.iter_mut()) {
+            names(&mut k.columns, &own);
+        }
+        for c in &mut t.checks {
+            exprs(&mut c.expr, &own);
+        }
+        for i in &mut t.indexes {
+            for c in &mut i.columns {
+                if let Some(new) = own.get(c) {
+                    c.clone_from(new);
+                } else if c.contains(['(', ' ', '"']) {
+                    exprs(c, &own);
+                }
+            }
+            if let Some(p) = &mut i.predicate {
+                exprs(p, &own);
+            }
+        }
+    }
+    for fk in &mut t.foreign_keys {
+        names(&mut fk.columns, &own);
+        let target = old
+            .find(&fk.ref_schema, &fk.ref_table)
+            .and_then(|ot| Some((ot, new.table(ot.id)?)));
+        if let Some((ot, nt)) = target {
+            names(&mut fk.ref_columns, &renames(ot, nt));
+        }
+    }
+    t
 }
 
 /// Os comandos agrupados na ordem em que rodam.
@@ -363,6 +429,44 @@ mod tests {
             ]
         );
         assert!(diff(&d.model, &d.model).is_empty());
+    }
+
+    #[test]
+    fn renaming_a_column_keeps_keys_indexes_checks_and_foreign_keys() {
+        let (mut d, _) = shop();
+        let cliente = id(&d, "cliente");
+        d.add_index(
+            cliente,
+            Index {
+                name: "cliente_nome_idx".into(),
+                method: "btree".into(),
+                columns: vec!["nome".into(), "lower(nome)".into()],
+                predicate: Some("nome IS NOT NULL".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        d.add_check(
+            cliente,
+            Check {
+                name: "cliente_nome_check".into(),
+                expr: "length(nome) > 0".into(),
+            },
+        )
+        .unwrap();
+        d.history.clear();
+        let saved = d.model.clone();
+        let t = d.model.table(cliente).unwrap();
+        let (pk, nome) = (t.column("id").unwrap().id, t.column("nome").unwrap().id);
+        d.rename_column(cliente, pk, "codigo").unwrap();
+        d.rename_column(cliente, nome, "Nome").unwrap();
+        assert_eq!(
+            diff(&saved, &d.model),
+            [
+                "ALTER TABLE public.cliente RENAME COLUMN id TO codigo;",
+                "ALTER TABLE public.cliente RENAME COLUMN nome TO \"Nome\";",
+            ]
+        );
     }
 
     #[test]
