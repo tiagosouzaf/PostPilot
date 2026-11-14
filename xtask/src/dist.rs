@@ -1,4 +1,4 @@
-//! `cargo xtask dist`: pacotes de instalação do PGStudio.
+//! `cargo xtask dist`: pacotes de instalação do PostPilot.
 //!
 //! - `.deb` (Debian, Ubuntu e derivados), montado com `dpkg-deb`;
 //! - AppImage (qualquer Linux x86-64), o runtime tipo 2 do projeto AppImage
@@ -8,8 +8,8 @@
 //!   código;
 //! - `.zip` para Windows, compilado de forma cruzada com o MinGW
 //!   (`x86_64-pc-windows-gnu`) quando o host não é Windows;
-//! - `.msi` para Windows, com o mesmo `pgstudio.exe`, montado pelo `wixl` (do
-//!   msitools) a partir de `packaging/windows/pgstudio.wxs`.
+//! - `.msi` para Windows, com o mesmo `postpilot.exe`, montado pelo `wixl` (do
+//!   msitools) a partir de `packaging/windows/postpilot.wxs`.
 //!
 //! Tudo sai em `target/packages/`, com um `SHA256SUMS`. O binário é
 //! compilado no perfil `dist` (o `release` sem símbolos).
@@ -23,21 +23,24 @@ Uso: cargo xtask dist [opções]
 
 Gera os pacotes de instalação em target/packages/:
 
-  deb       pgstudio_<versão>_amd64.deb (precisa do dpkg-deb)
-  appimage  PGStudio-<versão>-x86_64.AppImage (precisa do mksquashfs, do
+  deb       postpilot_<versão>_amd64.deb (precisa do dpkg-deb)
+  appimage  PostPilot-<versão>-x86_64.AppImage (precisa do mksquashfs, do
             pacote squashfs-tools; baixa o runtime do AppImage na primeira
             vez, ou use APPIMAGE_RUNTIME=caminho)
-  arch      pgstudio-<versão>-1-x86_64.pkg.tar.zst (precisa do bsdtar, do
+  arch      postpilot-<versão>-1-x86_64.pkg.tar.zst (precisa do bsdtar, do
             pacote libarchive-tools no Ubuntu; no Arch já vem). Instale com
             sudo pacman -U; ou compile com o makepkg em packaging/arch/
-  zip       PGStudio-<versão>-windows-x86_64.zip (no Linux, compila para
+  tar       postpilot-<versão>-linux-x86_64.tar.gz, a árvore usr/ dos
+            pacotes (binário, .desktop, ícones, licenças), que o pacote
+            postpilot-bin do AUR baixa do Release (precisa do bsdtar)
+  zip       PostPilot-<versão>-windows-x86_64.zip (no Linux, compila para
             x86_64-pc-windows-gnu: rustup target add x86_64-pc-windows-gnu
             e o pacote mingw-w64)
-  msi       PGStudio-<versão>-x86_64.msi, instalador com atalho no menu
+  msi       PostPilot-<versão>-x86_64.msi, instalador com atalho no menu
             Iniciar e desinstalação pelo Windows (o mesmo exe do zip; precisa
             do wixl, do pacote wixl no Ubuntu ou msitools no Arch)
 
-No Linux, o padrão são os cinco; no Windows, só o zip (o msi também sai lá
+No Linux, o padrão são os seis; no Windows, só o zip (o msi também sai lá
 com --only msi se o wixl estiver no PATH).
 
 O binário Linux é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
@@ -47,7 +50,7 @@ roda com a glibc da máquina que compilou ou mais nova.
 
 Opções:
   --only F    só estes formatos, separados por vírgula
-              (deb,appimage,arch,zip,msi)
+              (deb,appimage,arch,tar,zip,msi)
   --no-build  não recompila; usa os binários do perfil dist que já existem
   --native    compila o binário Linux sem o cargo-zigbuild";
 
@@ -114,15 +117,17 @@ pub enum Format {
     Deb,
     AppImage,
     Arch,
+    Tar,
     Zip,
     Msi,
 }
 
 impl Format {
-    const ALL: [Format; 5] = [
+    const ALL: [Format; 6] = [
         Format::Deb,
         Format::AppImage,
         Format::Arch,
+        Format::Tar,
         Format::Zip,
         Format::Msi,
     ];
@@ -132,6 +137,7 @@ impl Format {
             "deb" => Some(Format::Deb),
             "appimage" => Some(Format::AppImage),
             "arch" => Some(Format::Arch),
+            "tar" => Some(Format::Tar),
             "zip" => Some(Format::Zip),
             "msi" => Some(Format::Msi),
             _ => None,
@@ -139,7 +145,10 @@ impl Format {
     }
 
     fn needs_linux_binary(self) -> bool {
-        matches!(self, Format::Deb | Format::AppImage | Format::Arch)
+        matches!(
+            self,
+            Format::Deb | Format::AppImage | Format::Arch | Format::Tar
+        )
     }
 
     fn needs_windows_binary(self) -> bool {
@@ -208,7 +217,7 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
             .join("target")
             .join(LINUX_TARGET)
             .join("dist")
-            .join("pgstudio");
+            .join("postpilot");
         let zig = if args.build {
             !args.native && has_zigbuild()
         } else {
@@ -230,7 +239,7 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
         let exe = if zig {
             zig_exe
         } else {
-            root.join("target").join("dist").join("pgstudio")
+            root.join("target").join("dist").join("postpilot")
         };
         if !exe.exists() {
             return Err(format!("{} não existe; rode sem --no-build", exe.display()));
@@ -248,6 +257,11 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
         if args.formats.contains(&Format::Arch) {
             made.push(build_arch(root, &out, &exe)?);
         }
+        if args.formats.contains(&Format::Tar) {
+            let tar = build_tar(root, &out, &exe)?;
+            write_aur_bin(&out, &tar)?;
+            made.push(tar);
+        }
     }
     if args.formats.iter().any(|f| f.needs_windows_binary()) {
         let target = (!cfg!(windows)).then_some(WINDOWS_TARGET);
@@ -259,7 +273,7 @@ pub fn run(args: DistArgs, root: &Path) -> Result<bool, String> {
             exe.push(t);
         }
         exe.push("dist");
-        exe.push("pgstudio.exe");
+        exe.push("postpilot.exe");
         if !exe.exists() {
             return Err(format!("{} não existe; rode sem --no-build", exe.display()));
         }
@@ -432,23 +446,23 @@ pub fn min_glibc(elf: &[u8]) -> Option<String> {
 fn icons(root: &Path) -> Vec<(u32, PathBuf)> {
     [16, 24, 32, 48, 64, 128, 256, 512]
         .into_iter()
-        .map(|n| (n, root.join(format!("packaging/icons/pgstudio-{n}.png"))))
+        .map(|n| (n, root.join(format!("packaging/icons/postpilot-{n}.png"))))
         .collect()
 }
 
 /// Arquivos comuns ao .deb e ao AppImage, sob `usr/`.
 fn install_usr(root: &Path, usr: &Path, exe: &Path) -> Result<(), String> {
-    let bin = usr.join("bin").join("pgstudio");
+    let bin = usr.join("bin").join("postpilot");
     copy(exe, &bin)?;
     set_executable(&bin)?;
     copy(
-        &root.join("packaging/linux/pgstudio.desktop"),
-        &usr.join("share/applications/pgstudio.desktop"),
+        &root.join("packaging/linux/postpilot.desktop"),
+        &usr.join("share/applications/postpilot.desktop"),
     )?;
     for (n, png) in icons(root) {
         copy(
             &png,
-            &usr.join(format!("share/icons/hicolor/{n}x{n}/apps/pgstudio.png")),
+            &usr.join(format!("share/icons/hicolor/{n}x{n}/apps/postpilot.png")),
         )?;
     }
     Ok(())
@@ -493,18 +507,20 @@ pub fn deb_control(version: &str, installed_kib: u64, glibc: Option<&str>) -> St
     }];
     depends.extend(DEB_DEPENDS.iter().map(|d| d.to_string()));
     format!(
-        "Package: pgstudio\n\
+        "Package: postpilot\n\
          Version: {version}\n\
          Architecture: amd64\n\
-         Maintainer: PGStudio <https://github.com/tiagosouzaf/postpilot>\n\
+         Maintainer: PostPilot <https://github.com/tiagosouzaf/postpilot>\n\
          Installed-Size: {installed_kib}\n\
          Depends: {}\n\
          Recommends: {}\n\
+         Replaces: pgstudio\n\
+         Conflicts: pgstudio\n\
          Section: database\n\
          Priority: optional\n\
          Homepage: https://github.com/tiagosouzaf/postpilot\n\
          Description: PostgreSQL management studio inspired by SSMS\n \
-         PGStudio is a native desktop client for PostgreSQL written in Rust,\n \
+         PostPilot is a native desktop client for PostgreSQL written in Rust,\n \
          with an Object Explorer, query windows with IntelliSense, a result\n \
          grid, execution plans, database diagrams and administration tools,\n \
          laid out like SQL Server Management Studio.\n",
@@ -517,13 +533,13 @@ fn build_deb(root: &Path, out: &Path, exe: &Path, glibc: Option<&str>) -> Result
     let stage = out.join("deb-root");
     fresh_dir(&stage)?;
     install_usr(root, &stage.join("usr"), exe)?;
-    let doc = stage.join("usr/share/doc/pgstudio");
+    let doc = stage.join("usr/share/doc/postpilot");
     let mut copyright = String::from(
         "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\
-         Upstream-Name: PGStudio\n\
+         Upstream-Name: PostPilot\n\
          Source: https://github.com/tiagosouzaf/postpilot\n\n\
          Files: *\n\
-         Copyright: PGStudio contributors\n\
+         Copyright: PostPilot contributors\n\
          License: MIT or Apache-2.0\n\n",
     );
     for (name, file) in [("MIT", "LICENSE-MIT"), ("Apache-2.0", "LICENSE-APACHE")] {
@@ -545,7 +561,7 @@ fn build_deb(root: &Path, out: &Path, exe: &Path, glibc: Option<&str>) -> Result
         &stage.join("DEBIAN/control"),
         deb_control(version(), installed, glibc),
     )?;
-    let deb = out.join(format!("pgstudio_{}_amd64.deb", version()));
+    let deb = out.join(format!("postpilot_{}_amd64.deb", version()));
     run_tool(
         Command::new("dpkg-deb")
             .args(["--root-owner-group", "-Zxz", "--build"])
@@ -588,17 +604,19 @@ fn appimage_runtime(out: &Path) -> Result<PathBuf, String> {
 pub fn arch_pkginfo(version: &str, size: u64, builddate: u64) -> String {
     let mut s = format!(
         "# Gerado por cargo xtask dist\n\
-         pkgname = pgstudio\n\
-         pkgbase = pgstudio\n\
+         pkgname = postpilot\n\
+         pkgbase = postpilot\n\
          xdata = pkgtype=pkg\n\
          pkgver = {version}-{ARCH_PKGREL}\n\
          pkgdesc = PostgreSQL management studio inspired by SSMS\n\
          url = https://github.com/tiagosouzaf/postpilot\n\
          builddate = {builddate}\n\
-         packager = PGStudio <https://github.com/tiagosouzaf/postpilot>\n\
+         packager = PostPilot <https://github.com/tiagosouzaf/postpilot>\n\
          size = {size}\n\
          arch = x86_64\n\
-         license = MIT OR Apache-2.0\n"
+         license = MIT OR Apache-2.0\n\
+         conflict = pgstudio\n\
+         replaces = pgstudio\n"
     );
     for d in ARCH_DEPENDS {
         let _ = writeln!(s, "depend = {d}");
@@ -609,11 +627,127 @@ pub fn arch_pkginfo(version: &str, size: u64, builddate: u64) -> String {
     s
 }
 
+/// Página do projeto, de onde o pacote `postpilot-bin` do AUR baixa o
+/// tarball (do Release `v<versão>`).
+const PROJECT_URL: &str = "https://github.com/tiagosouzaf/postpilot";
+
+/// PKGBUILD e .SRCINFO do pacote `postpilot-bin` do AUR, que instala o
+/// tarball de `cargo xtask dist --only tar` publicado no Release
+/// `v<versão>`.
+pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
+    let file = format!("postpilot-{version}-linux-x86_64.tar.gz");
+    let quote = |items: &[&str]| -> String {
+        items
+            .iter()
+            .map(|d| format!("  '{d}'\n"))
+            .collect::<String>()
+    };
+    let pkgbuild = format!(
+        "# Pacote do AUR gerado por `cargo xtask dist` (xtask/src/dist.rs).\n\
+         # Instala o binário publicado no Release v$pkgver do GitHub.\n\
+         \n\
+         pkgname=postpilot-bin\n\
+         pkgver={version}\n\
+         pkgrel={ARCH_PKGREL}\n\
+         pkgdesc='PostgreSQL management studio inspired by SSMS (binary release)'\n\
+         arch=('x86_64')\n\
+         url='{PROJECT_URL}'\n\
+         license=('MIT OR Apache-2.0')\n\
+         depends=(\n{deps})\n\
+         optdepends=(\n{opt})\n\
+         provides=('postpilot')\n\
+         conflicts=('postpilot' 'pgstudio')\n\
+         options=('!strip' '!debug')\n\
+         source=(\"{file}::$url/releases/download/v$pkgver/{file}\")\n\
+         sha256sums=('{sha256}')\n\
+         \n\
+         package() {{\n\
+         \x20 cp -a \"$srcdir/usr\" \"$pkgdir/\"\n\
+         }}\n",
+        deps = quote(ARCH_DEPENDS),
+        opt = quote(ARCH_OPTDEPENDS),
+    );
+    let mut srcinfo = format!(
+        "pkgbase = postpilot-bin\n\
+         \tpkgdesc = PostgreSQL management studio inspired by SSMS (binary release)\n\
+         \tpkgver = {version}\n\
+         \tpkgrel = {ARCH_PKGREL}\n\
+         \turl = {PROJECT_URL}\n\
+         \tarch = x86_64\n\
+         \tlicense = MIT OR Apache-2.0\n"
+    );
+    for d in ARCH_DEPENDS {
+        let _ = writeln!(srcinfo, "\tdepends = {d}");
+    }
+    for d in ARCH_OPTDEPENDS {
+        let _ = writeln!(srcinfo, "\toptdepends = {d}");
+    }
+    let _ = write!(
+        srcinfo,
+        "\tprovides = postpilot\n\
+         \tconflicts = postpilot\n\
+         \tconflicts = pgstudio\n\
+         \toptions = !strip\n\
+         \toptions = !debug\n\
+         \tsource = {file}::{PROJECT_URL}/releases/download/v{version}/{file}\n\
+         \tsha256sums = {sha256}\n\
+         \n\
+         pkgname = postpilot-bin\n"
+    );
+    (pkgbuild, srcinfo)
+}
+
+/// Escreve `target/packages/aur/postpilot-bin/` com o SHA-256 do tarball.
+fn write_aur_bin(out: &Path, tar: &Path) -> Result<(), String> {
+    let output = Command::new("sha256sum")
+        .arg(tar)
+        .output()
+        .map_err(|e| format!("sha256sum: {e}"))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let sha = text
+        .split_whitespace()
+        .next()
+        .filter(|h| h.len() == 64)
+        .ok_or("sha256sum não devolveu um hash")?;
+    let (pkgbuild, srcinfo) = aur_bin(version(), sha);
+    let dir = out.join("aur").join("postpilot-bin");
+    write(&dir.join("PKGBUILD"), pkgbuild)?;
+    write(&dir.join(".SRCINFO"), srcinfo)?;
+    eprintln!("pacote do AUR em {}", dir.display());
+    Ok(())
+}
+
+/// `usr/` com as licenças, para o tarball do AUR.
+fn build_tar(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
+    let stage = out.join("tar-root");
+    fresh_dir(&stage)?;
+    install_usr(root, &stage.join("usr"), exe)?;
+    let licenses = stage.join("usr/share/licenses/postpilot");
+    for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        copy(&root.join(file), &licenses.join(file))?;
+    }
+    let tar = out.join(format!("postpilot-{}-linux-x86_64.tar.gz", version()));
+    run_tool(
+        Command::new("bsdtar")
+            .env("LANG", "C")
+            .args([
+                "--uid", "0", "--gid", "0", "--uname", "root", "--gname", "root",
+            ])
+            .arg("-czf")
+            .arg(&tar)
+            .arg("usr")
+            .current_dir(&stage),
+        "instale o bsdtar (libarchive-tools no Ubuntu)",
+    )?;
+    io(std::fs::remove_dir_all(&stage), &stage)?;
+    Ok(tar)
+}
+
 fn build_arch(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
     let stage = out.join("arch-root");
     fresh_dir(&stage)?;
     install_usr(root, &stage.join("usr"), exe)?;
-    let licenses = stage.join("usr/share/licenses/pgstudio");
+    let licenses = stage.join("usr/share/licenses/postpilot");
     for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
         copy(&root.join(file), &licenses.join(file))?;
     }
@@ -646,7 +780,7 @@ fn build_arch(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
         "instale o bsdtar (libarchive-tools no Ubuntu)",
     )?;
     let pkg = out.join(format!(
-        "pgstudio-{}-{ARCH_PKGREL}-x86_64.pkg.tar.zst",
+        "postpilot-{}-{ARCH_PKGREL}-x86_64.pkg.tar.zst",
         version()
     ));
     run_tool(
@@ -664,21 +798,21 @@ fn build_arch(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
 }
 
 fn build_appimage(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
-    let appdir = out.join("PGStudio.AppDir");
+    let appdir = out.join("PostPilot.AppDir");
     fresh_dir(&appdir)?;
     install_usr(root, &appdir.join("usr"), exe)?;
     copy(
-        &root.join("packaging/linux/pgstudio.desktop"),
-        &appdir.join("pgstudio.desktop"),
+        &root.join("packaging/linux/postpilot.desktop"),
+        &appdir.join("postpilot.desktop"),
     )?;
     copy(
-        &root.join("packaging/icons/pgstudio-256.png"),
-        &appdir.join("pgstudio.png"),
+        &root.join("packaging/icons/postpilot-256.png"),
+        &appdir.join("postpilot.png"),
     )?;
-    symlink("pgstudio.png", &appdir.join(".DirIcon"))?;
-    symlink("usr/bin/pgstudio", &appdir.join("AppRun"))?;
+    symlink("postpilot.png", &appdir.join(".DirIcon"))?;
+    symlink("usr/bin/postpilot", &appdir.join("AppRun"))?;
 
-    let squashfs = out.join("PGStudio.squashfs");
+    let squashfs = out.join("PostPilot.squashfs");
     if squashfs.exists() {
         io(std::fs::remove_file(&squashfs), &squashfs)?;
     }
@@ -699,7 +833,7 @@ fn build_appimage(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String
     let runtime = appimage_runtime(out)?;
     let mut image = io(std::fs::read(&runtime), &runtime)?;
     image.extend(io(std::fs::read(&squashfs), &squashfs)?);
-    let path = out.join(format!("PGStudio-{}-x86_64.AppImage", version()));
+    let path = out.join(format!("PostPilot-{}-x86_64.AppImage", version()));
     write(&path, image)?;
     set_executable(&path)?;
     io(std::fs::remove_file(&squashfs), &squashfs)?;
@@ -720,7 +854,7 @@ fn symlink(_: &str, link: &Path) -> Result<(), String> {
 /// Copia o exe e as licenças (em .txt com CRLF) para `dir`: o que o zip e
 /// o msi instalam.
 fn stage_windows(root: &Path, dir: &Path, exe: &Path) -> Result<(), String> {
-    copy(exe, &dir.join("pgstudio.exe"))?;
+    copy(exe, &dir.join("postpilot.exe"))?;
     for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
         let text = io(std::fs::read_to_string(root.join(file)), &root.join(file))?;
         write(&dir.join(format!("{file}.txt")), crlf(&text))?;
@@ -729,7 +863,7 @@ fn stage_windows(root: &Path, dir: &Path, exe: &Path) -> Result<(), String> {
 }
 
 fn build_zip(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
-    let name = format!("PGStudio-{}-windows-x86_64", version());
+    let name = format!("PostPilot-{}-windows-x86_64", version());
     let stage = out.join("zip-root");
     fresh_dir(&stage)?;
     let dir = stage.join(&name);
@@ -797,10 +931,10 @@ fn build_msi(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
     fresh_dir(&stage)?;
     stage_windows(root, &stage, exe)?;
     copy(
-        &root.join("packaging/icons/pgstudio.ico"),
-        &stage.join("pgstudio.ico"),
+        &root.join("packaging/icons/postpilot.ico"),
+        &stage.join("postpilot.ico"),
     )?;
-    let msi = out.join(format!("PGStudio-{}-x86_64.msi", version()));
+    let msi = out.join(format!("PostPilot-{}-x86_64.msi", version()));
     run_tool(
         Command::new("wixl")
             .args(["--arch", "x64", "--define"])
@@ -809,7 +943,7 @@ fn build_msi(root: &Path, out: &Path, exe: &Path) -> Result<PathBuf, String> {
             .arg(format!("SourceDir={}", stage.display()))
             .arg("--output")
             .arg(&msi)
-            .arg(root.join("packaging/windows/pgstudio.wxs")),
+            .arg(root.join("packaging/windows/postpilot.wxs")),
         "instale o wixl (pacote wixl no Debian/Ubuntu, msitools no Arch)",
     )?;
     io(std::fs::remove_dir_all(&stage), &stage)?;
@@ -954,11 +1088,11 @@ mod tests {
     #[test]
     fn wxs_uses_the_xtask_variables_and_a_fixed_upgrade_code() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let wxs = std::fs::read_to_string(root.join("packaging/windows/pgstudio.wxs")).unwrap();
+        let wxs = std::fs::read_to_string(root.join("packaging/windows/postpilot.wxs")).unwrap();
         assert!(wxs.contains("Version=\"$(var.Version)\""));
         for file in [
-            "pgstudio.exe",
-            "pgstudio.ico",
+            "postpilot.exe",
+            "postpilot.ico",
             "LICENSE-MIT.txt",
             "LICENSE-APACHE.txt",
         ] {
@@ -966,6 +1100,24 @@ mod tests {
         }
         assert!(wxs.contains("UpgradeCode=\"6B0E9A3C-52F4-4C6D-9B1A-7E2D3F8C4A51\""));
         assert!(wxs.contains("<MajorUpgrade "));
+    }
+
+    #[test]
+    fn aur_bin_points_at_the_release_and_lists_the_dependencies() {
+        let (pkgbuild, srcinfo) = aur_bin("1.2.3", &"a".repeat(64));
+        assert!(pkgbuild.contains("\npkgname=postpilot-bin\n"));
+        assert!(pkgbuild.contains("\npkgver=1.2.3\n"));
+        assert!(pkgbuild.contains(
+            "source=(\"postpilot-1.2.3-linux-x86_64.tar.gz::$url/releases/download/v$pkgver/postpilot-1.2.3-linux-x86_64.tar.gz\")"
+        ));
+        assert!(pkgbuild.contains("\n  'libxkbcommon-x11'\n"));
+        assert!(pkgbuild.contains("\n  cp -a \"$srcdir/usr\" \"$pkgdir/\"\n}\n"));
+        assert!(srcinfo.starts_with("pkgbase = postpilot-bin\n\tpkgdesc = "));
+        assert!(srcinfo.contains(&format!("\tsha256sums = {}\n", "a".repeat(64))));
+        assert!(srcinfo.contains(
+            "\tsource = postpilot-1.2.3-linux-x86_64.tar.gz::https://github.com/tiagosouzaf/postpilot/releases/download/v1.2.3/postpilot-1.2.3-linux-x86_64.tar.gz\n"
+        ));
+        assert!(srcinfo.ends_with("\n\npkgname = postpilot-bin\n"));
     }
 
     #[test]
@@ -980,12 +1132,12 @@ mod tests {
             assert!(png.exists(), "{}", png.display());
         }
         let desktop =
-            std::fs::read_to_string(root.join("packaging/linux/pgstudio.desktop")).unwrap();
-        assert!(desktop.contains("Exec=pgstudio %F"));
-        assert!(desktop.contains("Icon=pgstudio\n"));
-        assert!(desktop.contains("StartupWMClass=pgstudio\n"));
+            std::fs::read_to_string(root.join("packaging/linux/postpilot.desktop")).unwrap();
+        assert!(desktop.contains("Exec=postpilot %F"));
+        assert!(desktop.contains("Icon=postpilot\n"));
+        assert!(desktop.contains("StartupWMClass=postpilot\n"));
         assert!(root.join("packaging/windows/LEIA-ME.txt").exists());
-        assert!(root.join("packaging/windows/pgstudio.wxs").exists());
-        assert!(root.join("packaging/icons/pgstudio.ico").exists());
+        assert!(root.join("packaging/windows/postpilot.wxs").exists());
+        assert!(root.join("packaging/icons/postpilot.ico").exists());
     }
 }

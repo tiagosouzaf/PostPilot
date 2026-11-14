@@ -52,7 +52,8 @@ pub enum Event {
     NewQuery(NodeId),
     /// "Select Top 1000 Rows".
     SelectTop(NodeId),
-    /// "Edit Top 200 Rows" (por enquanto abre só para leitura).
+    /// "Edit Top 200 Rows": grade editável numa tabela, só leitura numa
+    /// view.
     EditTop(NodeId),
     /// "Script as" > CREATE ou DROP numa janela de consulta nova.
     Script(NodeId, ScriptAction),

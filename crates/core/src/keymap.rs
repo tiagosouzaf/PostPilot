@@ -274,6 +274,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::ObjectExplorer, "F8"),
     (CommandId::ObjectExplorerDetails, "F7"),
     (CommandId::RegisteredServers, "Ctrl+Alt+G"),
+    (CommandId::WorkspaceExplorer, "Ctrl+Alt+L"),
     (CommandId::TemplateExplorer, "Ctrl+Alt+T"),
     (CommandId::PropertiesWindow, "F4"),
     (CommandId::Output, "Ctrl+Alt+O"),

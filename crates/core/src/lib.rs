@@ -14,13 +14,22 @@ pub use command::CommandId;
 /// O modelo do schema dos designers (Fase 3).
 pub use pgstudio_schema_model as schema;
 
-/// Nome do produto exibido na interface.
-pub const APP_NAME: &str = "PGStudio";
+/// Nome do produto exibido na interface. Até a versão 0.1 o app se chamava
+/// PGStudio; o nome mudou porque outros produtos de PostgreSQL já usam esse.
+pub const APP_NAME: &str = "PostPilot";
+
+/// Pasta do app dentro da pasta de configuração do usuário
+/// (`%APPDATA%\PostPilot`, `~/.config/PostPilot`).
+pub const CONFIG_DIR_NAME: &str = "PostPilot";
+
+/// Pasta de configuração do nome antigo, migrada para [`CONFIG_DIR_NAME`]
+/// na primeira execução.
+pub const LEGACY_CONFIG_DIR_NAME: &str = "PGStudio";
 
 /// Versão do PGStudio, igual à versão do workspace Cargo.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Título padrão da janela principal, por exemplo `PGStudio 0.1.0`.
+/// Título padrão da janela principal, por exemplo `PostPilot 0.1.0`.
 pub fn window_title() -> String {
     format!("{APP_NAME} {VERSION}")
 }
@@ -56,7 +65,7 @@ mod tests {
     fn window_title_has_name_and_version() {
         assert_eq!(
             window_title(),
-            format!("PGStudio {}", env!("CARGO_PKG_VERSION"))
+            format!("PostPilot {}", env!("CARGO_PKG_VERSION"))
         );
     }
 
