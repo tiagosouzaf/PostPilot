@@ -114,7 +114,7 @@ impl Client {
         };
         if let Err(mpsc::SendError(p)) = self.tx.send(pending) {
             p.responder
-                .send(Reply::error("PGStudio is closing; the call was not made."));
+                .send(Reply::error("PostPilot is closing; the call was not made."));
         }
         (self.waker)();
         reply_rx
@@ -124,11 +124,11 @@ impl Client {
     pub fn call(&self, tool: &str, args: Value, origin: Origin) -> Reply {
         match self.send(tool, args, origin).recv_timeout(CALL_TIMEOUT) {
             Ok(r) => r,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                Reply::error("PGStudio did not answer in time (is a dialog waiting for the user?).")
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => Reply::error(
+                "PostPilot did not answer in time (is a dialog waiting for the user?).",
+            ),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                Reply::error("PGStudio dropped the call without answering.")
+                Reply::error("PostPilot dropped the call without answering.")
             }
         }
     }

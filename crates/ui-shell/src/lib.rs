@@ -1288,6 +1288,7 @@ impl ShellApp {
         matches!(
             cmd,
             Exit | ThemeLight
+                | ClaudeCodeAccess
                 | ThemeDark
                 | FullScreen
                 | About
@@ -1377,6 +1378,10 @@ impl ShellApp {
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
             CommandId::SchemaCompare => self.open_compare(ctx, None),
+            CommandId::ClaudeCodeAccess => {
+                let on = !self.claude.is_listening();
+                self.set_claude_code_access(ctx, on);
+            }
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
@@ -3048,6 +3053,7 @@ impl ShellApp {
                         .and_then(|id| self.documents.get(id))
                         .is_some_and(|d| d.actual_plan);
                     let selected = (cmd == CommandId::ActualPlan && actual)
+                        || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.theme),
                             (CommandId::ThemeLight, Theme::Light)
@@ -3178,6 +3184,7 @@ impl ShellApp {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
                 ui.label(RichText::new(connection).color(color));
+                self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {
                     ui.separator();
                     ui.label(RichText::new(format!("Ln {line}   Col {col}")).color(color));

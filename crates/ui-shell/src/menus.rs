@@ -153,7 +153,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Tools",
-        entries: &[I(SchemaCompare), SEP, I(Options)],
+        entries: &[I(SchemaCompare), SEP, I(ClaudeCodeAccess), SEP, I(Options)],
     },
     Menu {
         title: "Window",

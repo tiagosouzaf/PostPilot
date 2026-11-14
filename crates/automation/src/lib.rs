@@ -14,7 +14,9 @@
 
 pub mod catalog;
 pub mod collect;
+pub mod endpoint;
 pub mod hub;
+pub mod mcp;
 pub mod safety;
 pub mod tools;
 

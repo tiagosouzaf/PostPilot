@@ -452,3 +452,60 @@ fn query_windows() {
         "0.00"
     );
 }
+
+#[test]
+fn claude_code_access_through_the_local_channel() {
+    const DB: &str = "pgstudio_claude_mcp";
+    let Some((s, password)) = setup(DB) else {
+        return;
+    };
+    let (mut h, _) = harness(s, password);
+    let dir = std::env::temp_dir().join(format!("postpilot-claude-mcp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let endpoint = dir.join("mcp-endpoint.json");
+    let settings = dir.join("claude.json");
+    let ctx = h.ctx.clone();
+    let app =
+        std::mem::take(h.state_mut()).with_claude_code(&ctx, endpoint.clone(), settings.clone());
+    *h.state_mut() = app;
+    assert!(h.state().claude_code_listener().is_none());
+    assert_eq!(
+        pgstudio_automation::endpoint::call(&endpoint, "list_servers", Value::Null).text,
+        pgstudio_automation::endpoint::NOT_RUNNING
+    );
+
+    // Tools > Allow Claude Code (MCP).
+    h.state_mut()
+        .execute(&ctx, pgstudio_core::CommandId::ClaudeCodeAccess);
+    assert!(h.state().claude_code_listener().is_some());
+    assert!(std::fs::read_to_string(&settings).unwrap().contains("true"));
+    let path = endpoint.clone();
+    let caller = std::thread::spawn(move || {
+        pgstudio_automation::endpoint::call(
+            &path,
+            "run_query",
+            json!({ "sql": "select count(*) from cliente" }),
+        )
+    });
+    let start = Instant::now();
+    while !caller.is_finished() {
+        h.step();
+        assert!(start.elapsed() < Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let v = json_of(&caller.join().unwrap());
+    assert_eq!(v["results"][0]["rows"], json!([["5"]]));
+    assert_eq!(h.state().claude_code_listener().unwrap().calls(), 1);
+
+    // Desligar fecha o canal, apaga o arquivo e guarda a escolha.
+    h.state_mut()
+        .execute(&ctx, pgstudio_core::CommandId::ClaudeCodeAccess);
+    assert!(h.state().claude_code_listener().is_none());
+    assert!(!endpoint.exists());
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("false")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
