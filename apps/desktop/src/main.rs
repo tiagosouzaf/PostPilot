@@ -29,7 +29,8 @@
 //!   "New Table..." ou "New Database Diagram" (para screenshots; com
 //!   `PGSTUDIO_DIAGRAM_ALL=1`, o diagrama já abre com todas as tabelas).
 //!   `querydesign` abre uma janela de consulta no banco e o Query Designer
-//!   nela (com `PGSTUDIO_DIAGRAM_ALL=1`, com todas as tabelas). `plan` abre
+//!   nela (com `PGSTUDIO_DIAGRAM_ALL=1`, com todas as tabelas; com
+//!   `PGSTUDIO_QUERY`, lendo esse SELECT). `plan` abre
 //!   uma janela de consulta no banco com o texto de `PGSTUDIO_QUERY` e pede
 //!   o plano estimado (Ctrl+L); `actualplan` faz o mesmo com o plano real
 //!   (Ctrl+M e F5) e `info` com o Alt+F1 no começo do texto. `activity`
@@ -166,7 +167,14 @@ fn main() -> eframe::Result {
                 };
                 app = app.with_selected_action(make);
                 if action == "querydesign" {
-                    app = app.with_design_query_on_open();
+                    // Com PGSTUDIO_QUERY, o designer abre lendo esse SELECT.
+                    match std::env::var("PGSTUDIO_QUERY") {
+                        Ok(text) => {
+                            app =
+                                app.with_query_on_open(text, pgstudio_core::CommandId::DesignQuery);
+                        }
+                        Err(_) => app = app.with_design_query_on_open(),
+                    }
                 }
                 if let Ok(pair) = std::env::var("PGSTUDIO_COMPARE")
                     && let Some((source, target)) = pair.split_once(',')

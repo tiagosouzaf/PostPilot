@@ -1583,8 +1583,13 @@ impl ShellApp {
                 let db = provider.database_of(&node);
                 let pending = self.query_on_open.take();
                 let text = pending.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+                let len = text.chars().count();
                 let id = self.documents.new_script(text, db);
                 self.activate_document(id);
+                // O Query Designer lê o texto selecionado (screenshots).
+                if matches!(pending, Some((_, CommandId::DesignQuery))) {
+                    pgstudio_sql_editor::set_selection(ctx, panels::editor_id(id), (0, len));
+                }
                 if std::mem::take(&mut self.design_query_on_open) {
                     self.open_query_designer(ctx);
                 }
@@ -2102,7 +2107,12 @@ impl ShellApp {
             self.status = "Choose a database for the query window first.".to_string();
             return;
         };
-        let qd = query_designer::QueryDesigner::open(provider, db, doc, ctx);
+        let selected = self
+            .documents
+            .get(doc)
+            .and_then(|d| pgstudio_sql_editor::selected_text(ctx, panels::editor_id(doc), &d.text));
+        let qd = query_designer::QueryDesigner::open(provider, db, doc, ctx)
+            .with_sql(selected.unwrap_or_default());
         self.query_designer = Some(if self.diagram_all_tables {
             qd.with_all_tables()
         } else {
@@ -2157,6 +2167,7 @@ impl ShellApp {
             return;
         };
         let doc = qd.doc;
+        let replace = qd.replaces_selection();
         self.query_designer = None;
         let Some(sql) = result else {
             return;
@@ -2164,7 +2175,11 @@ impl ShellApp {
         let editor = panels::editor_id(doc);
         if let Some(d) = self.documents.get_mut(doc) {
             let selection = pgstudio_sql_editor::selection(ctx, editor).unwrap_or((0, 0));
-            let inserted = query_designer::insert(&mut d.text, selection, &sql);
+            let inserted = if replace {
+                query_designer::insert(&mut d.text, selection, &sql)
+            } else {
+                query_designer::insert_after(&mut d.text, selection, &sql)
+            };
             pgstudio_sql_editor::set_selection(ctx, editor, inserted);
             d.editor.focus_editor();
         }
