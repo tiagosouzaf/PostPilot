@@ -1,4 +1,4 @@
-# PKGBUILD do PGStudio para Arch Linux (e derivados, como o Omarchy).
+# PKGBUILD do PostPilot para Arch Linux (e derivados, como o Omarchy).
 #
 # Compila a partir desta cópia do repositório:
 #
@@ -8,7 +8,7 @@
 # distro, com o bsdtar). As dependências abaixo são as mesmas de
 # ARCH_DEPENDS em xtask/src/dist.rs; um teste confere.
 
-pkgname=pgstudio
+pkgname=postpilot
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='PostgreSQL management studio inspired by SSMS'
@@ -35,6 +35,9 @@ optdepends=(
   'xdg-desktop-portal: diálogos de abrir e salvar arquivo'
   'xdg-desktop-portal-gtk: seletor de arquivos no Hyprland e no sway (os portais deles não têm)'
 )
+# O app se chamava PGStudio até a 0.1.
+conflicts=('pgstudio')
+replaces=('pgstudio')
 makedepends=('cargo')
 options=('!lto' '!debug')
 
@@ -48,12 +51,12 @@ build() {
 
 package() {
   cd "$_root"
-  install -Dm755 "$srcdir/target/dist/pgstudio" "$pkgdir/usr/bin/pgstudio"
-  install -Dm644 packaging/linux/pgstudio.desktop \
-    "$pkgdir/usr/share/applications/pgstudio.desktop"
+  install -Dm755 "$srcdir/target/dist/postpilot" "$pkgdir/usr/bin/postpilot"
+  install -Dm644 packaging/linux/postpilot.desktop \
+    "$pkgdir/usr/share/applications/postpilot.desktop"
   for n in 16 24 32 48 64 128 256 512; do
-    install -Dm644 "packaging/icons/pgstudio-$n.png" \
-      "$pkgdir/usr/share/icons/hicolor/${n}x${n}/apps/pgstudio.png"
+    install -Dm644 "packaging/icons/postpilot-$n.png" \
+      "$pkgdir/usr/share/icons/hicolor/${n}x${n}/apps/postpilot.png"
   done
   install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
 }

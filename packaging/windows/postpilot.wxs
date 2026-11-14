@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Instalador .msi do PGStudio, gerado por `cargo xtask dist` com o wixl
+  Instalador .msi do PostPilot, gerado por `cargo xtask dist` com o wixl
   (msitools). O xtask passa as variáveis com -D:
 
     Version     versão do workspace (ex.: 0.1.0)
-    SourceDir   pasta com pgstudio.exe, LICENSE-MIT.txt, LICENSE-APACHE.txt
-                e pgstudio.ico
+    SourceDir   pasta com postpilot.exe, LICENSE-MIT.txt, LICENSE-APACHE.txt
+                e postpilot.ico
 
-  Instala para todos os usuários em Arquivos de Programas\PGStudio, com
-  atalho no menu Iniciar, entrada em Aplicativos instalados e o PGStudio na
+  Instala para todos os usuários em Arquivos de Programas\PostPilot, com
+  atalho no menu Iniciar, entrada em Aplicativos instalados e o PostPilot na
   lista "Abrir com" dos arquivos .sql (sem virar o programa padrão). Uma
   versão nova substitui a anterior (MajorUpgrade); o UpgradeCode nunca muda.
 
@@ -17,24 +17,24 @@
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
-           Name="PGStudio"
+           Name="PostPilot"
            Language="1033"
            Codepage="1252"
            Version="$(var.Version)"
-           Manufacturer="PGStudio"
+           Manufacturer="PostPilot"
            UpgradeCode="6B0E9A3C-52F4-4C6D-9B1A-7E2D3F8C4A51">
-    <Package Description="PGStudio $(var.Version)"
+    <Package Description="PostPilot $(var.Version)"
              Comments="PostgreSQL management studio inspired by SSMS"
-             Manufacturer="PGStudio"
+             Manufacturer="PostPilot"
              InstallerVersion="500"
              Compressed="yes"
              InstallScope="perMachine" />
-    <Media Id="1" Cabinet="pgstudio.cab" EmbedCab="yes" />
+    <Media Id="1" Cabinet="postpilot.cab" EmbedCab="yes" />
 
-    <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do PGStudio já está instalada." />
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do PostPilot já está instalada." />
 
-    <Icon Id="pgstudio.ico" SourceFile="$(var.SourceDir)/pgstudio.ico" />
-    <Property Id="ARPPRODUCTICON" Value="pgstudio.ico" />
+    <Icon Id="postpilot.ico" SourceFile="$(var.SourceDir)/postpilot.ico" />
+    <Property Id="ARPPRODUCTICON" Value="postpilot.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/tiagosouzaf/postpilot" />
     <Property Id="ARPHELPLINK" Value="https://github.com/tiagosouzaf/postpilot/issues" />
     <Property Id="ARPNOMODIFY" Value="1" />
@@ -42,10 +42,10 @@
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="PGStudio">
+        <Directory Id="INSTALLDIR" Name="PostPilot">
           <Component Id="MainExecutable" Guid="*" Win64="yes">
-            <File Id="pgstudio.exe" Name="pgstudio.exe"
-                  Source="$(var.SourceDir)/pgstudio.exe" KeyPath="yes" />
+            <File Id="postpilot.exe" Name="postpilot.exe"
+                  Source="$(var.SourceDir)/postpilot.exe" KeyPath="yes" />
           </Component>
           <Component Id="Licenses" Guid="*" Win64="yes">
             <File Id="LICENSE_MIT.txt" Name="LICENSE-MIT.txt"
@@ -53,34 +53,34 @@
             <File Id="LICENSE_APACHE.txt" Name="LICENSE-APACHE.txt"
                   Source="$(var.SourceDir)/LICENSE-APACHE.txt" />
           </Component>
-          <!-- "Abrir com" para .sql. O ProgID é do PGStudio; o padrão do
+          <!-- "Abrir com" para .sql. O ProgID é do PostPilot; o padrão do
                .sql (Bloco de Notas, SSMS, ...) fica como está. -->
           <Component Id="SqlOpenWith" Guid="*" Win64="yes">
-            <RegistryValue Root="HKLM" Key="Software\Classes\PGStudio.sql"
+            <RegistryValue Root="HKLM" Key="Software\Classes\PostPilot.sql"
                            Value="Script SQL" Type="string" KeyPath="yes" />
-            <RegistryValue Root="HKLM" Key="Software\Classes\PGStudio.sql\DefaultIcon"
-                           Value="[INSTALLDIR]pgstudio.exe,0" Type="string" />
-            <RegistryValue Root="HKLM" Key="Software\Classes\PGStudio.sql\shell\open\command"
-                           Value="&quot;[INSTALLDIR]pgstudio.exe&quot; &quot;%1&quot;" Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\PostPilot.sql\DefaultIcon"
+                           Value="[INSTALLDIR]postpilot.exe,0" Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\PostPilot.sql\shell\open\command"
+                           Value="&quot;[INSTALLDIR]postpilot.exe&quot; &quot;%1&quot;" Type="string" />
             <RegistryValue Root="HKLM" Key="Software\Classes\.sql\OpenWithProgids"
-                           Name="PGStudio.sql" Value="" Type="string" />
+                           Name="PostPilot.sql" Value="" Type="string" />
           </Component>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
         <Component Id="StartMenuShortcut" Guid="*" Win64="yes">
-          <Shortcut Id="PGStudioShortcut" Name="PGStudio"
+          <Shortcut Id="PostPilotShortcut" Name="PostPilot"
                     Description="PostgreSQL management studio"
-                    Target="[INSTALLDIR]pgstudio.exe"
+                    Target="[INSTALLDIR]postpilot.exe"
                     WorkingDirectory="INSTALLDIR"
-                    Icon="pgstudio.ico" />
-          <RegistryValue Root="HKLM" Key="Software\PGStudio"
+                    Icon="postpilot.ico" />
+          <RegistryValue Root="HKLM" Key="Software\PostPilot"
                          Name="StartMenuShortcut" Value="1" Type="integer" KeyPath="yes" />
         </Component>
       </Directory>
     </Directory>
 
-    <Feature Id="Complete" Title="PGStudio" Level="1">
+    <Feature Id="Complete" Title="PostPilot" Level="1">
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="Licenses" />
       <ComponentRef Id="SqlOpenWith" />

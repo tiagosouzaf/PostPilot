@@ -1,6 +1,6 @@
-//! Ponto de entrada do PGStudio.
+//! Ponto de entrada do PostPilot (o binário `postpilot`).
 //!
-//! Uso: `pgstudio [--renderer wgpu|glow] [arquivo.sql ...]` abre os arquivos
+//! Uso: `postpilot [--renderer wgpu|glow] [arquivo.sql ...]` abre os arquivos
 //! em janelas de consulta.
 //!
 //! `--renderer` escolhe o renderizador gráfico (veja o módulo `renderer`):
@@ -19,10 +19,10 @@
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
-//!   `<config>/PGStudio/layout.json`. Sem ela, o modo screenshot e o de
+//!   `<config>/PostPilot/layout.json`. Sem ela, o modo screenshot e o de
 //!   medição usam sempre o layout padrão.
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
-//!   `<config>/PGStudio/keymap.txt`.
+//!   `<config>/PostPilot/keymap.txt`.
 //! - `PGSTUDIO_RUN=1`: executa a janela de consulta ativa (o primeiro
 //!   arquivo aberto) assim que conectar, como um F5.
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
@@ -53,11 +53,14 @@
 //!   Object Explorer.
 //!
 //! - `PGSTUDIO_REGISTERED=arquivo.json`: usa outra árvore de Registered
-//!   Servers no lugar de `<config>/PGStudio/registered_servers.json` e já
+//!   Servers no lugar de `<config>/PostPilot/registered_servers.json` e já
 //!   abre a janela (para screenshots).
+//! - `PGSTUDIO_WORKSPACE=pasta`: abre este workspace (veja
+//!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
+//!   lembrado em `<config>/PGStudio/workspace.txt`.
 //!
-//! As conexões recentes ficam em `<config>/PGStudio/connections.json` e os
-//! servidores registrados em `<config>/PGStudio/registered_servers.json`,
+//! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
+//! servidores registrados em `<config>/PostPilot/registered_servers.json`,
 //! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
 //! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
 //! de medição não usam o cofre.
@@ -83,12 +86,13 @@ use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
 
+mod migrate;
 mod renderer;
 
 /// Identificador do app no Wayland e no X11 (`WM_CLASS`).
-const APP_ID: &str = "pgstudio";
+const APP_ID: &str = "postpilot";
 /// Ícone da janela e da barra de tarefas (o mesmo dos pacotes).
-const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/pgstudio-256.png");
+const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/postpilot-256.png");
 
 fn main() -> std::process::ExitCode {
     let launch = renderer::Launch::parse(
@@ -96,16 +100,24 @@ fn main() -> std::process::ExitCode {
         std::env::var(renderer::ENV).ok().as_deref(),
     );
     for warning in &launch.warnings {
-        eprintln!("pgstudio: {warning}");
+        eprintln!("postpilot: {warning}");
+    }
+    // Até a 0.1 o app se chamava PGStudio: traz a configuração antiga.
+    if let Some(config) = config_dir() {
+        match migrate::legacy_config(&config) {
+            Ok(true) => eprintln!("postpilot: settings copied from the PGStudio folder"),
+            Ok(false) => {}
+            Err(e) => eprintln!("postpilot: could not copy the PGStudio settings: {e}"),
+        }
     }
     match run(&launch) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) if launch.should_fall_back(&e) => {
-            eprintln!("pgstudio: the wgpu renderer failed ({e}); trying again with glow (OpenGL)");
+            eprintln!("postpilot: the wgpu renderer failed ({e}); trying again with glow (OpenGL)");
             relaunch_with_glow()
         }
         Err(e) => {
-            eprintln!("pgstudio: {e}");
+            eprintln!("postpilot: {e}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -128,7 +140,7 @@ fn relaunch_with_glow() -> std::process::ExitCode {
             std::process::ExitCode::from(code)
         }
         Err(e) => {
-            eprintln!("pgstudio: could not restart with glow: {e}");
+            eprintln!("postpilot: could not restart with glow: {e}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -181,11 +193,16 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         RecentConnections::in_memory(Vec::new())
     } else {
         config_dir()
-            .map(|d| RecentConnections::open(d.join("PGStudio").join("connections.json")))
+            .map(|d| {
+                RecentConnections::open(
+                    d.join(pgstudio_core::CONFIG_DIR_NAME)
+                        .join("connections.json"),
+                )
+            })
             .unwrap_or_default()
     };
     eframe::run_native(
-        "pgstudio",
+        APP_ID,
         options,
         Box::new(move |cc| {
             let mut app = ShellApp::new(&cc.egui_ctx)
@@ -208,10 +225,20 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 app.show_registered_servers();
             } else if screenshot.is_none() && !bench {
                 if let Some(dir) = config_dir() {
-                    let file = dir.join("PGStudio").join("registered_servers.json");
+                    let file = dir
+                        .join(pgstudio_core::CONFIG_DIR_NAME)
+                        .join("registered_servers.json");
                     app = app.with_registered_servers(RegisteredServers::open(file));
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
+            if let Some(root) = std::env::var_os("PGSTUDIO_WORKSPACE").map(PathBuf::from) {
+                app.open_workspace(&root);
+            } else if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                app = app.with_workspace_memory(dir.join("PGStudio").join("workspace.txt"));
             }
             if !demo {
                 match DbRuntime::new() {
@@ -358,14 +385,16 @@ fn env_settings(server: &str) -> Option<ConnectionSettings> {
 fn keymap_path() -> Option<PathBuf> {
     std::env::var_os("PGSTUDIO_KEYMAP")
         .map(PathBuf::from)
-        .or_else(|| config_dir().map(|d| d.join("PGStudio").join("keymap.txt")))
+        .or_else(|| config_dir().map(|d| d.join(pgstudio_core::CONFIG_DIR_NAME).join("keymap.txt")))
 }
 
 /// Arquivo de layout: `PGSTUDIO_LAYOUT` ou a pasta de configuração.
 fn layout_path() -> Option<PathBuf> {
     std::env::var_os("PGSTUDIO_LAYOUT")
         .map(PathBuf::from)
-        .or_else(|| config_dir().map(|d| d.join("PGStudio").join("layout.json")))
+        .or_else(|| {
+            config_dir().map(|d| d.join(pgstudio_core::CONFIG_DIR_NAME).join("layout.json"))
+        })
 }
 
 /// Pasta de configuração do usuário: `%APPDATA%` no Windows,
@@ -463,5 +492,17 @@ impl FileDialogs for NativeDialogs {
             .add_filter("SQL INSERT statements", &["sql"])
             .save_file();
         self.remember(path)
+    }
+
+    fn folder_path(&mut self, title: &str) -> Option<PathBuf> {
+        let mut dialog = rfd::FileDialog::new().set_title(title);
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let path = dialog.pick_folder();
+        if let Some(p) = &path {
+            self.last_dir = Some(p.clone());
+        }
+        path
     }
 }
