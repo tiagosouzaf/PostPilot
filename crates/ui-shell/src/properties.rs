@@ -3,6 +3,7 @@
 //! função, como as do SSMS. Script mostra o SQL antes; OK aplica tudo numa
 //! transação.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -23,11 +24,11 @@ pub enum Page {
 
 impl Page {
     fn label(self) -> &'static str {
-        match self {
+        tr(match self {
             Page::General => "General",
             Page::Membership => "Membership",
             Page::Permissions => "Permissions",
-        }
+        })
     }
 }
 
@@ -183,15 +184,19 @@ impl SecurityDialog {
             Some(Content::Role {
                 before: Some(b), ..
             }) => {
-                format!("Role Properties - {}", b.name)
+                trf!("Role Properties - {name}", name = b.name)
             }
             Some(Content::Grants { target, .. }) => {
-                format!("{} Properties - {}", target.kind.label(), target.name)
+                trf!(
+                    "{kind} Properties - {name}",
+                    kind = target.kind.label(),
+                    name = target.name
+                )
             }
             _ => match self.securable {
-                Securable::NewRole => "Role - New".to_string(),
-                Securable::Role(_) => "Role Properties".to_string(),
-                _ => "Properties".to_string(),
+                Securable::NewRole => tr("Role - New").to_string(),
+                Securable::Role(_) => tr("Role Properties").to_string(),
+                _ => tr("Properties").to_string(),
             },
         }
     }
@@ -228,15 +233,15 @@ impl SecurityDialog {
                 ..
             }) => {
                 if edit.name.trim().is_empty() {
-                    Some("The role needs a name.")
+                    Some(tr("The role needs a name."))
                 } else if edit.password != *confirm_password {
-                    Some("The password and its confirmation do not match.")
+                    Some(tr("The password and its confirmation do not match."))
                 } else {
                     None
                 }
             }
             Some(_) => None,
-            None => Some("The properties are not loaded."),
+            None => Some(tr("The properties are not loaded.")),
         }
     }
 
@@ -288,7 +293,7 @@ impl SecurityDialog {
         }
         let statements = self.statements(false);
         if statements.is_empty() {
-            self.error = Some("There are no changes to script.".to_string());
+            self.error = Some(tr("There are no changes to script.").to_string());
             return None;
         }
         let mut sql = statements.join(";\n");
@@ -312,7 +317,8 @@ impl SecurityDialog {
                 Reply::Read(Err(e)) => self.state = State::Failed(e),
                 Reply::Applied(Ok(())) => {
                     self.applying = false;
-                    let mut log: Vec<String> = vec![format!("{}: changes applied.", self.title())];
+                    let mut log: Vec<String> =
+                        vec![trf!("{title}: changes applied.", title = self.title())];
                     log.extend(self.sent.iter().map(|s| format!("  {s};")));
                     return Some(Request::Applied(log));
                 }
@@ -370,7 +376,7 @@ impl SecurityDialog {
                 ui.set_height(360.0);
                 ui.vertical(|ui| {
                     ui.set_width(120.0);
-                    ui.weak("Select a page");
+                    ui.weak(tr("Select a page"));
                     for &p in self.pages() {
                         if ui.selectable_label(self.page == p, p.label()).clicked() {
                             self.page = p;
@@ -395,16 +401,20 @@ impl SecurityDialog {
             let bar = egui::vec2(ui.available_width(), 26.0);
             ui.allocate_ui_with_layout(bar, Layout::right_to_left(Align::Center), |ui| {
                 let ready = matches!(self.state, State::Ready(_)) && !self.applying;
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     request = Some(Request::Closed);
                 }
-                if ui.add_enabled(ready, egui::Button::new("OK")).clicked() {
+                if ui.add_enabled(ready, egui::Button::new(tr("OK"))).clicked() {
                     request = self.apply(ctx).or(request.take());
                 }
                 if ui
                     .add_enabled(
                         ready,
-                        egui::Button::new(format!("{} Script", egui_phosphor::regular::SCROLL)),
+                        egui::Button::new(format!(
+                            "{} {}",
+                            egui_phosphor::regular::SCROLL,
+                            tr("Script")
+                        )),
                     )
                     .clicked()
                 {
@@ -436,60 +446,60 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label("Role name:");
+                    ui.label(tr("Role name:"));
                     ui.add(egui::TextEdit::singleline(&mut edit.name).desired_width(240.0));
                     ui.end_row();
-                    ui.label("Password:");
+                    ui.label(tr("Password:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut edit.password)
                             .password(true)
-                            .hint_text("unchanged")
+                            .hint_text(tr("unchanged"))
                             .desired_width(240.0),
                     );
                     ui.end_row();
-                    ui.label("Confirm password:");
+                    ui.label(tr("Confirm password:"));
                     ui.add(
                         egui::TextEdit::singleline(confirm_password)
                             .password(true)
                             .desired_width(240.0),
                     );
                     ui.end_row();
-                    ui.label("Valid until:");
+                    ui.label(tr("Valid until:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut edit.valid_until)
-                            .hint_text("never")
+                            .hint_text(tr("never"))
                             .desired_width(240.0),
                     );
                     ui.end_row();
-                    ui.label("Connection limit:");
+                    ui.label(tr("Connection limit:"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut edit.connection_limit).range(-1..=100_000),
                         );
-                        ui.weak("-1 means no limit");
+                        ui.weak(tr("-1 means no limit"));
                     });
                     ui.end_row();
                 });
             ui.add_space(8.0);
-            ui.strong("Attributes");
-            ui.checkbox(&mut edit.can_login, "Can log in (LOGIN)");
-            ui.checkbox(&mut edit.superuser, "Superuser");
-            ui.checkbox(&mut edit.create_db, "Create databases");
-            ui.checkbox(&mut edit.create_role, "Create roles");
+            ui.strong(tr("Attributes"));
+            ui.checkbox(&mut edit.can_login, tr("Can log in (LOGIN)"));
+            ui.checkbox(&mut edit.superuser, tr("Superuser"));
+            ui.checkbox(&mut edit.create_db, tr("Create databases"));
+            ui.checkbox(&mut edit.create_role, tr("Create roles"));
             ui.checkbox(
                 &mut edit.inherit,
-                "Inherit privileges of the roles it is a member of",
+                tr("Inherit privileges of the roles it is a member of"),
             );
-            ui.checkbox(&mut edit.replication, "Replication");
-            ui.checkbox(&mut edit.bypass_rls, "Bypass row-level security");
+            ui.checkbox(&mut edit.replication, tr("Replication"));
+            ui.checkbox(&mut edit.bypass_rls, tr("Bypass row-level security"));
         }
         (Page::Membership, Content::Role { edit, roles, .. }) => {
             let me = edit.name.clone();
             let (left, right) = (&mut edit.member_of, &mut edit.members);
             ui.columns(2, |cols| {
                 let [a, b] = cols else { return };
-                role_list(a, "Member of", roles, &me, left);
-                role_list(b, "Members", roles, &me, right);
+                role_list(a, tr("Member of"), roles, &me, left);
+                role_list(b, tr("Members"), roles, &me, right);
             });
         }
         (
@@ -503,17 +513,17 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                 ..
             },
         ) => {
-            ui.label(format!(
-                "{}: {}    Owner: {}",
-                target.kind.label(),
-                target.name,
-                target.owner
+            ui.label(trf!(
+                "{kind}: {name}    Owner: {owner}",
+                kind = target.kind.label(),
+                name = target.name,
+                owner = target.owner
             ));
             ui.add_space(4.0);
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(180.0);
-                    ui.strong("Users or roles");
+                    ui.strong(tr("Users or roles"));
                     egui::ScrollArea::vertical()
                         .id_salt("grantees")
                         .max_height(220.0)
@@ -532,7 +542,7 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                         });
                     let mut add = None;
                     egui::ComboBox::from_id_salt("grantee_add")
-                        .selected_text("Add...")
+                        .selected_text(tr("Add..."))
                         .width(170.0)
                         .show_ui(ui, |ui| {
                             let candidates = std::iter::once("PUBLIC".to_string())
@@ -552,18 +562,18 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                 ui.separator();
                 ui.vertical(|ui| {
                     let Some(who) = selected.clone() else {
-                        ui.weak("Select or add a user or role.");
+                        ui.weak(tr("Select or add a user or role."));
                         return;
                     };
-                    ui.strong(format!("Permissions for {who}"));
+                    ui.strong(trf!("Permissions for {who}", who = who));
                     egui::Grid::new("privileges")
                         .num_columns(3)
                         .striped(true)
                         .spacing([18.0, 4.0])
                         .show(ui, |ui| {
-                            ui.strong("Permission");
-                            ui.strong("Grant");
-                            ui.strong("With Grant");
+                            ui.strong(tr("Permission"));
+                            ui.strong(tr("Grant"));
+                            ui.strong(tr("With Grant"));
                             ui.end_row();
                             for &p in target.kind.privileges() {
                                 let key = (who.clone(), p.to_string());
@@ -576,7 +586,7 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                                         egui::WidgetType::Checkbox,
                                         true,
                                         grant,
-                                        format!("Grant {p}"),
+                                        trf!("Grant {privilege}", privilege = p),
                                     )
                                 });
                                 let w = ui.add(egui::Checkbox::without_text(&mut option));
@@ -585,7 +595,7 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                                         egui::WidgetType::Checkbox,
                                         true,
                                         option,
-                                        format!("With Grant {p}"),
+                                        trf!("With Grant {privilege}", privilege = p),
                                     )
                                 });
                                 if g.changed() {

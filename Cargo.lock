@@ -3031,6 +3031,7 @@ dependencies = [
  "egui-phosphor",
  "egui_kittest",
  "pgstudio-core",
+ "pgstudio-i18n",
 ]
 
 [[package]]

@@ -988,3 +988,296 @@ msgstr "Exigir"
 
 msgid "Verify full"
 msgstr "Verificação completa"
+
+# Pesquisador de Objetos, propriedades e segurança
+
+msgid "-1 means no limit"
+msgstr "-1 significa sem limite"
+
+msgid "Add..."
+msgstr "Adicionar..."
+
+msgid "Attributes"
+msgstr "Atributos"
+
+msgid "Back Up..."
+msgstr "Fazer Backup..."
+
+msgid "Bypass row-level security"
+msgstr "Ignorar a segurança em nível de linha"
+
+msgid "CREATE To New Query Window"
+msgstr "CREATE em Nova Janela de Consulta"
+
+msgid "DROP To New Query Window"
+msgstr "DROP em Nova Janela de Consulta"
+
+msgid "Can log in (LOGIN)"
+msgstr "Pode fazer logon (LOGIN)"
+
+msgid "Compare Schema..."
+msgstr "Comparar Esquema..."
+
+msgid "Confirm password:"
+msgstr "Confirmar senha:"
+
+msgid "Connection limit:"
+msgstr "Limite de conexões:"
+
+msgid "Create databases"
+msgstr "Criar bancos de dados"
+
+msgid "Create roles"
+msgstr "Criar roles"
+
+msgid "Database"
+msgstr "Banco de Dados"
+
+msgid "Design"
+msgstr "Design"
+
+msgid "Designers are not available for this server."
+msgstr "Os designers não estão disponíveis para este servidor."
+
+msgid "Edit Top {n} Rows"
+msgstr "Editar {n} Linhas Superiores"
+
+msgid "Function"
+msgstr "Função"
+
+msgid "Grant"
+msgstr "Conceder"
+
+msgid "Grant {privilege}"
+msgstr "Conceder {privilege}"
+
+msgid "Inherit privileges of the roles it is a member of"
+msgstr "Herdar os privilégios das roles das quais é membro"
+
+msgid "IntelliSense is not available for this server."
+msgstr "O IntelliSense não está disponível para este servidor."
+
+msgid "Member of"
+msgstr "Membro de"
+
+msgid "Members"
+msgstr "Membros"
+
+msgid "Membership"
+msgstr "Associação"
+
+msgid "New Database Diagram"
+msgstr "Novo Diagrama de Banco de Dados"
+
+msgid "New Role..."
+msgstr "Nova Role..."
+
+msgid "New Table..."
+msgstr "Nova Tabela..."
+
+msgid "Not connected. Use File > Connect Object Explorer."
+msgstr "Não conectado. Use Arquivo > Conectar Pesquisador de Objetos."
+
+msgid "Permission"
+msgstr "Permissão"
+
+msgid "Permissions"
+msgstr "Permissões"
+
+msgid "Permissions for {who}"
+msgstr "Permissões de {who}"
+
+msgid "Refresh"
+msgstr "Atualizar"
+
+msgid "Register..."
+msgstr "Registrar..."
+
+msgid "Replication"
+msgstr "Replicação"
+
+msgid "Restore Database..."
+msgstr "Restaurar Banco de Dados..."
+
+msgid "Restore..."
+msgstr "Restaurar..."
+
+msgid "Role - New"
+msgstr "Role - Nova"
+
+msgid "Role Properties"
+msgstr "Propriedades da Role"
+
+msgid "Role Properties - {name}"
+msgstr "Propriedades da Role - {name}"
+
+msgid "Role name:"
+msgstr "Nome da role:"
+
+msgid "Schema"
+msgstr "Esquema"
+
+msgid "Script"
+msgstr "Script"
+
+msgid "Script as"
+msgstr "Gerar Script como"
+
+msgid "Script {kind} as"
+msgstr "Gerar Script de {kind} como"
+
+msgid "Scripting is not available for this server."
+msgstr "A geração de scripts não está disponível para este servidor."
+
+msgid "Select Top {n} Rows"
+msgstr "Selecionar {n} Linhas Superiores"
+
+msgid "Select a page"
+msgstr "Selecionar uma página"
+
+msgid "Select or add a user or role."
+msgstr "Selecione ou adicione um usuário ou role."
+
+msgid "Superuser"
+msgstr "Superusuário"
+
+msgid "Table"
+msgstr "Tabela"
+
+msgid "The object no longer exists."
+msgstr "O objeto não existe mais."
+
+msgid "The password and its confirmation do not match."
+msgstr "A senha e a confirmação não coincidem."
+
+msgid "The permissions could not be read."
+msgstr "Não foi possível ler as permissões."
+
+msgid "The properties are not loaded."
+msgstr "As propriedades não foram carregadas."
+
+msgid "The role could not be read."
+msgstr "Não foi possível ler a role."
+
+msgid "The role needs a name."
+msgstr "A role precisa de um nome."
+
+msgid "The role no longer exists."
+msgstr "A role não existe mais."
+
+msgid "The roles could not be read."
+msgstr "Não foi possível ler as roles."
+
+msgid "There are no changes to script."
+msgstr "Não há alterações para gerar script."
+
+msgid "Users or roles"
+msgstr "Usuários ou roles"
+
+msgid "Valid until:"
+msgstr "Válida até:"
+
+msgid "With Grant"
+msgstr "Com Concessão"
+
+msgid "With Grant {privilege}"
+msgstr "Com Concessão {privilege}"
+
+msgid "never"
+msgstr "nunca"
+
+msgid "unchanged"
+msgstr "inalterada"
+
+msgid "{kind} Properties - {name}"
+msgstr "Propriedades de {kind} - {name}"
+
+msgid "{kind}: {name}    Owner: {owner}"
+msgstr "{kind}: {name}    Proprietário: {owner}"
+
+msgid "{title}: changes applied."
+msgstr "{title}: alterações aplicadas."
+
+msgid "Databases"
+msgstr "Bancos de Dados"
+
+msgid "Database Diagrams"
+msgstr "Diagramas de Banco de Dados"
+
+msgid "Schemas"
+msgstr "Esquemas"
+
+msgid "Tables"
+msgstr "Tabelas"
+
+msgid "Views"
+msgstr "Exibições"
+
+msgid "Materialized Views"
+msgstr "Exibições Materializadas"
+
+msgid "Functions"
+msgstr "Funções"
+
+msgid "Procedures"
+msgstr "Procedimentos"
+
+msgid "Types"
+msgstr "Tipos"
+
+msgid "Extensions"
+msgstr "Extensões"
+
+msgid "Columns"
+msgstr "Colunas"
+
+msgid "Indexes"
+msgstr "Índices"
+
+msgid "Sequences"
+msgstr "Sequências"
+
+msgid "Constraints"
+msgstr "Restrições"
+
+msgid "Triggers"
+msgstr "Gatilhos"
+
+msgid "Security"
+msgstr "Segurança"
+
+msgid "Roles"
+msgstr "Roles"
+
+msgid "Server"
+msgstr "Servidor"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "Materialized View"
+msgstr "Exibição Materializada"
+
+msgid "Procedure"
+msgstr "Procedimento"
+
+msgid "Column"
+msgstr "Coluna"
+
+msgid "Index"
+msgstr "Índice"
+
+msgid "Sequence"
+msgstr "Sequência"
+
+msgid "Constraint"
+msgstr "Restrição"
+
+msgid "Trigger"
+msgstr "Gatilho"
+
+msgid "Extension"
+msgstr "Extensão"
+
+msgid "Role"
+msgstr "Role"

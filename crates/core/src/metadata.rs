@@ -76,8 +76,13 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    /// Nome do tipo para a janela Properties.
+    /// Nome do tipo para a janela Properties, no idioma da interface.
     pub fn label(self) -> &'static str {
+        pgstudio_i18n::tr(self.english_label())
+    }
+
+    /// Nome do tipo em inglês (a chave da tradução).
+    pub fn english_label(self) -> &'static str {
         match self {
             NodeKind::Server => "Server",
             NodeKind::Folder(_) => "Folder",
@@ -201,7 +206,7 @@ pub trait MetadataProvider: Send + Sync {
     fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
         let _ = (node, action);
         Err(MetadataError(
-            "Scripting is not available for this server.".to_string(),
+            pgstudio_i18n::tr("Scripting is not available for this server.").to_string(),
         ))
     }
 
@@ -217,7 +222,7 @@ pub trait MetadataProvider: Send + Sync {
     fn catalog(&self, database: &str) -> Result<crate::catalog::Catalog, MetadataError> {
         let _ = database;
         Err(MetadataError(
-            "IntelliSense is not available for this server.".to_string(),
+            pgstudio_i18n::tr("IntelliSense is not available for this server.").to_string(),
         ))
     }
 
@@ -241,7 +246,7 @@ pub trait MetadataProvider: Send + Sync {
     fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
         let _ = database;
         Err(MetadataError(
-            "Designers are not available for this server.".to_string(),
+            pgstudio_i18n::tr("Designers are not available for this server.").to_string(),
         ))
     }
 
@@ -250,7 +255,7 @@ pub trait MetadataProvider: Send + Sync {
     fn apply_ddl(&self, database: &str, statements: &[String]) -> Result<(), MetadataError> {
         let _ = (database, statements);
         Err(MetadataError(
-            "Designers are not available for this server.".to_string(),
+            pgstudio_i18n::tr("Designers are not available for this server.").to_string(),
         ))
     }
 
@@ -352,3 +357,62 @@ pub const COMMON_TYPES: &[&str] = &[
     "timestamp without time zone",
     "uuid",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_have_portuguese_translations() {
+        use Folder::*;
+        use pgstudio_i18n::{Language, has_translation};
+        let folders = [
+            Databases,
+            Diagrams,
+            Schemas,
+            Tables,
+            Views,
+            MaterializedViews,
+            Functions,
+            Procedures,
+            Types,
+            Extensions,
+            Columns,
+            Indexes,
+            Sequences,
+            Constraints,
+            Triggers,
+            Security,
+            Roles,
+        ];
+        let kinds = [
+            NodeKind::Server,
+            NodeKind::Database,
+            NodeKind::Schema,
+            NodeKind::Table,
+            NodeKind::View,
+            NodeKind::MaterializedView,
+            NodeKind::Function,
+            NodeKind::Procedure,
+            NodeKind::Column,
+            NodeKind::Index,
+            NodeKind::Sequence,
+            NodeKind::Constraint,
+            NodeKind::Trigger,
+            NodeKind::Type,
+            NodeKind::Extension,
+            NodeKind::Role,
+            NodeKind::Folder(Tables),
+        ];
+        let texts = folders
+            .iter()
+            .map(|f| f.label())
+            .chain(kinds.iter().map(|k| k.english_label()));
+        for text in texts {
+            assert!(
+                has_translation(Language::PortugueseBrazil, None, text),
+                "sem tradução em locales/pt-BR.po: {text:?}"
+            );
+        }
+    }
+}

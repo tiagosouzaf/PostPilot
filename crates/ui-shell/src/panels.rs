@@ -248,7 +248,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                                     ui.add(egui::Label::new(value).wrap());
                                     ui.end_row();
                                 };
-                                row(ui, tr("Name"), &node.name);
+                                let name = match node.kind {
+                                    pgstudio_core::metadata::NodeKind::Folder(_) => tr(&node.name),
+                                    _ => node.name.as_str(),
+                                };
+                                row(ui, tr("Name"), name);
                                 row(ui, tr("Type"), node.kind.label());
                                 if let Some(Properties::Loaded(props)) = &props {
                                     for p in props {
