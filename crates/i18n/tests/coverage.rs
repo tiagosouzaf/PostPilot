@@ -26,23 +26,18 @@ const PENDING: &[&str] = &[
     "crates/ui-shell/src/repo/panel.rs",
     "crates/docking/src/lib.rs",
     "crates/execution-plan/src/view.rs",
-    "crates/object-explorer/src/lib.rs",
     "crates/result-grid/src/grid.rs",
     "crates/sql-editor/src/lib.rs",
     "crates/ui-shell/src/activity.rs",
     "crates/ui-shell/src/backup.rs",
-    "crates/ui-shell/src/connect.rs",
     "crates/ui-shell/src/designer/dialogs.rs",
     "crates/ui-shell/src/designer/mod.rs",
     "crates/ui-shell/src/diagrams.rs",
     "crates/ui-shell/src/edit_rows.rs",
-    "crates/ui-shell/src/properties.rs",
     "crates/ui-shell/src/query_designer.rs",
-    "crates/ui-shell/src/registered.rs",
     "crates/ui-shell/src/restore.rs",
     "crates/ui-shell/src/results.rs",
     "crates/ui-shell/src/schema_compare.rs",
-    "crates/ui-shell/src/servers.rs",
 ];
 
 /// Pastas com código da interface.
@@ -328,6 +323,34 @@ fn enclosing_call(src: &str, at: usize) -> Option<(String, usize)> {
     None
 }
 
+/// Se o literal em `at` é o valor de um braço de `match` que está dentro de
+/// `tr(match ... { ... })`: o `tr` traduz o resultado do `match`.
+fn match_arm_in_tr(src: &str, at: usize) -> bool {
+    if !src[..at].trim_end().ends_with("=>") {
+        return false;
+    }
+    let b = src.as_bytes();
+    let mut depth = 0i32;
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b'}' => depth += 1,
+            b'{' if depth > 0 => depth -= 1,
+            b'{' => {
+                let before = &src[..i];
+                let Some(m) = before.rfind("match ") else {
+                    return false;
+                };
+                let head = src[..m].trim_end();
+                return head.ends_with("tr(") || head.ends_with("tr_noop(");
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Começo da instrução que contém `at`, sem espaços.
 fn statement_start(src: &str, at: usize) -> &str {
     let start = src[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
@@ -357,6 +380,16 @@ fn every_translatable_text_has_a_translation() {
     for (file, src) in sources() {
         let lits = literals(&src);
         for (k, lit) in lits.iter().enumerate() {
+            if match_arm_in_tr(&src, lit.start) {
+                used.insert((None, lit.value.clone()));
+                if !has_translation(Language::PortugueseBrazil, None, &lit.value) {
+                    missing
+                        .entry(lit.value.clone())
+                        .or_default()
+                        .push(format!("{file}:{}", lit.line));
+                }
+                continue;
+            }
             let Some((call, paren)) = enclosing_call(&src, lit.start) else {
                 continue;
             };
@@ -518,4 +551,10 @@ fn f() { // "no"
     let busy = lits.iter().find(|l| l.value == "Busy").unwrap();
     assert!(statement_start(src, busy.start).starts_with("self.status ="));
     assert_eq!(lits[2].line, 5);
+
+    let src = "fn l(k: K) -> &str { tr(match k { K::A => \"Alpha\", K::B => \"Beta\" }) }";
+    let lits = literals(src);
+    assert!(lits.iter().all(|l| match_arm_in_tr(src, l.start)));
+    let src = "fn l(k: K) -> &str { match k { K::A => \"Alpha\" } }";
+    assert!(!match_arm_in_tr(src, literals(src)[0].start));
 }

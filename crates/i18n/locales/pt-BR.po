@@ -837,6 +837,568 @@ msgstr "o pedido 3 sem tags e sem customer.phone"
 
 msgid "Append to an array"
 msgstr "Acrescentar a um array"
+# Workspace: senhas (Fase R)
+
+msgid "The master password check stopped unexpectedly."
+msgstr "A verificação da senha mestra parou inesperadamente."
+
+msgid "Workspace passwords locked."
+msgstr "Senhas do workspace trancadas."
+
+msgid "Workspace passwords are on: remembered passwords of this workspace's servers are saved encrypted in secrets.json."
+msgstr "Senhas no workspace ativadas: as senhas lembradas dos servidores deste workspace ficam criptografadas em secrets.json."
+
+msgid "Master password changed. Commit and push secrets.json."
+msgstr "Senha mestra trocada. Faça commit e push do secrets.json."
+
+msgid "Workspace passwords unlocked."
+msgstr "Senhas do workspace destrancadas."
+
+msgid "Unlocked, but the master password could not be remembered on this computer: {error}"
+msgstr "Destrancado, mas não foi possível lembrar a senha mestra neste computador: {error}"
+
+msgid "Checking the master password..."
+msgstr "Conferindo a senha mestra..."
+
+msgid "Passwords stay on this computer."
+msgstr "As senhas ficam neste computador."
+
+msgid "Save in workspace..."
+msgstr "Salvar no workspace..."
+
+msgid "Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"
+msgstr "Defina uma senha mestra e salve as senhas lembradas dos servidores deste workspace, criptografadas, em secrets.json"
+
+msgid "Passwords locked"
+msgstr "Senhas trancadas"
+
+msgid "Unlock..."
+msgstr "Destrancar..."
+
+msgid "No passwords saved yet"
+msgstr "Nenhuma senha salva ainda"
+
+msgid "1 password in the workspace"
+msgstr "1 senha no workspace"
+
+msgid "{n} passwords in the workspace"
+msgstr "{n} senhas no workspace"
+
+msgid "Remembered passwords of this workspace's servers are saved here, encrypted with the master password."
+msgstr "As senhas lembradas dos servidores deste workspace ficam aqui, criptografadas com a senha mestra."
+
+msgid "Change Master Password..."
+msgstr "Trocar Senha Mestra..."
+
+msgid "Lock"
+msgstr "Trancar"
+
+msgid "Save Passwords in Workspace"
+msgstr "Salvar Senhas no Workspace"
+
+msgid "Unlock Workspace Passwords"
+msgstr "Destrancar Senhas do Workspace"
+
+msgid "Change Master Password"
+msgstr "Trocar Senha Mestra"
+
+msgid "Choose a master password. It encrypts the passwords that go into the repository (secrets.json); it is never saved there."
+msgstr "Escolha uma senha mestra. Ela criptografa as senhas que vão para o repositório (secrets.json) e nunca é salva lá."
+
+msgid "At least {n} characters. If you forget it, the saved passwords cannot be recovered: you type them again."
+msgstr "Pelo menos {n} caracteres. Se você esquecer, as senhas salvas não podem ser recuperadas: você digita de novo."
+
+msgid "This workspace keeps its passwords encrypted. Enter the master password."
+msgstr "Este workspace guarda as senhas criptografadas. Digite a senha mestra."
+
+msgid "Enter the new master password. The other computers will ask for it after the next pull."
+msgstr "Digite a nova senha mestra. Os outros computadores vão pedi-la depois do próximo pull."
+
+msgid "Master password:"
+msgstr "Senha mestra:"
+
+msgid "New master password:"
+msgstr "Nova senha mestra:"
+
+msgid "Confirm password:"
+msgstr "Confirmar senha:"
+
+msgid "Remember on this computer"
+msgstr "Lembrar neste computador"
+
+msgid "Keeps the master password in this computer's keyring, so the workspace unlocks by itself."
+msgstr "Guarda a senha mestra no cofre deste computador, para o workspace destrancar sozinho."
+
+msgid "The master password is not correct."
+msgstr "A senha mestra não está correta."
+
+msgid "The workspace passwords are locked."
+msgstr "As senhas do workspace estão trancadas."
+
+msgid "Use at least {n} characters for the master password."
+msgstr "Use pelo menos {n} caracteres na senha mestra."
+
+msgid "The passwords do not match."
+msgstr "As senhas não conferem."
+
+msgid "The saved password for {key} was changed outside PostPilot and cannot be read."
+msgstr "A senha salva de {key} foi alterada fora do PostPilot e não pode ser lida."
+# Conexão e Servidores Registrados
+
+msgid "\"{port}\" is not a valid port."
+msgstr "\"{port}\" não é uma porta válida."
+
+msgid "A group cannot be moved into itself."
+msgstr "Um grupo não pode ser movido para dentro dele mesmo."
+
+msgid "A group named \"{name}\" already exists in this group."
+msgstr "Já existe um grupo chamado \"{name}\" neste grupo."
+
+msgid "A server named \"{name}\" already exists in this group."
+msgstr "Já existe um servidor chamado \"{name}\" neste grupo."
+
+msgid "Are you sure you want to delete the server group \"{name}\" and everything in it?"
+msgstr "Tem certeza de que deseja excluir o grupo de servidores \"{name}\" e tudo o que há nele?"
+
+msgid "Are you sure you want to delete the server registration \"{name}\"?"
+msgstr "Tem certeza de que deseja excluir o registro de servidor \"{name}\"?"
+
+msgid "Authentication:"
+msgstr "Autenticação:"
+
+msgid "Connect to Server"
+msgstr "Conectar ao Servidor"
+
+msgid "Connecting to {server}…"
+msgstr "Conectando a {server}…"
+
+msgid "Could not read {path}: {error}"
+msgstr "Não foi possível ler {path}: {error}"
+
+msgid "Could not write {path}: {error}"
+msgstr "Não foi possível gravar {path}: {error}"
+
+msgid "Database Engine"
+msgstr "Mecanismo de Banco de Dados"
+
+msgid "Database:"
+msgstr "Banco de dados:"
+
+msgid "Deleted \"{name}\"."
+msgstr "\"{name}\" excluído."
+
+msgid "Edit Server Group Properties"
+msgstr "Editar Propriedades do Grupo de Servidores"
+
+msgid "Edit Server Registration Properties"
+msgstr "Editar Propriedades do Registro de Servidor"
+
+msgid "Encryption:"
+msgstr "Criptografia:"
+
+msgid "Enter a group name."
+msgstr "Digite um nome de grupo."
+
+msgid "Enter a login."
+msgstr "Digite um logon."
+
+msgid "Enter a server name."
+msgstr "Digite um nome de servidor."
+
+msgid "Export..."
+msgstr "Exportar..."
+
+msgid "Exported registered servers to {path} (passwords are not exported)."
+msgstr "Servidores registrados exportados para {path} (as senhas não são exportadas)."
+
+msgid "Group description:"
+msgstr "Descrição do grupo:"
+
+msgid "Group name:"
+msgstr "Nome do grupo:"
+
+msgid "Import..."
+msgstr "Importar..."
+
+msgid "Imported 1 registered server."
+msgstr "1 servidor registrado importado."
+
+msgid "Imported {n} registered servers."
+msgstr "{n} servidores registrados importados."
+
+msgid "Login:"
+msgstr "Logon:"
+
+msgid "Looking for the saved password…"
+msgstr "Procurando a senha salva…"
+
+msgid "Missing \"]\" after the IPv6 address."
+msgstr "Falta \"]\" depois do endereço IPv6."
+
+msgid "Moved \"{name}\" to \"{group}\"."
+msgstr "\"{name}\" movido para \"{group}\"."
+
+msgid "New Server Group Properties"
+msgstr "Propriedades do Novo Grupo de Servidores"
+
+msgid "New Server Group..."
+msgstr "Novo Grupo de Servidores..."
+
+msgid "New Server Registration"
+msgstr "Novo Registro de Servidor"
+
+msgid "New Server Registration..."
+msgstr "Novo Registro de Servidor..."
+
+msgid "No registered servers. Right-click \"{group}\" and choose \"New Server Registration...\"."
+msgstr "Nenhum servidor registrado. Clique com o botão direito em \"{group}\" e escolha \"Novo Registro de Servidor...\"."
+
+msgid "No system keyring."
+msgstr "Sem cofre de senhas do sistema."
+
+msgid "Not a server."
+msgstr "Não é um servidor."
+
+msgid "Only a real connection can be registered."
+msgstr "Só uma conexão real pode ser registrada."
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Password:"
+msgstr "Senha:"
+
+msgid "PostgreSQL"
+msgstr "PostgreSQL"
+
+msgid "Recent servers"
+msgstr "Servidores recentes"
+
+msgid "Registered server \"{name}\" saved."
+msgstr "Servidor registrado \"{name}\" salvo."
+
+msgid "Registered server description:"
+msgstr "Descrição do servidor registrado:"
+
+msgid "Registered server name:"
+msgstr "Nome do servidor registrado:"
+
+msgid "Registered servers need a real connection."
+msgstr "Servidores registrados precisam de uma conexão real."
+
+msgid "Remember password"
+msgstr "Lembrar senha"
+
+msgid "Server group \"{name}\" saved."
+msgstr "Grupo de servidores \"{name}\" salvo."
+
+msgid "Server name:"
+msgstr "Nome do servidor:"
+
+msgid "Server type:"
+msgstr "Tipo de servidor:"
+
+msgid "Tasks"
+msgstr "Tarefas"
+
+msgid "The connection attempt stopped unexpectedly."
+msgstr "A tentativa de conexão parou inesperadamente."
+
+msgid "The group no longer exists."
+msgstr "O grupo não existe mais."
+
+msgid "The root group cannot be moved."
+msgstr "O grupo raiz não pode ser movido."
+
+msgid "The root group cannot be renamed."
+msgstr "O grupo raiz não pode ser renomeado."
+
+msgid "The server no longer exists."
+msgstr "O servidor não existe mais."
+
+msgid "The system keyring failed: {error}"
+msgstr "O cofre de senhas do sistema falhou: {error}"
+
+msgid "The system keyring is not available: {error}"
+msgstr "O cofre de senhas do sistema não está disponível: {error}"
+
+msgid "The target group no longer exists."
+msgstr "O grupo de destino não existe mais."
+
+msgid "Unexpected \"{after}\" after the address."
+msgstr "\"{after}\" inesperado depois do endereço."
+
+msgid "Wait for the current connection attempt."
+msgstr "Aguarde a tentativa de conexão atual."
+
+msgid "host or host,port"
+msgstr "host ou host,porta"
+
+msgid "same as the server name"
+msgstr "igual ao nome do servidor"
+
+msgid "{path} has an unsupported version ({version})."
+msgstr "{path} tem uma versão sem suporte ({version})."
+
+msgid "{path} is not a registered servers file: {error}"
+msgstr "{path} não é um arquivo de servidores registrados: {error}"
+
+msgid "Local Server Groups"
+msgstr "Grupos de Servidores Locais"
+
+msgid "Disable"
+msgstr "Desabilitar"
+
+msgid "Prefer"
+msgstr "Preferir"
+
+msgid "Require"
+msgstr "Exigir"
+
+msgid "Verify full"
+msgstr "Verificação completa"
+
+# Pesquisador de Objetos, propriedades e segurança
+
+msgid "-1 means no limit"
+msgstr "-1 significa sem limite"
+
+msgid "Add..."
+msgstr "Adicionar..."
+
+msgid "Attributes"
+msgstr "Atributos"
+
+msgid "Back Up..."
+msgstr "Fazer Backup..."
+
+msgid "Bypass row-level security"
+msgstr "Ignorar a segurança em nível de linha"
+
+msgid "CREATE To New Query Window"
+msgstr "CREATE em Nova Janela de Consulta"
+
+msgid "DROP To New Query Window"
+msgstr "DROP em Nova Janela de Consulta"
+
+msgid "Can log in (LOGIN)"
+msgstr "Pode fazer logon (LOGIN)"
+
+msgid "Compare Schema..."
+msgstr "Comparar Esquema..."
+
+msgid "Confirm password:"
+msgstr "Confirmar senha:"
+
+msgid "Connection limit:"
+msgstr "Limite de conexões:"
+
+msgid "Create databases"
+msgstr "Criar bancos de dados"
+
+msgid "Create roles"
+msgstr "Criar roles"
+
+msgid "Database"
+msgstr "Banco de Dados"
+
+msgid "Design"
+msgstr "Design"
+
+msgid "Designers are not available for this server."
+msgstr "Os designers não estão disponíveis para este servidor."
+
+msgid "Edit Top {n} Rows"
+msgstr "Editar {n} Linhas Superiores"
+
+msgid "Function"
+msgstr "Função"
+
+msgid "Grant"
+msgstr "Conceder"
+
+msgid "Grant {privilege}"
+msgstr "Conceder {privilege}"
+
+msgid "Inherit privileges of the roles it is a member of"
+msgstr "Herdar os privilégios das roles das quais é membro"
+
+msgid "IntelliSense is not available for this server."
+msgstr "O IntelliSense não está disponível para este servidor."
+
+msgid "Member of"
+msgstr "Membro de"
+
+msgid "Members"
+msgstr "Membros"
+
+msgid "Membership"
+msgstr "Associação"
+
+msgid "New Database Diagram"
+msgstr "Novo Diagrama de Banco de Dados"
+
+msgid "New Role..."
+msgstr "Nova Role..."
+
+msgid "New Table..."
+msgstr "Nova Tabela..."
+
+msgid "Not connected. Use File > Connect Object Explorer."
+msgstr "Não conectado. Use Arquivo > Conectar Pesquisador de Objetos."
+
+msgid "Permission"
+msgstr "Permissão"
+
+msgid "Permissions"
+msgstr "Permissões"
+
+msgid "Permissions for {who}"
+msgstr "Permissões de {who}"
+
+msgid "Refresh"
+msgstr "Atualizar"
+
+msgid "Register..."
+msgstr "Registrar..."
+
+msgid "Replication"
+msgstr "Replicação"
+
+msgid "Restore Database..."
+msgstr "Restaurar Banco de Dados..."
+
+msgid "Restore..."
+msgstr "Restaurar..."
+
+msgid "Role - New"
+msgstr "Role - Nova"
+
+msgid "Role Properties"
+msgstr "Propriedades da Role"
+
+msgid "Role Properties - {name}"
+msgstr "Propriedades da Role - {name}"
+
+msgid "Role name:"
+msgstr "Nome da role:"
+
+msgid "Schema"
+msgstr "Esquema"
+
+msgid "Script"
+msgstr "Script"
+
+msgid "Script as"
+msgstr "Gerar Script como"
+
+msgid "Script {kind} as"
+msgstr "Gerar Script de {kind} como"
+
+msgid "Scripting is not available for this server."
+msgstr "A geração de scripts não está disponível para este servidor."
+
+msgid "Select Top {n} Rows"
+msgstr "Selecionar {n} Linhas Superiores"
+
+msgid "Select a page"
+msgstr "Selecionar uma página"
+
+msgid "Select or add a user or role."
+msgstr "Selecione ou adicione um usuário ou role."
+
+msgid "Superuser"
+msgstr "Superusuário"
+
+msgid "Table"
+msgstr "Tabela"
+
+msgid "The object no longer exists."
+msgstr "O objeto não existe mais."
+
+msgid "The password and its confirmation do not match."
+msgstr "A senha e a confirmação não coincidem."
+
+msgid "The permissions could not be read."
+msgstr "Não foi possível ler as permissões."
+
+msgid "The properties are not loaded."
+msgstr "As propriedades não foram carregadas."
+
+msgid "The role could not be read."
+msgstr "Não foi possível ler a role."
+
+msgid "The role needs a name."
+msgstr "A role precisa de um nome."
+
+msgid "The role no longer exists."
+msgstr "A role não existe mais."
+
+msgid "The roles could not be read."
+msgstr "Não foi possível ler as roles."
+
+msgid "There are no changes to script."
+msgstr "Não há alterações para gerar script."
+
+msgid "Users or roles"
+msgstr "Usuários ou roles"
+
+msgid "Valid until:"
+msgstr "Válida até:"
+
+msgid "With Grant"
+msgstr "Com Concessão"
+
+msgid "With Grant {privilege}"
+msgstr "Com Concessão {privilege}"
+
+msgid "never"
+msgstr "nunca"
+
+msgid "unchanged"
+msgstr "inalterada"
+
+msgid "{kind} Properties - {name}"
+msgstr "Propriedades de {kind} - {name}"
+
+msgid "{kind}: {name}    Owner: {owner}"
+msgstr "{kind}: {name}    Proprietário: {owner}"
+
+msgid "{title}: changes applied."
+msgstr "{title}: alterações aplicadas."
+
+msgid "Databases"
+msgstr "Bancos de Dados"
+
+msgid "Database Diagrams"
+msgstr "Diagramas de Banco de Dados"
+
+msgid "Schemas"
+msgstr "Esquemas"
+
+msgid "Tables"
+msgstr "Tabelas"
+
+msgid "Views"
+msgstr "Exibições"
+
+msgid "Materialized Views"
+msgstr "Exibições Materializadas"
+
+msgid "Functions"
+msgstr "Funções"
+
+msgid "Procedures"
+msgstr "Procedimentos"
+
+msgid "Types"
+msgstr "Tipos"
+
+msgid "Extensions"
+msgstr "Extensões"
+
+msgid "Columns"
+msgstr "Colunas"
 
 msgid "Indexes"
 msgstr "Índices"
@@ -1053,3 +1615,50 @@ msgstr "String sem fechar"
 
 msgid "Unexpected text after the JSON value"
 msgstr "Texto inesperado depois do valor JSON"
+msgid "Sequences"
+msgstr "Sequências"
+
+msgid "Constraints"
+msgstr "Restrições"
+
+msgid "Triggers"
+msgstr "Gatilhos"
+
+msgid "Security"
+msgstr "Segurança"
+
+msgid "Roles"
+msgstr "Roles"
+
+msgid "Server"
+msgstr "Servidor"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "Materialized View"
+msgstr "Exibição Materializada"
+
+msgid "Procedure"
+msgstr "Procedimento"
+
+msgid "Column"
+msgstr "Coluna"
+
+msgid "Index"
+msgstr "Índice"
+
+msgid "Sequence"
+msgstr "Sequência"
+
+msgid "Constraint"
+msgstr "Restrição"
+
+msgid "Trigger"
+msgstr "Gatilho"
+
+msgid "Extension"
+msgstr "Extensão"
+
+msgid "Role"
+msgstr "Role"
