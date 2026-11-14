@@ -3031,7 +3031,8 @@ impl ShellApp {
                 .values()
                 .any(|e| e.is_loading() || e.is_saving())
             || !self.exports.is_empty()
-            || self.query_designer.as_ref().is_some_and(|q| q.is_loading());
+            || self.query_designer.as_ref().is_some_and(|q| q.is_loading())
+            || self.compare.as_ref().is_some_and(|c| c.is_busy());
         // Conta os frames parados: o que acabou de aparecer (um diálogo
         // modal entra com fade) precisa de alguns frames para assentar.
         if busy {
