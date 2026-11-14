@@ -28,6 +28,7 @@ mod path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use pgstudio_core::catalog::{self, Catalog, Column, RelationKind, Schema};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::metadata::{
     Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
@@ -87,6 +88,29 @@ mod sql {
 
     pub const CONSTRAINTS: &str = "SELECT oid, conname::text, contype::text \
         FROM pg_catalog.pg_constraint WHERE conrelid = $1 ORDER BY contype, conname";
+
+    /// Schemas onde nomes sem schema são procurados, com o `pg_catalog`
+    /// (funções como `now()` e `count()`).
+    pub const SEARCH_PATH: &str = "SELECT unnest(pg_catalog.current_schemas(true))::text";
+
+    /// Tabelas e views de todos os schemas do usuário com as colunas, para o
+    /// IntelliSense: uma consulta só, em ordem de schema, nome e coluna.
+    pub const CATALOG_RELATIONS: &str = "SELECT n.nspname::text, c.relname::text, \
+        c.relkind::text, a.attname::text, pg_catalog.format_type(a.atttypid, a.atttypmod) \
+        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+        LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 \
+            AND NOT a.attisdropped \
+        WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm') AND NOT c.relispartition \
+        AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+        ORDER BY 1, 2, a.attnum";
+
+    /// Nomes de funções e procedures, incluindo as do `pg_catalog`.
+    pub const CATALOG_FUNCTIONS: &str = "SELECT DISTINCT n.nspname::text, p.proname::text \
+        FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+        WHERE p.prokind IN ('f', 'p', 'a', 'w') \
+        AND (n.nspname = 'pg_catalog' OR (n.nspname !~ '^pg_' \
+            AND n.nspname <> 'information_schema')) \
+        ORDER BY 1, 2";
 
     pub const INDEXES: &str = "SELECT i.indexrelid, c.relname::text, i.indisunique, i.indisprimary \
         FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid \
@@ -169,6 +193,60 @@ impl CatalogExplorer {
         self.runtime
             .block_on(session.client().query(sql, params))
             .map_err(|e| MetadataError(describe(&e)))
+    }
+
+    fn read_catalog(&self, db: &str) -> Result<Catalog, MetadataError> {
+        let search_path = self
+            .query(db, sql::SEARCH_PATH, &[])?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        let mut schemas: Vec<Schema> = self
+            .query(db, sql::SCHEMAS, &[])?
+            .iter()
+            .map(|r| Schema {
+                name: r.get(0),
+                ..Schema::default()
+            })
+            .collect();
+        schemas.push(Schema {
+            name: "pg_catalog".into(),
+            ..Schema::default()
+        });
+        let index = |schemas: &[Schema], name: &str| schemas.iter().position(|s| s.name == name);
+        for r in self.query(db, sql::CATALOG_RELATIONS, &[])? {
+            let (schema, name, kind): (String, String, String) = (r.get(0), r.get(1), r.get(2));
+            let Some(i) = index(&schemas, &schema) else {
+                continue;
+            };
+            let rels = &mut schemas[i].relations;
+            if rels.last().is_none_or(|l| l.name != name) {
+                rels.push(catalog::Relation {
+                    name,
+                    kind: if matches!(kind.as_str(), "v" | "m") {
+                        RelationKind::View
+                    } else {
+                        RelationKind::Table
+                    },
+                    columns: Vec::new(),
+                });
+            }
+            let column: Option<String> = r.get(3);
+            if let (Some(name), Some(rel)) = (column, rels.last_mut()) {
+                rel.columns.push(Column { name, ty: r.get(4) });
+            }
+        }
+        for r in self.query(db, sql::CATALOG_FUNCTIONS, &[])? {
+            let schema: String = r.get(0);
+            if let Some(i) = index(&schemas, &schema) {
+                schemas[i].functions.push(r.get(1));
+            }
+        }
+        Ok(Catalog {
+            database: db.to_string(),
+            search_path,
+            schemas,
+        })
     }
 
     fn databases(&self) -> Result<Vec<ObjectNode>, MetadataError> {
@@ -455,6 +533,10 @@ impl MetadataProvider for CatalogExplorer {
             Path::RelationFolder(db, _, oid, f) => self.relation_folder(&db, oid, f),
             Path::ServerFolder(_) | Path::Leaf => Ok(Vec::new()),
         }
+    }
+
+    fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
+        self.read_catalog(database)
     }
 }
 

@@ -59,6 +59,18 @@ Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
 (Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
 trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
+O IntelliSense lê o catálogo do banco (schemas, tabelas, views, colunas e
+funções) em segundo plano, na primeira vez que uma janela de consulta precisa
+dele, e guarda em cache; Ctrl+Shift+R (Edit > IntelliSense > Refresh Local
+Cache) lê de novo. A lista abre sozinha ao digitar: depois de `FROM` e `JOIN`
+vêm tabelas e views, depois de `alias.` as colunas daquela tabela, depois de
+`schema.` o que há no schema, e no resto as colunas das tabelas do comando,
+palavras-chave e funções. Ctrl+Espaço completa a palavra (direto, se só houver
+uma opção), Ctrl+J lista, Tab ou Enter escolhe e Esc fecha. Strings, nomes
+entre aspas, `$$` e comentários sem fim e parênteses sem par ficam sublinhados
+em vermelho, assim como o trecho do erro que o servidor apontou na última
+execução; o mouse em cima mostra a mensagem.
+
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira
 execução, no banco da conexão do Object Explorer). Vários comandos separados

@@ -3,9 +3,37 @@
 
 use eframe::egui::{self, Event, Id, Key, Modifiers, PointerButton, Pos2, Rect, Vec2};
 use egui_kittest::Harness;
+use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_sql_editor::{EditorState, SqlEditor, selection, set_selection};
 
+fn catalog() -> Catalog {
+    let rel = |name: &str, cols: &[&str]| Relation {
+        name: name.into(),
+        kind: RelationKind::Table,
+        columns: cols
+            .iter()
+            .map(|c| Column {
+                name: (*c).into(),
+                ty: "integer".into(),
+            })
+            .collect(),
+    };
+    Catalog {
+        database: "loja".into(),
+        search_path: vec!["public".into()],
+        schemas: vec![Schema {
+            name: "public".into(),
+            relations: vec![
+                rel("cliente", &["id", "nome"]),
+                rel("pedido", &["id", "cliente_id", "total"]),
+            ],
+            functions: Vec::new(),
+        }],
+    }
+}
+
 struct Doc {
+    catalog: Option<Catalog>,
     text: String,
     state: EditorState,
     rect: Rect,
@@ -20,6 +48,7 @@ fn harness(text: &str) -> Harness<'static, Doc> {
     let mut state = EditorState::default();
     state.focus_editor();
     let doc = Doc {
+        catalog: Some(catalog()),
         text: text.to_string(),
         state,
         rect: Rect::NOTHING,
@@ -33,7 +62,9 @@ fn harness(text: &str) -> Harness<'static, Doc> {
         .with_max_steps(120)
         .build_ui_state(
             |ui, doc: &mut Doc| {
-                let out = SqlEditor::new(&mut doc.text, &mut doc.state, id()).show(ui);
+                let out = SqlEditor::new(&mut doc.text, &mut doc.state, id())
+                    .catalog(doc.catalog.as_ref())
+                    .show(ui);
                 doc.rect = out.response.rect;
                 doc.cursor = out.cursor.unwrap();
             },
@@ -214,4 +245,96 @@ fn moving_to_the_end_of_a_long_script_scrolls_to_it() {
     h.run_steps(120);
     click(&mut h, Pos2::new(rect.center().x, rect.top() + 5.0), 1);
     assert_eq!(h.state().cursor.0, 1, "a roda volta ao começo");
+}
+
+fn labels(h: &Harness<'static, Doc>) -> Vec<String> {
+    h.state().state.completion_labels()
+}
+
+#[test]
+fn typing_after_from_lists_tables_and_tab_accepts() {
+    let mut h = harness("");
+    typed(&mut h, "select * from p");
+    assert_eq!(labels(&h), ["pedido", "public"]);
+    typed(&mut h, "e");
+    assert_eq!(labels(&h), ["pedido"]);
+    key(&mut h, Modifiers::NONE, Key::Tab);
+    assert_eq!(h.state().text, "select * from pedido");
+    assert!(!h.state().state.is_completing());
+    typed(&mut h, " p where p.");
+    assert_eq!(labels(&h), ["cliente_id", "id", "total"]);
+    key(&mut h, Modifiers::NONE, Key::ArrowDown);
+    key(&mut h, Modifiers::NONE, Key::ArrowDown);
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().text, "select * from pedido p where p.total");
+    // Uma linha nova não veio junto com o Enter que escolheu.
+    assert_eq!(h.state().cursor, (1, 37));
+}
+
+#[test]
+fn escape_and_space_close_the_list() {
+    let mut h = harness("select * from cliente c where c.");
+    place(&mut h, (33, 33));
+    key(&mut h, Modifiers::CTRL, Key::J);
+    assert_eq!(labels(&h), ["id", "nome"]);
+    key(&mut h, Modifiers::NONE, Key::Escape);
+    assert!(!h.state().state.is_completing());
+    typed(&mut h, "n");
+    assert_eq!(labels(&h), ["nome"]);
+    typed(&mut h, " ");
+    assert!(!h.state().state.is_completing());
+    assert_eq!(h.state().text, "select * from cliente c where c.n ");
+}
+
+#[test]
+fn ctrl_space_completes_a_single_match_directly() {
+    let mut h = harness("select c.no from cliente c");
+    place(&mut h, (11, 11));
+    key(&mut h, Modifiers::CTRL, Key::Space);
+    assert_eq!(h.state().text, "select c.nome from cliente c");
+    assert!(!h.state().state.is_completing());
+    key(&mut h, Modifiers::CTRL, Key::Z);
+    assert_eq!(h.state().text, "select c.no from cliente c");
+}
+
+#[test]
+fn backspace_updates_the_list() {
+    let mut h = harness("");
+    typed(&mut h, "select * from pedido where tot");
+    assert_eq!(labels(&h), ["total"]);
+    key(&mut h, Modifiers::NONE, Key::Backspace);
+    key(&mut h, Modifiers::NONE, Key::Backspace);
+    assert!(labels(&h).contains(&"total".to_string()));
+    assert!(labels(&h).contains(&"TO".to_string()));
+}
+
+#[test]
+fn clicking_a_suggestion_inserts_it() {
+    let mut h = harness("");
+    typed(&mut h, "select * from c");
+    assert_eq!(labels(&h), ["cliente"]);
+    // A lista fica embaixo da linha 1, começando na palavra.
+    let p = char_pos(&mut h, 1, 16);
+    click(&mut h, Pos2::new(p.x, p.y + 3.0), 1);
+    assert_eq!(h.state().text, "select * from cliente");
+}
+
+#[test]
+fn syntax_errors_are_underlined_while_they_last() {
+    let mut h = harness("");
+    typed(&mut h, "select f(1");
+    assert_eq!(h.state().state.errors().len(), 1);
+    typed(&mut h, ")");
+    assert!(h.state().state.errors().is_empty());
+    typed(&mut h, " 'abc");
+    assert_eq!(
+        h.state().state.errors()[0].1,
+        "Unclosed quotation mark after the character string."
+    );
+    // O mouse em cima mostra a mensagem.
+    let p = char_pos(&mut h, 0, 14);
+    h.event(Event::PointerMoved(p));
+    h.run_steps(30);
+    use egui_kittest::kittest::Queryable;
+    h.get_by_label("Unclosed quotation mark after the character string.");
 }

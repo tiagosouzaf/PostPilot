@@ -7,6 +7,7 @@
 use std::thread;
 use std::time::Duration;
 
+use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::metadata::{
     Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
 };
@@ -171,6 +172,64 @@ impl MetadataProvider for FakeProvider {
             _ => return Err(MetadataError(format!("unknown node: {id}"))),
         };
         Ok(out)
+    }
+
+    /// O mesmo catálogo da árvore: tabelas `table_NNNNN` com as colunas da
+    /// pasta Columns. Como a árvore, aceita qualquer banco.
+    fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
+        thread::sleep(self.delay);
+        let (schemas, tables) = if database == "stress" {
+            (vec!["public".to_string()], STRESS_TABLES)
+        } else {
+            let mut v = vec!["public".to_string()];
+            v.extend((1..SCHEMAS).map(|i| format!("schema_{i}")));
+            (v, TABLES)
+        };
+        let columns: Vec<Column> = [
+            ("id", "bigint"),
+            ("name", "text"),
+            ("email", "text"),
+            ("created_at", "timestamptz"),
+            ("balance", "numeric(12,2)"),
+            ("active", "boolean"),
+        ]
+        .iter()
+        .map(|(n, t)| Column {
+            name: (*n).into(),
+            ty: (*t).into(),
+        })
+        .collect();
+        let mut schemas: Vec<Schema> = schemas
+            .into_iter()
+            .map(|name| Schema {
+                relations: (0..tables)
+                    .map(|i| Relation {
+                        name: format!("table_{i:05}"),
+                        kind: RelationKind::Table,
+                        columns: columns.clone(),
+                    })
+                    .chain((0..5).map(|i| Relation {
+                        name: format!("view_{i}"),
+                        kind: RelationKind::View,
+                        columns: columns[..2].to_vec(),
+                    }))
+                    .collect(),
+                functions: (0..5).map(|i| format!("fn_{i}")).collect(),
+                name,
+            })
+            .collect();
+        schemas.push(Schema {
+            name: "pg_catalog".into(),
+            relations: Vec::new(),
+            functions: ["count", "max", "min", "now", "sum"]
+                .map(String::from)
+                .into(),
+        });
+        Ok(Catalog {
+            database: database.to_string(),
+            search_path: vec!["public".into(), "pg_catalog".into()],
+            schemas,
+        })
     }
 }
 

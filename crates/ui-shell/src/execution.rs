@@ -142,8 +142,8 @@ pub struct Execution {
     started: Instant,
     elapsed: Option<Duration>,
     outcome: Outcome,
-    /// Posição do primeiro erro, ainda não mostrada no editor.
-    pending_error: Option<usize>,
+    /// Posição e mensagem do primeiro erro, ainda não mostradas no editor.
+    pending_error: Option<(usize, String)>,
     pub tab: Tab,
     pub database: String,
     /// Grade ou texto, escolhido antes de executar.
@@ -247,8 +247,9 @@ impl Execution {
         self.results.iter().map(ResultSet::len).sum()
     }
 
-    /// Posição (no documento) do erro a mostrar no editor, uma vez só.
-    pub fn take_error_position(&mut self) -> Option<usize> {
+    /// Posição (no documento) e mensagem do erro a mostrar no editor, uma
+    /// vez só.
+    pub fn take_error_position(&mut self) -> Option<(usize, String)> {
         self.pending_error.take()
     }
 
@@ -314,7 +315,7 @@ impl Execution {
                     position,
                 });
                 if self.pending_error.is_none() {
-                    self.pending_error = position;
+                    self.pending_error = position.map(|p| (p, e.message.clone()));
                 }
                 self.outcome = Outcome::Failed;
             }

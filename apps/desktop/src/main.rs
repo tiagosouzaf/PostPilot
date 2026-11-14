@@ -17,6 +17,9 @@
 //!   `<config>/PGStudio/keymap.txt`.
 //! - `PGSTUDIO_RUN=1`: executa a janela de consulta ativa (o primeiro
 //!   arquivo aberto) assim que conectar, como um F5.
+//! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
+//!   ativa e abre o IntelliSense assim que o catálogo chegar (para
+//!   screenshots).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -121,6 +124,9 @@ fn main() -> eframe::Result {
             }
             if std::env::var_os("PGSTUDIO_RUN").is_some() {
                 app = app.with_run_on_connect();
+            }
+            if std::env::var_os("PGSTUDIO_LIST_MEMBERS").is_some() {
+                app = app.with_list_members_on_load();
             }
             if bench {
                 app = app.with_bench();

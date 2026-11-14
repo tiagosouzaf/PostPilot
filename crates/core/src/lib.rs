@@ -3,6 +3,7 @@
 //! Esta crate não depende de toolkit de GUI nem faz I/O. A camada de UI e o
 //! backend se comunicam através dos tipos definidos aqui.
 
+pub mod catalog;
 pub mod command;
 pub mod connection;
 pub mod keymap;

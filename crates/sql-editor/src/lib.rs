@@ -14,6 +14,8 @@
 //! O texto continua sendo uma `String` do documento.
 
 pub mod buffer;
+pub mod complete;
+pub mod diagnostics;
 pub mod edit;
 pub mod highlight;
 pub mod lexer;
@@ -34,6 +36,8 @@ pub struct EditorState {
     focus: bool,
     /// Seleção a aplicar junto com o foco (busca e "Go To Line").
     select: Option<(usize, usize)>,
+    /// Abrir a lista do IntelliSense no próximo frame (menu Edit).
+    list_members: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -101,6 +105,33 @@ impl EditorState {
     pub fn focus_editor(&mut self) {
         self.focus = true;
     }
+
+    /// Abre a lista do IntelliSense no cursor (List Members, Complete Word).
+    pub fn list_members(&mut self) {
+        self.list_members = true;
+        self.focus = true;
+    }
+
+    /// Sublinha o erro que o servidor apontou no caractere `at`, até o texto
+    /// mudar.
+    pub fn mark_error(&mut self, at: usize, message: impl Into<String>) {
+        self.buffer.pending_error = Some((at, message.into()));
+    }
+
+    /// Erros sublinhados agora: (início, fim) em bytes e mensagem.
+    pub fn errors(&self) -> Vec<(std::ops::Range<usize>, String)> {
+        self.buffer.errors()
+    }
+
+    /// Se a lista do IntelliSense está aberta.
+    pub fn is_completing(&self) -> bool {
+        self.buffer.is_completing()
+    }
+
+    /// Sugestões da lista aberta, na ordem mostrada.
+    pub fn completion_labels(&self) -> Vec<String> {
+        self.buffer.completion_labels()
+    }
 }
 
 /// Seleção atual do editor `id`, em caracteres: (âncora, cursor).
@@ -144,6 +175,7 @@ pub struct SqlEditor<'a> {
     id: Id,
     colors: Colors,
     font: FontId,
+    catalog: Option<&'a pgstudio_core::catalog::Catalog>,
 }
 
 /// O que aconteceu no editor neste frame.
@@ -162,7 +194,15 @@ impl<'a> SqlEditor<'a> {
             id,
             colors: Colors::LIGHT,
             font: FontId::monospace(13.0),
+            catalog: None,
         }
+    }
+
+    /// Catálogo do banco da janela, para o IntelliSense. Sem ele, só há
+    /// palavras-chave.
+    pub fn catalog(mut self, catalog: Option<&'a pgstudio_core::catalog::Catalog>) -> Self {
+        self.catalog = catalog;
+        self
     }
 
     /// Usa estas cores (o tema escuro passa [`Colors::DARK`]).
@@ -179,16 +219,29 @@ impl<'a> SqlEditor<'a> {
             id,
             colors,
             font,
+            catalog,
         } = self;
         // Foco e seleção pedidos em frames anteriores. Os pedidos deste frame
         // (das barras abaixo) ficam para o próximo: o clique ou o Enter que
         // os causou não pode chegar ao editor.
         let focus = std::mem::take(&mut state.focus);
         let select = state.select.take();
+        let list_members = std::mem::take(&mut state.list_members);
         find_bar(ui, id, text, state);
         goto_bar(ui, id, text, state);
 
-        let out = widget::show(ui, id, text, &mut state.buffer, colors, font, select, focus);
+        let out = widget::show(
+            ui,
+            id,
+            text,
+            &mut state.buffer,
+            colors,
+            font,
+            select,
+            focus,
+            catalog,
+            list_members,
+        );
         EditorResponse {
             response: out.response,
             cursor: Some(out.cursor),

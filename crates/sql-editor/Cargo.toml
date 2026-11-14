@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 eframe.workspace = true
+pgstudio-core.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
