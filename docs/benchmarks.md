@@ -293,6 +293,50 @@ sem GPU), 3 execuções de cada cenário (`cargo xtask bench --scenario plan`,
 - **Windows não foi medido**, pelo mesmo motivo do marco 3.7: os cenários
   `plan` e `activity` numa máquina Windows completam a tabela.
 
+### Marco 5.6 (plano grande)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
+sem GPU), 5 execuções de cada cenário, em duas rodadas alternando `plan` e
+`diagram` (o cenário de referência, sem mudança no código):
+
+| Cenário | Meta | Rodada 1: mediana | Rodada 1: pior | Rodada 2: mediana | Rodada 2: pior |
+| --- | --- | --- | --- | --- | --- |
+| Plano: 2.000 nós chegam e são desenhados (Ctrl+L) | — | 69.1 ms | 70.1 ms | 59.2 ms | 62.4 ms |
+| Plano: frame com zoom e rolagem (p95) | < 20 ms (60 FPS) | 20.3 ms ❌ | 20.7 ms ❌ | 19.8 ms ✅ | 24.7 ms ❌ |
+| Plano: CPU da interface por frame (p95) | — | 0.9 ms | 0.9 ms | 0.9 ms | 1.2 ms |
+| Plano: RAM com o plano de 2.000 nós | — | 140.9 MB | 141.3 MB | 140.8 MB | 140.9 MB |
+| Diagrama: frame com zoom e pan (p95), para comparar | < 20 ms (60 FPS) | 25.0 ms ❌ | 26.0 ms ❌ | 23.0 ms ❌ | 25.7 ms ❌ |
+
+Antes da mudança, no mesmo container e no mesmo dia (3 execuções): plano
+com p95 de 26,9 ms (pior 27,1 ms) e CPU da interface de 5,9 ms; diagrama com
+27,0 ms (pior 28,6 ms).
+
+- **O container estava ainda mais lento que no marco 4.9:** o diagrama de
+  referência deu de 23 a 27 ms de p95 (18,2 ms no marco 3.7 e 21,4 ms no
+  4.9). Contra ele, o plano passou de "um pouco pior que o diagrama" (22,1
+  contra 21,4 ms no marco 4.9; 26,9 contra 27,0 ms antes desta mudança) para
+  3 a 5 ms melhor. Mas o pior caso ainda fica acima de 20 ms aqui, então a
+  meta conta como **não atingida** neste ambiente.
+- **O que sobra é o renderizador por software:** com o plano montado e o
+  passeio igual, mas sem desenhar nenhum nó nem seta, o mesmo cenário deu
+  19,4 ms de p95 (pior 19,6 ms, 5 execuções) contra 20,0 ms (pior 21,2 ms)
+  desenhando. O plano custa cerca de 0,6 ms do frame; o resto é o llvmpipe
+  pintando a janela de 1280×800. Fica como "precisa de medição com GPU",
+  como o diagrama de 2.000 tabelas.
+- **A maior parte da CPU não estava no desenho:** a aba do plano copiava o
+  plano inteiro (2.000 nós com todas as propriedades) a cada frame só para
+  calcular o custo relativo ao lote. Sem a cópia, a CPU da interface caiu de
+  5,9 ms para 1,1 ms e o p95 de 26,9 ms para 22,6 ms.
+- **Textos e formas guardados:** os textos de cada nó (título, tabela,
+  custo, linhas, o rótulo para leitores de tela), a fração de custo e a
+  espessura das setas são montados uma vez por plano (antes, cada nó na
+  tela somava o custo do plano inteiro duas vezes por frame). Os galleys dos
+  nós na tela ficam guardados enquanto o tamanho da fonte não muda, sem cor
+  (a cor entra na hora de desenhar). Os nós e os filhos de cada `Append` são
+  achados por busca binária na altura visível, em vez de percorrer os 2.000.
+  Com isso a CPU foi de 1,1 ms para 0,9 ms e o p95 para 20 ms.
+- **Windows não foi medido**, pelo mesmo motivo dos marcos anteriores.
+
 ### Marco 5.8 (Fase 5)
 
 Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
