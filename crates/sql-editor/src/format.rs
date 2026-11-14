@@ -150,11 +150,7 @@ pub fn format_selection(
 /// A posição em `new` que corresponde ao caractere `pos` de `old`, contando
 /// só os caracteres que não são espaço (a formatação só mexe nos espaços).
 pub fn map_position(old: &str, new: &str, pos: usize) -> usize {
-    let solid = old
-        .chars()
-        .take(pos)
-        .filter(|c| !c.is_whitespace())
-        .count();
+    let solid = old.chars().take(pos).filter(|c| !c.is_whitespace()).count();
     // Cursor colado no token seguinte fica antes dele; senão, logo depois
     // do anterior.
     let before_next = old.chars().nth(pos).is_some_and(|c| !c.is_whitespace());
@@ -408,7 +404,9 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     fn top(&self) -> &Frame {
-        self.frames.last().expect("there is always a statement frame")
+        self.frames
+            .last()
+            .expect("there is always a statement frame")
     }
 
     fn top_mut(&mut self) -> &mut Frame {
@@ -639,10 +637,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             "where" => Some(Clause::Where),
             "having" => Some(Clause::Having),
             "values" if prev != Some("default") => Some(Clause::Values),
-            "set" if prev == Some("update")
-                || (self.first_keyword.as_deref() == Some("update")
-                    && self.frames.len() == 1
-                    && top.clause == Clause::None) =>
+            "set"
+                if prev == Some("update")
+                    || (self.first_keyword.as_deref() == Some("update")
+                        && self.frames.len() == 1
+                        && top.clause == Clause::None) =>
             {
                 Some(Clause::Set)
             }
@@ -693,7 +692,8 @@ impl<'a, 'o> Printer<'a, 'o> {
     fn spacing(&self, i: usize) -> Sep {
         let it = &self.items[i];
         let p = self.prev.map(|p| &self.items[p]);
-        let punct = |t: &Item<'_>, s: &[&str]| t.kind == TokenKind::Punctuation && s.contains(&t.text);
+        let punct =
+            |t: &Item<'_>, s: &[&str]| t.kind == TokenKind::Punctuation && s.contains(&t.text);
         let op = |t: &Item<'_>, s: &str| t.kind == TokenKind::Operator && t.text == s;
         let keep = if it.glued { Sep::None } else { Sep::Space };
         let Some(p) = p else {
@@ -778,8 +778,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     } else {
                         self.cont_indent()
                     };
-                    let frame =
-                        Frame::new(FrameKind::Case, open + self.opts.indent, open, broken);
+                    let frame = Frame::new(FrameKind::Case, open + self.opts.indent, open, broken);
                     self.frames.push(frame);
                 }
                 "end" if self.top().kind == FrameKind::Case => {
@@ -958,12 +957,18 @@ mod tests {
             keyword_case: KeywordCase::Lower,
             ..Default::default()
         };
-        assert_eq!(format("SELECT 1 FROM t", &lower).unwrap(), "select 1\nfrom t");
+        assert_eq!(
+            format("SELECT 1 FROM t", &lower).unwrap(),
+            "select 1\nfrom t"
+        );
         let keep = FormatOptions {
             keyword_case: KeywordCase::Preserve,
             ..Default::default()
         };
-        assert_eq!(format("Select 1 From t", &keep).unwrap(), "Select 1\nFrom t");
+        assert_eq!(
+            format("Select 1 From t", &keep).unwrap(),
+            "Select 1\nFrom t"
+        );
     }
 
     #[test]

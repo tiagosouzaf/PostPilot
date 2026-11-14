@@ -1,9 +1,9 @@
 //! O editor de SQL dentro da casca: atalhos de comentar, busca, Go To Line
 //! e a posição do cursor na status bar.
 
+use eframe::egui::accesskit::Role;
 use eframe::egui::{Event, Key, Modifiers};
 use egui_kittest::Harness;
-use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::{Queryable, by};
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::panels::editor_id;
@@ -250,10 +250,7 @@ fn ctrl_shift_i_formats_only_the_selected_lines() {
     let id = query_with(&mut harness, "select 1 from a;\nselect 2 from b;");
     select(&mut harness, id, (17, 20));
     press(&mut harness, Modifiers::CTRL | Modifiers::SHIFT, Key::I);
-    assert_eq!(
-        text_of(&harness, id),
-        "select 1 from a;\nSELECT 2\nFROM b;"
-    );
+    assert_eq!(text_of(&harness, id), "select 1 from a;\nSELECT 2\nFROM b;");
     assert_eq!(
         pgstudio_sql_editor::selection(&harness.ctx, editor_id(id)),
         Some((17, 33))
@@ -268,7 +265,10 @@ fn sql_that_cannot_be_formatted_is_left_alone_with_a_warning() {
     press(&mut harness, Modifiers::CTRL, Key::D);
     assert_eq!(text_of(&harness, id), "select 'sem fim from t");
     assert!(
-        harness.state().status().starts_with("Couldn't format the SQL"),
+        harness
+            .state()
+            .status()
+            .starts_with("Couldn't format the SQL"),
         "{}",
         harness.state().status()
     );

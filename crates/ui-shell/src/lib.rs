@@ -2115,7 +2115,8 @@ impl ShellApp {
                             let at = pgstudio_sql_editor::edit::char_of(&doc.text, at);
                             doc.editor.mark_error(at, e.message.clone());
                         }
-                        self.status = format!("Couldn't format the SQL: {e} The text was not changed.");
+                        self.status =
+                            format!("Couldn't format the SQL: {e} The text was not changed.");
                     }
                 }
                 doc.editor.focus_editor();

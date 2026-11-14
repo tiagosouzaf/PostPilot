@@ -1,4 +1,4 @@
-//! Editor de SQL do PGStudio.
+//! Editor de SQL do PostPilot.
 //!
 //! O editor é um widget próprio (módulo `widget`) que monta e desenha só as
 //! linhas visíveis, então digitar num script de milhares de linhas não
@@ -9,7 +9,7 @@
 //! - desfazer e refazer ([`buffer::History`]);
 //! - números de linha;
 //! - comentar e descomentar linhas ([`comment_selection`]);
-//! - formatar o SQL ([`format_selection`], módulo [`format`]);
+//! - formatar o SQL ([`format_selection`], módulo [`format`](mod@format));
 //! - barra de busca (Ctrl+F) e "Go To Line" (Ctrl+G).
 //!
 //! O texto continua sendo uma `String` do documento.
