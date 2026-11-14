@@ -1019,3 +1019,20 @@ fn tasks_restore_opens_the_restore_window() {
     let d = harness.state().restore_dialog().unwrap();
     assert_eq!(d.options.target, Target::New(String::new()));
 }
+
+#[test]
+fn tasks_compare_schema_opens_with_the_database_as_source() {
+    let (mut harness, _) = harness_with_tables();
+    harness.get_by_label_contains(" app_01").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Tasks").hover();
+    harness.run();
+    harness.get_by_label("Compare Schema...").click();
+    harness.run_steps(4);
+    harness.get_by_label("Schema Compare");
+    let d = harness.state().schema_compare().unwrap();
+    assert_eq!(d.source, "app_01");
+    harness.get_by_label("Close").click();
+    harness.run_steps(3);
+    assert!(harness.state().schema_compare().is_none());
+}

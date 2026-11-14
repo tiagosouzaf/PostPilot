@@ -24,6 +24,7 @@ pub mod properties;
 pub mod query_designer;
 pub mod restore;
 pub mod results;
+pub mod schema_compare;
 pub mod security;
 pub mod theme;
 
@@ -79,6 +80,10 @@ pub struct ShellApp {
     /// "Back Up Database" aberta.
     backup: Option<backup::BackupDialog>,
     restore: Option<restore::RestoreDialog>,
+    compare: Option<schema_compare::SchemaCompare>,
+    /// Origem e destino que o Schema Compare já compara ao abrir
+    /// (screenshots).
+    compare_target: Option<(String, String)>,
     /// Query Designer aberto (Ctrl+Shift+Q).
     query_designer: Option<query_designer::QueryDesigner>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
@@ -217,6 +222,8 @@ impl Default for ShellApp {
             security: None,
             backup: None,
             restore: None,
+            compare: None,
+            compare_target: None,
             query_designer: None,
             design_query_on_open: false,
             restore_file: None,
@@ -984,6 +991,7 @@ impl ShellApp {
                 | ResultsToGrid
                 | DesignQuery
                 | ActivityMonitor
+                | SchemaCompare
                 | ObjectInfo
         )
     }
@@ -1029,6 +1037,7 @@ impl ShellApp {
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
+            CommandId::SchemaCompare => self.open_compare(ctx, None),
             CommandId::Output => self.workspace.open(Panel::Output),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
@@ -1507,6 +1516,11 @@ impl ShellApp {
                 self.open_restore(ctx, db);
                 return;
             }
+            Event::CompareSchema(node) => {
+                let db = provider.database_of(&node);
+                self.open_compare(ctx, db);
+                return;
+            }
             Event::Properties(node) => {
                 match provider.securable(&node) {
                     Some(target) => self.open_security(ctx, target),
@@ -1799,6 +1813,7 @@ impl ShellApp {
             || self.security.is_some()
             || self.backup.is_some()
             || self.restore.is_some()
+            || self.compare.is_some()
         {
             Vec::new()
         } else {
@@ -1889,6 +1904,7 @@ impl ShellApp {
         self.security_window(&ctx);
         self.backup_window(&ctx);
         self.restore_window(&ctx);
+        self.compare_window(&ctx);
         self.connect_window(&ctx);
 
         if self.about_open {
@@ -1987,6 +2003,13 @@ impl ShellApp {
     /// (screenshots).
     pub fn with_design_query_on_open(mut self) -> Self {
         self.design_query_on_open = true;
+        self
+    }
+
+    /// O "Schema Compare" já abre comparando `source` com `target`
+    /// (screenshots).
+    pub fn with_compare(mut self, source: String, target: String) -> Self {
+        self.compare_target = Some((source, target));
         self
     }
 
@@ -2151,6 +2174,63 @@ impl ShellApp {
             dialog.list(ctx);
         }
         self.restore = Some(dialog);
+    }
+
+    /// Abre "Schema Compare"; `source` é a origem sugerida.
+    fn open_compare(&mut self, ctx: &egui::Context, source: Option<String>) {
+        let Some(c) = &self.connection else {
+            self.status = "Connect to a PostgreSQL server to compare schemas.".to_string();
+            return;
+        };
+        let mut dialog = schema_compare::SchemaCompare::open(
+            source,
+            &c.settings.database,
+            c.metadata.clone(),
+            c.queries.clone(),
+            ctx,
+        );
+        if let Some((source, target)) = self.compare_target.take() {
+            dialog.source = source;
+            dialog.target = target;
+            dialog.compare(ctx);
+        }
+        self.compare = Some(dialog);
+    }
+
+    /// "Schema Compare", para testes.
+    pub fn schema_compare(&self) -> Option<&schema_compare::SchemaCompare> {
+        self.compare.as_ref()
+    }
+
+    /// "Schema Compare", mutável (testes).
+    pub fn schema_compare_mut(&mut self) -> Option<&mut schema_compare::SchemaCompare> {
+        self.compare.as_mut()
+    }
+
+    fn compare_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.compare else {
+            return;
+        };
+        match dialog.show(ctx) {
+            None => {}
+            Some(schema_compare::Request::Log(lines)) => self.output.extend(lines),
+            Some(schema_compare::Request::Script(sql, db)) => {
+                self.compare = None;
+                let id = self.documents.new_script(sql, Some(db));
+                self.activate_document(id);
+                self.output
+                    .push("Schema Compare: the script was opened in a new query window.".into());
+            }
+            Some(schema_compare::Request::Applied(db, lines)) => {
+                self.output.extend(lines);
+                self.status = format!("The changes were applied to {db}.");
+                self.explorer
+                    .refresh(&pgstudio_core::metadata::NodeId(format!(
+                        "server/Databases/{db}"
+                    )));
+            }
+            Some(schema_compare::Request::Closed) => self.compare = None,
+        }
     }
 
     /// "Restore Database", para testes.
