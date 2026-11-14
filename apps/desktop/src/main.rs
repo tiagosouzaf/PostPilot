@@ -19,7 +19,7 @@
 //!   quando o primeiro frame aparece e ignora o layout salvo. Com `grid` ou
 //!   `intellisense`, roda também esse cenário e escreve os números (veja
 //!   `pgstudio_ui_shell::bench`).
-//! - `PGSTUDIO_THEME=dark`: abre com o tema escuro.
+//! - `PGSTUDIO_THEME=light|dark`: abre com esse tema (sem ela, o escuro).
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
@@ -199,8 +199,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         ..Default::default()
     };
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
+        Ok("light") => Theme::Light,
         Ok("dark") => Theme::Dark,
-        _ => Theme::Light,
+        _ => Theme::default(),
     };
     let (keymap, keymap_status) = load_keymap();
     let files = launch.files.clone();

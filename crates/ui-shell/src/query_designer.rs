@@ -871,7 +871,7 @@ impl QueryDesigner {
         let mut result = None;
         let mut open_picker = false;
         let mut remove = None;
-        let modal = egui::Modal::new(egui::Id::new("query_designer")).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new("query_designer")).show(ctx, |ui| {
             let width = (ctx.content_rect().width() - 80.0).clamp(500.0, 1100.0);
             ui.set_width(width);
             ui.heading("Query Designer");

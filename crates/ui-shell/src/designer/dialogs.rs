@@ -422,7 +422,7 @@ impl TableDesigner {
         let Some(d) = &mut self.dialog else {
             return;
         };
-        let modal = egui::Modal::new(egui::Id::new(("designer_dialog", id))).show(ctx, |ui| {
+        let modal = crate::theme::modal(egui::Id::new(("designer_dialog", id))).show(ctx, |ui| {
             ui.set_width(640.0);
             ui.heading(kind.title());
             ui.separator();
