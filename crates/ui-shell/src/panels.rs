@@ -23,6 +23,8 @@ pub enum Panel {
     Diagram(u32),
     /// Activity Monitor (um só, do servidor conectado).
     ActivityMonitor,
+    /// Edit Top N Rows de uma tabela, pelo número da janela.
+    EditRows(u32),
 }
 
 impl Panel {
@@ -36,6 +38,7 @@ impl Panel {
             Panel::TableDesigner(_) => "Table Designer",
             Panel::Diagram(_) => "Database Diagram",
             Panel::ActivityMonitor => "Activity Monitor",
+            Panel::EditRows(_) => "Edit Rows",
         }
     }
 }
@@ -49,7 +52,8 @@ impl Pane for Panel {
             Panel::Query(_)
             | Panel::TableDesigner(_)
             | Panel::Diagram(_)
-            | Panel::ActivityMonitor => Area::Document,
+            | Panel::ActivityMonitor
+            | Panel::EditRows(_) => Area::Document,
         }
     }
 }
@@ -78,6 +82,8 @@ pub struct Viewer<'a> {
     pub diagrams: &'a mut crate::diagrams::Diagrams,
     /// Activity Monitor, se aberto.
     pub activity: &'a mut Option<crate::activity::ActivityMonitor>,
+    /// Janelas Edit Top N Rows.
+    pub edit_rows: &'a mut std::collections::BTreeMap<u32, crate::edit_rows::EditRows>,
     /// Documento cujo editor deve receber o foco neste frame.
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
@@ -119,6 +125,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .as_ref()
                 .map(|a| a.title())
                 .unwrap_or_else(|| pane.title().to_string()),
+            Panel::EditRows(id) => self
+                .edit_rows
+                .get(id)
+                .map(|e| e.title())
+                .unwrap_or_else(|| pane.title().to_string()),
             _ => pane.title().to_string(),
         }
     }
@@ -141,6 +152,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 *self.activity = None;
                 true
             }
+            Panel::EditRows(id) => self
+                .edit_rows
+                .get_mut(id)
+                .is_none_or(crate::edit_rows::EditRows::request_close),
             _ => true,
         }
     }
@@ -240,6 +255,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::Diagram(id) => {
                 if let Some(d) = self.diagrams.get_mut(*id) {
                     d.show(ui, *id);
+                }
+            }
+            Panel::EditRows(id) => {
+                if let Some(e) = self.edit_rows.get_mut(id) {
+                    e.show(ui, *id);
                 }
             }
             Panel::ActivityMonitor => match self.activity {
