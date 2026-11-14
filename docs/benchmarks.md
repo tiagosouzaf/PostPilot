@@ -115,7 +115,8 @@ em repouso ([execução do CI](https://github.com/tiagosouzaf/PostPilot/actions/
   54,6 MB). O cenário da grade passou do limite de 180 s do xtask, porque a
   rolagem era de 600 frames fixos e o WARP desenha devagar; agora a rolagem
   dura 10 s em qualquer máquina. Os números de grade e IntelliSense no
-  Windows entram quando o CI rodar de novo.
+  Windows ainda não foram medidos: os minutos do GitHub Actions acabaram, e
+  medir exige rodar `cargo xtask bench` numa máquina Windows.
 
 Medido localmente (Linux x86_64 num container, Xvfb + lavapipe, sem GPU),
 3 execuções de cada cenário, 10 s em repouso:
