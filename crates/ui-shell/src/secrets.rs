@@ -9,6 +9,7 @@
 //! As chamadas podem esperar o D-Bus, então a interface nunca chama o cofre
 //! na thread dela: veja [`lookup`] e [`save_in_background`].
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -102,9 +103,9 @@ impl KeyringStore {
 fn explain(e: keyring::Error) -> SecretError {
     SecretError(match e {
         keyring::Error::PlatformFailure(e) | keyring::Error::NoStorageAccess(e) => {
-            format!("The system keyring is not available: {e}")
+            trf!("The system keyring is not available: {error}", error = e)
         }
-        other => format!("The system keyring failed: {other}"),
+        other => trf!("The system keyring failed: {error}", error = other),
     })
 }
 
@@ -179,15 +180,15 @@ pub struct NoStore;
 
 impl SecretStore for NoStore {
     fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
-        Err(SecretError("No system keyring.".into()))
+        Err(SecretError(tr("No system keyring.").into()))
     }
 
     fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
-        Err(SecretError("No system keyring.".into()))
+        Err(SecretError(tr("No system keyring.").into()))
     }
 
     fn delete(&self, _: &str) -> Result<(), SecretError> {
-        Err(SecretError("No system keyring.".into()))
+        Err(SecretError(tr("No system keyring.").into()))
     }
 }
 
