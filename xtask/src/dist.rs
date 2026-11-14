@@ -450,6 +450,33 @@ fn icons(root: &Path) -> Vec<(u32, PathBuf)> {
         .collect()
 }
 
+/// Pasta do plugin do Claude Code nos pacotes Linux, sob `usr/`.
+pub const LINUX_PLUGIN_DIR: &str = "share/postpilot";
+
+/// O plugin do Claude Code (`claude-plugin/`) e o marketplace que aponta
+/// para ele, em `dest`. Com isso, `claude plugin marketplace add <dest>`
+/// e `claude plugin install postpilot@postpilot` instalam o plugin.
+fn install_claude_plugin(root: &Path, dest: &Path) -> Result<(), String> {
+    fn walk(from: &Path, to: &Path) -> Result<(), String> {
+        for entry in io(std::fs::read_dir(from), from)? {
+            let entry = io(entry, from)?;
+            let path = entry.path();
+            let target = to.join(entry.file_name());
+            if path.is_dir() {
+                walk(&path, &target)?;
+            } else {
+                copy(&path, &target)?;
+            }
+        }
+        Ok(())
+    }
+    walk(&root.join("claude-plugin"), &dest.join("claude-plugin"))?;
+    copy(
+        &root.join(".claude-plugin/marketplace.json"),
+        &dest.join(".claude-plugin/marketplace.json"),
+    )
+}
+
 /// Arquivos comuns ao .deb e ao AppImage, sob `usr/`.
 fn install_usr(root: &Path, usr: &Path, exe: &Path) -> Result<(), String> {
     let bin = usr.join("bin").join("postpilot");
@@ -465,7 +492,7 @@ fn install_usr(root: &Path, usr: &Path, exe: &Path) -> Result<(), String> {
             &usr.join(format!("share/icons/hicolor/{n}x{n}/apps/postpilot.png")),
         )?;
     }
-    Ok(())
+    install_claude_plugin(root, &usr.join(LINUX_PLUGIN_DIR))
 }
 
 #[cfg(unix)]
@@ -855,6 +882,7 @@ fn symlink(_: &str, link: &Path) -> Result<(), String> {
 /// o msi instalam.
 fn stage_windows(root: &Path, dir: &Path, exe: &Path) -> Result<(), String> {
     copy(exe, &dir.join("postpilot.exe"))?;
+    install_claude_plugin(root, dir)?;
     for file in ["LICENSE-MIT", "LICENSE-APACHE"] {
         let text = io(std::fs::read_to_string(root.join(file)), &root.join(file))?;
         write(&dir.join(format!("{file}.txt")), crlf(&text))?;
@@ -1052,6 +1080,34 @@ mod tests {
 
     /// O `PKGBUILD` e o pacote do xtask têm de concordar na versão e nas
     /// dependências.
+    #[test]
+    fn claude_plugin_is_staged_with_its_marketplace() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let dest = std::env::temp_dir().join(format!("postpilot-plugin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+        install_claude_plugin(root, &dest).unwrap();
+        for file in [
+            ".claude-plugin/marketplace.json",
+            "claude-plugin/.claude-plugin/plugin.json",
+            "claude-plugin/.mcp.json",
+            "claude-plugin/skills/postpilot/SKILL.md",
+            "claude-plugin/commands/optimize.md",
+        ] {
+            assert!(dest.join(file).is_file(), "{file}");
+        }
+        let market = std::fs::read_to_string(dest.join(".claude-plugin/marketplace.json")).unwrap();
+        assert!(
+            market.contains("\"source\": \"./claude-plugin\""),
+            "{market}"
+        );
+        let pkgbuild = std::fs::read_to_string(root.join("packaging/arch/PKGBUILD")).unwrap();
+        assert!(
+            pkgbuild.contains(&format!("/usr/{LINUX_PLUGIN_DIR}/")),
+            "PKGBUILD sem o plugin"
+        );
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
     #[test]
     fn pkgbuild_matches_the_xtask_package() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();

@@ -58,5 +58,10 @@ package() {
     install -Dm644 "packaging/icons/postpilot-$n.png" \
       "$pkgdir/usr/share/icons/hicolor/${n}x${n}/apps/postpilot.png"
   done
+  # Plugin do Claude Code e o marketplace dele (docs/claude.md).
+  install -dm755 "$pkgdir/usr/share/postpilot/"
+  cp -r --no-preserve=ownership claude-plugin "$pkgdir/usr/share/postpilot/"
+  install -Dm644 .claude-plugin/marketplace.json \
+    "$pkgdir/usr/share/postpilot/.claude-plugin/marketplace.json"
   install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
 }

@@ -86,6 +86,11 @@ falhar:
    `class: pgstudio`.
 7. `cargo xtask pgmatrix --versions 17` (opcional): roda a suíte no
    PostgreSQL do Arch.
+8. Claude (com o Claude Code instalado e logado; passos em
+   [`claude.md`](claude.md#no-omarchy-arch--hyprland)): Exibir > Claude
+   responde a uma pergunta; o diálogo de confirmação de um `DELETE` aparece
+   na janela do PostPilot; e, aberto pelo lançador do Hyprland (sem o
+   terminal), o painel acha o `claude` em `~/.local/bin`.
 
 ## 2. Windows
 

@@ -11,11 +11,12 @@ recentes, servidores registrados, layout e keymap) e as senhas lembradas no
 cofre do sistema. Os pacotes novos substituem os antigos (`pgstudio`) no apt e
 no pacman.
 
-> As Fases 0 a 6 do roteiro estão prontas: janela no estilo do SSMS com
+> As Fases 0 a 7 do roteiro estão prontas: janela no estilo do SSMS com
 > painéis encaixáveis, Object Explorer, editor com IntelliSense, grade que
 > edita e exporta, Table Designer, diagramas, Query Designer, planos de
-> execução, Activity Monitor, segurança, backup e restore, Schema Compare e
-> servidores registrados. O que ainda não foi testado está em
+> execução, Activity Monitor, segurança, backup e restore, Schema Compare,
+> servidores registrados e o Claude (painel no app, ações rápidas e o
+> Claude Code pelo MCP). O que ainda não foi testado está em
 > [Limitações conhecidas](#limitações-conhecidas).
 
 ## Estrutura
@@ -33,6 +34,8 @@ crates/result-grid/ buffer paginado, grade de resultados e resultados em texto
 crates/schema-model/ modelo do schema, diff para DDL, comparação e snapshot
 crates/diagram-engine/ desenho de tabelas e relacionamentos (diagramas e Query Designer)
 crates/execution-plan/ leitura e desenho do EXPLAIN (FORMAT JSON)
+crates/automation/ ferramentas do Claude, servidor MCP (`postpilot mcp`) e ponte com o Claude Code
+claude-plugin/    plugin do Claude Code (MCP, skill e comandos); o marketplace fica em `.claude-plugin/`
 xtask/            tarefas de desenvolvimento (`cargo xtask bench`, `dist`, `pgmatrix`)
 packaging/        ícone, atalho .desktop e textos dos pacotes de instalação
 ```
@@ -303,6 +306,28 @@ no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret
 Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 
+### Claude
+
+O PostPilot trabalha com o [Claude Code](https://claude.com/claude-code)
+instalado na máquina, com o login dele (sem chave de API):
+
+- **View > Claude** abre um painel de conversa. O Claude vê os servidores,
+  o catálogo, as janelas de consulta e os resultados; escreve consultas no
+  editor (Ctrl+Z desfaz) e roda leituras numa transação `READ ONLY`.
+  Qualquer coisa que altere dados ou esquema abre uma confirmação com o SQL.
+- **Ações rápidas:** Explicar, Otimizar e Corrigir o Erro com o Claude no
+  menu de contexto do editor (e em Query > Claude); Perguntar ao Claude nas
+  tabelas e views do Object Explorer.
+- **Claude Code no terminal:** com Tools > Allow Claude Code (MCP) ligado,
+  o `claude` mexe no PostPilot aberto pelo plugin (`claude plugin
+  marketplace add /usr/share/postpilot`, depois `claude plugin install
+  postpilot@postpilot`) ou só pelo MCP (`claude mcp add postpilot --
+  postpilot mcp`).
+
+O passo a passo, inclusive no Omarchy, está em
+[`docs/claude.md`](docs/claude.md); as decisões, no
+[ADR 0003](docs/adr/0003-claude.md).
+
 ### Layout
 
 Como no SSMS, um painel pode ser desafixado (auto-hide): "Auto Hide" no menu de
@@ -426,6 +451,9 @@ uma máquina de verdade tem os passos em
   Pause/Break. Cancel fica no botão ■ e no menu Query.
 - **PostgreSQL 13 a 17:** a suíte passa nas cinco versões (`cargo xtask
   pgmatrix`), mas o 13 e o 15 testados não eram as últimas correções.
+- **Claude no Windows:** o painel, o `postpilot mcp` e o plugin não foram
+  testados num Windows de verdade, e o `.msi` não instala o plugin (o `.zip`
+  traz). Veja [`docs/claude.md`](docs/claude.md#windows).
 - **macOS** não é alvo e nunca foi testado.
 
 ## Roteiro
@@ -442,6 +470,8 @@ uma máquina de verdade tem os passos em
    registrados, Query Designer de mão dupla e pacotes de instalação.
 7. **Fase 6:** acabamento: Query Designer, Schema Compare e servidores
    registrados completos, auto-hide, PostgreSQL 13 a 17, Wayland e `.msi`.
+8. **Fase 7:** Claude no PostPilot: ferramentas, servidor MCP, plugin do
+   Claude Code, painel do Claude no app e ações rápidas.
 
 Versão mínima do PostgreSQL suportada: 13.
 
