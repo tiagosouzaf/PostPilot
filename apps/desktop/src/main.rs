@@ -317,4 +317,17 @@ impl FileDialogs for NativeDialogs {
         let path = self.dialog().set_title("Open File").pick_file();
         self.remember(path)
     }
+
+    fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
+        let path = self
+            .dialog()
+            .set_title("Save Grid Results")
+            .set_file_name(name)
+            .add_filter("CSV (Comma delimited)", &["csv"])
+            .add_filter("Text (Tab delimited)", &["tsv", "txt"])
+            .add_filter("JSON", &["json"])
+            .add_filter("SQL INSERT statements", &["sql"])
+            .save_file();
+        self.remember(path)
+    }
 }

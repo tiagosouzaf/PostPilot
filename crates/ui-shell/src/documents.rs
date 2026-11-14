@@ -205,6 +205,11 @@ pub trait FileDialogs {
     fn save_path(&mut self, name: &str, current: Option<&Path>) -> Option<PathBuf>;
     /// Pede um arquivo para abrir.
     fn open_path(&mut self) -> Option<PathBuf>;
+    /// Pede onde salvar resultados (Save Results As, Results to File); a
+    /// extensão escolhe o formato (CSV, TSV, JSON ou INSERT em `.sql`).
+    fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
+        self.save_path(name, None)
+    }
 }
 
 /// Sem diálogos: toda pergunta é cancelada.

@@ -118,6 +118,20 @@ coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
 resultados; no modo texto, as larguras das colunas saem das primeiras mil
 linhas, até 256 caracteres, como no SSMS.
 
+Para exportar, o menu de contexto da grade tem "Save Results As..." e "Copy
+as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
+perguntarem um arquivo e escreverem as linhas nele direto do servidor, sem
+guardá-las. A extensão escolhe o formato:
+
+- `.csv`: como o `COPY ... (FORMAT csv, HEADER)` lê. NULL fica como campo
+  vazio e o texto vazio como `""`.
+- `.tsv` ou `.txt`: o formato texto do `COPY` (tab, `\N` para NULL).
+- `.json`: uma lista de objetos.
+- `.sql`: um `INSERT INTO table_name` por linha.
+
+O CSV e o TSV voltam iguais com `COPY`; há um teste que faz isso com 1
+milhão de linhas.
+
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
 ao abrir. Se o arquivo estiver estragado, o PGStudio abre com o layout padrão e
