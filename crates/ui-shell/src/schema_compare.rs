@@ -1,285 +1,225 @@
 //! "Schema Compare" (Tools > Schema Compare..., ou Tasks > Compare Schema...
-//! num banco): compara dois bancos, mostra o que difere, gera o script que
+//! num banco): compara dois schemas, mostra o que difere, gera o script que
 //! deixa o destino como a origem e aplica numa transação.
 //!
-//! Tabelas, colunas, chaves, índices e checks vêm do `schema-model`
-//! ([`Comparison`]); views e funções são comparadas pelo texto da definição
-//! (`pg_get_viewdef` e `pg_get_functiondef`).
+//! Cada lado é um banco do servidor conectado, um banco de outro servidor
+//! (conecta só para comparar e aplicar) ou um snapshot `.pgsschema` salvo
+//! antes ("Save Snapshot..." em qualquer lado que seja um banco).
+//!
+//! Tabelas, colunas, chaves, índices e checks vêm do `schema-model`; views,
+//! funções, procedures, triggers, sequências e tipos são lidos pelo
+//! [`catalog`] e comparados pela definição. O [`Outcome`] junta tudo.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Align, Layout};
+use pgstudio_core::connection::{ConnectionSettings, Connector, SslMode, parse_server_name};
 use pgstudio_core::metadata::MetadataProvider;
-use pgstudio_core::query::{QueryEvent, QueryService, QuerySession};
-use pgstudio_core::schema::compare::{Comparison, Name, Status};
-use pgstudio_core::schema::quote_ident;
+use pgstudio_core::query::{QueryEvent, QueryService};
+pub use pgstudio_core::schema::compare::{Item, Outcome, Status};
+pub use pgstudio_core::schema::objects::{Key, Kind};
+use pgstudio_core::schema::snapshot::{self, Schema, Snapshot};
 
-/// O tipo de objeto comparado.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Kind {
-    Table,
-    View,
-    Function,
+use crate::documents::FileDialogs;
+
+pub mod catalog;
+
+/// De onde vem um lado da comparação.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Place {
+    /// Um banco do servidor conectado.
+    #[default]
+    Database,
+    /// Um banco de outro servidor.
+    Server,
+    /// Um snapshot `.pgsschema`.
+    Snapshot,
 }
 
-impl Kind {
+impl Place {
+    pub const ALL: [Place; 3] = [Place::Database, Place::Server, Place::Snapshot];
+
     pub fn label(self) -> &'static str {
         match self {
-            Kind::Table => "Table",
-            Kind::View => "View",
-            Kind::Function => "Function",
+            Place::Database => "Database",
+            Place::Server => "Other server",
+            Place::Snapshot => "Snapshot file",
         }
     }
 }
 
-/// Um objeto: tipo, schema e nome (funções com os argumentos).
-pub type Key = (Kind, String, String);
-
-/// Uma view ou função de um banco.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Definition {
-    /// O texto comparado.
-    pub text: String,
-    pub create: String,
-    pub drop: String,
+/// Um lado da comparação, como está na janela.
+#[derive(Clone, Default)]
+pub struct Side {
+    pub place: Place,
+    /// O banco (no servidor conectado ou no outro).
+    pub database: String,
+    /// Outro servidor: "Server name" como no Connect to Server.
+    pub server: String,
+    pub user: String,
+    /// Só na memória, enquanto a janela está aberta.
+    pub password: String,
+    pub ssl: SslMode,
+    /// O arquivo `.pgsschema`.
+    pub file: String,
 }
 
-/// Views de usuário (sem as de extensões).
-pub const VIEWS_SQL: &str = "SELECT n.nspname, c.relname, pg_catalog.pg_get_viewdef(c.oid) \
-    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-    WHERE c.relkind = 'v' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
-        WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
-    ORDER BY 1, 2";
-
-/// Funções e procedures de usuário (sem as de extensões).
-pub const FUNCTIONS_SQL: &str = "SELECT n.nspname, p.proname, \
-    pg_catalog.pg_get_function_identity_arguments(p.oid), pg_catalog.pg_get_functiondef(p.oid), \
-    p.prokind::text \
-    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-    WHERE p.prokind IN ('f', 'p') AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
-        WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e') \
-    ORDER BY 1, 2, 3";
-
-/// As views de um banco, das linhas de [`VIEWS_SQL`].
-pub fn views(rows: &[Vec<Option<String>>]) -> BTreeMap<Key, Definition> {
-    rows.iter()
-        .filter_map(|r| {
-            let schema = r.first()?.clone()?;
-            let name = r.get(1)?.clone()?;
-            let def = r.get(2)?.clone()?;
-            let body = def.trim().trim_end_matches(';').trim_end().to_string();
-            let q = format!("{}.{}", quote_ident(&schema), quote_ident(&name));
-            Some((
-                (Kind::View, schema, name),
-                Definition {
-                    create: format!("CREATE VIEW {q} AS\n{body};"),
-                    drop: format!("DROP VIEW {q};"),
-                    text: body,
-                },
-            ))
-        })
-        .collect()
+/// Qual lado.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Which {
+    Source,
+    Target,
 }
 
-/// As funções de um banco, das linhas de [`FUNCTIONS_SQL`].
-pub fn functions(rows: &[Vec<Option<String>>]) -> BTreeMap<Key, Definition> {
-    rows.iter()
-        .filter_map(|r| {
-            let schema = r.first()?.clone()?;
-            let name = r.get(1)?.clone()?;
-            let args = r.get(2)?.clone().unwrap_or_default();
-            let def = r.get(3)?.clone()?;
-            let what = if r.get(4)?.as_deref() == Some("p") {
-                "PROCEDURE"
-            } else {
-                "FUNCTION"
-            };
-            let text = def.trim().to_string();
-            Some((
-                (Kind::Function, schema.clone(), format!("{name}({args})")),
-                Definition {
-                    create: format!("{text};"),
-                    drop: format!(
-                        "DROP {what} {}.{}({args});",
-                        quote_ident(&schema),
-                        quote_ident(&name)
-                    ),
-                    text,
-                },
-            ))
-        })
-        .collect()
+/// Um lado pronto para ler, conferido.
+#[derive(Clone)]
+enum Endpoint {
+    Here(String),
+    There(ConnectionSettings, String),
+    File(PathBuf),
 }
 
-/// Uma diferença da lista.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Item {
-    pub key: Key,
-    pub status: Status,
-    /// O DDL que só este objeto levaria.
-    pub statements: Vec<String>,
+impl Endpoint {
+    /// Como aparece na janela e no log.
+    fn label(&self) -> String {
+        match self {
+            Endpoint::Here(db) => db.clone(),
+            Endpoint::There(s, _) => format!("{}/{}", s.server_name(), s.database),
+            Endpoint::File(p) => p
+                .file_name()
+                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into()),
+        }
+    }
+
+    fn same_as(&self, other: &Endpoint) -> bool {
+        match (self, other) {
+            (Endpoint::Here(a), Endpoint::Here(b)) => a == b,
+            (Endpoint::There(a, _), Endpoint::There(b, _)) => {
+                (&a.host, a.port, &a.database) == (&b.host, b.port, &b.database)
+            }
+            (Endpoint::File(a), Endpoint::File(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
-/// O resultado de comparar.
-pub struct Outcome {
-    pub source: String,
-    pub target: String,
-    tables: Comparison,
-    routines: BTreeMap<Key, (Option<Definition>, Option<Definition>)>,
-    pub items: Vec<Item>,
-    /// Quantos objetos são iguais.
-    pub equal: usize,
-}
-
-impl Outcome {
-    pub fn new(
-        source: String,
-        target: String,
-        tables: Comparison,
-        source_defs: BTreeMap<Key, Definition>,
-        target_defs: BTreeMap<Key, Definition>,
-    ) -> Self {
-        let mut items: Vec<Item> = tables
-            .tables
-            .iter()
-            .map(|t| Item {
-                key: (Kind::Table, t.schema.clone(), t.name.clone()),
-                status: t.status,
-                statements: t.statements.clone(),
-            })
-            .collect();
-        let mut equal = tables.equal;
-        let keys: BTreeSet<Key> = source_defs
-            .keys()
-            .chain(target_defs.keys())
-            .cloned()
-            .collect();
-        let mut routines = BTreeMap::new();
-        for key in keys {
-            let s = source_defs.get(&key).cloned();
-            let t = target_defs.get(&key).cloned();
-            let (status, statements) = match (&s, &t) {
-                (Some(s), None) => (Status::OnlyInSource, vec![s.create.clone()]),
-                (None, Some(t)) => (Status::OnlyInTarget, vec![t.drop.clone()]),
-                (Some(s), Some(t)) if s.text != t.text => {
-                    (Status::Different, vec![t.drop.clone(), s.create.clone()])
+impl Side {
+    fn endpoint(&self, what: &str) -> Result<Endpoint, String> {
+        match self.place {
+            Place::Database if self.database.is_empty() => {
+                Err(format!("Choose the {what} database."))
+            }
+            Place::Database => Ok(Endpoint::Here(self.database.clone())),
+            Place::Server => {
+                let (host, port) =
+                    parse_server_name(&self.server).map_err(|e| format!("{what}: {e}"))?;
+                if self.database.trim().is_empty() {
+                    return Err(format!("Enter the {what} database."));
                 }
-                _ => {
-                    equal += 1;
-                    continue;
-                }
-            };
-            items.push(Item {
-                key: key.clone(),
-                status,
-                statements,
-            });
-            routines.insert(key, (s, t));
+                let settings = ConnectionSettings {
+                    host,
+                    port,
+                    database: self.database.trim().into(),
+                    user: self.user.trim().into(),
+                    ssl: self.ssl,
+                };
+                Ok(Endpoint::There(settings, self.password.clone()))
+            }
+            Place::Snapshot if self.file.trim().is_empty() => {
+                Err(format!("Choose the {what} snapshot file."))
+            }
+            Place::Snapshot => Ok(Endpoint::File(PathBuf::from(self.file.trim()))),
         }
-        items.sort_by(|a, b| a.key.cmp(&b.key));
-        Outcome {
-            source,
-            target,
-            tables,
-            routines,
-            items,
-            equal,
-        }
-    }
-
-    /// O script para os objetos `chosen`, na ordem que o PostgreSQL aceita:
-    /// apaga as views e funções que saem ou mudam, altera as tabelas, cria
-    /// as funções e por fim as views.
-    pub fn script(&self, chosen: &BTreeSet<Key>) -> Vec<String> {
-        let pick = |kind: Kind, create: bool| -> Vec<String> {
-            self.routines
-                .iter()
-                .filter(|(k, _)| k.0 == kind && chosen.contains(*k))
-                .filter_map(|(_, (s, t))| match (create, s, t) {
-                    (false, _, Some(t)) => Some(t.drop.clone()),
-                    (true, Some(s), _) => Some(s.create.clone()),
-                    _ => None,
-                })
-                .collect()
-        };
-        let tables: BTreeSet<Name> = chosen
-            .iter()
-            .filter(|k| k.0 == Kind::Table)
-            .map(|k| (k.1.clone(), k.2.clone()))
-            .collect();
-        let tables = if tables.is_empty() {
-            Vec::new()
-        } else {
-            self.tables.script(&tables)
-        };
-        [
-            pick(Kind::View, false),
-            pick(Kind::Function, false),
-            tables,
-            pick(Kind::Function, true),
-            pick(Kind::View, true),
-        ]
-        .concat()
     }
 }
 
-/// As linhas de uma consulta, esperando nesta thread.
-fn rows(session: &Arc<dyn QuerySession>, sql: &str) -> Result<Vec<Vec<Option<String>>>, String> {
-    let (tx, rx) = mpsc::channel();
-    session.execute(sql.into(), Box::new(move |e| drop(tx.send(e))));
-    let mut out = Vec::new();
-    let mut error = None;
-    loop {
-        match rx.recv_timeout(Duration::from_secs(120)) {
-            Ok(QueryEvent::Row(r)) => out.push(r),
-            Ok(QueryEvent::Error(e)) => error = Some(e.message),
-            Ok(QueryEvent::Finished { .. }) => break,
-            Ok(_) => {}
-            Err(_) => return Err("The server did not answer.".into()),
-        }
-    }
-    error.map_or(Ok(out), Err)
+/// O que as threads precisam para ler um lado.
+#[derive(Clone)]
+struct Env {
+    provider: Arc<dyn MetadataProvider>,
+    queries: Arc<dyn QueryService>,
+    connector: Option<Arc<dyn Connector>>,
+    /// O servidor conectado, para o cabeçalho do snapshot.
+    server: String,
 }
 
-/// Compara `source` com `target` (roda numa thread).
-fn compare(
-    provider: &Arc<dyn MetadataProvider>,
-    queries: &Arc<dyn QueryService>,
-    source: &str,
-    target: &str,
-) -> Result<Outcome, String> {
-    let model = |db: &str| {
-        provider
-            .load_model(db)
-            .map_err(|e| format!("{db}: {}", e.0))
-    };
-    let defs = |db: &str| -> Result<BTreeMap<Key, Definition>, String> {
-        let session = queries.open(db);
-        let mut d = views(&rows(&session, VIEWS_SQL).map_err(|e| format!("{db}: {e}"))?);
-        d.extend(functions(
-            &rows(&session, FUNCTIONS_SQL).map_err(|e| format!("{db}: {e}"))?,
-        ));
-        Ok(d)
-    };
-    let tables = Comparison::new(&model(source)?, &model(target)?);
-    Ok(Outcome::new(
-        source.into(),
-        target.into(),
-        tables,
-        defs(source)?,
-        defs(target)?,
-    ))
+impl Env {
+    fn connect(
+        &self,
+        settings: &ConnectionSettings,
+        password: &str,
+    ) -> Result<pgstudio_core::connection::Connected, String> {
+        let Some(connector) = &self.connector else {
+            return Err("This build cannot connect to other servers.".into());
+        };
+        connector
+            .connect(settings, password)
+            .map_err(|e| format!("{}: {e}", settings.server_name()))
+    }
+
+    /// O schema de um lado (roda numa thread).
+    fn load(&self, e: &Endpoint) -> Result<Schema, String> {
+        let label = e.label();
+        let r = match e {
+            Endpoint::Here(db) => catalog::load(&*self.provider, &*self.queries, db),
+            Endpoint::There(settings, password) => {
+                let c = self.connect(settings, password)?;
+                catalog::load(&*c.metadata, &*c.queries, &settings.database)
+            }
+            Endpoint::File(path) => std::fs::read_to_string(path)
+                .map_err(|e| e.to_string())
+                .and_then(|text| Snapshot::from_json(&text))
+                .map(|s| s.schema),
+        };
+        r.map_err(|e| format!("{label}: {e}"))
+    }
+
+    /// Salva o schema de um banco num `.pgsschema`.
+    fn save(&self, e: &Endpoint, path: &std::path::Path) -> Result<(), String> {
+        let schema = self.load(e)?;
+        let (server, db) = match e {
+            Endpoint::Here(db) => (self.server.clone(), db.clone()),
+            Endpoint::There(s, _) => (s.server_name(), s.database.clone()),
+            Endpoint::File(_) => return Err("Choose a database to save.".into()),
+        };
+        let taken = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let snap = Snapshot::new(&server, &db, taken, schema);
+        std::fs::write(path, snap.to_json()).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// Aplica o script num banco, numa transação.
+    fn apply(&self, e: &Endpoint, statements: &[String]) -> Result<(), String> {
+        match e {
+            Endpoint::Here(db) => self.provider.apply_ddl(db, statements).map_err(|e| e.0),
+            Endpoint::There(settings, password) => {
+                let c = self.connect(settings, password)?;
+                c.metadata
+                    .apply_ddl(&settings.database, statements)
+                    .map_err(|e| e.0)
+            }
+            Endpoint::File(_) => Err("A snapshot file cannot be changed.".into()),
+        }
+    }
+}
+
+/// O que foi comparado.
+struct Compared {
+    outcome: Outcome,
+    source: String,
+    target: Endpoint,
 }
 
 enum Phase {
     Idle,
-    Comparing(Receiver<Result<Outcome, String>>),
+    Comparing(Receiver<Result<Outcome, String>>, String, Endpoint),
     Applying(Receiver<Result<(), String>>, Vec<String>),
+    Saving(Receiver<Result<(), String>>, String),
 }
 
 /// O que a janela pediu à casca.
@@ -288,21 +228,20 @@ pub enum Request {
     /// Abrir o script numa janela de consulta no banco destino.
     Script(String, String),
     Log(Vec<String>),
-    /// Aplicou no banco destino.
+    /// Aplicou num banco do servidor conectado.
     Applied(String, Vec<String>),
     Closed,
 }
 
 /// A janela "Schema Compare".
 pub struct SchemaCompare {
-    provider: Arc<dyn MetadataProvider>,
-    queries: Arc<dyn QueryService>,
-    pub source: String,
-    pub target: String,
+    env: Env,
+    pub source: Side,
+    pub target: Side,
     databases: Option<Vec<String>>,
     databases_rx: Receiver<Vec<String>>,
     phase: Phase,
-    outcome: Option<Outcome>,
+    compared: Option<Compared>,
     /// O que entra no script (tudo, depois de comparar).
     pub chosen: BTreeSet<Key>,
     /// O objeto cujo DDL aparece ao lado.
@@ -342,14 +281,21 @@ impl SchemaCompare {
             }),
         );
         Self {
-            provider,
-            queries,
-            source: source.unwrap_or_default(),
-            target: String::new(),
+            env: Env {
+                provider,
+                queries,
+                connector: None,
+                server: String::new(),
+            },
+            source: Side {
+                database: source.unwrap_or_default(),
+                ..Default::default()
+            },
+            target: Side::default(),
             databases: None,
             databases_rx,
             phase: Phase::Idle,
-            outcome: None,
+            compared: None,
             chosen: BTreeSet::new(),
             selected: None,
             confirming: false,
@@ -358,29 +304,64 @@ impl SchemaCompare {
         }
     }
 
+    /// Permite comparar com outros servidores, conectando com `connector`;
+    /// `home` é a conexão atual, que preenche servidor e usuário.
+    pub fn with_connector(
+        mut self,
+        connector: Option<Arc<dyn Connector>>,
+        home: &ConnectionSettings,
+    ) -> Self {
+        self.env.connector = connector;
+        self.env.server = home.server_name();
+        for side in [&mut self.source, &mut self.target] {
+            side.server = home.server_name();
+            side.user = home.user.clone();
+            side.ssl = home.ssl;
+        }
+        self
+    }
+
     pub fn databases(&self) -> Option<&[String]> {
         self.databases.as_deref()
     }
 
     pub fn outcome(&self) -> Option<&Outcome> {
-        self.outcome.as_ref()
+        self.compared.as_ref().map(|c| &c.outcome)
     }
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
 
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
     pub fn is_busy(&self) -> bool {
         !matches!(self.phase, Phase::Idle)
     }
 
+    pub fn side_mut(&mut self, which: Which) -> &mut Side {
+        match which {
+            Which::Source => &mut self.source,
+            Which::Target => &mut self.target,
+        }
+    }
+
     /// Compara origem e destino.
     pub fn compare(&mut self, ctx: &egui::Context) {
-        if self.source.is_empty() || self.target.is_empty() {
-            self.error = Some("Choose the source and the target databases.".into());
-            return;
-        }
-        if self.source == self.target {
+        let ends = self
+            .source
+            .endpoint("source")
+            .and_then(|s| Ok((s, self.target.endpoint("target")?)));
+        let (s, t) = match ends {
+            Ok(e) => e,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        if s.same_as(&t) {
             self.error = Some("The source and the target are the same database.".into());
             return;
         }
@@ -388,30 +369,78 @@ impl SchemaCompare {
         self.status = None;
         self.confirming = false;
         let (tx, rx) = mpsc::channel();
-        let (p, q) = (self.provider.clone(), self.queries.clone());
-        let (s, t) = (self.source.clone(), self.target.clone());
+        let env = self.env.clone();
+        let (s2, t2) = (s.clone(), t.clone());
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(compare(&p, &q, &s, &t));
+            let r = env
+                .load(&s2)
+                .and_then(|a| Ok(Outcome::new(&a, &env.load(&t2)?)));
+            let _ = tx.send(r);
             ctx.request_repaint();
         });
-        self.phase = Phase::Comparing(rx);
+        self.phase = Phase::Comparing(rx, s.label(), t);
+    }
+
+    /// Salva o schema de um lado num `.pgsschema`.
+    pub fn save_snapshot(&mut self, which: Which, path: PathBuf, ctx: &egui::Context) {
+        let side = match which {
+            Which::Source => &self.source,
+            Which::Target => &self.target,
+        };
+        let e = match side.endpoint(if which == Which::Source {
+            "source"
+        } else {
+            "target"
+        }) {
+            Ok(Endpoint::File(_)) => {
+                self.error = Some("Choose a database to save as a snapshot.".into());
+                return;
+            }
+            Ok(e) => e,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        self.error = None;
+        self.status = None;
+        let (tx, rx) = mpsc::channel();
+        let env = self.env.clone();
+        let line = format!("{} to {}", e.label(), path.display());
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(env.save(&e, &path));
+            ctx.request_repaint();
+        });
+        self.phase = Phase::Saving(rx, line);
     }
 
     /// O script dos objetos marcados.
     pub fn script(&self) -> Vec<String> {
-        self.outcome
+        self.compared
             .as_ref()
-            .map(|o| o.script(&self.chosen))
+            .map(|c| c.outcome.script(&self.chosen))
             .unwrap_or_default()
+    }
+
+    /// O destino pode receber o script (é um banco)?
+    pub fn can_apply(&self) -> bool {
+        self.compared
+            .as_ref()
+            .is_some_and(|c| !matches!(c.target, Endpoint::File(_)))
     }
 
     /// Aplica o script no destino, numa transação.
     pub fn apply(&mut self, ctx: &egui::Context) {
-        let Some(o) = &self.outcome else {
+        let Some(c) = &self.compared else {
             return;
         };
-        let script = o.script(&self.chosen);
+        if !self.can_apply() {
+            self.error = Some("The target is a snapshot file; generate a script instead.".into());
+            return;
+        }
+        let script = c.outcome.script(&self.chosen);
         if script.is_empty() {
             self.error = Some("Select at least one difference.".into());
             return;
@@ -419,24 +448,37 @@ impl SchemaCompare {
         self.error = None;
         self.confirming = false;
         let (tx, rx) = mpsc::channel();
-        let p = self.provider.clone();
-        let db = o.target.clone();
+        let env = self.env.clone();
+        let target = c.target.clone();
         let stmts = script.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(p.apply_ddl(&db, &stmts).map_err(|e| e.0));
+            let _ = tx.send(env.apply(&target, &stmts));
             ctx.request_repaint();
         });
         self.phase = Phase::Applying(rx, script);
     }
 
+    /// O script com o cabeçalho, como vai para a janela ou o arquivo.
+    fn script_text(&self) -> String {
+        let Some(c) = &self.compared else {
+            return String::new();
+        };
+        format!(
+            "-- Schema Compare: changes that make {} like {}.\n\n{}\n",
+            c.target.label(),
+            c.source,
+            self.script().join("\n\n")
+        )
+    }
+
     /// Recebe o que as threads mandaram.
     pub fn step(&mut self, ctx: &egui::Context) -> Option<Request> {
         if let Ok(d) = self.databases_rx.try_recv() {
-            if self.target.is_empty() {
-                self.target = d
+            if self.target.database.is_empty() {
+                self.target.database = d
                     .iter()
-                    .find(|n| **n != self.source)
+                    .find(|n| **n != self.source.database)
                     .cloned()
                     .unwrap_or_default();
             }
@@ -444,27 +486,48 @@ impl SchemaCompare {
         }
         match &self.phase {
             Phase::Idle => None,
-            Phase::Comparing(rx) => {
+            Phase::Comparing(rx, source, target) => {
                 let r = rx.try_recv().ok()?;
+                let (source, target) = (source.clone(), target.clone());
                 self.phase = Phase::Idle;
                 match r {
                     Ok(o) => {
                         self.chosen = o.items.iter().map(|i| i.key.clone()).collect();
                         self.selected = o.items.first().map(|i| i.key.clone());
                         let line = format!(
-                            "Schema Compare: {} to {}: {} differences, {} equal.",
-                            o.source,
-                            o.target,
+                            "Schema Compare: {source} to {}: {} differences, {} equal.",
+                            target.label(),
                             o.items.len(),
                             o.equal
                         );
-                        self.outcome = Some(o);
+                        self.compared = Some(Compared {
+                            outcome: o,
+                            source,
+                            target,
+                        });
                         Some(Request::Log(vec![line]))
                     }
                     Err(e) => {
-                        self.outcome = None;
+                        self.compared = None;
                         self.error = Some(e.clone());
                         Some(Request::Log(vec![format!("Schema Compare: failed ({e}).")]))
+                    }
+                }
+            }
+            Phase::Saving(rx, line) => {
+                let r = rx.try_recv().ok()?;
+                let line = line.clone();
+                self.phase = Phase::Idle;
+                match r {
+                    Ok(()) => {
+                        self.status = Some(format!("Saved the snapshot of {line}."));
+                        Some(Request::Log(vec![format!(
+                            "Schema Compare: saved the snapshot of {line}."
+                        )]))
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("The snapshot was not saved: {e}"));
+                        None
                     }
                 }
             }
@@ -472,19 +535,24 @@ impl SchemaCompare {
                 let r = rx.try_recv().ok()?;
                 let script = script.clone();
                 self.phase = Phase::Idle;
-                let target = self.target.clone();
+                let target = self.compared.as_ref()?.target.clone();
+                let label = target.label();
                 match r {
                     Ok(()) => {
                         let mut log = vec![format!(
-                            "Schema Compare: applied {} statements to {target}.",
+                            "Schema Compare: applied {} statements to {label}.",
                             script.len()
                         )];
                         log.extend(script.iter().map(|s| format!("  {}", first_line(s))));
-                        self.status = Some(format!("The changes were applied to {target}."));
-                        // Compara de novo: o que entrou some da lista.
-                        self.compare(ctx);
-                        self.status = Some(format!("The changes were applied to {target}."));
-                        Some(Request::Applied(target, log))
+                        // Compara de novo os mesmos lados: o que entrou some
+                        // da lista.
+                        let source = self.compared.as_ref()?.source.clone();
+                        self.recompare(ctx, source, target.clone());
+                        self.status = Some(format!("The changes were applied to {label}."));
+                        Some(match target {
+                            Endpoint::Here(db) => Request::Applied(db, log),
+                            _ => Request::Log(log),
+                        })
                     }
                     Err(e) => {
                         self.error = Some(format!("Nothing was changed: {e}"));
@@ -497,48 +565,64 @@ impl SchemaCompare {
         }
     }
 
-    /// Desenha a janela.
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
+    /// Compara de novo depois de aplicar, com os lados da última
+    /// comparação (mesmo que a janela tenha mudado).
+    fn recompare(&mut self, ctx: &egui::Context, source_label: String, target: Endpoint) {
+        let source = match self.source.endpoint("source") {
+            Ok(s) if s.label() == source_label => s,
+            _ => {
+                self.compare(ctx);
+                return;
+            }
+        };
+        let (tx, rx) = mpsc::channel();
+        let env = self.env.clone();
+        let t2 = target.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let r = env
+                .load(&source)
+                .and_then(|a| Ok(Outcome::new(&a, &env.load(&t2)?)));
+            let _ = tx.send(r);
+            ctx.request_repaint();
+        });
+        self.phase = Phase::Comparing(rx, source_label, target);
+    }
+
+    /// Desenha a janela. Os diálogos de arquivo abrem e salvam snapshots e
+    /// scripts.
+    pub fn show(&mut self, ctx: &egui::Context, dialogs: &mut dyn FileDialogs) -> Option<Request> {
         let mut request = self.step(ctx);
         let modal = egui::Modal::new(egui::Id::new("schema_compare")).show(ctx, |ui| {
-            ui.set_width(940.0);
+            ui.set_width(980.0);
             ui.heading("Schema Compare");
             ui.separator();
             let idle = !self.is_busy();
             ui.add_enabled_ui(idle, |ui| {
-                ui.horizontal(|ui| {
-                    let dbs: Vec<String> = self.databases.clone().unwrap_or_default();
-                    ui.label("Source:");
-                    egui::ComboBox::from_id_salt("compare_source")
-                        .width(200.0)
-                        .selected_text(self.source.as_str())
-                        .show_ui(ui, |ui| {
-                            for d in &dbs {
-                                ui.selectable_value(&mut self.source, d.clone(), d.as_str());
-                            }
-                        });
-                    ui.label(egui_phosphor::regular::ARROW_RIGHT);
-                    ui.label("Target:");
-                    egui::ComboBox::from_id_salt("compare_target")
-                        .width(200.0)
-                        .selected_text(self.target.as_str())
-                        .show_ui(ui, |ui| {
-                            for d in &dbs {
-                                ui.selectable_value(&mut self.target, d.clone(), d.as_str());
-                            }
-                        });
-                    if ui
-                        .button(format!("{} Compare", egui_phosphor::regular::GIT_DIFF))
-                        .clicked()
-                    {
-                        self.compare(ctx);
-                    }
-                });
+                egui::Grid::new("compare_sides")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        for which in [Which::Source, Which::Target] {
+                            ui.label(match which {
+                                Which::Source => "Source:",
+                                Which::Target => "Target:",
+                            });
+                            ui.horizontal(|ui| self.side_ui(ui, ctx, which, dialogs));
+                            ui.end_row();
+                        }
+                    });
+                if ui
+                    .button(format!("{} Compare", egui_phosphor::regular::GIT_DIFF))
+                    .clicked()
+                {
+                    self.compare(ctx);
+                }
             });
             ui.separator();
-            let body = egui::vec2(ui.available_width(), 380.0);
+            let body = egui::vec2(ui.available_width(), 360.0);
             ui.allocate_ui_with_layout(body, Layout::top_down(Align::Min), |ui| {
-                ui.set_height(380.0);
+                ui.set_height(360.0);
                 self.body(ui);
             });
             ui.separator();
@@ -549,6 +633,11 @@ impl SchemaCompare {
             }
             let bar = egui::vec2(ui.available_width(), 26.0);
             ui.allocate_ui_with_layout(bar, Layout::right_to_left(Align::Center), |ui| {
+                let target = self
+                    .compared
+                    .as_ref()
+                    .map(|c| c.target.label())
+                    .unwrap_or_default();
                 if self.confirming {
                     if ui.button("No").clicked() {
                         self.confirming = false;
@@ -557,17 +646,19 @@ impl SchemaCompare {
                         self.apply(ctx);
                     }
                     ui.label(format!(
-                        "Apply {} statements to {} in one transaction?",
+                        "Apply {} statements to {target} in one transaction?",
                         self.script().len(),
-                        self.target
                     ));
                     return;
                 }
                 if ui.add_enabled(idle, egui::Button::new("Close")).clicked() {
                     request = Some(Request::Closed);
                 }
-                let ready = idle && self.outcome.is_some() && !self.chosen.is_empty();
-                if ui.add_enabled(ready, egui::Button::new("Apply")).clicked() {
+                let ready = idle && self.compared.is_some() && !self.chosen.is_empty();
+                if ui
+                    .add_enabled(ready && self.can_apply(), egui::Button::new("Apply"))
+                    .clicked()
+                {
                     self.confirming = true;
                 }
                 if ui
@@ -580,12 +671,7 @@ impl SchemaCompare {
                     )
                     .clicked()
                 {
-                    let sql = self.script().join("\n\n");
-                    let header = format!(
-                        "-- Schema Compare: changes that make {} like {}.\n\n",
-                        self.target, self.source
-                    );
-                    request = Some(Request::Script(header + &sql + "\n", self.target.clone()));
+                    request = self.generate_script(dialogs);
                 }
             });
         });
@@ -595,8 +681,109 @@ impl SchemaCompare {
         request
     }
 
+    /// "Generate Script": num banco do servidor conectado, abre numa janela
+    /// de consulta nele; em outro servidor ou num snapshot, salva num
+    /// arquivo `.sql` (uma janela de consulta rodaria no servidor errado).
+    fn generate_script(&mut self, dialogs: &mut dyn FileDialogs) -> Option<Request> {
+        let text = self.script_text();
+        match &self.compared.as_ref()?.target {
+            Endpoint::Here(db) => Some(Request::Script(text, db.clone())),
+            _ => {
+                let path = dialogs.save_path("SchemaCompare.sql", None)?;
+                match std::fs::write(&path, text) {
+                    Ok(()) => {
+                        self.status = Some(format!("The script was saved to {}.", path.display()));
+                        Some(Request::Log(vec![format!(
+                            "Schema Compare: the script was saved to {}.",
+                            path.display()
+                        )]))
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("{}: {e}", path.display()));
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    /// Os campos de um lado.
+    fn side_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        which: Which,
+        dialogs: &mut dyn FileDialogs,
+    ) {
+        let dbs: Vec<String> = self.databases.clone().unwrap_or_default();
+        let id = match which {
+            Which::Source => "source",
+            Which::Target => "target",
+        };
+        let side = self.side_mut(which);
+        egui::ComboBox::from_id_salt(format!("compare_{id}_place"))
+            .width(120.0)
+            .selected_text(side.place.label())
+            .show_ui(ui, |ui| {
+                for p in Place::ALL {
+                    ui.selectable_value(&mut side.place, p, p.label());
+                }
+            });
+        let mut save = false;
+        match side.place {
+            Place::Database => {
+                egui::ComboBox::from_id_salt(format!("compare_{id}"))
+                    .width(220.0)
+                    .selected_text(side.database.as_str())
+                    .show_ui(ui, |ui| {
+                        for d in &dbs {
+                            ui.selectable_value(&mut side.database, d.clone(), d.as_str());
+                        }
+                    });
+                save = ui.button("Save Snapshot...").clicked();
+            }
+            Place::Server => {
+                let field = |ui: &mut egui::Ui, text: &mut String, hint: &str, w: f32| {
+                    ui.add(
+                        egui::TextEdit::singleline(text)
+                            .hint_text(hint)
+                            .desired_width(w),
+                    );
+                };
+                field(ui, &mut side.server, "Server name", 150.0);
+                field(ui, &mut side.user, "Login", 100.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut side.password)
+                        .password(true)
+                        .hint_text("Password")
+                        .desired_width(100.0),
+                );
+                field(ui, &mut side.database, "Database", 120.0);
+                save = ui.button("Save Snapshot...").clicked();
+            }
+            Place::Snapshot => {
+                ui.add(
+                    egui::TextEdit::singleline(&mut side.file)
+                        .hint_text(format!("File (.{})", snapshot::EXTENSION))
+                        .desired_width(420.0),
+                );
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = dialogs.open_path() {
+                        side.file = path.display().to_string();
+                    }
+                }
+            }
+        }
+        if save {
+            let name = format!("{}.{}", side.database.trim(), snapshot::EXTENSION);
+            if let Some(path) = dialogs.save_path(&name, None) {
+                self.save_snapshot(which, path, ctx);
+            }
+        }
+    }
+
     fn body(&mut self, ui: &mut egui::Ui) {
-        if matches!(self.phase, Phase::Comparing(_)) {
+        if matches!(self.phase, Phase::Comparing(..)) {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label("Comparing...");
@@ -610,8 +797,15 @@ impl SchemaCompare {
             });
             return;
         }
-        let Some(o) = &self.outcome else {
-            ui.label("Choose the databases and press Compare.");
+        if matches!(self.phase, Phase::Saving(..)) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Saving the snapshot...");
+            });
+            return;
+        }
+        let Some(o) = self.compared.as_ref().map(|c| &c.outcome) else {
+            ui.label("Choose the source and the target and press Compare.");
             return;
         };
         if o.items.is_empty() {
@@ -709,90 +903,4 @@ impl SchemaCompare {
 
 fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or(s)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pgstudio_core::schema::Model;
-
-    fn row(v: &[&str]) -> Vec<Option<String>> {
-        v.iter().map(|s| Some(s.to_string())).collect()
-    }
-
-    #[test]
-    fn views_and_functions_are_compared_by_definition() {
-        let src_views = views(&[
-            row(&[
-                "public",
-                "grandes",
-                " SELECT id\n   FROM pedido\n  WHERE total > 100;",
-            ]),
-            row(&["public", "Nova", " SELECT 1;"]),
-        ]);
-        let dst_views = views(&[
-            row(&[
-                "public",
-                "grandes",
-                " SELECT id\n   FROM pedido\n  WHERE total > 50;",
-            ]),
-            row(&["public", "velha", " SELECT 2;"]),
-        ]);
-        let def = |body: &str| {
-            format!(
-                "CREATE OR REPLACE FUNCTION public.f(a integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$select {body}$function$\n"
-            )
-        };
-        let src_fns = functions(&[row(&["public", "f", "a integer", &def("a"), "f"])]);
-        let dst_fns = functions(&[
-            row(&["public", "f", "a integer", &def("a"), "f"]),
-            row(&[
-                "public",
-                "p",
-                "",
-                "CREATE OR REPLACE PROCEDURE public.p() ...",
-                "p",
-            ]),
-        ]);
-        let mut s = src_views;
-        s.extend(src_fns);
-        let mut t = dst_views;
-        t.extend(dst_fns);
-        let o = Outcome::new(
-            "a".into(),
-            "b".into(),
-            Comparison::new(&Model::default(), &Model::default()),
-            s,
-            t,
-        );
-        let summary: Vec<_> = o
-            .items
-            .iter()
-            .map(|i| (i.key.0, i.key.2.as_str(), i.status))
-            .collect();
-        assert_eq!(
-            summary,
-            [
-                (Kind::View, "Nova", Status::OnlyInSource),
-                (Kind::View, "grandes", Status::Different),
-                (Kind::View, "velha", Status::OnlyInTarget),
-                (Kind::Function, "p()", Status::OnlyInTarget),
-            ]
-        );
-        assert_eq!(o.equal, 1);
-        assert_eq!(
-            o.items[1].statements,
-            [
-                "DROP VIEW public.grandes;",
-                "CREATE VIEW public.grandes AS\nSELECT id\n   FROM pedido\n  WHERE total > 100;"
-            ]
-        );
-        assert_eq!(o.items[3].statements, ["DROP PROCEDURE public.p();"]);
-        let all: BTreeSet<Key> = o.items.iter().map(|i| i.key.clone()).collect();
-        let script = o.script(&all);
-        assert_eq!(script[0], "DROP VIEW public.grandes;");
-        assert_eq!(script[2], "DROP PROCEDURE public.p();");
-        assert_eq!(script[3], "CREATE VIEW public.\"Nova\" AS\nSELECT 1;");
-        assert_eq!(script.len(), 5);
-    }
 }

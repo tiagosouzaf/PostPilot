@@ -10,6 +10,9 @@
 //!   o PostgreSQL aceita.
 //! - [`compare`]: o Schema Compare, que alinha as tabelas de dois bancos
 //!   pelo nome e usa o [`diff`] para levar um ao outro.
+//! - [`objects`]: o resto do schema que o Schema Compare compara pelo texto
+//!   da definição (views, funções, procedures, triggers, sequências e tipos).
+//! - [`snapshot`]: o schema inteiro de um banco num arquivo `.pgsschema`.
 //!
 //! Tabelas e colunas têm um [`Id`] estável: o do catálogo (oid da tabela,
 //! número da coluna) ou um novo, de [`Model::new_id`]. É por ele que o diff
@@ -18,10 +21,14 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 pub mod compare;
 pub mod diff;
 pub mod edit;
 mod ident;
+pub mod objects;
+pub mod snapshot;
 
 pub use ident::quote_ident;
 
@@ -32,7 +39,7 @@ pub type Id = u64;
 pub const FIRST_NEW_ID: Id = 1 << 40;
 
 /// O schema de um banco (as tabelas dos schemas de usuário).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Model {
     /// As tabelas, compartilhadas: copiar o modelo (o undo faz isso a cada
     /// edição) só copia ponteiros, e mudar uma tabela copia só ela.
@@ -42,7 +49,7 @@ pub struct Model {
 }
 
 /// Uma tabela.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Table {
     pub id: Id,
     pub schema: String,
@@ -56,7 +63,7 @@ pub struct Table {
 }
 
 /// Uma coluna.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Column {
     pub id: Id,
     pub name: String,
@@ -71,7 +78,7 @@ pub struct Column {
 }
 
 /// `GENERATED ... AS IDENTITY`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Identity {
     Always,
     ByDefault,
@@ -87,14 +94,14 @@ impl Identity {
 }
 
 /// Chave primária ou unique: o nome da constraint e as colunas, em ordem.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Key {
     pub name: String,
     pub columns: Vec<String>,
 }
 
 /// Constraint `CHECK`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
     pub name: String,
     /// A expressão, sem o `CHECK (...)` em volta.
@@ -102,7 +109,7 @@ pub struct Check {
 }
 
 /// Chave estrangeira.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForeignKey {
     pub name: String,
     pub columns: Vec<String>,
@@ -114,7 +121,7 @@ pub struct ForeignKey {
 }
 
 /// O que uma FK faz quando a linha referenciada muda ou some.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     #[default]
     NoAction,
@@ -159,7 +166,7 @@ impl Action {
 
 /// Índice que não pertence a uma constraint (as de PK e unique já criam o
 /// seu).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Index {
     pub name: String,
     pub unique: bool,
