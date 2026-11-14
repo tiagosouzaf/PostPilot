@@ -10,11 +10,10 @@
 //! Todas as chamadas podem demorar (rede), então a interface roda cada uma
 //! numa thread separada com [`Job`].
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-
-use pgstudio_i18n::{tr, tr_noop, trf};
 
 /// O git falhou ou não existe.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,8 +50,7 @@ pub struct Change {
 }
 
 impl Change {
-    /// Descrição curta, como no Team Explorer (em inglês; a chave da
-    /// tradução: mostre com `tr`).
+    /// Descrição curta, como no Team Explorer.
     pub fn kind(&self) -> &'static str {
         match self.code.as_str() {
             "??" => tr_noop("Added"),
@@ -175,7 +173,7 @@ fn run(mut cmd: Command) -> Result<String, GitError> {
         if e.kind() == std::io::ErrorKind::NotFound {
             GitError::NotInstalled
         } else {
-            GitError::Failed(format!("Could not run git: {e}"))
+            GitError::Failed(trf!("Could not run git: {e}", e = e))
         }
     })?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -297,13 +295,15 @@ impl Git {
         } else {
             if self.remote_url().is_none() {
                 return Err(GitError::Failed(
-                    tr("The workspace has no remote. Use Source Control > Remote... to set the repository URL.")
-                        .into(),
+                    tr(
+                        "The workspace has no remote. Use Source Control > Remote... to set the repository URL.",
+                    )
+                    .into(),
                 ));
             }
             self.git(&["push", "-u", "origin", "HEAD"])?;
         }
-        Ok(tr("Pushed.").into())
+        Ok("Pushed.".into())
     }
 
     /// URL do remoto `origin`, se houver.

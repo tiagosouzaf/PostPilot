@@ -132,12 +132,17 @@ pub enum Outcome {
 impl Outcome {
     /// Texto da faixa de status da janela de consulta, como no SSMS.
     pub fn label(self) -> &'static str {
-        tr(match self {
+        tr(self.english_label())
+    }
+
+    /// O mesmo texto sempre em inglês, para o que vai ao Claude Code.
+    pub fn english_label(self) -> &'static str {
+        match self {
             Outcome::Running => "Executing query...",
             Outcome::Succeeded => "Query executed successfully.",
             Outcome::Failed => "Query completed with errors.",
             Outcome::Canceled => "Query was canceled.",
-        })
+        }
     }
 }
 

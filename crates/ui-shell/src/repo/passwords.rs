@@ -9,6 +9,7 @@
 //! A senha mestra pode ser lembrada nesta máquina, no cofre do sistema
 //! (nunca no repositório): aí o workspace destranca sozinho ao abrir.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -16,7 +17,6 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_i18n::{tr, trf};
 
 use super::vault::{self, DEFAULT_KDF, Kdf, Key, Vault, VaultError};
 use crate::secrets::{SecretError, SecretStore};
@@ -64,7 +64,7 @@ impl WorkspaceSecrets {
 }
 
 fn no_system() -> SecretError {
-    SecretError("No system keyring.".into())
+    SecretError(tr("No system keyring.").into())
 }
 
 impl SecretStore for WorkspaceSecrets {

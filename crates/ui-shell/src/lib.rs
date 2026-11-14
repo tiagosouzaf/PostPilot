@@ -1427,6 +1427,9 @@ impl ShellApp {
                 | RegisteredServers
                 | WorkspaceExplorer
                 | ClaudePanel
+                | ClaudeExplain
+                | ClaudeOptimize
+                | ClaudeFix
                 | NewWorkspace
                 | OpenWorkspace
                 | CloneWorkspace
@@ -1705,6 +1708,9 @@ impl ShellApp {
             CommandId::ClaudePanel => {
                 self.workspace.open(Panel::Claude);
                 self.claude_panel.focus();
+            }
+            CommandId::ClaudeExplain | CommandId::ClaudeOptimize | CommandId::ClaudeFix => {
+                self.claude_quick_action(ctx, cmd);
             }
             CommandId::NewWorkspace => self.ask_new_workspace(),
             CommandId::OpenWorkspace => self.ask_open_workspace(),
@@ -2220,6 +2226,13 @@ impl ShellApp {
             return;
         };
         let (node, action, run, read_only) = match event {
+            Event::AskClaude(node) => {
+                let database = provider.database_of(&node);
+                if let Some(object) = self.explorer.node(&node).cloned() {
+                    self.claude_ask_about(ctx, &object, database);
+                }
+                return;
+            }
             Event::NewQuery(node) => {
                 let db = provider.database_of(&node);
                 let pending = self.query_on_open.take();

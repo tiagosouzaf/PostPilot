@@ -60,7 +60,7 @@ para `servers.json`.
 
   A connection string não é guardada. A senha vai para o cofre do workspace
   (veja abaixo) e nunca para `servers.json`.
-- **Import... (Importar...):** este botão, ao lado de "Servers", traz os
+- **"Import from this computer" (Importar deste computador):** este botão, ao lado de "Servers", traz os
   Registered Servers desta máquina para o workspace. Grupos de mesmo nome se
   juntam e um servidor de mesmo nome é substituído. Com as senhas do workspace
   destrancadas, as senhas lembradas desses servidores são copiadas para o
@@ -122,7 +122,7 @@ a antiga. Se ninguém tiver:
 2. Ligue as senhas de novo com **Save in workspace...** e uma senha mestra
    nova.
 3. Conecte de novo em cada servidor com "Remember password". Ou use
-   "Import..." (Importar...) ao lado de "Servers" para trazer as senhas que ainda estão no
+   "Importar deste computador" para trazer as senhas que ainda estão no
    keyring de alguém.
 
 Se a senha mestra vazou, troque-a. Mas quem copiou o `secrets.json` antigo

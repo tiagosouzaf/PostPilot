@@ -17,10 +17,7 @@ use pgstudio_i18n::{Language, catalog_keys, has_translation};
 /// Arquivos ainda não convertidos, que o teste 2 não olha. A lista só
 /// diminui: um arquivo daqui sem nenhum texto solto também falha, para ser
 /// tirado da lista.
-const PENDING: &[&str] = &[
-    "crates/ui-shell/src/update.rs",
-    "crates/ui-shell/src/claude.rs",
-];
+const PENDING: &[&str] = &[];
 
 /// Pastas com código da interface.
 const UI_DIRS: &[&str] = &[
@@ -33,6 +30,7 @@ const UI_DIRS: &[&str] = &[
     "crates/docking/src",
     "crates/diagram-engine/src",
     "crates/schema-model/src",
+    "crates/pg-metadata/src",
 ];
 
 /// Arquivos que não são interface (medição, dados de demonstração).

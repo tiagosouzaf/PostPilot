@@ -1,10 +1,10 @@
 //! O workspace na casca: abrir, criar e fechar, ligar as consultas aos
 //! servidores do workspace ao abrir e ao salvar.
 
+use pgstudio_i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 
 use pgstudio_core::connection::ConnectionSettings;
-use pgstudio_i18n::{tr, trf};
 
 use super::panel::Action;
 use super::{QueryLink, Workspace, find_server_by_key, link_settings};
@@ -75,9 +75,9 @@ impl ShellApp {
         match Workspace::create(root, &name) {
             Ok(ws) => {
                 self.status = trf!(
-                    "Created workspace {name} in {path}.",
+                    "Created workspace {name} in {folder}.",
                     name = ws.name(),
-                    path = root.display()
+                    folder = root.display()
                 );
                 self.workspace_panel.open(ws);
                 self.after_workspace_opened();
@@ -124,8 +124,8 @@ impl ShellApp {
         let busy = std::fs::read_dir(&dest).is_ok_and(|mut d| d.next().is_some());
         if busy {
             self.status = trf!(
-                "{path} already exists and is not empty.",
-                path = dest.display()
+                "{folder} already exists and is not empty.",
+                folder = dest.display()
             );
             return;
         }
@@ -144,7 +144,7 @@ impl ShellApp {
             Ok(root) => {
                 self.create_workspace(&root);
             }
-            Err(e) => self.status = trf!("Clone failed: {error}", error = e),
+            Err(e) => self.status = trf!("Clone failed: {e}", e = e),
         }
     }
 
@@ -243,9 +243,9 @@ impl ShellApp {
         self.status = match link {
             Some(l) => match l.database {
                 Some(db) => trf!(
-                    "Item(s) Saved. Linked to {server} / {database}.",
+                    "Item(s) Saved. Linked to {server} / {db}.",
                     server = l.server,
-                    database = db
+                    db = db
                 ),
                 None => trf!("Item(s) Saved. Linked to {server}.", server = l.server),
             },
@@ -304,11 +304,7 @@ impl ShellApp {
         });
         let text = link.map(|l| l.line() + "\n").unwrap_or_default();
         if let Err(e) = std::fs::write(&path, text) {
-            self.status = trf!(
-                "Could not create {path}: {error}",
-                path = path.display(),
-                error = e
-            );
+            self.status = trf!("Could not create {path}: {e}", path = path.display(), e = e);
             return;
         }
         self.workspace_panel.refresh();

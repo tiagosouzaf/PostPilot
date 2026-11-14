@@ -31,6 +31,7 @@
 //! que um pull trouxe. Se a senha mestra mudou em outra máquina (o sal
 //! mudou), o cofre volta a ficar trancado.
 
+use pgstudio_i18n::{tr, trf};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -99,12 +100,12 @@ impl std::fmt::Display for VaultError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VaultError::WrongPassword => f.write_str("The master password is not correct."),
-            VaultError::Locked => f.write_str("The workspace passwords are locked."),
+            VaultError::Locked => f.write_str(tr("The workspace passwords are locked.")),
             VaultError::WeakPassword(m) | VaultError::File(m) => f.write_str(m),
-            VaultError::Tampered(key) => write!(
-                f,
-                "The saved password for {key} was changed outside PostPilot and cannot be read."
-            ),
+            VaultError::Tampered(key) => f.write_str(&trf!(
+                "The saved password for {key} was changed outside PostPilot and cannot be read.",
+                key = key
+            )),
         }
     }
 }
@@ -145,12 +146,12 @@ impl std::fmt::Debug for Key {
 
 fn derive(password: &str, salt: &[u8], kdf: Kdf) -> Result<Zeroizing<[u8; 32]>, VaultError> {
     let params = Params::new(kdf.m_cost, kdf.t_cost, kdf.p_cost, Some(32))
-        .map_err(|e| VaultError::File(format!("Invalid key derivation settings: {e}")))?;
+        .map_err(|e| VaultError::File(trf!("Invalid key derivation settings: {e}", e = e)))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = Zeroizing::new([0u8; 32]);
     argon
         .hash_password_into(password.as_bytes(), salt, out.as_mut())
-        .map_err(|e| VaultError::File(format!("Key derivation failed: {e}")))?;
+        .map_err(|e| VaultError::File(trf!("Key derivation failed: {e}", e = e)))?;
     Ok(out)
 }
 
@@ -201,7 +202,7 @@ pub fn check_new_password(password: &str, confirm: &str) -> Result<(), VaultErro
     }
     if password != confirm {
         return Err(VaultError::WeakPassword(
-            "The passwords do not match.".into(),
+            tr("The passwords do not match.").into(),
         ));
     }
     Ok(())
@@ -242,8 +243,9 @@ impl Vault {
     }
 
     fn read(&self) -> Result<VaultFile, VaultError> {
-        let text = std::fs::read_to_string(&self.path)
-            .map_err(|e| VaultError::File(format!("Could not read {FILE}: {e}")))?;
+        let text = std::fs::read_to_string(&self.path).map_err(|e| {
+            VaultError::File(trf!("Could not read {file}: {e}", file = FILE, e = e))
+        })?;
         let file: VaultFile = serde_json::from_str(&text)
             .map_err(|e| VaultError::File(format!("{FILE} is invalid: {e}")))?;
         if file.format > FORMAT {
@@ -273,7 +275,7 @@ impl Vault {
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, text)
             .and_then(|()| std::fs::rename(&tmp, &self.path))
-            .map_err(|e| VaultError::File(format!("Could not save {FILE}: {e}")))
+            .map_err(|e| VaultError::File(trf!("Could not save {file}: {e}", file = FILE, e = e)))
     }
 
     fn kdf_of(file: &VaultFile) -> Kdf {
@@ -288,8 +290,9 @@ impl Vault {
     /// existe: para trocar a senha, use [`Self::change_password`].
     pub fn create(&mut self, password: &str, kdf: Kdf) -> Result<(), VaultError> {
         if self.exists() {
-            return Err(VaultError::File(format!(
-                "The workspace already has {FILE}. Unlock it instead."
+            return Err(VaultError::File(trf!(
+                "The workspace already has {file}. Unlock it instead.",
+                file = FILE
             )));
         }
         self.write_new(password, kdf, BTreeMap::new())

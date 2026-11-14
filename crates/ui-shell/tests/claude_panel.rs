@@ -172,3 +172,145 @@ fn missing_claude_explains_how_to_install() {
     assert!(!h.state().claude_panel().is_busy());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// O painel com o `claude` falso numa pasta só deste teste.
+fn panel_app(name: &str, demo: bool) -> (Harness<'static, ShellApp>, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("postpilot-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = fake_claude(&dir);
+    let mut app = ShellApp::default().with_claude_panel(
+        Some(program),
+        Some(PathBuf::from("/usr/bin/postpilot-test")),
+        Some(dir.clone()),
+    );
+    if demo {
+        app.connect_demo();
+    }
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    h.run();
+    (h, dir)
+}
+
+/// A última mensagem que o `claude` falso recebeu.
+fn last_message(dir: &Path) -> String {
+    let log = std::fs::read_to_string(dir.join("log")).unwrap();
+    let message: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    message["message"]["content"].as_str().unwrap().to_string()
+}
+
+fn run_command(h: &mut Harness<'static, ShellApp>, cmd: pgstudio_core::CommandId) {
+    let ctx = h.ctx.clone();
+    h.state_mut().execute(&ctx, cmd);
+}
+
+#[test]
+fn quick_actions_from_the_editor_context_menu() {
+    let (mut h, dir) = panel_app("quick", false);
+    h.key_press_modifiers(Modifiers::CTRL, Key::N);
+    h.run();
+    let doc = h.state().active_document().unwrap();
+    h.event(Event::Text("select * from pedido".into()));
+    h.run();
+
+    // Sem seleção: a consulta inteira, e a versão nova troca tudo.
+    let editor = pgstudio_ui_shell::panels::editor_id(doc);
+    run_command(&mut h, pgstudio_core::CommandId::ClaudeOptimize);
+    h.run();
+    wait(&mut h, "no answer", |a| !a.claude_panel().is_busy());
+    let items = h.state().claude_panel().items().to_vec();
+    assert_eq!(items[0], Item::User("Optimize this query.".into()));
+    let sent = last_message(&dir);
+    assert!(
+        sent.contains(&format!("the query in query window {doc}")),
+        "{sent}"
+    );
+    assert!(sent.contains("mode replace_all"), "{sent}");
+
+    // Com seleção: só ela.
+    pgstudio_sql_editor::set_selection(&h.ctx, editor, (0, 6));
+    h.run();
+    run_command(&mut h, pgstudio_core::CommandId::ClaudeExplain);
+    h.run();
+    wait(&mut h, "no answer", |a| !a.claude_panel().is_busy());
+    let sent = last_message(&dir);
+    assert!(sent.contains("Explain the selected SQL."), "{sent}");
+    assert!(
+        sent.contains(&format!("the selected text of query window {doc}")),
+        "{sent}"
+    );
+    assert!(sent.contains("Selected text (chars 0-6): select"), "{sent}");
+
+    // Corrigir leva o erro da última execução (aqui, nenhuma).
+    run_command(&mut h, pgstudio_core::CommandId::ClaudeFix);
+    h.run();
+    wait(&mut h, "no answer", |a| !a.claude_panel().is_busy());
+    let sent = last_message(&dir);
+    assert!(sent.contains("Fix the error in this query."), "{sent}");
+    assert!(sent.contains("reported no error"), "{sent}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ask_claude_about_a_table_from_object_explorer() {
+    use pgstudio_core::metadata::NodeId;
+    use pgstudio_object_explorer::Load;
+    let (mut h, dir) = panel_app("ask", true);
+    let first_child = |h: &mut Harness<'static, ShellApp>, id: &str| -> String {
+        let ex = h.state_mut().explorer_mut();
+        assert!(ex.wait_idle(Duration::from_secs(10)));
+        ex.expand(&NodeId(id.into()));
+        assert!(ex.wait_idle(Duration::from_secs(10)));
+        match ex.children(&NodeId(id.into())) {
+            Some(Load::Loaded(ids)) => ids[0].0.clone(),
+            other => panic!("{id}: {other:?}"),
+        }
+    };
+    let databases = first_child(&mut h, "srv");
+    let db = first_child(&mut h, &databases);
+    first_child(&mut h, &db);
+    let schema = first_child(&mut h, &format!("{db}/Schemas"));
+    let tables = first_child(&mut h, &schema);
+    let table = first_child(&mut h, &tables);
+    h.state_mut().explorer_mut().select(&NodeId(table.clone()));
+    h.run_steps(3);
+    let name = h
+        .state()
+        .explorer()
+        .node(&NodeId(table))
+        .unwrap()
+        .name
+        .clone();
+    h.get_all_by_label_contains(&name)
+        .next()
+        .expect("no table row")
+        .click_secondary();
+    h.run_steps(3);
+    h.get_by_label(&format!("{} Ask Claude", egui_phosphor::regular::SPARKLE))
+        .click();
+    h.run_steps(3);
+    wait(&mut h, "no answer", |a| !a.claude_panel().is_busy());
+    let items = h.state().claude_panel().items().to_vec();
+    assert_eq!(items[0], Item::User(format!("Tell me about {name}.")));
+    let sent = last_message(&dir);
+    assert!(
+        sent.contains(&format!("{name} is a table in database")),
+        "{sent}"
+    );
+    assert!(sent.contains("describe_table"), "{sent}");
+
+    // Inserir sem janela de consulta aberta abre uma.
+    assert!(h.state().active_document().is_none());
+    h.get_by_label(&format!(
+        "{} Insert",
+        egui_phosphor::regular::ARROW_SQUARE_IN
+    ))
+    .click();
+    h.run_steps(3);
+    let doc = h.state().active_document().expect("a new query window");
+    let text = h.state().documents().get(doc).unwrap().text.clone();
+    assert_eq!(text, "select 42 as resposta;");
+    let _ = std::fs::remove_dir_all(&dir);
+}

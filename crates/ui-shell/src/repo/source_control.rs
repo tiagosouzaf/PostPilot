@@ -1,12 +1,12 @@
 //! A faixa "Source Control" do Workspace Explorer: branch, o que mudou e os
 //! botões Pull, Commit e Push, como o Team Explorer do Visual Studio.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::VecDeque;
 use std::path::Path;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_i18n::{tr, tr_noop, trf};
 
 use super::git::{self, Done, Git, GitError, Job, Status};
 
@@ -21,14 +21,6 @@ struct RemoteDialog {
     url: String,
     error: Option<String>,
 }
-
-// Rótulos das operações: chave da tradução e também o que `apply` compara.
-const READING: &str = tr_noop("Reading status...");
-const INITIALIZING: &str = tr_noop("Initializing...");
-const PULLING: &str = tr_noop("Pulling...");
-const PUSHING: &str = tr_noop("Pushing...");
-const COMMITTING: &str = tr_noop("Committing...");
-const SETTING_REMOTE: &str = tr_noop("Setting remote...");
 
 type Work = Box<dyn FnOnce(&Git) -> Result<String, GitError> + Send>;
 
@@ -78,7 +70,9 @@ impl SourceControl {
         }
         self.stale = false;
         let git = self.git.clone();
-        self.job = Some(Job::spawn(READING, move || Done::Status(git.status())));
+        self.job = Some(Job::spawn(tr_noop("Reading status..."), move || {
+            Done::Status(git.status())
+        }));
     }
 
     /// O último estado lido.
@@ -134,7 +128,7 @@ impl SourceControl {
 
     /// "Initialize Git Repository".
     pub fn init(&mut self) {
-        self.start(INITIALIZING, |g| {
+        self.start(tr_noop("Initializing..."), |g| {
             g.init()
                 .map(|()| tr("Initialized the git repository.").into())
         });
@@ -142,7 +136,7 @@ impl SourceControl {
 
     /// Pull.
     pub fn pull(&mut self) {
-        self.start(PULLING, |g| {
+        self.start(tr_noop("Pulling..."), |g| {
             g.pull().map(|m| {
                 if m.is_empty() {
                     tr("Pulled.").into()
@@ -155,14 +149,14 @@ impl SourceControl {
 
     /// Push.
     pub fn push(&mut self) {
-        self.start(PUSHING, Git::push);
+        self.start(tr_noop("Pushing..."), Git::push);
     }
 
     /// Commit de tudo o que mudou, e Push depois se `push`.
     pub fn commit(&mut self, message: &str, push: bool) {
         let message = message.to_string();
         self.push_after_commit = push;
-        self.start(COMMITTING, move |g| {
+        self.start(tr_noop("Committing..."), move |g| {
             g.commit_all(&message)
                 .map(|m| trf!("Committed: {m}", m = m))
         });
@@ -171,7 +165,7 @@ impl SourceControl {
     /// Define a URL do remoto `origin`.
     pub fn set_remote(&mut self, url: &str) {
         let url = url.to_string();
-        self.start(SETTING_REMOTE, move |g| {
+        self.start(tr_noop("Setting remote..."), move |g| {
             g.set_remote(&url)
                 .map(|()| trf!("Remote set to {url}.", url = url))
         });
@@ -234,7 +228,7 @@ impl SourceControl {
                 match result {
                     Ok(m) => {
                         self.message = Some(m);
-                        if what == COMMITTING && self.push_after_commit {
+                        if what == "Committing..." && self.push_after_commit {
                             self.push_after_commit = false;
                             self.push();
                         }
@@ -245,7 +239,7 @@ impl SourceControl {
                     }
                 }
                 // Pull (mesmo com conflito) e init mexem nos arquivos.
-                if what == PULLING || what == INITIALIZING {
+                if what == "Pulling..." || what == "Initializing..." {
                     self.files_changed = true;
                 }
             }
@@ -288,8 +282,7 @@ impl SourceControl {
                     } else {
                         status.branch.clone()
                     };
-                    // i18n-ignore: nome do branch
-                    ui.label(format!("{} {branch}", icon::GIT_BRANCH))
+                    ui.label(format!("{} {branch}", icon::GIT_BRANCH)) // i18n-ignore
                         .on_hover_text(
                             status
                                 .remote
@@ -309,15 +302,15 @@ impl SourceControl {
                     let n = status.changes.len();
                     if n > 0 {
                         ui.weak(if n == 1 {
-                            tr("1 change").to_string()
+                            "1 change".to_string()
                         } else {
-                            trf!("{n} changes", n = n)
+                            format!("{n} changes")
                         })
                         .on_hover_text(
                             status
                                 .changes
                                 .iter()
-                                .map(|c| format!("{} {}", tr(c.kind()), c.path))
+                                .map(|c| format!("{} {}", c.kind(), c.path))
                                 .collect::<Vec<_>>()
                                 .join("\n"),
                         );
@@ -393,10 +386,10 @@ impl SourceControl {
                         .max_height(160.0)
                         .show(ui, |ui| {
                             for c in &changes {
-                                ui.label(format!("{:<9} {}", tr(c.kind()), c.path));
+                                ui.label(format!("{:<11} {}", tr(c.kind()), c.path)); // i18n-ignore
                             }
                             for c in &conflicts {
-                                ui.label(format!("{:<9} {c}", tr("Resolved")));
+                                ui.label(trf!("Resolved  {c}", c = c));
                             }
                         });
                 });

@@ -12,12 +12,14 @@ Reading is free: read-only SQL runs inside a `READ ONLY` transaction. Anything t
 
 1. Install PostPilot. The `postpilot` command must be on your `PATH`, which the Arch, .deb and AppImage packages take care of.
 2. In PostPilot, turn on **Tools > Allow Claude Code (MCP)**. The choice is saved.
-3. In Claude Code:
+3. In Claude Code, from the copy that came with the Linux packages:
 
    ```
-   /plugin marketplace add tiagosouzaf/postpilot
-   /plugin install postpilot@postpilot
+   claude plugin marketplace add /usr/share/postpilot
+   claude plugin install postpilot@postpilot
    ```
+
+   or straight from GitHub: `/plugin marketplace add tiagosouzaf/postpilot`, then `/plugin install postpilot@postpilot`.
 
 Without the plugin, you can add only the MCP server: `claude mcp add postpilot -- postpilot mcp`. Use one or the other, not both.
 

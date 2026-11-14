@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+pgstudio-i18n.workspace = true
 pgstudio-core.workspace = true
 pgstudio-pg-client.workspace = true
 pgstudio-schema-model.workspace = true

@@ -2,13 +2,13 @@
 //! SSMS. Em cima, os servidores do workspace (a mesma árvore do Registered
 //! Servers, gravada em `servers.json`); embaixo, as consultas de `queries/`.
 
+use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_i18n::{tr, tr_noop, trf};
 
 use super::git::{Done, Git, GitError, Job};
 use super::passwords::{Passwords, SharedVault, WorkspaceSecrets};
@@ -252,7 +252,7 @@ impl WorkspacePanel {
             return Err(e);
         }
         if let Err(e) = std::fs::create_dir_all(&path) {
-            let e = trf!("Could not create the folder: {error}", error = e);
+            let e = trf!("Could not create the folder: {e}", e = e);
             dialog.error = Some(e.clone());
             return Err(e);
         }
@@ -409,7 +409,7 @@ impl WorkspacePanel {
                             egui::RichText::new(format!(
                                 "{} {}",
                                 icon::DOWNLOAD_SIMPLE,
-                                tr("Import...")
+                                tr("Import from this computer")
                             ))
                             .small(),
                         )

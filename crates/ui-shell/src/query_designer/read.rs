@@ -11,6 +11,7 @@
 //! [`ReadError::Unsupported`]. Assim o OK nunca troca a seleção por uma
 //! consulta que faz outra coisa.
 
+use pgstudio_i18n::{tr, trf};
 use std::fmt;
 use std::ops::ControlFlow;
 
@@ -51,29 +52,35 @@ pub enum ReadError {
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadError::Syntax(e) => write!(f, "The selected text could not be parsed: {e}"),
-            ReadError::NotSelect => f.write_str("Select a single SELECT statement to design it."),
-            ReadError::Cte => f.write_str(
+            ReadError::Syntax(e) => {
+                f.write_str(&trf!("The selected text could not be parsed: {e}", e = e))
+            }
+            ReadError::NotSelect => {
+                f.write_str(tr("Select a single SELECT statement to design it."))
+            }
+            ReadError::Cte => f.write_str(tr(
                 "The query uses a common table expression (WITH), which the Query Designer \
                  can't show.",
-            ),
-            ReadError::SetOperation(op) => write!(
-                f,
-                "The query combines results with {op}, which the Query Designer can't show."
-            ),
-            ReadError::Subquery => {
-                f.write_str("The query has a subquery, which the Query Designer can't show.")
-            }
+            )),
+            ReadError::SetOperation(op) => f.write_str(&trf!(
+                "The query combines results with {op}, which the Query Designer can't show.",
+                op = op
+            )),
+            ReadError::Subquery => f.write_str(tr(
+                "The query has a subquery, which the Query Designer can't show.",
+            )),
             ReadError::UnknownTable(t) => {
-                write!(f, "The table {t} was not found in the database.")
+                f.write_str(&trf!("The table {t} was not found in the database.", t = t))
             }
-            ReadError::UnknownColumn(c) => write!(f, "The column {c} was not found."),
-            ReadError::AmbiguousColumn(c) => write!(
-                f,
-                "The column {c} exists in more than one table; qualify it with the table name."
-            ),
+            ReadError::UnknownColumn(c) => {
+                f.write_str(&trf!("The column {c} was not found.", c = c))
+            }
+            ReadError::AmbiguousColumn(c) => f.write_str(&trf!(
+                "The column {c} exists in more than one table; qualify it with the table name.",
+                c = c
+            )),
             ReadError::Unsupported(what) => {
-                write!(f, "The Query Designer can't show {what}.")
+                f.write_str(&trf!("The Query Designer can't show {what}.", what = what))
             }
         }
     }
@@ -130,27 +137,27 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
                 Ok(n) => Some(n),
                 Err(_) => return unsupported(format!("LIMIT {n}")),
             },
-            _ => return unsupported("this LIMIT"),
+            _ => return unsupported(tr("this LIMIT")),
         },
         Some(LimitClause::LimitOffset {
             offset: Some(_), ..
         }) => {
             return unsupported("OFFSET");
         }
-        Some(_) => return unsupported("this LIMIT"),
+        Some(_) => return unsupported(tr("this LIMIT")),
     };
     if query.fetch.is_some() {
-        return unsupported("FETCH FIRST (use LIMIT)");
+        return unsupported(tr("FETCH FIRST (use LIMIT)"));
     }
     if !query.locks.is_empty() {
-        return unsupported("FOR UPDATE or FOR SHARE");
+        return unsupported(tr("FOR UPDATE or FOR SHARE"));
     }
     if query.for_clause.is_some()
         || query.settings.is_some()
         || query.format_clause.is_some()
         || !query.pipe_operators.is_empty()
     {
-        return unsupported("this kind of query");
+        return unsupported(tr("this kind of query"));
     }
     check_select(select)?;
 
@@ -177,7 +184,7 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
     match &select.group_by {
         GroupByExpr::Expressions(exprs, modifiers) => {
             if !modifiers.is_empty() {
-                return unsupported("ROLLUP, CUBE or GROUPING SETS");
+                return unsupported(tr("ROLLUP, CUBE or GROUPING SETS"));
             }
             if !exprs.is_empty() {
                 r.query.group_by = true;
@@ -201,7 +208,7 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
         };
         for (n, o) in exprs.iter().enumerate() {
             if o.options.nulls_first.is_some() || o.with_fill.is_some() {
-                return unsupported("NULLS FIRST or NULLS LAST in ORDER BY");
+                return unsupported(tr("NULLS FIRST or NULLS LAST in ORDER BY"));
             }
             let sort = match o.options.sort {
                 None | Some(OrderBySort::Asc) => SortType::Ascending,
@@ -211,7 +218,7 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
             let row = r.order_row(&o.expr, &items)?;
             let row = &mut r.query.rows[row];
             if row.sort != SortType::Unsorted {
-                return unsupported("the same column twice in ORDER BY");
+                return unsupported(tr("the same column twice in ORDER BY"));
             }
             row.sort = sort;
             row.sort_order = n as u32 + 1;
@@ -305,7 +312,7 @@ fn check_select(s: &Select) -> Result<(), ReadError> {
         return unsupported("DISTINCT ON");
     }
     if s.top.is_some() {
-        return unsupported("TOP (use LIMIT)");
+        return unsupported(tr("TOP (use LIMIT)"));
     }
     if s.into.is_some() {
         return unsupported("SELECT INTO");
@@ -324,7 +331,7 @@ fn check_select(s: &Select) -> Result<(), ReadError> {
         || s.qualify.is_some()
         || s.value_table_mode.is_some()
     {
-        return unsupported("this kind of SELECT");
+        return unsupported(tr("this kind of SELECT"));
     }
     Ok(())
 }
@@ -406,7 +413,7 @@ impl Reader<'_> {
                 JoinOperator::Right(c) | JoinOperator::RightOuter(c) => (JoinKind::Right, c),
                 JoinOperator::FullOuter(c) => (JoinKind::Full, c),
                 JoinOperator::CrossJoin(JoinConstraint::None) => continue,
-                _ => return unsupported("this kind of JOIN"),
+                _ => return unsupported(tr("this kind of JOIN")),
             };
             match constraint {
                 JoinConstraint::On(on) => {
@@ -417,7 +424,7 @@ impl Reader<'_> {
                     }
                 }
                 JoinConstraint::None if kind == JoinKind::Inner => continue,
-                JoinConstraint::None => return unsupported("an outer JOIN without ON"),
+                JoinConstraint::None => return unsupported(tr("an outer JOIN without ON")),
                 JoinConstraint::Using(_) | JoinConstraint::UsingAlias(..) => {
                     return unsupported("JOIN ... USING");
                 }
@@ -454,11 +461,11 @@ impl Reader<'_> {
                 (name, alias)
             }
             TableFactor::Table { args: Some(_), .. } | TableFactor::Function { .. } => {
-                return unsupported("a function in FROM");
+                return unsupported(tr("a function in FROM"));
             }
             TableFactor::Derived { .. } => return Err(ReadError::Subquery),
             TableFactor::NestedJoin { .. } => {
-                return unsupported("parentheses around JOINs");
+                return unsupported(tr("parentheses around JOINs"));
             }
             _ => return unsupported(format!("{factor} in FROM")),
         };
@@ -469,7 +476,7 @@ impl Reader<'_> {
         let reference = match alias {
             Some(a) => {
                 if !a.columns.is_empty() {
-                    return unsupported("column aliases on a table");
+                    return unsupported(tr("column aliases on a table"));
                 }
                 name(&a.name)
             }
@@ -639,7 +646,7 @@ impl Reader<'_> {
         let (expr, alias) = match item {
             SelectItem::Wildcard(opts) => {
                 if self.query.rows.iter().any(|r| r.output) || opts.to_string().trim() != "" {
-                    return unsupported("* together with other columns");
+                    return unsupported(tr("* together with other columns"));
                 }
                 return Ok(None);
             }
