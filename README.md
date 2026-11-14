@@ -37,6 +37,10 @@ Novas crates entram na fase do roteiro que as usa.
 - **Ubuntu, Debian e derivados:** `sudo apt install ./pgstudio_<versão>_amd64.deb`.
   O PGStudio aparece no menu de aplicativos; para remover,
   `sudo apt remove pgstudio`.
+- **Arch Linux e derivados (Omarchy, Manjaro, EndeavourOS):**
+  `sudo pacman -U pgstudio-<versão>-1-x86_64.pkg.tar.zst`, ou compile do código
+  com `cd packaging/arch && makepkg -si`. O atalho aparece no lançador de
+  aplicativos; para remover, `sudo pacman -R pgstudio`.
 - **Outras distribuições Linux:** `chmod +x PGStudio-<versão>-x86_64.AppImage`
   e execute. Sem FUSE (alguns containers), use
   `./PGStudio-<versão>-x86_64.AppImage --appimage-extract-and-run`.
@@ -220,6 +224,7 @@ gera em `target/packages/`, com um `SHA256SUMS`:
 | --- | --- |
 | `pgstudio_<versão>_amd64.deb` | `dpkg-deb` |
 | `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
+| `pgstudio-<versão>-1-x86_64.pkg.tar.zst` | `bsdtar` (libarchive-tools no Ubuntu; no Arch já vem); `packaging/arch/PKGBUILD` gera o mesmo pacote com o `makepkg` |
 | `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
 
 O binário Linux sai ligado contra a glibc 2.31 quando há o
@@ -228,9 +233,9 @@ O binário Linux sai ligado contra a glibc 2.31 quando há o
 `--native`, sai um build comum, que só roda com a glibc da máquina que
 compilou ou mais nova.
 
-`--only deb,appimage,zip` escolhe os formatos e `--no-build` reaproveita os
+`--only deb,appimage,arch,zip` escolhe os formatos e `--no-build` reaproveita os
 binários. No Ubuntu, as ferramentas vêm de
-`sudo apt install dpkg-dev squashfs-tools zip mingw-w64`. O ícone fica em
+`sudo apt install dpkg-dev squashfs-tools libarchive-tools zip mingw-w64`. O ícone fica em
 `packaging/icons/` (gerado por `make_icon.py`); o exe do Windows o recebe pelo
 `windres` do MinGW. O `.msi` fica para quando houver uma máquina ou CI com
 Windows.
