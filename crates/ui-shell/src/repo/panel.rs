@@ -350,7 +350,7 @@ impl WorkspacePanel {
         let mut clone_ok = None;
         let mut clone_cancel = false;
         if let Some(dialog) = &mut self.clone {
-            egui::Modal::new(egui::Id::new("workspace_clone")).show(ctx, |ui| {
+            crate::theme::modal(egui::Id::new("workspace_clone")).show(ctx, |ui| {
                 ui.set_width(460.0);
                 ui.heading("Clone Workspace");
                 ui.label("Repository URL, for example git@github.com:you/sql.git:");
