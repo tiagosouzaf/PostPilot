@@ -570,12 +570,24 @@ impl ShellApp {
                         self.activate_document(id);
                         id
                     }
-                    Scenario::Diagram => {
+                    Scenario::Diagram | Scenario::DiagramLarge => {
                         let start = std::time::Instant::now();
-                        let model = bench::synthetic_model(bench::DIAGRAM_TABLES);
+                        let model = bench::synthetic_model(run.scenario.tables());
                         let id = self.diagrams.open_model("bench".into(), model, true);
                         self.workspace.open(Panel::Diagram(id));
                         run.load_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        id
+                    }
+                    Scenario::Designer => {
+                        let provider = Arc::new(bench::ModelProvider(bench::designer_model()));
+                        let target = pgstudio_core::metadata::DesignTarget {
+                            database: "bench".into(),
+                            schema: "public".into(),
+                            table: Some(bench::DESIGNER_TABLE),
+                        };
+                        let node = pgstudio_core::metadata::NodeId("bench".into());
+                        let id = self.designers.open(provider, target, node, ctx);
+                        self.workspace.open(Panel::TableDesigner(id));
                         id
                     }
                 };
@@ -595,10 +607,14 @@ impl ShellApp {
                     Scenario::IntelliSense => {
                         self.catalog_for(doc).is_some() && !self.catalogs.is_loading()
                     }
-                    Scenario::Diagram => true,
+                    Scenario::Diagram | Scenario::DiagramLarge => true,
+                    Scenario::Designer => {
+                        self.designers.get(doc).is_some_and(|d| !d.is_loading())
+                            && !self.designers.is_loading()
+                    }
                 };
                 if ready {
-                    if run.scenario != Scenario::Diagram {
+                    if !matches!(run.scenario, Scenario::Diagram | Scenario::DiagramLarge) {
                         run.load_ms = since.elapsed().as_secs_f64() * 1000.0;
                     }
                     run.phase = Phase::Running { doc, step: 0 };
@@ -633,7 +649,42 @@ impl ShellApp {
                         }
                     }
                 }
-                Scenario::Diagram => {
+                Scenario::Designer => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let Some(d) = self.designers.get_mut(doc) else {
+                        run.phase = Phase::Done;
+                        self.bench_run = Some(run);
+                        return;
+                    };
+                    if step < bench::DESIGNER_EDITS {
+                        let start = std::time::Instant::now();
+                        d.add_column(&format!("extra_{step:03}"));
+                        run.edit_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                        run.phase = Phase::Running {
+                            doc,
+                            step: step + 1,
+                        };
+                    } else {
+                        let start = std::time::Instant::now();
+                        let script = d.change_script();
+                        let script_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        let tables = d.model().tables.len();
+                        let mut edits = run.edit_ms.clone();
+                        let edit_p95 = bench::percentile(&mut edits, 95.0);
+                        let line = run.result_line(&[
+                            ("edit_p95", (edit_p95 * 100.0).round() / 100.0),
+                            ("tables", tables as f64),
+                            ("edits", step as f64),
+                            ("statements", script.len() as f64),
+                            ("script_ms", (script_ms * 100.0).round() / 100.0),
+                        ]);
+                        bench_print(&line);
+                        run.phase = Phase::Done;
+                    }
+                }
+                Scenario::Diagram | Scenario::DiagramLarge => {
                     if step > 0 {
                         run.record(ui_ms);
                     }

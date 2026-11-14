@@ -52,9 +52,14 @@ Mede o pgstudio (release) em três cenários e compara com as metas:
   diagram       um Database Diagram de 500 tabelas passeia de um canto a
                 outro com zoom e pan por 10 s: 60 FPS (p95 < 20 ms por
                 frame)
+  diagram2000   o mesmo com 2.000 tabelas: 60 FPS
+  designer      Table Designer num banco de 2.000 tabelas, 300 colunas
+                acrescentadas uma por frame: 60 FPS; mede também o tempo de
+                gerar o script de alterações
 
 Opções:
-  --scenario S   startup, grid, intellisense, diagram ou all (padrão all)
+  --scenario S   startup, grid, intellisense, diagram, diagram2000, designer
+                 ou all (padrão all)
   --runs N       execuções de cada cenário (padrão 5)
   --idle S       segundos parado antes de medir a memória (padrão 30)
   --no-build     não recompila; usa o binário existente
@@ -138,14 +143,18 @@ enum Scenario {
     Grid,
     IntelliSense,
     Diagram,
+    DiagramLarge,
+    Designer,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 4] = [
+    const ALL: [Scenario; 6] = [
         Scenario::Startup,
         Scenario::Grid,
         Scenario::IntelliSense,
         Scenario::Diagram,
+        Scenario::DiagramLarge,
+        Scenario::Designer,
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -159,6 +168,8 @@ impl Scenario {
             Scenario::Grid => "grid",
             Scenario::IntelliSense => "intellisense",
             Scenario::Diagram => "diagram",
+            Scenario::DiagramLarge => "diagram2000",
+            Scenario::Designer => "designer",
         }
     }
 }
@@ -203,6 +214,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     let mut grid = Vec::new();
     let mut intellisense = Vec::new();
     let mut diagram = Vec::new();
+    let mut diagram_large = Vec::new();
+    let mut designer = Vec::new();
     for scenario in &args.scenarios {
         for run in 1..=args.runs {
             match scenario {
@@ -219,7 +232,7 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                     );
                     samples.push(s);
                 }
-                Scenario::Grid | Scenario::IntelliSense | Scenario::Diagram => {
+                _ => {
                     let r = measure_scenario(&exe, &root, *scenario)?;
                     eprintln!(
                         "{} {run}/{}: {} (RAM {:.1} MB)",
@@ -231,7 +244,9 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                     match scenario {
                         Scenario::Grid => grid.push(r),
                         Scenario::IntelliSense => intellisense.push(r),
-                        _ => diagram.push(r),
+                        Scenario::Diagram => diagram.push(r),
+                        Scenario::DiagramLarge => diagram_large.push(r),
+                        _ => designer.push(r),
                     }
                 }
             }
@@ -244,6 +259,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
         grid,
         intellisense,
         diagram,
+        diagram_large,
+        designer,
     };
     let startup = !samples.is_empty();
     if args.markdown {
@@ -334,6 +351,8 @@ struct ScenarioReport {
     grid: Vec<ScenarioRun>,
     intellisense: Vec<ScenarioRun>,
     diagram: Vec<ScenarioRun>,
+    diagram_large: Vec<ScenarioRun>,
+    designer: Vec<ScenarioRun>,
 }
 
 /// Mediana e pior valor de uma chave nas execuções.
@@ -374,14 +393,23 @@ impl ScenarioReport {
         stats(&self.diagram, |r| r.get("frame_p95"))
     }
 
+    /// Frame p95 abaixo da meta em todas as execuções, com `tables` tabelas.
+    fn frames_ok(runs: &[ScenarioRun], tables: f64) -> bool {
+        runs.is_empty()
+            || (stats(runs, |r| r.get("frame_p95")).1 < DIAGRAM_FRAME_TARGET_MS
+                && runs.iter().all(|r| r.get("tables") == tables))
+    }
+
     fn diagram_ok(&self) -> bool {
-        self.diagram.is_empty()
-            || (self.diagram_frame().1 < DIAGRAM_FRAME_TARGET_MS
-                && self.diagram.iter().all(|r| r.get("tables") == 500.0))
+        Self::frames_ok(&self.diagram, 500.0)
     }
 
     fn passed(&self) -> bool {
-        self.grid_ok() && self.intellisense_ok() && self.diagram_ok()
+        self.grid_ok()
+            && self.intellisense_ok()
+            && self.diagram_ok()
+            && Self::frames_ok(&self.diagram_large, 2000.0)
+            && Self::frames_ok(&self.designer, 2000.0)
     }
 
     /// Linhas da tabela: medida, meta, mediana, pior e se passou.
@@ -500,6 +528,76 @@ impl ScenarioReport {
                 "—".into(),
                 mb(med),
                 mb(worst),
+                "—".into(),
+            ]);
+        }
+        if !self.diagram_large.is_empty() {
+            let runs = &self.diagram_large;
+            let (med, worst) = stats(runs, |r| r.get("load_ms"));
+            rows.push([
+                "Diagrama: 2.000 tabelas montadas (layout)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Diagrama 2.000: frame com zoom e pan (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok(runs, 2000.0)),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("ui_p95"));
+            rows.push([
+                "Diagrama 2.000: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.ram_mb);
+            rows.push([
+                "Diagrama: RAM com 2.000 tabelas".into(),
+                "—".into(),
+                mb(med),
+                mb(worst),
+                "—".into(),
+            ]);
+        }
+        if !self.designer.is_empty() {
+            let runs = &self.designer;
+            let (med, worst) = stats(runs, |r| r.get("load_ms"));
+            rows.push([
+                "Table Designer: abre num banco de 2.000 tabelas".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Table Designer: frame com uma coluna nova (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok(runs, 2000.0)),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("ui_p95"));
+            rows.push([
+                "Table Designer: CPU da interface por edição (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("script_ms"));
+            rows.push([
+                "Table Designer: script de 300 colunas novas".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
                 "—".into(),
             ]);
         }
@@ -847,6 +945,14 @@ mod tests {
             grid: vec![grid(15.0, 190.0), grid(16.0, 200.0)],
             intellisense: vec![keys(4.0), keys(6.0)],
             diagram: vec![diagram(16.0, 500), diagram(17.0, 500)],
+            diagram_large: vec![diagram(18.0, 2000)],
+            designer: vec![scenario(
+                &format!(
+                    "{RESULT} scenario=designer load_ms=40 ui_p95=4 frame_p95=17 \
+                     tables=2000 script_ms=12"
+                ),
+                150.0,
+            )],
         };
         assert!(good.passed(), "{}", good.text());
         let md = good.markdown();
@@ -890,6 +996,17 @@ mod tests {
             ),
             "{md}"
         );
+        assert!(
+            md.contains(
+                "| Table Designer: script de 300 colunas novas | — | 12.0 ms | 12.0 ms | — |"
+            ),
+            "{md}"
+        );
+        let slow_large = ScenarioReport {
+            diagram_large: vec![diagram(30.0, 2000)],
+            ..Default::default()
+        };
+        assert!(!slow_large.passed());
         for bad in [diagram(25.0, 500), diagram(10.0, 3)] {
             let r = ScenarioReport {
                 diagram: vec![bad],

@@ -477,14 +477,31 @@ impl Diagram {
                         colors.border
                     };
                     let width = if selected { 2.0 } else { 1.0 };
-                    mesh.add_colored_rect(r, border);
                     let inner = r.shrink(width);
-                    mesh.add_colored_rect(inner, colors.body);
-                    let header = Rect::from_min_size(
-                        inner.min,
-                        vec2(inner.width(), HEADER_HEIGHT * self.camera.zoom),
-                    );
+                    // Cada pixel pintado uma vez só: a borda em quatro
+                    // tiras e o corpo abaixo do cabeçalho. Sem GPU, pintar
+                    // a caixa inteira três vezes pesa com milhares delas.
+                    for strip in [
+                        Rect::from_min_max(r.min, pos2(r.max.x, inner.min.y)),
+                        Rect::from_min_max(pos2(r.min.x, inner.max.y), r.max),
+                        Rect::from_min_max(
+                            pos2(r.min.x, inner.min.y),
+                            pos2(inner.min.x, inner.max.y),
+                        ),
+                        Rect::from_min_max(
+                            pos2(inner.max.x, inner.min.y),
+                            pos2(r.max.x, inner.max.y),
+                        ),
+                    ] {
+                        mesh.add_colored_rect(strip, border);
+                    }
+                    let split = (inner.min.y + HEADER_HEIGHT * self.camera.zoom).min(inner.max.y);
+                    let header = Rect::from_min_max(inner.min, pos2(inner.max.x, split));
                     mesh.add_colored_rect(header, colors.header);
+                    mesh.add_colored_rect(
+                        Rect::from_min_max(pos2(inner.min.x, split), inner.max),
+                        colors.body,
+                    );
                     if self.camera.zoom >= TITLE_ZOOM {
                         titles.push((header, n));
                     }

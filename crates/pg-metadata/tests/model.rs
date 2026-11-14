@@ -110,7 +110,7 @@ fn shape(m: &Model) -> Vec<Table> {
     let mut tables: Vec<Table> = m
         .tables
         .iter()
-        .cloned()
+        .map(|t| (**t).clone())
         .map(|mut t| {
             t.id = 0;
             for c in &mut t.columns {

@@ -14,6 +14,8 @@
 //! reconhece um objeto renomeado. Constraints e índices são reconhecidos
 //! pelo nome.
 
+use std::sync::Arc;
+
 pub mod diff;
 pub mod edit;
 mod ident;
@@ -29,7 +31,9 @@ pub const FIRST_NEW_ID: Id = 1 << 40;
 /// O schema de um banco (as tabelas dos schemas de usuário).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Model {
-    pub tables: Vec<Table>,
+    /// As tabelas, compartilhadas: copiar o modelo (o undo faz isso a cada
+    /// edição) só copia ponteiros, e mudar uma tabela copia só ela.
+    pub tables: Vec<Arc<Table>>,
     /// Próximo [`Id`] livre para objetos novos.
     pub next_id: Id,
 }
@@ -175,7 +179,7 @@ impl Model {
             .max()
             .unwrap_or(0);
         Model {
-            tables,
+            tables: tables.into_iter().map(Arc::new).collect(),
             next_id: (used + 1).max(FIRST_NEW_ID),
         }
     }
@@ -188,11 +192,20 @@ impl Model {
     }
 
     pub fn table(&self, id: Id) -> Option<&Table> {
-        self.tables.iter().find(|t| t.id == id)
+        self.tables.iter().find(|t| t.id == id).map(|t| &**t)
     }
 
+    /// A tabela para mudar (copiada se outro modelo também a usa).
     pub fn table_mut(&mut self, id: Id) -> Option<&mut Table> {
-        self.tables.iter_mut().find(|t| t.id == id)
+        self.tables
+            .iter_mut()
+            .find(|t| t.id == id)
+            .map(Arc::make_mut)
+    }
+
+    /// Põe uma tabela no fim.
+    pub fn push(&mut self, table: Table) {
+        self.tables.push(Arc::new(table));
     }
 
     /// Tabela pelo schema e nome.
@@ -200,6 +213,7 @@ impl Model {
         self.tables
             .iter()
             .find(|t| t.schema == schema && t.name == name)
+            .map(|t| &**t)
     }
 }
 

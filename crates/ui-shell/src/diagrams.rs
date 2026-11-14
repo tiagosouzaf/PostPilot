@@ -370,8 +370,7 @@ impl DiagramView {
 
     /// Há alterações no banco ou no desenho ainda não salvas.
     pub fn is_dirty(&self) -> bool {
-        matches!(self.state, State::Ready)
-            && (self.layout_dirty || self.doc.history.is_dirty() || self.base != self.doc.model)
+        matches!(self.state, State::Ready) && (self.layout_dirty || self.doc.history.is_dirty())
     }
 
     /// O "Add Table" aberto, se estiver.
