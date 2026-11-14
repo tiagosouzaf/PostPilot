@@ -60,6 +60,20 @@ const SOURCE: &str = "SELECT g AS id, \
        (g * 1.5)::numeric AS valor \
   FROM generate_series(1, 1000000) g";
 
+/// Tira a primeira linha (o cabeçalho) do arquivo.
+fn drop_first_line(path: &std::path::Path) {
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+    let headerless = path.with_extension("body");
+    let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
+    let mut header = Vec::new();
+    reader.read_until(b'\n', &mut header).unwrap();
+    let mut out = BufWriter::new(std::fs::File::create(&headerless).unwrap());
+    std::io::copy(&mut reader, &mut out).unwrap();
+    out.flush().unwrap();
+    drop(out);
+    std::fs::rename(&headerless, path).unwrap();
+}
+
 fn to_file(session: Arc<dyn QuerySession>, path: &std::path::Path) -> Execution {
     let ctx = egui::Context::default();
     let mut exec = Execution::start_to_file(session, SOURCE.into(), 0, path, &ctx).unwrap();
@@ -93,10 +107,19 @@ fn a_million_rows_go_to_the_file_and_come_back_with_copy() {
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             }
             let t = format!("export_back_{pid}_{ext}");
+            // HEADER no formato texto só existe a partir do PostgreSQL 15;
+            // antes disso, o cabeçalho sai do arquivo antes do COPY.
+            let version: u32 = value(&admin, "SHOW server_version_num")
+                .unwrap()
+                .parse()
+                .unwrap();
             let options = if ext == "csv" {
                 "FORMAT csv, HEADER"
-            } else {
+            } else if version >= 150_000 {
                 "FORMAT text, HEADER"
+            } else {
+                drop_first_line(&path);
+                "FORMAT text"
             };
             value(
                 &admin,

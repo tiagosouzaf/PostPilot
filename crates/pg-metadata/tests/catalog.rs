@@ -31,6 +31,12 @@ fn server() -> Option<(ConnectionSettings, String)> {
     ))
 }
 
+/// A versão principal do servidor ("13.7" dá 13, "17beta1" dá 17).
+fn server_major(version: &str) -> u32 {
+    let digits: String = version.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().unwrap()
+}
+
 /// Banco de teste com um pouco de tudo, criado e apagado pelo teste.
 struct TestDb {
     rt: DbRuntime,
@@ -367,10 +373,12 @@ fn reads_the_whole_catalog_for_intellisense() {
         pgstudio_core::catalog::RelationKind::View
     );
     // Os construtores do range são funções de verdade para o IntelliSense.
-    assert_eq!(
-        sales.functions,
-        ["add", "floatmultirange", "floatrange", "noop"]
-    );
+    // O multirange (e o construtor dele) só existe a partir do PostgreSQL 14.
+    let mut expected = vec!["add", "floatmultirange", "floatrange", "noop"];
+    if server_major(&connected.server_version) < 14 {
+        expected.retain(|f| *f != "floatmultirange");
+    }
+    assert_eq!(sales.functions, expected);
     let builtins = cat.schema("pg_catalog").unwrap();
     assert!(builtins.functions.iter().any(|f| f == "now"));
     assert!(builtins.relations.is_empty());
