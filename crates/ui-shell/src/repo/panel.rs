@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
+use pgstudio_i18n::{tr, trf};
 
 use super::git::{Done, Git, GitError, Job};
-use super::passwords::{Passwords, SharedVault};
+use super::passwords::{Passwords, SharedVault, WorkspaceSecrets};
 use super::source_control::SourceControl;
 use super::{Folder, Workspace};
 use crate::registered::{self, RegisteredPanel};
@@ -29,6 +30,9 @@ pub enum Action {
     NewQuery(PathBuf),
     /// Pedido da árvore de servidores do workspace.
     Servers(registered::Action),
+    /// Trazer os Registered Servers desta máquina (e as senhas lembradas)
+    /// para o workspace.
+    ImportRegistered,
 }
 
 struct Opened {
@@ -68,6 +72,8 @@ pub struct WorkspacePanel {
     /// Cofre de senhas do workspace aberto, dividido com o "Remember
     /// password".
     vault: SharedVault,
+    /// Cópia das senhas do cofre do sistema para o do workspace, rodando.
+    copying: Option<std::thread::JoinHandle<Result<usize, String>>>,
 }
 
 impl WorkspacePanel {
@@ -255,9 +261,93 @@ impl WorkspacePanel {
         Ok(path)
     }
 
+    /// Copia, numa thread, as senhas lembradas destas chaves (`usuario@host:porta`)
+    /// de `from` para o cofre do workspace, que precisa estar destrancado.
+    /// Senhas que já estão no cofre não mudam.
+    pub fn copy_passwords(&mut self, keys: Vec<String>, from: Arc<dyn SecretStore>) {
+        let slot = self.vault.clone();
+        self.copying = Some(std::thread::spawn(move || {
+            let mut copied = 0;
+            for key in keys {
+                {
+                    let mut slot = slot.lock().expect("vault lock");
+                    let Some(v) = slot.vault.as_mut().filter(|v| v.is_unlocked()) else {
+                        return Err(tr("The workspace passwords are locked.").into());
+                    };
+                    if v.get(&key).ok().flatten().is_some() {
+                        continue;
+                    }
+                }
+                // O cofre do sistema pode demorar: fora da trava.
+                let Ok(Some(secret)) = from.get(&key) else {
+                    continue;
+                };
+                let mut slot = slot.lock().expect("vault lock");
+                let Some(v) = slot.vault.as_mut().filter(|v| v.is_unlocked()) else {
+                    return Err(tr("The workspace passwords are locked.").into());
+                };
+                v.set(&key, &secret)
+                    .map_err(|e| super::passwords::vault_error_text(&e))?;
+                copied += 1;
+            }
+            Ok(copied)
+        }));
+    }
+
+    /// Se a cópia das senhas está rodando.
+    pub fn is_copying(&self) -> bool {
+        self.copying.is_some()
+    }
+
+    /// Espera a cópia das senhas (testes) e devolve a mensagem dela.
+    pub fn wait_copy(&mut self) -> Option<String> {
+        self.finish_copy()
+    }
+
+    fn finish_copy(&mut self) -> Option<String> {
+        let handle = self.copying.take()?;
+        let result = handle
+            .join()
+            .unwrap_or_else(|_| Err(tr("Copying the passwords failed.").into()));
+        Some(match result {
+            Ok(1) => tr("Copied 1 saved password to the workspace passwords.").into(),
+            Ok(n) => trf!(
+                "Copied {n} saved passwords to the workspace passwords.",
+                n = n
+            ),
+            Err(e) => e,
+        })
+    }
+
+    /// O cofre que a árvore de servidores do workspace usa: as senhas dos
+    /// servidores dela vão para o cofre do workspace (quando destrancado),
+    /// até as de um servidor que acabou de ser registrado.
+    fn workspace_store(
+        &self,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) -> Option<Arc<dyn SecretStore>> {
+        store.map(|s| {
+            Arc::new(WorkspaceSecrets::workspace_only(
+                Some(s.clone()),
+                self.vault.clone(),
+            )) as Arc<dyn SecretStore>
+        })
+    }
+
+    /// Abre o "New Server Registration" na raiz da árvore do workspace,
+    /// como o menu de contexto dela.
+    pub fn new_server(&mut self, store: Option<&Arc<dyn SecretStore>>) {
+        let store = self.workspace_store(store);
+        if let Some(o) = &mut self.opened {
+            o.servers.new_server(&[], store.as_ref());
+        }
+    }
+
     /// Desenha o painel e devolve os pedidos.
     pub fn show(&mut self, ui: &mut egui::Ui, store: Option<&Arc<dyn SecretStore>>) -> Vec<Action> {
         let mut actions = Vec::new();
+        let workspace_store = self.workspace_store(store);
+        let store = workspace_store.as_ref();
         let Some(o) = &mut self.opened else {
             ui.add_space(6.0);
             ui.weak("No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries.");
@@ -310,7 +400,30 @@ impl WorkspacePanel {
         // Servers tem rolagem que ocupa todo o espaço que recebe.
         let width = ui.available_width();
         let height = (ui.available_height() * 0.4).max(80.0);
-        ui.label(egui::RichText::new("Servers").small().weak());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Servers").small().weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(format!(
+                                "{} {}",
+                                icon::DOWNLOAD_SIMPLE,
+                                tr("Import from this computer")
+                            ))
+                            .small(),
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text(tr(
+                        "Import Registered Servers from this computer, with their saved passwords",
+                    ))
+                    .clicked()
+                {
+                    actions.push(Action::ImportRegistered);
+                }
+            });
+        });
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -387,6 +500,11 @@ impl WorkspacePanel {
                     o.servers.current = current;
                 }
             }
+        }
+        if self.copying.as_ref().is_some_and(|h| h.is_finished()) {
+            status = self.finish_copy().or(status);
+        } else if self.copying.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         if self.clone_job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));

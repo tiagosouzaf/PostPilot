@@ -989,6 +989,65 @@ msgstr "Exigir"
 msgid "Verify full"
 msgstr "Verificação completa"
 
+msgid "Paste a connection string."
+msgstr "Cole uma connection string."
+
+msgid "Not a connection string. Use postgresql://user:password@host:5432/database or host=... dbname=... user=..."
+msgstr "Não é uma connection string. Use postgresql://usuario:senha@host:5432/banco ou host=... dbname=... user=..."
+
+msgid "Connection strings with several hosts are not supported."
+msgstr "Connection strings com vários hosts não são suportadas."
+
+msgid "Unknown sslmode \"{mode}\"."
+msgstr "sslmode \"{mode}\" desconhecido."
+
+msgid "Invalid %-escape in the connection string."
+msgstr "Escape % inválido na connection string."
+
+msgid "Missing \"=\" after \"{key}\"."
+msgstr "Falta \"=\" depois de \"{key}\"."
+
+msgid "Unterminated quoted value in the connection string."
+msgstr "Valor entre aspas sem fechar na connection string."
+
+msgid "Connection string:"
+msgstr "Connection string:"
+
+msgid "paste postgresql://... to fill the fields"
+msgstr "cole postgresql://... para preencher os campos"
+
+msgid "Import Registered Servers from this computer, with their saved passwords"
+msgstr "Importar os Servidores Registrados deste computador, com as senhas lembradas"
+
+msgid "Copying the passwords failed."
+msgstr "A cópia das senhas falhou."
+
+msgid "Copied 1 saved password to the workspace passwords."
+msgstr "1 senha lembrada copiada para as senhas do workspace."
+
+msgid "Copied {n} saved passwords to the workspace passwords."
+msgstr "{n} senhas lembradas copiadas para as senhas do workspace."
+
+msgid "There are no Registered Servers on this computer to import."
+msgstr "Não há Servidores Registrados neste computador para importar."
+
+msgid "No workspace is open."
+msgstr "Nenhum workspace está aberto."
+
+msgid "Imported 1 server into the workspace."
+msgstr "1 servidor importado para o workspace."
+
+msgid "Imported {n} servers into the workspace."
+msgstr "{n} servidores importados para o workspace."
+
+msgid "{imported} Copying their saved passwords to the workspace passwords..."
+msgstr "{imported} Copiando as senhas lembradas deles para as senhas do workspace..."
+
+msgid "{imported} Turn on or unlock the workspace passwords to bring their saved passwords too."
+msgstr "{imported} Ligue ou destranque as senhas do workspace para trazer também as senhas lembradas deles."
+
+msgid "Import from this computer"
+msgstr "Importar deste computador"
 # Pesquisador de Objetos, propriedades e segurança
 
 msgid "-1 means no limit"
