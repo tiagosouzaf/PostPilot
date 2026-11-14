@@ -19,7 +19,9 @@
 mod app;
 pub mod git;
 pub mod panel;
+pub mod passwords;
 pub mod source_control;
+pub mod vault;
 
 use std::path::{Path, PathBuf};
 

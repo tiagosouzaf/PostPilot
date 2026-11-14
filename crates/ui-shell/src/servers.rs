@@ -176,7 +176,12 @@ impl ShellApp {
     /// Usa este cofre para "Remember password" (o aplicativo usa o do
     /// sistema; sem cofre, a senha é sempre pedida).
     pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
-        self.secrets = Some(store);
+        // O cofre do workspace aberto vem antes deste, para os servidores
+        // do workspace.
+        self.secrets = Some(Arc::new(crate::repo::passwords::WorkspaceSecrets::new(
+            Some(store),
+            self.workspace_panel.vault_slot(),
+        )));
         if let Some(dialog) = self.connect_dialog.take() {
             let settings = dialog.settings().unwrap_or_default();
             self.connect_dialog =
