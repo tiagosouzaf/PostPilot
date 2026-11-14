@@ -67,14 +67,24 @@ Explorer abre o diálogo de novo. As conexões usadas ficam em
 Server name lista as recentes.
 
 O menu de contexto do Object Explorer abre janelas de consulta no banco do nó:
-New Query (vazia), Select Top 1000 Rows e Edit Top 200 Rows em tabelas e views
-(já executam; por enquanto a grade é só leitura) e Script as > CREATE To / DROP
-To New Query Window em bancos, schemas, tabelas, views, funções, índices,
+New Query (vazia), Select Top 1000 Rows em tabelas e views (já executa) e
+Script as > CREATE To / DROP To New Query Window em bancos, schemas, tabelas, views, funções, índices,
 sequences e constraints. O CREATE vem do próprio servidor (`pg_get_viewdef`,
 `pg_get_functiondef`, `pg_get_indexdef`, `pg_get_constraintdef`), e o de
 tabela inclui colunas, `serial`, identity, colunas geradas, defaults,
 constraints, `PARTITION BY` e os índices; os scripts rodam sem erro num banco
 limpo (há um teste que faz isso).
+
+Edit Top 200 Rows numa tabela abre a grade editável, como no SSMS. Clique
+numa célula e digite (ou F2, Enter ou duplo clique para editar o valor
+atual); Ctrl+0 põe NULL. A célula alterada fica marcada e a linha vai ao
+banco ao sair dela (ou com Enter): um UPDATE pela chave primária, ou um
+INSERT pela linha `*` do fim, que deixa as colunas não preenchidas com o
+padrão. O `RETURNING` traz os valores como o banco gravou. Se der erro, a
+linha fica marcada com a mensagem e Esc desfaz as alterações. Delete (ou o
+menu da linha) exclui depois de confirmar. Colunas geradas e de identidade
+`ALWAYS` não são editáveis, e tabela sem chave primária (ou view) fica só
+leitura, com o motivo.
 
 Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
@@ -127,6 +137,20 @@ coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
 ("Results to Grid") escolhem como as próximas execuções da janela mostram os
 resultados; no modo texto, as larguras das colunas saem das primeiras mil
 linhas, até 256 caracteres, como no SSMS.
+
+Para exportar, o menu de contexto da grade tem "Save Results As..." e "Copy
+as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
+perguntarem um arquivo e escreverem as linhas nele direto do servidor, sem
+guardá-las. A extensão escolhe o formato:
+
+- `.csv`: como o `COPY ... (FORMAT csv, HEADER)` lê. NULL fica como campo
+  vazio e o texto vazio como `""`.
+- `.tsv` ou `.txt`: o formato texto do `COPY` (tab, `\N` para NULL).
+- `.json`: uma lista de objetos.
+- `.sql`: um `INSERT INTO table_name` por linha.
+
+O CSV e o TSV voltam iguais com `COPY`; há um teste que faz isso com 1
+milhão de linhas.
 
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados

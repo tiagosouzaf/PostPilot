@@ -42,10 +42,18 @@
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
 //!   (`host` ou `host,porta`), conecta direto usando `PGUSER`, `PGDATABASE` e
-//!   `PGPASSWORD`.
+//!   `PGPASSWORD`. Vários servidores separados por `;` aparecem juntos no
+//!   Object Explorer.
 //!
-//! As conexões recentes ficam em `<config>/PGStudio/connections.json`, sem
-//! senha.
+//! - `PGSTUDIO_REGISTERED=arquivo.json`: usa outra árvore de Registered
+//!   Servers no lugar de `<config>/PGStudio/registered_servers.json` e já
+//!   abre a janela (para screenshots).
+//!
+//! As conexões recentes ficam em `<config>/PGStudio/connections.json` e os
+//! servidores registrados em `<config>/PGStudio/registered_servers.json`,
+//! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
+//! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
+//! de medição não usam o cofre.
 
 // Sem console no Windows nos builds de release (os pacotes de `cargo xtask
 // dist`); em debug o console fica, para ver os logs.
@@ -65,6 +73,8 @@ use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::documents::FileDialogs;
 use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
+use pgstudio_ui_shell::registered::RegisteredServers;
+use pgstudio_ui_shell::secrets::KeyringStore;
 
 /// Identificador do app no Wayland e no X11 (`WM_CLASS`).
 const APP_ID: &str = "pgstudio";
@@ -137,6 +147,17 @@ fn main() -> eframe::Result {
             if let Some(store) = layout {
                 app = app.with_layout_store(store);
             }
+            let registered_file = std::env::var_os("PGSTUDIO_REGISTERED").map(PathBuf::from);
+            if let Some(file) = &registered_file {
+                app = app.with_registered_servers(RegisteredServers::open(file));
+                app.show_registered_servers();
+            } else if screenshot.is_none() && !bench {
+                if let Some(dir) = config_dir() {
+                    let file = dir.join("PGStudio").join("registered_servers.json");
+                    app = app.with_registered_servers(RegisteredServers::open(file));
+                }
+                app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
             if !demo {
                 match DbRuntime::new() {
                     Ok(runtime) => {
@@ -149,8 +170,8 @@ fn main() -> eframe::Result {
                         app = app.with_status("Could not start the database runtime.");
                     }
                 }
-                if let Some(server) = connect.as_deref().filter(|c| *c != "dialog") {
-                    connect_from_env(&mut app, server);
+                if let Some(servers) = connect.as_deref().filter(|c| *c != "dialog") {
+                    app = connect_from_env(app, servers);
                 }
             }
             for file in &files {
@@ -222,7 +243,41 @@ fn main() -> eframe::Result {
 
 /// Conecta direto ao servidor de `PGSTUDIO_CONNECT`, com as variáveis do
 /// libpq para o resto.
-fn connect_from_env(app: &mut ShellApp, server: &str) {
+fn connect_from_env(mut app: ShellApp, servers: &str) -> ShellApp {
+    let mut servers = servers.split(';').filter(|s| !s.trim().is_empty());
+    let Some(first) = servers.next() else {
+        return app;
+    };
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let mut rest = Vec::new();
+    for server in servers {
+        if let Some(s) = env_settings(server) {
+            rest.push(s);
+        }
+    }
+    if !rest.is_empty() {
+        // Os outros servidores conectam como servidores registrados, com a
+        // senha num cofre só da memória.
+        let store = pgstudio_ui_shell::secrets::MemoryStore::default();
+        for s in &rest {
+            let key = pgstudio_ui_shell::secrets::password_key(s);
+            pgstudio_ui_shell::secrets::SecretStore::set(&store, &key, &password)
+                .expect("memory store");
+        }
+        app = app.with_secret_store(Arc::new(store));
+        for s in rest {
+            app.queue_registered_connect(s);
+        }
+    }
+    if let Some(settings) = env_settings(first) {
+        app.connect_to(settings, password);
+    }
+    app
+}
+
+/// Conexão para um servidor de `PGSTUDIO_CONNECT`, com `PGUSER` e
+/// `PGDATABASE`.
+fn env_settings(server: &str) -> Option<ConnectionSettings> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
     let mut settings = ConnectionSettings {
         user: env("PGUSER").unwrap_or_else(|| "postgres".into()),
@@ -231,9 +286,9 @@ fn connect_from_env(app: &mut ShellApp, server: &str) {
     };
     if let Err(e) = settings.set_server_name(server) {
         eprintln!("PGSTUDIO_CONNECT: {e}");
-        return;
+        return None;
     }
-    app.connect_to(settings, env("PGPASSWORD").unwrap_or_default());
+    Some(settings)
 }
 
 /// Arquivo de keymap do usuário: `PGSTUDIO_KEYMAP` ou a pasta de configuração.
@@ -331,6 +386,19 @@ impl FileDialogs for NativeDialogs {
 
     fn open_path(&mut self) -> Option<PathBuf> {
         let path = self.dialog().set_title("Open File").pick_file();
+        self.remember(path)
+    }
+
+    fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
+        let path = self
+            .dialog()
+            .set_title("Save Grid Results")
+            .set_file_name(name)
+            .add_filter("CSV (Comma delimited)", &["csv"])
+            .add_filter("Text (Tab delimited)", &["tsv", "txt"])
+            .add_filter("JSON", &["json"])
+            .add_filter("SQL INSERT statements", &["sql"])
+            .save_file();
         self.remember(path)
     }
 }
