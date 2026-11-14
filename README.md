@@ -44,9 +44,12 @@ Novas crates entram na fase do roteiro que as usa.
   há instalador; o SmartScreen pode avisar porque o exe não é assinado ("Mais
   informações" > "Executar assim mesmo").
 
-No Linux, o binário precisa da glibc GLIBC_MIN ou mais nova (Ubuntu 22.04,
-Debian 12, Fedora 36 e posteriores) e de Vulkan ou OpenGL ES (o Mesa de
-qualquer desktop serve).
+No Linux, o binário é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
+posteriores) e precisa de Vulkan ou OpenGL ES (o Mesa de qualquer desktop
+serve). Os pacotes foram testados em Ubuntu 22.04 e 24.04 limpos; no 20.04 o
+binário carrega, mas o renderizador por software do Mesa daquela versão é
+antigo demais para o wgpu (numa GPU de verdade deve abrir, mas não foi
+testado).
 
 ## Uso
 
@@ -218,6 +221,12 @@ gera em `target/packages/`, com um `SHA256SUMS`:
 | `pgstudio_<versão>_amd64.deb` | `dpkg-deb` |
 | `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
 | `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
+
+O binário Linux sai ligado contra a glibc 2.31 quando há o
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
+(`cargo install cargo-zigbuild` e `pip install ziglang`); sem ele, ou com
+`--native`, sai um build comum, que só roda com a glibc da máquina que
+compilou ou mais nova.
 
 `--only deb,appimage,zip` escolhe os formatos e `--no-build` reaproveita os
 binários. No Ubuntu, as ferramentas vêm de
