@@ -29,10 +29,10 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
         .show(ui, |ui| status_strip(ui, exec, server));
     // Sem resultados (ainda), só há o que mostrar em Messages; a escolha
     // do usuário fica guardada para quando eles chegarem.
-    let tab = if exec.results.is_empty() {
-        Tab::Messages
-    } else {
-        exec.tab
+    let tab = match exec.tab {
+        Tab::Plan if !exec.plans.is_empty() => Tab::Plan,
+        Tab::Results if !exec.results.is_empty() => Tab::Results,
+        _ => Tab::Messages,
     };
     ui.horizontal(|ui| {
         let results = format!("{} Results", icons::TABLE);
@@ -46,6 +46,10 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
         {
             exec.tab = Tab::Messages;
         }
+        let plan = format!("{} Execution plan", icons::FLOW_ARROW);
+        if !exec.plans.is_empty() && ui.selectable_label(tab == Tab::Plan, plan).clicked() {
+            exec.tab = Tab::Plan;
+        }
     });
     ui.separator();
     match tab {
@@ -54,8 +58,46 @@ pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> 
             ResultsMode::Text => text_results(ui, doc, &mut exec.results),
         },
         Tab::Messages => messages(ui, doc, exec, &mut action),
+        Tab::Plan => plans(ui, doc, exec),
     }
     action
+}
+
+/// Os planos do Ctrl+L, um embaixo do outro, cada um com o cabeçalho do
+/// SSMS: número, custo relativo ao lote e o comando.
+fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
+    let shares = {
+        let plans: Vec<_> = exec.plans.iter().map(|(p, _)| p.clone()).collect();
+        pgstudio_execution_plan::batch_shares(&plans)
+    };
+    let count = exec.plans.len();
+    let height = (ui.available_height() / count as f32).max(180.0);
+    egui::ScrollArea::vertical()
+        .id_salt(("plans", doc))
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            for (i, (plan, view)) in exec.plans.iter_mut().enumerate() {
+                ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+                    ui.label(format!(
+                        "Query {}: Query cost (relative to the batch): {:.0}%",
+                        i + 1,
+                        shares[i] * 100.0
+                    ));
+                    let statement: String = plan
+                        .statement
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    ui.add(
+                        egui::Label::new(RichText::new(statement).monospace().weak()).truncate(),
+                    );
+                    ui.separator();
+                    ui.set_min_height(height - 8.0);
+                    view.show(ui, plan, ("plan_view", doc, i));
+                });
+                ui.separator();
+            }
+        });
 }
 
 fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str) {

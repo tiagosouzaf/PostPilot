@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
+use pgstudio_execution_plan::{Plan, PlanView};
 use pgstudio_result_grid::{GridState, ResultStore};
 
 /// Linhas recebidas entre um pedido de frame e outro, para a contagem na
@@ -129,6 +130,98 @@ pub enum Tab {
     #[default]
     Results,
     Messages,
+    /// "Execution plan", com os planos do Ctrl+L.
+    Plan,
+}
+
+/// Um trecho do SQL enviado que veio do documento: `len` caracteres a
+/// partir de `sent` no texto enviado correspondem aos que começam em
+/// `original` no texto escolhido pelo usuário.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Segment {
+    pub sent: usize,
+    pub original: usize,
+    pub len: usize,
+}
+
+/// O que vai para o servidor: o texto escolhido (seleção ou documento) ou
+/// uma versão dele com comandos em volta (como `EXPLAIN` antes de cada
+/// comando), com os trechos que permitem levar a posição de um erro de
+/// volta ao documento.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Batch {
+    pub sent: String,
+    pub segments: Vec<Segment>,
+    /// Os comandos, um por resultado esperado, para os cabeçalhos dos
+    /// planos.
+    pub statements: Vec<String>,
+}
+
+impl Batch {
+    /// O texto como está.
+    pub fn plain(sql: &str) -> Self {
+        Batch {
+            sent: sql.to_string(),
+            segments: vec![Segment {
+                sent: 0,
+                original: 0,
+                len: sql.chars().count(),
+            }],
+            statements: Vec::new(),
+        }
+    }
+
+    /// `EXPLAIN (options)` antes de cada comando de `sql`, como o Ctrl+L.
+    /// Sem comandos (só espaço e comentários), devolve `None`.
+    pub fn explain(sql: &str, options: &str) -> Option<Self> {
+        let ranges = pgstudio_sql_editor::lexer::statements(sql);
+        if ranges.is_empty() {
+            return None;
+        }
+        let mut sent = String::new();
+        let mut sent_chars = 0;
+        let mut segments = Vec::new();
+        let mut statements = Vec::new();
+        for (i, r) in ranges.into_iter().enumerate() {
+            if i > 0 {
+                sent.push_str(";\n");
+                sent_chars += 2;
+            }
+            let prefix = format!("EXPLAIN ({options}) ");
+            sent_chars += prefix.chars().count();
+            sent.push_str(&prefix);
+            let body = &sql[r.clone()];
+            let len = body.chars().count();
+            segments.push(Segment {
+                sent: sent_chars,
+                original: sql[..r.start].chars().count(),
+                len,
+            });
+            sent.push_str(body);
+            sent_chars += len;
+            statements.push(body.to_string());
+        }
+        Some(Batch {
+            sent,
+            segments,
+            statements,
+        })
+    }
+
+    /// Posição (em caracteres, a partir de 0) no texto escolhido para uma
+    /// posição no texto enviado. Uma posição dentro do que foi acrescentado
+    /// vai para o começo do comando seguinte.
+    pub fn original_position(&self, sent: usize) -> usize {
+        let i = self.segments.partition_point(|s| s.sent <= sent);
+        let prev = i.checked_sub(1).map(|i| self.segments[i]);
+        let next = self.segments.get(i);
+        match prev {
+            Some(s) if sent - s.sent <= s.len || next.is_none() => {
+                s.original + (sent - s.sent).min(s.len)
+            }
+            _ => next.map_or(0, |n| n.original),
+        }
+    }
 }
 
 /// Uma execução, do F5 até o fim.
@@ -152,6 +245,13 @@ pub struct Execution {
     pub database: String,
     /// Grade ou texto, escolhido antes de executar.
     pub mode: ResultsMode,
+    /// Os trechos do texto enviado e os comandos, para levar erros ao
+    /// documento e dar nome aos planos.
+    batch: Batch,
+    /// Ctrl+L: cada resultado é um plano em JSON, mostrado na aba
+    /// Execution plan em vez da grade.
+    plan_mode: bool,
+    pub plans: Vec<(Plan, PlanView)>,
 }
 
 impl std::fmt::Debug for Execution {
@@ -173,12 +273,40 @@ impl Execution {
         offset: usize,
         ctx: &egui::Context,
     ) -> Self {
+        let batch = Batch::plain(&sql);
+        Self::start_batch(session, batch, sql, offset, ctx)
+    }
+
+    /// Ctrl+L: pede o plano estimado de cada comando de `sql`, sem rodar
+    /// nada. `None` quando não há comando.
+    pub fn start_plan(
+        session: Arc<dyn QuerySession>,
+        sql: String,
+        offset: usize,
+        ctx: &egui::Context,
+    ) -> Option<Self> {
+        let batch = Batch::explain(&sql, "FORMAT JSON")?;
+        let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
+        exec.plan_mode = true;
+        exec.tab = Tab::Plan;
+        Some(exec)
+    }
+
+    /// Manda `batch.sent` para a sessão; `sql` é o texto escolhido, que
+    /// começa no caractere `offset` do documento.
+    pub fn start_batch(
+        session: Arc<dyn QuerySession>,
+        batch: Batch,
+        sql: String,
+        offset: usize,
+        ctx: &egui::Context,
+    ) -> Self {
         let (tx, events) = mpsc::channel();
         let ctx = ctx.clone();
         let mut current: Option<Arc<Mutex<ResultStore>>> = None;
         let mut since_repaint = 0;
         session.execute(
-            sql.clone(),
+            batch.sent.clone(),
             Box::new(move |e| match e {
                 QueryEvent::Row(row) => {
                     if let Some(store) = &current {
@@ -223,7 +351,15 @@ impl Execution {
             pending_error: None,
             tab: Tab::Results,
             mode: ResultsMode::Grid,
+            batch,
+            plan_mode: false,
+            plans: Vec::new(),
         }
+    }
+
+    /// Se a execução é de plano (Ctrl+L).
+    pub fn is_plan(&self) -> bool {
+        self.plan_mode
     }
 
     /// Pede o cancelamento.
@@ -277,6 +413,11 @@ impl Execution {
         match event {
             // Colunas e linhas vão direto para o buffer (ver `start`).
             QueryEvent::Columns(_) | QueryEvent::Row(_) => {}
+            QueryEvent::CommandComplete { .. } if self.plan_mode => {
+                if std::mem::take(&mut self.open_result) {
+                    self.take_plan();
+                }
+            }
             QueryEvent::CommandComplete { rows } => {
                 let had_result = std::mem::take(&mut self.open_result);
                 if had_result || rows > 0 {
@@ -301,10 +442,13 @@ impl Execution {
             }),
             QueryEvent::Error(e) => {
                 self.open_result = false;
-                let position = e.position.map(|p| self.offset + p.saturating_sub(1));
-                let header = match e.position {
+                let original = e
+                    .position
+                    .map(|p| self.batch.original_position(p.saturating_sub(1)));
+                let position = original.map(|p| self.offset + p);
+                let header = match original {
                     Some(p) => {
-                        let (line, col) = line_col(&self.sql, p.saturating_sub(1));
+                        let (line, col) = line_col(&self.sql, p);
                         format!(
                             "Msg {}, Level {}, Line {line}, Column {col}",
                             code(&e),
@@ -340,13 +484,51 @@ impl Execution {
                     format_elapsed(self.elapsed(), true)
                 ));
                 // Erros vão para a aba Messages, como no SSMS.
-                if self.results.is_empty() || self.outcome == Outcome::Failed {
+                if self.plan_mode {
+                    if self.plans.is_empty() {
+                        self.tab = Tab::Messages;
+                    }
+                } else if self.results.is_empty() || self.outcome == Outcome::Failed {
                     self.tab = Tab::Messages;
                 }
                 return true;
             }
         }
         false
+    }
+
+    /// O resultado que acabou de chegar é a saída de um `EXPLAIN (FORMAT
+    /// JSON)`: vira um plano e sai da lista de resultados.
+    fn take_plan(&mut self) {
+        let Some(set) = self.results.pop() else {
+            return;
+        };
+        let json: String = {
+            let mut store = set.store();
+            (0..store.len())
+                .filter_map(|r| store.row(r).into_iter().next().flatten())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let statement = self
+            .batch
+            .statements
+            .get(self.plans.len())
+            .cloned()
+            .unwrap_or_default();
+        match pgstudio_execution_plan::parse(&json, &statement) {
+            Ok(plans) => {
+                for plan in plans {
+                    let view = PlanView::new(&plan);
+                    self.plans.push((plan, view));
+                }
+            }
+            Err(e) => self.messages.push(Message {
+                text: e.to_string(),
+                kind: MessageKind::Error,
+                position: None,
+            }),
+        }
     }
 
     fn info(&mut self, text: String) {
@@ -397,6 +579,25 @@ pub fn format_elapsed(d: Duration, millis: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_batch_maps_positions_back() {
+        let sql = "SELECT 1;\n  SELECT bad FROM t;";
+        let b = Batch::explain(sql, "FORMAT JSON").unwrap();
+        assert_eq!(
+            b.sent,
+            "EXPLAIN (FORMAT JSON) SELECT 1;\nEXPLAIN (FORMAT JSON) SELECT bad FROM t"
+        );
+        assert_eq!(b.statements, ["SELECT 1", "SELECT bad FROM t"]);
+        let bad = b.sent.find("bad").unwrap();
+        assert_eq!(b.original_position(bad), sql.find("bad").unwrap());
+        // Dentro do EXPLAIN acrescentado: começo do comando.
+        assert_eq!(b.original_position(40), sql.find("SELECT bad").unwrap());
+        assert_eq!(b.original_position(3), 0);
+        assert!(Batch::explain(" -- nada", "FORMAT JSON").is_none());
+        let plain = Batch::plain("SELECT 1");
+        assert_eq!(plain.original_position(7), 7);
+    }
 
     #[test]
     fn elapsed_is_formatted_like_ssms() {
