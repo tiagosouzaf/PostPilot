@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use pgstudio_core::connection::ConnectionSettings;
-use pgstudio_core::query::{QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage};
+use pgstudio_core::query::{
+    ColumnSource, DescribeDone, QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage,
+};
 use tokio_postgres::SimpleQueryMessage;
 use tokio_postgres::error::{DbError, ErrorPosition, SqlState};
 
@@ -108,6 +110,34 @@ impl QuerySession for PgQuerySession {
 
     fn database(&self) -> String {
         self.settings.database.clone()
+    }
+
+    fn describe(&self, sql: String, done: DescribeDone) {
+        let shared = self.shared.clone();
+        self.runtime.handle().spawn(async move {
+            let guard = shared.session.lock().await;
+            let result = match guard.as_ref() {
+                Some(session) if !session.is_closed() => session
+                    .client()
+                    .prepare(&sql)
+                    .await
+                    .map(|statement| {
+                        statement
+                            .columns()
+                            .iter()
+                            .map(|c| match (c.table_oid(), c.column_id()) {
+                                (Some(table), Some(column)) if table != 0 && column > 0 => {
+                                    Some(ColumnSource { table, column })
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .map_err(|e| error_message(&e).message),
+                _ => Err("The connection is closed.".to_string()),
+            };
+            done(result);
+        });
     }
 }
 

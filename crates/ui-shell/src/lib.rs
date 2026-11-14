@@ -30,6 +30,7 @@ pub mod query_designer;
 pub mod registered;
 pub mod repo;
 pub mod restore;
+pub mod result_edit;
 pub mod results;
 pub mod schema_compare;
 pub mod secrets;
