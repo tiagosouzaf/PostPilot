@@ -303,8 +303,11 @@ fn ask_claude_about_a_table_from_object_explorer() {
 
     // Inserir sem janela de consulta aberta abre uma.
     assert!(h.state().active_document().is_none());
-    h.get_by_label(&format!("{} Insert", egui_phosphor::regular::ARROW_SQUARE_IN))
-        .click();
+    h.get_by_label(&format!(
+        "{} Insert",
+        egui_phosphor::regular::ARROW_SQUARE_IN
+    ))
+    .click();
     h.run_steps(3);
     let doc = h.state().active_document().expect("a new query window");
     let text = h.state().documents().get(doc).unwrap().text.clone();
