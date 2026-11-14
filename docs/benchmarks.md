@@ -15,7 +15,7 @@ vezes e mede três cenários (`--scenario startup|grid|intellisense|all`):
   executa uma consulta sintética de 1 milhão de linhas (6 colunas, parecidas
   com uma tabela de clientes) pelo mesmo caminho de uma consulta real: as
   linhas vão de uma thread para o buffer do resultado, e a grade mostra o que
-  chegou. Depois a grade rola do começo ao fim em 600 frames. Mede o tempo
+  chegou. Depois a grade rola do começo ao fim em 10 s (cerca de 600 frames a 60 FPS). Mede o tempo
   até as linhas chegarem, o intervalo entre frames (o que a tela mostra), o
   tempo de CPU da interface em cada frame e a memória com o resultado
   carregado.
@@ -88,6 +88,34 @@ Medido no CI do [PR #8](https://github.com/tiagosouzaf/PostPilot/pull/8)
   a fazer (por exemplo, testar o renderizador `glow`).
 
 ### Marco 2.8 (fim da Fase 2)
+
+Linux medido no CI do [PR #18](https://github.com/tiagosouzaf/PostPilot/pull/18)
+(`ubuntu-latest`, Xvfb + lavapipe, sem GPU), 5 execuções de cada cenário, 30 s
+em repouso ([execução do CI](https://github.com/tiagosouzaf/PostPilot/actions/runs/43540649190)):
+
+| Cenário | Meta | Mediana | Pior | Situação |
+| --- | --- | --- | --- | --- |
+| Até o primeiro frame | < 1 s | 123 ms | 3311 ms | ❌ acima |
+| RAM em repouso | < 100 MB | 117.0 MB | 124.7 MB | ❌ acima |
+| Grade: 1 milhão de linhas chegam | — | 652.7 ms | 675.5 ms | — |
+| Grade: frame rolando (p95) | < 20 ms (60 FPS) | 28.6 ms | 39.2 ms | ❌ acima |
+| Grade: CPU da interface por frame (p95) | — | 0.6 ms | 0.8 ms | — |
+| Grade: RAM a mais que o repouso | < 96 MB | 78.1 MB | 78.2 MB | ✅ dentro |
+| IntelliSense: catálogo de 10 mil tabelas carregado | — | 292.4 ms | 294.5 ms | — |
+| IntelliSense: tecla (p95) | — | 2.5 ms | 3.1 ms | — |
+| IntelliSense: pior tecla | < 50 ms | 3.5 ms | 4.6 ms | ✅ dentro |
+| IntelliSense: RAM com o catálogo | — | 128.2 MB | 128.5 MB | — |
+
+- **Grade rolando acima da meta no CI:** a interface gasta 0,6 ms por frame;
+  os 28 ms são o lavapipe desenhando a janela nos 2 núcleos do runner. Fica
+  como "precisa de medição com GPU", como a RAM em repouso no marco 1.8.
+- **Primeiro frame:** só a primeira execução (3,3 s, disco frio do runner)
+  passou de 1 s; as outras ficaram em 121 a 124 ms.
+- **Windows:** a partida e a RAM ficaram como no marco 1.8 (mediana 407 ms e
+  54,6 MB). O cenário da grade passou do limite de 180 s do xtask, porque a
+  rolagem era de 600 frames fixos e o WARP desenha devagar; agora a rolagem
+  dura 10 s em qualquer máquina. Os números de grade e IntelliSense no
+  Windows entram quando o CI rodar de novo.
 
 Medido localmente (Linux x86_64 num container, Xvfb + lavapipe, sem GPU),
 3 execuções de cada cenário, 10 s em repouso:
