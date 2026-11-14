@@ -194,8 +194,17 @@ mod tests {
                         break;
                     }
                 }
-                let body: &[u8] = if line.contains("/sums") { sums.as_bytes() } else { file };
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                let body: &[u8] = if line.contains("/sums") {
+                    sums.as_bytes()
+                } else {
+                    file
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
                 stream.write_all(body).unwrap();
             }
         });
@@ -209,8 +218,16 @@ mod tests {
             page: String::new(),
             notes: String::new(),
             assets: vec![
-                Asset { name: "app.AppImage".into(), url: format!("{base}/file"), size: 5 },
-                Asset { name: "SHA256SUMS".into(), url: format!("{base}/sums"), size: 0 },
+                Asset {
+                    name: "app.AppImage".into(),
+                    url: format!("{base}/file"),
+                    size: 5,
+                },
+                Asset {
+                    name: "SHA256SUMS".into(),
+                    url: format!("{base}/sums"),
+                    size: 0,
+                },
             ],
         }
     }
@@ -233,7 +250,8 @@ mod tests {
         let r = release(&base);
         let dir = temp("ok");
         let progress = Progress::default();
-        let out = download_verified(&r, &r.assets[0], &dir.join("app"), "Test/1", &progress).unwrap();
+        let out =
+            download_verified(&r, &r.assets[0], &dir.join("app"), "Test/1", &progress).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"hello");
         assert_eq!(progress.fraction(), Some(1.0));
         assert!(!dir.join("app.part").exists());
@@ -246,8 +264,14 @@ mod tests {
         let base = serve(b"hello", format!("{hash}  app.AppImage\n"));
         let r = release(&base);
         let dir = temp("bad");
-        let err = download_verified(&r, &r.assets[0], &dir.join("app"), "Test/1", &Progress::default())
-            .unwrap_err();
+        let err = download_verified(
+            &r,
+            &r.assets[0],
+            &dir.join("app"),
+            "Test/1",
+            &Progress::default(),
+        )
+        .unwrap_err();
         assert!(err.contains("does not match"), "{err}");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -258,14 +282,46 @@ mod tests {
         let base = serve(b"hello", "abc  other-file\n".into());
         let mut r = release(&base);
         let dir = temp("nosums");
-        let err = download_verified(&r, &r.assets[0], &dir.join("app"), "Test/1", &Progress::default())
-            .unwrap_err();
+        let err = download_verified(
+            &r,
+            &r.assets[0],
+            &dir.join("app"),
+            "Test/1",
+            &Progress::default(),
+        )
+        .unwrap_err();
         assert!(err.contains("no line"), "{err}");
         r.assets.pop();
-        let err = download_verified(&r, &r.assets[0], &dir.join("app"), "Test/1", &Progress::default())
-            .unwrap_err();
+        let err = download_verified(
+            &r,
+            &r.assets[0],
+            &dir.join("app"),
+            "Test/1",
+            &Progress::default(),
+        )
+        .unwrap_err();
         assert!(err.contains("SHA256SUMS"), "{err}");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn updates_an_appimage_end_to_end() {
+        let hash = hex(&Sha256::digest(b"hello"));
+        let base = serve(b"hello", format!("{hash}  app.AppImage\n"));
+        let mut r = release(&base);
+        r.assets[0].name = "PostPilot-0.2.0-x86_64.AppImage".into();
+        let base_sums = serve(b"", format!("{hash}  PostPilot-0.2.0-x86_64.AppImage\n"));
+        r.assets[1].url = format!("{base_sums}/sums");
+        let dir = temp("e2e");
+        let image = dir.join("PostPilot-0.1.0-x86_64.AppImage");
+        std::fs::write(&image, b"old").unwrap();
+        let kind = crate::InstallKind::AppImage(image.clone());
+        let done = crate::install(&kind, &r, "Test/1", &Progress::default()).unwrap();
+        assert_eq!(done, crate::Installed::Restart(image.clone()));
+        assert_eq!(std::fs::read(&image).unwrap(), b"hello");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -273,7 +329,9 @@ mod tests {
     #[test]
     #[ignore = "precisa de rede"]
     fn fetches_a_real_release() {
-        let r = fetch_latest("BurntSushi/ripgrep", "PostPilot-test/0").unwrap().unwrap();
+        let r = fetch_latest("BurntSushi/ripgrep", "PostPilot-test/0")
+            .unwrap()
+            .unwrap();
         assert!(r.is_newer_than("0.0.1"));
         assert!(!r.assets.is_empty());
     }

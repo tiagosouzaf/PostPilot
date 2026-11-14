@@ -17,8 +17,6 @@ rustls-native-certs.workspace = true
 # Cliente HTTP bloqueante (a checagem roda numa thread própria). Sem as
 # raízes embutidas: usa as do sistema, como a conexão TLS com o PostgreSQL.
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "gzip"] }
-# Só para o .zip do Windows (cópia portátil).
-zip = { version = "7", default-features = false, features = ["deflate-flate2"] }
 
 [lints]
 workspace = true

@@ -168,7 +168,8 @@ pub fn install(
         InstallKind::WindowsMsi => {
             let dir = std::env::temp_dir().join("postpilot-update");
             std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            let msi = download_verified(release, asset, &dir.join(&asset.name), user_agent, progress)?;
+            let msi =
+                download_verified(release, asset, &dir.join(&asset.name), user_agent, progress)?;
             // /passive: só a barra de progresso; o UAC ainda pede permissão.
             // O MajorUpgrade do .msi remove a versão antiga.
             Command::new("msiexec")
@@ -182,7 +183,8 @@ pub fn install(
         InstallKind::WindowsPortable(exe) => {
             let dir = std::env::temp_dir().join("postpilot-update");
             std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            let zip = download_verified(release, asset, &dir.join(&asset.name), user_agent, progress)?;
+            let zip =
+                download_verified(release, asset, &dir.join(&asset.name), user_agent, progress)?;
             let result = replace_from_zip(&zip, exe);
             let _ = std::fs::remove_file(&zip);
             result.map(|()| Installed::Restart(exe.clone()))
@@ -211,39 +213,76 @@ fn replace_appimage(_: &Path, _: &Path) -> Result<(), String> {
     Err("AppImages only run on Linux".into())
 }
 
-/// Extrai o `.exe` do zip ao lado do atual e troca os dois. O Windows não
-/// deixa apagar um `.exe` em execução, mas deixa renomear: o antigo vira
-/// `.old` e sai na próxima abertura ([`cleanup_old_binary`]).
+/// Extrai o zip com o `tar` do próprio Windows (10 ou mais novo lê zip) e
+/// troca o `.exe` pelo de dentro dele.
 fn replace_from_zip(zip: &Path, exe: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(zip).map_err(|e| format!("{}: {e}", zip.display()))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip.display()))?;
-    let index = (0..archive.len())
-        .find(|&i| {
-            archive
-                .by_index(i)
-                .is_ok_and(|f| f.is_file() && f.name().to_ascii_lowercase().ends_with(".exe"))
-        })
-        .ok_or("the zip has no .exe")?;
-    let new = with_suffix(exe, ".new");
-    {
-        let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
-        let mut out = std::fs::File::create(&new).map_err(|e| format!("{}: {e}", new.display()))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("{}: {e}", new.display()))?;
-        out.sync_all().map_err(|e| format!("{}: {e}", new.display()))?;
+    let dir = with_suffix(zip, ".extracted");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let result = extract_zip(zip, &dir)
+        .and_then(|()| find_exe(&dir).ok_or_else(|| "the zip has no .exe".to_string()))
+        .and_then(|new| swap_exe(&new, exe));
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn extract_zip(zip: &Path, dir: &Path) -> Result<(), String> {
+    // O caminho completo, para não pegar outro `tar` do PATH.
+    let tar = std::env::var_os("SystemRoot")
+        .map(|root| Path::new(&root).join("System32").join("tar.exe"))
+        .unwrap_or_else(|| PathBuf::from("tar"));
+    let status = Command::new(&tar)
+        .arg("-xf")
+        .arg(zip)
+        .arg("-C")
+        .arg(dir)
+        .status()
+        .map_err(|e| format!("could not run {}: {e}", tar.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("could not extract {}", zip.display()))
     }
+}
+
+/// O primeiro `.exe` em `dir` ou numa subpasta direta (o zip tem uma pasta
+/// `PostPilot-<versão>-windows-x86_64/`).
+fn find_exe(dir: &Path) -> Option<PathBuf> {
+    let is_exe =
+        |p: &Path| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+    let entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    entries.iter().find(|p| is_exe(p)).cloned().or_else(|| {
+        entries.iter().filter(|p| p.is_dir()).find_map(|sub| {
+            std::fs::read_dir(sub)
+                .ok()?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .find(|p| is_exe(p))
+        })
+    })
+}
+
+/// Troca `exe` por `new`. O Windows não deixa apagar um `.exe` em execução,
+/// mas deixa renomear: o antigo vira `.old` e sai na próxima abertura
+/// ([`cleanup_old_binary`]). `new` é copiado (pode estar em outro disco).
+fn swap_exe(new: &Path, exe: &Path) -> Result<(), String> {
+    let staged = with_suffix(exe, ".new");
+    std::fs::copy(new, &staged).map_err(|e| format!("{}: {e}", staged.display()))?;
     let old = with_suffix(exe, ".old");
     let _ = std::fs::remove_file(&old);
     let swap = std::fs::rename(exe, &old)
         .map_err(|e| format!("{}: {e}", exe.display()))
         .and_then(|()| {
-            std::fs::rename(&new, exe).map_err(|e| {
+            std::fs::rename(&staged, exe).map_err(|e| {
                 // Devolve o antigo ao lugar para o app continuar abrindo.
                 let _ = std::fs::rename(&old, exe);
                 format!("{}: {e}", exe.display())
             })
         });
     if swap.is_err() {
-        let _ = std::fs::remove_file(&new);
+        let _ = std::fs::remove_file(&staged);
     }
     swap
 }
@@ -283,7 +322,10 @@ mod tests {
 
     #[test]
     fn package_managers_get_a_command_not_a_download() {
-        let r = release(&["postpilot_0.2.0_amd64.deb", "PostPilot-0.2.0-x86_64.AppImage"]);
+        let r = release(&[
+            "postpilot_0.2.0_amd64.deb",
+            "PostPilot-0.2.0-x86_64.AppImage",
+        ]);
         let pacman = InstallKind::Pacman("postpilot-bin".into());
         assert!(!pacman.can_self_update());
         assert_eq!(pacman.asset(&r), None);
@@ -311,47 +353,61 @@ mod tests {
             "SHA256SUMS",
         ]);
         let image = InstallKind::AppImage("/x/a.AppImage".into());
-        assert_eq!(image.asset(&r).unwrap().name, "PostPilot-0.2.0-x86_64.AppImage");
-        assert_eq!(InstallKind::WindowsMsi.asset(&r).unwrap().name, "PostPilot-0.2.0-x86_64.msi");
+        assert_eq!(
+            image.asset(&r).unwrap().name,
+            "PostPilot-0.2.0-x86_64.AppImage"
+        );
+        assert_eq!(
+            InstallKind::WindowsMsi.asset(&r).unwrap().name,
+            "PostPilot-0.2.0-x86_64.msi"
+        );
         let zip = InstallKind::WindowsPortable("C:/x/postpilot.exe".into());
-        assert_eq!(zip.asset(&r).unwrap().name, "PostPilot-0.2.0-windows-x86_64.zip");
+        assert_eq!(
+            zip.asset(&r).unwrap().name,
+            "PostPilot-0.2.0-windows-x86_64.zip"
+        );
         assert!(image.can_self_update() && zip.can_self_update());
     }
 
     #[test]
     fn program_files_prefix_ignores_case_and_slashes() {
         let pf = Path::new(r"C:\Program Files");
-        assert!(starts_with_ignore_case(Path::new(r"c:\program files\PostPilot\postpilot.exe"), pf));
-        assert!(starts_with_ignore_case(Path::new(r"\\?\C:\Program Files\PostPilot\postpilot.exe"), pf));
-        assert!(!starts_with_ignore_case(Path::new(r"C:\Program Files Extra\p.exe"), pf));
-        assert!(!starts_with_ignore_case(Path::new(r"D:\tools\postpilot.exe"), pf));
+        assert!(starts_with_ignore_case(
+            Path::new(r"c:\program files\PostPilot\postpilot.exe"),
+            pf
+        ));
+        assert!(starts_with_ignore_case(
+            Path::new(r"\\?\C:\Program Files\PostPilot\postpilot.exe"),
+            pf
+        ));
+        assert!(!starts_with_ignore_case(
+            Path::new(r"C:\Program Files Extra\p.exe"),
+            pf
+        ));
+        assert!(!starts_with_ignore_case(
+            Path::new(r"D:\tools\postpilot.exe"),
+            pf
+        ));
     }
 
     #[test]
-    fn swaps_the_exe_from_a_zip() {
-        use std::io::Write;
+    fn swaps_the_exe_found_in_the_extracted_folder() {
         let dir = std::env::temp_dir().join(format!("updater-zip-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let extracted = dir.join("x").join("PostPilot-0.2.0-windows-x86_64");
+        std::fs::create_dir_all(&extracted).unwrap();
+        std::fs::write(extracted.join("LICENSE-MIT.txt"), b"license").unwrap();
+        std::fs::write(extracted.join("postpilot.EXE"), b"new").unwrap();
         let exe = dir.join("postpilot.exe");
         std::fs::write(&exe, b"old").unwrap();
-        let zip_path = dir.join("p.zip");
-        {
-            let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
-            let opts = zip::write::SimpleFileOptions::default();
-            w.add_directory("PostPilot-0.2.0-windows-x86_64/", opts).unwrap();
-            w.start_file("PostPilot-0.2.0-windows-x86_64/LICENSE-MIT.txt", opts)
-                .unwrap();
-            w.write_all(b"license").unwrap();
-            w.start_file("PostPilot-0.2.0-windows-x86_64/postpilot.exe", opts)
-                .unwrap();
-            w.write_all(b"new").unwrap();
-            w.finish().unwrap();
-        }
-        replace_from_zip(&zip_path, &exe).unwrap();
+
+        let new = find_exe(&dir.join("x")).unwrap();
+        assert_eq!(new, extracted.join("postpilot.EXE"));
+        swap_exe(&new, &exe).unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new");
         assert_eq!(std::fs::read(with_suffix(&exe, ".old")).unwrap(), b"old");
         assert!(!with_suffix(&exe, ".new").exists());
+        assert_eq!(find_exe(&dir.join("nothing")), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

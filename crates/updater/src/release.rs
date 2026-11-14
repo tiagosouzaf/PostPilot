@@ -78,7 +78,8 @@ pub fn parse_release(json: &str) -> Result<Option<Release>, ReleaseError> {
     if raw.draft || raw.prerelease {
         return Ok(None);
     }
-    let version = parse_tag(&raw.tag_name).ok_or_else(|| ReleaseError::Tag(raw.tag_name.clone()))?;
+    let version =
+        parse_tag(&raw.tag_name).ok_or_else(|| ReleaseError::Tag(raw.tag_name.clone()))?;
     if !version.pre.is_empty() {
         return Ok(None);
     }
@@ -179,7 +180,10 @@ mod tests {
         assert!(!r.is_newer_than("0.2.0"));
         assert!(!r.is_newer_than("0.10.0"));
         assert!(!r.is_newer_than("not a version"));
-        assert_eq!(r.asset_ending_with("-x86_64.appimage").unwrap().url, "https://example.test/a");
+        assert_eq!(
+            r.asset_ending_with("-x86_64.appimage").unwrap().url,
+            "https://example.test/a"
+        );
         assert_eq!(r.asset_ending_with("-windows-x86_64.zip").unwrap().size, 12);
         assert_eq!(r.checksums().unwrap().url, "https://example.test/s");
     }
@@ -198,19 +202,26 @@ mod tests {
     fn rejects_bad_answers() {
         assert!(matches!(parse_release("{}"), Err(ReleaseError::Json(_))));
         let tag = LATEST.replace("\"v0.2.0\"", "\"nightly\"");
-        assert_eq!(parse_release(&tag), Err(ReleaseError::Tag("nightly".into())));
+        assert_eq!(
+            parse_release(&tag),
+            Err(ReleaseError::Tag("nightly".into()))
+        );
     }
 
     #[test]
     fn reads_sha256sums() {
         let a = "ab".repeat(32);
         let b = "0F".repeat(32);
-        let text = format!("{a}  PostPilot-0.2.0-x86_64.AppImage\n{b} *PostPilot-0.2.0-x86_64.msi\n");
+        let text =
+            format!("{a}  PostPilot-0.2.0-x86_64.AppImage\n{b} *PostPilot-0.2.0-x86_64.msi\n");
         assert_eq!(
             parse_sha256sums(&text, "PostPilot-0.2.0-x86_64.AppImage"),
             Some([0xab; 32])
         );
-        assert_eq!(parse_sha256sums(&text, "PostPilot-0.2.0-x86_64.msi"), Some([0x0f; 32]));
+        assert_eq!(
+            parse_sha256sums(&text, "PostPilot-0.2.0-x86_64.msi"),
+            Some([0x0f; 32])
+        );
         assert_eq!(parse_sha256sums(&text, "PostPilot-0.2.0-x86_64"), None);
         assert_eq!(parse_sha256sums("zz  f\n", "f"), None);
     }

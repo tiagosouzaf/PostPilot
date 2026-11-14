@@ -240,7 +240,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
             }
-            if screenshot.is_none() && !bench && let Some(dir) = config_dir() {
+            if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
                 let file = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("update.json");
                 app = app.with_updater(&cc.egui_ctx, Updater::detect(file));
             }

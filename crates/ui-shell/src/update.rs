@@ -11,11 +11,11 @@ use std::time::SystemTime;
 
 use eframe::egui::{self, RichText};
 use pgstudio_core::{APP_NAME, CommandId, VERSION};
-use pgstudio_updater::{
-    InstallKind, Installed, Progress, REPOSITORY, Release, UpdateSettings, aur_helper,
-};
+use pgstudio_updater::{Progress, REPOSITORY, aur_helper};
 
-pub use pgstudio_updater::cleanup_old_binary;
+pub use pgstudio_updater::{
+    InstallKind, Installed, Release, UpdateSettings, cleanup_old_binary, parse_release,
+};
 
 /// Em que pé está a atualização.
 #[derive(Debug)]
@@ -44,7 +44,8 @@ pub struct Updater {
     kind: InstallKind,
     helper: Option<&'static str>,
     state: State,
-    /// Se a checagem automática foi pedida nesta abertura (a manual ignora).
+    /// Se pode consultar a rede. Desligado no padrão (testes, screenshots e
+    /// medição); o app de verdade usa [`Updater::detect`].
     network: bool,
     /// Se a checagem atual foi pedida no menu: aí o resultado abre a janela.
     manual: bool,
@@ -56,10 +57,10 @@ pub struct Updater {
 }
 
 impl Default for Updater {
-    /// Sem arquivo de preferências e sem checagem ao abrir (testes,
-    /// screenshots, medição). "Check for Updates…" ainda funciona.
+    /// Sem arquivo de preferências e sem rede (testes, screenshots,
+    /// medição).
     fn default() -> Self {
-        Updater::new(UpdateSettings::in_memory(), InstallKind::Other)
+        Updater::new(UpdateSettings::in_memory(), InstallKind::Other).without_network()
     }
 }
 
@@ -122,6 +123,10 @@ impl Updater {
 
     fn check(&mut self, ctx: &egui::Context, manual: bool) {
         self.manual = manual;
+        if !self.network {
+            self.state = State::Failed("Update checks are off in this mode.".into());
+            return;
+        }
         self.state = State::Checking;
         self.settings.mark_checked(SystemTime::now());
         let _ = self.settings.save();
@@ -173,7 +178,8 @@ impl Updater {
         let state = std::mem::replace(&mut self.state, State::Idle);
         self.state = match (msg, state) {
             (Msg::Checked(Ok(Some(r))), _) if r.is_newer_than(VERSION) => {
-                let skipped = self.settings.skipped_version.as_deref() == Some(&r.version.to_string());
+                let skipped =
+                    self.settings.skipped_version.as_deref() == Some(&r.version.to_string());
                 if skipped && !self.manual {
                     State::UpToDate
                 } else {
@@ -281,7 +287,7 @@ impl Updater {
                     let _ = self.settings.save();
                 }
             });
-        self.open = open;
+        self.open &= open;
         command
     }
 
@@ -398,6 +404,11 @@ impl Updater {
     /// Para testes: põe a janela num estado sem passar pela rede.
     pub fn set_state(&mut self, state: State) {
         self.state = state;
+    }
+
+    /// Para testes: as preferências em uso.
+    pub fn settings(&self) -> &UpdateSettings {
+        &self.settings
     }
 
     /// Para testes e screenshots: nunca consulta a rede sozinho.
