@@ -2715,3 +2715,8 @@ msgstr "A seleção permanece no editor; OK adiciona a consulta criada depois de
 
 msgid "Another column of criteria: each column is ANDed, and the columns are ORed"
 msgstr "Outra coluna de critérios: cada coluna é combinada com AND, e as colunas entre si com OR"
+
+# Designer de Consultas
+
+msgid "e.g. > 10"
+msgstr "ex.: > 10"

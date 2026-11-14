@@ -1170,7 +1170,7 @@ impl QueryDesigner {
                                 [140.0, 20.0],
                                 egui::TextEdit::singleline(&mut r.filter)
                                     .id(egui::Id::new(("qd_filter", i)))
-                                    .hint_text("e.g. > 10"),
+                                    .hint_text(tr("e.g. > 10")),
                             );
                             for k in 1..criteria {
                                 ui.add_sized(
