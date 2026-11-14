@@ -674,8 +674,8 @@ pub fn show(
     response.context_menu(|ui| {
         let json_cell = json_cursor.filter(|&c| GridState::json_at(store, c).is_some());
         if ui
-            .add_enabled(json_cell.is_some(), egui::Button::new("View JSON..."))
-            .on_disabled_hover_text("The selected cell has no JSON object or array.")
+            .add_enabled(json_cell.is_some(), egui::Button::new(tr("View JSON...")))
+            .on_disabled_hover_text(tr("The selected cell has no JSON object or array."))
             .clicked()
         {
             open_json = json_cell;

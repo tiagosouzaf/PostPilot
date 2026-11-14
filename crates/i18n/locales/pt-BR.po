@@ -1215,8 +1215,6 @@ msgstr "{imported} Copiando as senhas lembradas deles para as senhas do workspac
 msgid "{imported} Turn on or unlock the workspace passwords to bring their saved passwords too."
 msgstr "{imported} Ligue ou destranque as senhas do workspace para trazer também as senhas lembradas deles."
 
-msgid "Import from this computer"
-msgstr "Importar deste computador"
 # Pesquisador de Objetos, propriedades e segurança
 
 msgid "-1 means no limit"
@@ -2206,3 +2204,264 @@ msgstr "{rows} linhas"
 
 msgid "{visible} of {total} sessions"
 msgstr "{visible} de {total} sessões"
+
+msgid "\"{name}\" already exists."
+msgstr "\"{name}\" já existe."
+
+msgid "(detached)"
+msgstr "(destacado)"
+
+msgid "1 change"
+msgstr "1 alteração"
+
+msgid "Added"
+msgstr "Adicionado"
+
+msgid "Bring the changes from the remote"
+msgstr "Trazer as alterações do remoto"
+
+msgid "Changes:"
+msgstr "Alterações:"
+
+msgid "Clone"
+msgstr "Clonar"
+
+msgid "Clone Workspace"
+msgstr "Clonar Workspace"
+
+msgid "Clone Workspace into"
+msgstr "Clonar Workspace em"
+
+msgid "Clone Workspace..."
+msgstr "Clonar Workspace..."
+
+msgid "Clone failed: {error}"
+msgstr "O clone falhou: {error}"
+
+msgid "Cloning {url}..."
+msgstr "Clonando {url}..."
+
+msgid "Cloning..."
+msgstr "Clonando..."
+
+msgid "Commit"
+msgstr "Commit"
+
+msgid "Commit and Push"
+msgstr "Commit e Push"
+
+msgid "Commit..."
+msgstr "Commit..."
+
+msgid "Commits to push / to pull"
+msgstr "Commits para enviar / para trazer"
+
+msgid "Committed: {m}"
+msgstr "Commit feito: {m}"
+
+msgid "Committing..."
+msgstr "Fazendo commit..."
+
+msgid "Conflicts: {files}"
+msgstr "Conflitos: {files}"
+
+msgid "Could not create the folder: {error}"
+msgstr "Não foi possível criar a pasta: {error}"
+
+msgid "Could not create the workspace: {error}"
+msgstr "Não foi possível criar o workspace: {error}"
+
+msgid "Created workspace {name} in {path}."
+msgstr "Workspace {name} criado em {path}."
+
+msgid "Created {path}."
+msgstr "{path} criada."
+
+msgid "Deleted"
+msgstr "Excluído"
+
+msgid "Enter a commit message."
+msgstr "Digite uma mensagem de commit."
+
+msgid "Enter a valid folder name."
+msgstr "Digite um nome de pasta válido."
+
+msgid "Enter the repository URL."
+msgstr "Digite a URL do repositório."
+
+msgid "Exported servers to {path} (passwords are not exported)."
+msgstr "Servidores exportados para {path} (as senhas não são exportadas)."
+
+msgid "Fix the conflicts and Commit before pushing."
+msgstr "Resolva os conflitos e faça o Commit antes do Push."
+
+msgid "Folder name:"
+msgstr "Nome da pasta:"
+
+msgid "Git is not installed. Install git (on Windows, Git for Windows) to use source control."
+msgstr "O Git não está instalado. Instale o git (no Windows, o Git for Windows) para usar o controle de versão."
+
+msgid "Initialize Git"
+msgstr "Inicializar Git"
+
+msgid "Initialized the git repository."
+msgstr "Repositório git inicializado."
+
+msgid "Initializing..."
+msgstr "Inicializando..."
+
+msgid "Item(s) Saved. Linked to {server} / {database}."
+msgstr "Item(ns) Salvo(s). Ligado a {server} / {database}."
+
+msgid "Item(s) Saved. Linked to {server}."
+msgstr "Item(ns) Salvo(s). Ligado a {server}."
+
+msgid "Item(s) Saved. Register this server in the workspace to link the query to it."
+msgstr "Item(ns) Salvo(s). Registre este servidor no workspace para ligar a consulta a ele."
+
+msgid "Message:"
+msgstr "Mensagem:"
+
+msgid "Modified"
+msgstr "Modificado"
+
+msgid "New Folder"
+msgstr "Nova Pasta"
+
+msgid "New Folder is not open."
+msgstr "Nova Pasta não está aberto."
+
+msgid "New Folder..."
+msgstr "Nova Pasta..."
+
+msgid "New Workspace"
+msgstr "Novo Workspace"
+
+msgid "New Workspace..."
+msgstr "Novo Workspace..."
+
+msgid "Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper."
+msgstr "Em seguida você escolhe a pasta do clone. O Git usa suas chaves SSH e o credential helper."
+
+msgid "No queries yet. Right-click \"Queries\" and choose \"New Query\", or save a query inside the queries folder."
+msgstr "Nenhuma consulta ainda. Clique com o botão direito em \"Consultas\" e escolha \"Nova Consulta\", ou salve uma consulta dentro da pasta queries."
+
+msgid "No remote"
+msgstr "Sem remoto"
+
+msgid "No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries."
+msgstr "Nenhum workspace está aberto. Um workspace é uma pasta, normalmente um repositório git, com seus servidores e consultas."
+
+msgid "Not under source control."
+msgstr "Fora do controle de versão."
+
+msgid "Open Workspace"
+msgstr "Abrir Workspace"
+
+msgid "Open Workspace..."
+msgstr "Abrir Workspace..."
+
+msgid "Opened workspace {name}."
+msgstr "Workspace {name} aberto."
+
+msgid "Pull"
+msgstr "Pull"
+
+msgid "Pull found conflicts in {files}. Fix the files (look for <<<<<<<), then Commit."
+msgstr "O Pull encontrou conflitos em {files}. Corrija os arquivos (procure <<<<<<<) e faça o Commit."
+
+msgid "Pulled."
+msgstr "Pull feito."
+
+msgid "Pulled: {m}"
+msgstr "Pull feito: {m}"
+
+msgid "Pulling..."
+msgstr "Fazendo pull..."
+
+msgid "Push"
+msgstr "Push"
+
+msgid "Pushed."
+msgstr "Push feito."
+
+msgid "Pushing..."
+msgstr "Fazendo push..."
+
+msgid "Queries"
+msgstr "Consultas"
+
+msgid "Reading status..."
+msgstr "Lendo o estado..."
+
+msgid "Remote"
+msgstr "Remoto"
+
+msgid "Remote set to {url}."
+msgstr "Remoto definido como {url}."
+
+msgid "Remote..."
+msgstr "Remoto..."
+
+msgid "Renamed"
+msgstr "Renomeado"
+
+msgid "Repository URL (origin), for example git@github.com:you/sql.git:"
+msgstr "URL do repositório (origin), por exemplo git@github.com:voce/sql.git:"
+
+msgid "Repository URL, for example git@github.com:you/sql.git:"
+msgstr "URL do repositório, por exemplo git@github.com:voce/sql.git:"
+
+msgid "Resolved"
+msgstr "Resolvido"
+
+msgid "Send your commits to the remote"
+msgstr "Enviar seus commits para o remoto"
+
+msgid "Servers"
+msgstr "Servidores"
+
+msgid "Setting remote..."
+msgstr "Definindo o remoto..."
+
+msgid "The git operation stopped unexpectedly."
+msgstr "A operação do git parou inesperadamente."
+
+msgid "The query is linked to \"{server}\", which is not a server of this workspace."
+msgstr "A consulta está ligada a \"{server}\", que não é um servidor deste workspace."
+
+msgid "The workspace has no remote. Use Source Control > Remote... to set the repository URL."
+msgstr "O workspace não tem remoto. Use Controle de Versão > Remoto... para definir a URL do repositório."
+
+msgid "The workspace is not under source control."
+msgstr "O workspace não está sob controle de versão."
+
+msgid "The workspace needs a name."
+msgstr "O workspace precisa de um nome."
+
+msgid "This workspace was saved by a newer PostPilot (format {format}). Update PostPilot to open it."
+msgstr "Este workspace foi salvo por um PostPilot mais novo (formato {format}). Atualize o PostPilot para abri-lo."
+
+msgid "Wait for the current clone."
+msgstr "Espere o clone atual terminar."
+
+msgid "Workspace"
+msgstr "Workspace"
+
+msgid "Workspace closed."
+msgstr "Workspace fechado."
+
+msgid "{file} is invalid: {error}"
+msgstr "{file} é inválido: {error}"
+
+msgid "{n} changes"
+msgstr "{n} alterações"
+
+msgid "{path} already exists and is not empty."
+msgstr "{path} já existe e não está vazia."
+
+msgid "{path} already has a PostPilot workspace. Use Open Workspace."
+msgstr "{path} já tem um workspace do PostPilot. Use Abrir Workspace."
+
+msgid "{path} is not a PostPilot workspace (no {file}). Use New Workspace to create one."
+msgstr "{path} não é um workspace do PostPilot (sem {file}). Use Novo Workspace para criar um."

@@ -19,10 +19,7 @@ use pgstudio_i18n::{Language, catalog_keys, has_translation};
 /// tirado da lista.
 const PENDING: &[&str] = &[
     "crates/ui-shell/src/update.rs",
-    "crates/ui-shell/src/repo/source_control.rs",
     "crates/ui-shell/src/claude.rs",
-    "crates/ui-shell/src/repo/app.rs",
-    "crates/ui-shell/src/repo/panel.rs",
     "crates/ui-shell/src/backup.rs",
     "crates/ui-shell/src/designer/dialogs.rs",
     "crates/ui-shell/src/designer/mod.rs",

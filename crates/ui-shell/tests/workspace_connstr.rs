@@ -142,9 +142,9 @@ fn pasted_connection_string_fills_the_dialog_and_the_password_goes_to_the_vault(
         d.connection_string = "postgresql://h:abc".into();
         assert!(d.apply_connection_string().is_err());
         assert!(d.connection_error().is_some());
+        let escaped = DB_PASSWORD.replace('@', "%40").replace(':', "%3A");
         d.connection_string =
-            "postgresql://app:p%40ss%3Aw0rd-do-banco@db.vendas.com:6432/vendas?sslmode=require"
-                .into();
+            format!("postgresql://app:{escaped}@db.vendas.com:6432/vendas?sslmode=require");
         d.apply_connection_string().unwrap();
         assert_eq!(d.server, "db.vendas.com,6432");
         assert_eq!(d.user, "app");
@@ -231,7 +231,7 @@ fn import_registered_servers_brings_their_passwords_into_the_vault() {
     let mut h = app(system.clone(), local_servers());
     let root = open_workspace(&mut h, &base, true);
 
-    h.get_by_label_contains("Import from this computer").click();
+    h.get_by_label_contains("Import...").click();
     h.run();
     // A cópia das senhas termina sozinha e avisa na status bar.
     let start = Instant::now();

@@ -6,6 +6,7 @@ use std::path::Path;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
+use pgstudio_i18n::{tr, tr_noop, trf};
 
 use super::git::{self, Done, Git, GitError, Job, Status};
 
@@ -20,6 +21,14 @@ struct RemoteDialog {
     url: String,
     error: Option<String>,
 }
+
+// Rótulos das operações: chave da tradução e também o que `apply` compara.
+const READING: &str = tr_noop("Reading status...");
+const INITIALIZING: &str = tr_noop("Initializing...");
+const PULLING: &str = tr_noop("Pulling...");
+const PUSHING: &str = tr_noop("Pushing...");
+const COMMITTING: &str = tr_noop("Committing...");
+const SETTING_REMOTE: &str = tr_noop("Setting remote...");
 
 type Work = Box<dyn FnOnce(&Git) -> Result<String, GitError> + Send>;
 
@@ -69,9 +78,7 @@ impl SourceControl {
         }
         self.stale = false;
         let git = self.git.clone();
-        self.job = Some(Job::spawn("Reading status...", move || {
-            Done::Status(git.status())
-        }));
+        self.job = Some(Job::spawn(READING, move || Done::Status(git.status())));
     }
 
     /// O último estado lido.
@@ -127,19 +134,20 @@ impl SourceControl {
 
     /// "Initialize Git Repository".
     pub fn init(&mut self) {
-        self.start("Initializing...", |g| {
-            g.init().map(|()| "Initialized the git repository.".into())
+        self.start(INITIALIZING, |g| {
+            g.init()
+                .map(|()| tr("Initialized the git repository.").into())
         });
     }
 
     /// Pull.
     pub fn pull(&mut self) {
-        self.start("Pulling...", |g| {
+        self.start(PULLING, |g| {
             g.pull().map(|m| {
                 if m.is_empty() {
-                    "Pulled.".into()
+                    tr("Pulled.").into()
                 } else {
-                    format!("Pulled: {m}")
+                    trf!("Pulled: {m}", m = m)
                 }
             })
         });
@@ -147,23 +155,25 @@ impl SourceControl {
 
     /// Push.
     pub fn push(&mut self) {
-        self.start("Pushing...", Git::push);
+        self.start(PUSHING, Git::push);
     }
 
     /// Commit de tudo o que mudou, e Push depois se `push`.
     pub fn commit(&mut self, message: &str, push: bool) {
         let message = message.to_string();
         self.push_after_commit = push;
-        self.start("Committing...", move |g| {
-            g.commit_all(&message).map(|m| format!("Committed: {m}"))
+        self.start(COMMITTING, move |g| {
+            g.commit_all(&message)
+                .map(|m| trf!("Committed: {m}", m = m))
         });
     }
 
     /// Define a URL do remoto `origin`.
     pub fn set_remote(&mut self, url: &str) {
         let url = url.to_string();
-        self.start("Setting remote...", move |g| {
-            g.set_remote(&url).map(|()| format!("Remote set to {url}."))
+        self.start(SETTING_REMOTE, move |g| {
+            g.set_remote(&url)
+                .map(|()| trf!("Remote set to {url}.", url = url))
         });
     }
 
@@ -224,7 +234,7 @@ impl SourceControl {
                 match result {
                     Ok(m) => {
                         self.message = Some(m);
-                        if what == "Committing..." && self.push_after_commit {
+                        if what == COMMITTING && self.push_after_commit {
                             self.push_after_commit = false;
                             self.push();
                         }
@@ -235,7 +245,7 @@ impl SourceControl {
                     }
                 }
                 // Pull (mesmo com conflito) e init mexem nos arquivos.
-                if what == "Pulling..." || what == "Initializing..." {
+                if what == PULLING || what == INITIALIZING {
                     self.files_changed = true;
                 }
             }
@@ -251,7 +261,7 @@ impl SourceControl {
         if let Some(job) = &self.job {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.weak(job.label);
+                ui.weak(tr(job.label));
             });
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -261,8 +271,8 @@ impl SourceControl {
             None => {}
             Some(Err(GitError::NotRepo)) => {
                 ui.horizontal(|ui| {
-                    ui.weak("Not under source control.");
-                    if ui.small_button("Initialize Git").clicked() {
+                    ui.weak(tr("Not under source control."));
+                    if ui.small_button(tr("Initialize Git")).clicked() {
                         self.init();
                     }
                 });
@@ -274,12 +284,18 @@ impl SourceControl {
                 let status = status.clone();
                 ui.horizontal_wrapped(|ui| {
                     let branch = if status.branch.is_empty() {
-                        "(detached)".to_string()
+                        tr("(detached)").to_string()
                     } else {
                         status.branch.clone()
                     };
+                    // i18n-ignore: nome do branch
                     ui.label(format!("{} {branch}", icon::GIT_BRANCH))
-                        .on_hover_text(status.remote.clone().unwrap_or_else(|| "No remote".into()));
+                        .on_hover_text(
+                            status
+                                .remote
+                                .clone()
+                                .unwrap_or_else(|| tr("No remote").into()),
+                        );
                     if status.ahead > 0 || status.behind > 0 {
                         ui.label(format!(
                             "{}{} {}{}",
@@ -288,20 +304,20 @@ impl SourceControl {
                             icon::ARROW_DOWN,
                             status.behind
                         ))
-                        .on_hover_text("Commits to push / to pull");
+                        .on_hover_text(tr("Commits to push / to pull"));
                     }
                     let n = status.changes.len();
                     if n > 0 {
                         ui.weak(if n == 1 {
-                            "1 change".to_string()
+                            tr("1 change").to_string()
                         } else {
-                            format!("{n} changes")
+                            trf!("{n} changes", n = n)
                         })
                         .on_hover_text(
                             status
                                 .changes
                                 .iter()
-                                .map(|c| format!("{} {}", c.kind(), c.path))
+                                .map(|c| format!("{} {}", tr(c.kind()), c.path))
                                 .collect::<Vec<_>>()
                                 .join("\n"),
                         );
@@ -310,13 +326,13 @@ impl SourceControl {
                 if !status.conflicts.is_empty() {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        format!("Conflicts: {}", status.conflicts.join(", ")),
+                        trf!("Conflicts: {files}", files = status.conflicts.join(", ")),
                     );
                 }
                 ui.horizontal(|ui| {
                     if ui
-                        .small_button(format!("{} Pull", icon::ARROW_DOWN))
-                        .on_hover_text("Bring the changes from the remote")
+                        .small_button(format!("{} {}", icon::ARROW_DOWN, tr("Pull")))
+                        .on_hover_text(tr("Bring the changes from the remote"))
                         .clicked()
                     {
                         self.pull();
@@ -324,25 +340,26 @@ impl SourceControl {
                     if ui
                         .add_enabled(
                             !status.is_clean(),
-                            egui::Button::new(format!("{} Commit...", icon::CHECK)).small(),
+                            egui::Button::new(format!("{} {}", icon::CHECK, tr("Commit...")))
+                                .small(),
                         )
                         .clicked()
                     {
                         self.open_commit();
                     }
                     if ui
-                        .small_button(format!("{} Push", icon::ARROW_UP))
-                        .on_hover_text("Send your commits to the remote")
+                        .small_button(format!("{} {}", icon::ARROW_UP, tr("Push")))
+                        .on_hover_text(tr("Send your commits to the remote"))
                         .clicked()
                     {
                         self.push();
                     }
                     ui.menu_button(icon::DOTS_THREE, |ui| {
-                        if ui.button("Remote...").clicked() {
+                        if ui.button(tr("Remote...")).clicked() {
                             self.open_remote();
                             ui.close();
                         }
-                        if ui.button("Refresh").clicked() {
+                        if ui.button(tr("Refresh")).clicked() {
                             self.refresh();
                             ui.close();
                         }
@@ -368,22 +385,22 @@ impl SourceControl {
         if let Some(dialog) = &mut self.commit {
             crate::theme::modal(egui::Id::new("workspace_commit")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.heading("Commit");
-                ui.label("Changes:");
+                ui.heading(tr("Commit"));
+                ui.label(tr("Changes:"));
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     egui::ScrollArea::vertical()
                         .max_height(160.0)
                         .show(ui, |ui| {
                             for c in &changes {
-                                ui.label(format!("{:<9} {}", c.kind(), c.path));
+                                ui.label(format!("{:<9} {}", tr(c.kind()), c.path));
                             }
                             for c in &conflicts {
-                                ui.label(format!("Resolved  {c}"));
+                                ui.label(format!("{:<9} {c}", tr("Resolved")));
                             }
                         });
                 });
-                ui.label("Message:");
+                ui.label(tr("Message:"));
                 ui.add(
                     egui::TextEdit::multiline(&mut dialog.message)
                         .desired_rows(3)
@@ -394,13 +411,13 @@ impl SourceControl {
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
-                    if ui.button("Commit and Push").clicked() {
+                    if ui.button(tr("Commit and Push")).clicked() {
                         commit = Some(true);
                     }
-                    if ui.button("Commit").clicked() {
+                    if ui.button(tr("Commit")).clicked() {
                         commit = Some(false);
                     }
                 });
@@ -412,7 +429,7 @@ impl SourceControl {
             && let Some(dialog) = &mut self.commit
         {
             if dialog.message.trim().is_empty() {
-                dialog.error = Some("Enter a commit message.".into());
+                dialog.error = Some(tr("Enter a commit message.").into());
             } else {
                 let message = dialog.message.clone();
                 self.commit = None;
@@ -425,8 +442,10 @@ impl SourceControl {
         if let Some(dialog) = &mut self.remote {
             crate::theme::modal(egui::Id::new("workspace_remote")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.heading("Remote");
-                ui.label("Repository URL (origin), for example git@github.com:you/sql.git:");
+                ui.heading(tr("Remote"));
+                ui.label(tr(
+                    "Repository URL (origin), for example git@github.com:you/sql.git:",
+                ));
                 let edit = ui
                     .add(egui::TextEdit::singleline(&mut dialog.url).desired_width(f32::INFINITY));
                 if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -437,10 +456,10 @@ impl SourceControl {
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
-                    if ui.button("OK").clicked() {
+                    if ui.button(tr("OK")).clicked() {
                         ok = true;
                     }
                 });
@@ -450,7 +469,7 @@ impl SourceControl {
             self.remote = None;
         } else if ok && let Some(dialog) = &mut self.remote {
             if dialog.url.trim().is_empty() {
-                dialog.error = Some("Enter the repository URL.".into());
+                dialog.error = Some(tr("Enter the repository URL.").into());
             } else {
                 let url = dialog.url.trim().to_string();
                 self.remote = None;

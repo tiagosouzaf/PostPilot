@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+use pgstudio_i18n::{tr, tr_noop, trf};
+
 /// O git falhou ou não existe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitError {
@@ -28,10 +30,10 @@ pub enum GitError {
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GitError::NotInstalled => f.write_str(
+            GitError::NotInstalled => f.write_str(tr(
                 "Git is not installed. Install git (on Windows, Git for Windows) to use source control.",
-            ),
-            GitError::NotRepo => f.write_str("The workspace is not under source control."),
+            )),
+            GitError::NotRepo => f.write_str(tr("The workspace is not under source control.")),
             GitError::Failed(m) => f.write_str(m),
         }
     }
@@ -49,14 +51,15 @@ pub struct Change {
 }
 
 impl Change {
-    /// Descrição curta, como no Team Explorer.
+    /// Descrição curta, como no Team Explorer (em inglês; a chave da
+    /// tradução: mostre com `tr`).
     pub fn kind(&self) -> &'static str {
         match self.code.as_str() {
-            "??" => "Added",
-            c if c.contains('D') => "Deleted",
-            c if c.contains('A') => "Added",
-            c if c.contains('R') => "Renamed",
-            _ => "Modified",
+            "??" => tr_noop("Added"),
+            c if c.contains('D') => tr_noop("Deleted"),
+            c if c.contains('A') => tr_noop("Added"),
+            c if c.contains('R') => tr_noop("Renamed"),
+            _ => tr_noop("Modified"),
         }
     }
 }
@@ -254,7 +257,7 @@ impl Git {
     pub fn commit_all(&self, message: &str) -> Result<String, GitError> {
         let message = message.trim();
         if message.is_empty() {
-            return Err(GitError::Failed("Enter a commit message.".into()));
+            return Err(GitError::Failed(tr("Enter a commit message.").into()));
         }
         self.git(&["add", "-A"])?;
         self.git(&["commit", "-m", message])
@@ -272,9 +275,9 @@ impl Git {
                 if conflicts.is_empty() {
                     Err(e)
                 } else {
-                    Err(GitError::Failed(format!(
-                        "Pull found conflicts in {}. Fix the files (look for <<<<<<<), then Commit.",
-                        conflicts.join(", ")
+                    Err(GitError::Failed(trf!(
+                        "Pull found conflicts in {files}. Fix the files (look for <<<<<<<), then Commit.",
+                        files = conflicts.join(", ")
                     )))
                 }
             }
@@ -286,7 +289,7 @@ impl Git {
         let status = self.status()?;
         if !status.conflicts.is_empty() {
             return Err(GitError::Failed(
-                "Fix the conflicts and Commit before pushing.".into(),
+                tr("Fix the conflicts and Commit before pushing.").into(),
             ));
         }
         if status.upstream.is_some() {
@@ -294,13 +297,13 @@ impl Git {
         } else {
             if self.remote_url().is_none() {
                 return Err(GitError::Failed(
-                    "The workspace has no remote. Use Source Control > Remote... to set the repository URL."
+                    tr("The workspace has no remote. Use Source Control > Remote... to set the repository URL.")
                         .into(),
                 ));
             }
             self.git(&["push", "-u", "origin", "HEAD"])?;
         }
-        Ok("Pushed.".into())
+        Ok(tr("Pushed.").into())
     }
 
     /// URL do remoto `origin`, se houver.
@@ -315,7 +318,7 @@ impl Git {
     pub fn set_remote(&self, url: &str) -> Result<(), GitError> {
         let url = url.trim();
         if url.is_empty() {
-            return Err(GitError::Failed("Enter the repository URL.".into()));
+            return Err(GitError::Failed(tr("Enter the repository URL.").into()));
         }
         if self.remote_url().is_some() {
             self.git(&["remote", "set-url", "origin", url])?;
@@ -329,7 +332,7 @@ impl Git {
     pub fn clone(url: &str, dest: &Path) -> Result<Git, GitError> {
         let url = url.trim();
         if url.is_empty() {
-            return Err(GitError::Failed("Enter the repository URL.".into()));
+            return Err(GitError::Failed(tr("Enter the repository URL.").into()));
         }
         let mut cmd = command();
         cmd.arg("clone").arg("--").arg(url).arg(dest);
@@ -391,7 +394,7 @@ impl Job {
             Ok(done) => Some(done),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => Some(Done::Status(Err(GitError::Failed(
-                "The git operation stopped unexpectedly.".into(),
+                tr("The git operation stopped unexpectedly.").into(),
             )))),
         }
     }
@@ -399,7 +402,7 @@ impl Job {
     /// Espera o resultado (testes).
     pub fn wait(&self) -> Done {
         self.rx.recv().unwrap_or(Done::Status(Err(GitError::Failed(
-            "The git operation stopped unexpectedly.".into(),
+            tr("The git operation stopped unexpectedly.").into(),
         ))))
     }
 }

@@ -303,6 +303,18 @@ no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret
 Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 
+### Workspace num repositório
+
+O **Workspace Explorer** (Ctrl+Alt+L) abre uma pasta, normalmente um
+repositório git, com os servidores (`servers.json`), as consultas
+(`queries/*.sql`) e as senhas do projeto. As senhas ficam criptografadas com
+uma senha mestra (Argon2id + XChaCha20-Poly1305) em `secrets.json`. Pull,
+Commit e Push ficam no próprio painel, e Clone Workspace... abre o repositório
+em outra máquina. Colar uma connection string `postgresql://...` no registro
+de um servidor preenche os campos. Detalhes, o que fica visível no repositório
+e o que fazer se a senha mestra for esquecida estão em
+[`docs/workspace.md`](docs/workspace.md).
+
 ### Layout
 
 Como no SSMS, um painel pode ser desafixado (auto-hide): "Auto Hide" no menu de

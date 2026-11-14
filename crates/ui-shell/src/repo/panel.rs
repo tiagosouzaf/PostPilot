@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_i18n::{tr, trf};
+use pgstudio_i18n::{tr, tr_noop, trf};
 
 use super::git::{Done, Git, GitError, Job};
 use super::passwords::{Passwords, SharedVault, WorkspaceSecrets};
@@ -176,11 +176,11 @@ impl WorkspacePanel {
     /// [`Self::take_cloned`].
     pub fn start_clone(&mut self, url: &str, dest: &Path) {
         if self.clone_job.is_some() {
-            self.message = Some("Wait for the current clone.".into());
+            self.message = Some(tr("Wait for the current clone.").into());
             return;
         }
         let (url, dest) = (url.to_string(), dest.to_path_buf());
-        self.clone_job = Some(Job::spawn("Cloning...", move || {
+        self.clone_job = Some(Job::spawn(tr_noop("Cloning..."), move || {
             Done::Cloned(Git::clone(&url, &dest).map(|g| g.root().to_path_buf()))
         }));
     }
@@ -219,7 +219,7 @@ impl WorkspacePanel {
     pub fn new_folder(&mut self, parent: &Path) {
         self.new_folder = Some(NewFolder {
             parent: parent.to_path_buf(),
-            name: "New Folder".into(),
+            name: tr("New Folder").into(),
             error: None,
         });
     }
@@ -232,7 +232,7 @@ impl WorkspacePanel {
     /// Confirma "New Folder" com este nome (testes e o botão OK).
     pub fn create_folder(&mut self, name: &str) -> Result<PathBuf, String> {
         let Some(dialog) = &mut self.new_folder else {
-            return Err("New Folder is not open.".into());
+            return Err(tr("New Folder is not open.").into());
         };
         let name = name.trim();
         let bad = name.is_empty()
@@ -241,18 +241,18 @@ impl WorkspacePanel {
             || name.starts_with('.')
             || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']);
         if bad {
-            let e = "Enter a valid folder name.".to_string();
+            let e = tr("Enter a valid folder name.").to_string();
             dialog.error = Some(e.clone());
             return Err(e);
         }
         let path = dialog.parent.join(name);
         if path.exists() {
-            let e = format!("\"{name}\" already exists.");
+            let e = trf!("\"{name}\" already exists.", name = name);
             dialog.error = Some(e.clone());
             return Err(e);
         }
         if let Err(e) = std::fs::create_dir_all(&path) {
-            let e = format!("Could not create the folder: {e}");
+            let e = trf!("Could not create the folder: {error}", error = e);
             dialog.error = Some(e.clone());
             return Err(e);
         }
@@ -350,22 +350,22 @@ impl WorkspacePanel {
         let store = workspace_store.as_ref();
         let Some(o) = &mut self.opened else {
             ui.add_space(6.0);
-            ui.weak("No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries.");
+            ui.weak(tr("No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries."));
             ui.add_space(6.0);
             if ui
-                .button(format!("{} New Workspace...", icon::FOLDER_PLUS))
+                .button(format!("{} {}", icon::FOLDER_PLUS, tr("New Workspace...")))
                 .clicked()
             {
                 actions.push(Action::New);
             }
             if ui
-                .button(format!("{} Open Workspace...", icon::FOLDER_OPEN))
+                .button(format!("{} {}", icon::FOLDER_OPEN, tr("Open Workspace...")))
                 .clicked()
             {
                 actions.push(Action::Open);
             }
             if ui
-                .button(format!("{} Clone Workspace...", icon::GIT_BRANCH))
+                .button(format!("{} {}", icon::GIT_BRANCH, tr("Clone Workspace...")))
                 .clicked()
             {
                 self.open_clone();
@@ -373,7 +373,7 @@ impl WorkspacePanel {
             if let Some(job) = &self.clone_job {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.weak(job.label);
+                    ui.weak(tr(job.label));
                 });
             }
             return actions;
@@ -385,7 +385,7 @@ impl WorkspacePanel {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(egui::Button::new(icon::ARROWS_CLOCKWISE).frame(false))
-                    .on_hover_text("Refresh")
+                    .on_hover_text(tr("Refresh"))
                     .clicked()
                 {
                     refresh = true;
@@ -401,7 +401,7 @@ impl WorkspacePanel {
         let width = ui.available_width();
         let height = (ui.available_height() * 0.4).max(80.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Servers").small().weak());
+            ui.label(egui::RichText::new(tr("Servers")).small().weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
@@ -409,7 +409,7 @@ impl WorkspacePanel {
                             egui::RichText::new(format!(
                                 "{} {}",
                                 icon::DOWNLOAD_SIMPLE,
-                                tr("Import from this computer")
+                                tr("Import...")
                             ))
                             .small(),
                         )
@@ -440,7 +440,7 @@ impl WorkspacePanel {
         );
         ui.separator();
 
-        ui.label(egui::RichText::new("Queries").small().weak());
+        ui.label(egui::RichText::new(tr("Queries")).small().weak());
         let mut folder_menu: Option<PathBuf> = None;
         egui::ScrollArea::both()
             .id_salt("workspace_queries")
@@ -450,7 +450,7 @@ impl WorkspacePanel {
                 folder_rows(ui, o, &root, 0, &mut actions, &mut folder_menu);
                 if root.count() == 0 && root.folders.is_empty() {
                     ui.add_space(4.0);
-                    ui.weak("No queries yet. Right-click \"Queries\" and choose \"New Query\", or save a query inside the queries folder.");
+                    ui.weak(tr("No queries yet. Right-click \"Queries\" and choose \"New Query\", or save a query inside the queries folder."));
                 }
             });
         if refresh {
@@ -514,24 +514,24 @@ impl WorkspacePanel {
         if let Some(dialog) = &mut self.clone {
             crate::theme::modal(egui::Id::new("workspace_clone")).show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.heading("Clone Workspace");
-                ui.label("Repository URL, for example git@github.com:you/sql.git:");
+                ui.heading(tr("Clone Workspace"));
+                ui.label(tr("Repository URL, for example git@github.com:you/sql.git:"));
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut dialog.url).desired_width(f32::INFINITY),
                 );
                 if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     clone_ok = Some(dialog.url.clone());
                 }
-                ui.weak("Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper.");
+                ui.weak(tr("Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper."));
                 if let Some(e) = &dialog.error {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         clone_cancel = true;
                     }
-                    if ui.button("Clone").clicked() {
+                    if ui.button(tr("Clone")).clicked() {
                         clone_ok = Some(dialog.url.clone());
                     }
                 });
@@ -543,7 +543,7 @@ impl WorkspacePanel {
             && let Some(dialog) = &mut self.clone
         {
             if url.trim().is_empty() {
-                dialog.error = Some("Enter the repository URL.".into());
+                dialog.error = Some(tr("Enter the repository URL.").into());
             } else {
                 self.clone = None;
                 self.pending_clone = Some(url.trim().to_string());
@@ -554,8 +554,8 @@ impl WorkspacePanel {
         if let Some(dialog) = &mut self.new_folder {
             crate::theme::modal(egui::Id::new("workspace_new_folder")).show(ctx, |ui| {
                 ui.set_width(320.0);
-                ui.heading("New Folder");
-                ui.label("Folder name:");
+                ui.heading(tr("New Folder"));
+                ui.label(tr("Folder name:"));
                 let edit = ui.text_edit_singleline(&mut dialog.name);
                 if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     ok = Some(dialog.name.clone());
@@ -565,10 +565,10 @@ impl WorkspacePanel {
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
-                    if ui.button("OK").clicked() {
+                    if ui.button(tr("OK")).clicked() {
                         ok = Some(dialog.name.clone());
                     }
                 });
@@ -579,7 +579,7 @@ impl WorkspacePanel {
         } else if let Some(name) = ok
             && let Ok(path) = self.create_folder(&name)
         {
-            status = Some(format!("Created {}.", path.display()));
+            status = Some(trf!("Created {path}.", path = path.display()));
         }
         status
     }
@@ -596,7 +596,7 @@ fn folder_rows(
     let expanded = !o.collapsed.contains(&folder.path);
     let mut toggle = false;
     let name = if depth == 0 {
-        "Queries".to_string()
+        tr("Queries").to_string()
     } else {
         folder.name.clone()
     };
@@ -630,11 +630,11 @@ fn folder_rows(
         }
         label.context_menu(|ui| {
             o.selected = Some(folder.path.clone());
-            if ui.button("New Query").clicked() {
+            if ui.button(tr("New Query")).clicked() {
                 actions.push(Action::NewQuery(folder.path.clone()));
                 ui.close();
             }
-            if ui.button("New Folder...").clicked() {
+            if ui.button(tr("New Folder...")).clicked() {
                 *folder_menu = Some(folder.path.clone());
                 ui.close();
             }
@@ -675,7 +675,7 @@ fn folder_rows(
             }
             label.context_menu(|ui| {
                 o.selected = Some(file.clone());
-                if ui.button("Open").clicked() {
+                if ui.button(tr("Open")).clicked() {
                     actions.push(Action::OpenQuery(file.clone()));
                     ui.close();
                 }
