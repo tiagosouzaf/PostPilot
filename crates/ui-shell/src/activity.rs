@@ -334,6 +334,20 @@ impl Action {
     }
 }
 
+/// O que a tela tira de uma leitura: refeito só quando a leitura, o
+/// filtro, a ordem ou "System processes" mudam, e não a cada frame (com
+/// milhares de sessões, filtrar, ordenar e montar as cadeias pesa).
+#[derive(Default)]
+struct Derived {
+    key: Option<(Instant, String, (Column, bool), bool)>,
+    /// Índices em `processes` das linhas da tabela, na ordem.
+    visible: Vec<usize>,
+    /// Sessões de cliente (ou todas, com "System processes").
+    total: usize,
+    /// Cadeias de bloqueio: profundidade, pid e o texto da linha.
+    chains: Vec<(usize, i32, String)>,
+}
+
 /// Coluna de ordenação da tabela Processes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Column {
@@ -396,6 +410,7 @@ pub struct ActivityMonitor {
     confirm: Option<Action>,
     /// Linhas desenhadas no último frame (para testes e medição).
     drawn_rows: usize,
+    derived: Derived,
 }
 
 impl ActivityMonitor {
@@ -423,6 +438,7 @@ impl ActivityMonitor {
             sort: (Column::Pid, true),
             confirm: None,
             drawn_rows: 0,
+            derived: Derived::default(),
         }
     }
 
@@ -594,12 +610,24 @@ impl ActivityMonitor {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
         };
+        self.visible_indices()
+            .into_iter()
+            .map(|i| &snap.processes[i])
+            .collect()
+    }
+
+    /// Índices das sessões que passam pelo filtro, na ordem da tabela.
+    fn visible_indices(&self) -> Vec<usize> {
+        let Some(snap) = &self.snapshot else {
+            return Vec::new();
+        };
         let needle = self.filter.to_lowercase();
-        let mut rows: Vec<&Process> = snap
+        let mut rows: Vec<(usize, &Process)> = snap
             .processes
             .iter()
-            .filter(|p| self.show_system || p.is_client())
-            .filter(|p| {
+            .enumerate()
+            .filter(|(_, p)| self.show_system || p.is_client())
+            .filter(|(_, p)| {
                 needle.is_empty()
                     || [
                         &p.pid.to_string(),
@@ -616,7 +644,7 @@ impl ActivityMonitor {
             })
             .collect();
         let (column, ascending) = self.sort;
-        rows.sort_by(|a, b| {
+        rows.sort_by(|(_, a), (_, b)| {
             let ord = match column {
                 Column::Pid => a.pid.cmp(&b.pid),
                 Column::User => a.user.cmp(&b.user),
@@ -635,7 +663,59 @@ impl ActivityMonitor {
             };
             if ascending { ord } else { ord.reverse() }
         });
-        rows
+        rows.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// Refaz [`Derived`] se algo mudou desde o último frame.
+    fn derive(&mut self) {
+        let Some(snap) = &self.snapshot else {
+            return;
+        };
+        let key = (snap.at, self.filter.clone(), self.sort, self.show_system);
+        if self.derived.key.as_ref() == Some(&key) {
+            return;
+        }
+        let total = snap
+            .processes
+            .iter()
+            .filter(|p| self.show_system || p.is_client())
+            .count();
+        let by_pid: std::collections::HashMap<i32, &Process> =
+            snap.processes.iter().map(|p| (p.pid, p)).collect();
+        let chains = blocking_chains(&snap.processes)
+            .into_iter()
+            .map(|(depth, pid)| {
+                let what = by_pid
+                    .get(&pid)
+                    .map(|p| {
+                        format!(
+                            "{} {} ({}{}) {}",
+                            p.application,
+                            p.user,
+                            p.state,
+                            if p.wait_event.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", {}", p.wait_event)
+                            },
+                            one_line(&p.query)
+                        )
+                    })
+                    .unwrap_or_default();
+                let text = if depth == 0 {
+                    format!("{} Head blocker {pid}: {what}", icon::LOCK)
+                } else {
+                    format!("{} {pid} waits: {what}", icon::HOURGLASS)
+                };
+                (depth, pid, text)
+            })
+            .collect();
+        self.derived = Derived {
+            key: Some(key),
+            visible: self.visible_indices(),
+            total,
+            chains,
+        };
     }
 
     /// Desenha o painel.
@@ -770,7 +850,12 @@ impl ActivityMonitor {
                 self.request(Action::Kill(pid));
             }
         });
-        let rows: Vec<Process> = self.visible_processes().into_iter().cloned().collect();
+        self.derive();
+        let Some(snap) = &self.snapshot else {
+            return;
+        };
+        let processes = &snap.processes;
+        let visible = &self.derived.visible;
         let mut clicked_header = None;
         let mut select = None;
         let mut action = None;
@@ -790,11 +875,11 @@ impl ActivityMonitor {
                     (format!("{t}{arrow}"), w)
                 })
                 .collect(),
-            rows.len(),
+            visible.len(),
             320.0,
             &mut |i| clicked_header = Some(i),
             &mut |ui, i| {
-                let p = &rows[i];
+                let p = &processes[visible[i]];
                 let response = cell(
                     ui,
                     PROCESS_COLUMNS[0].2,
@@ -859,60 +944,46 @@ impl ActivityMonitor {
         if let Some(a) = action {
             self.request(a);
         }
-        let total = self.snapshot.as_ref().map_or(0, |s| {
-            s.processes
-                .iter()
-                .filter(|p| self.show_system || p.is_client())
-                .count()
-        });
-        ui.weak(format!("{} of {total} sessions", rows.len()));
+        let total = self.derived.total;
+        ui.weak(format!(
+            "{} of {total} sessions",
+            self.derived.visible.len()
+        ));
     }
 
     fn locks(&mut self, ui: &mut egui::Ui) {
+        self.derive();
         let Some(snap) = &self.snapshot else {
             return;
         };
-        let chains = blocking_chains(&snap.processes);
+        let chains = &self.derived.chains;
         if chains.is_empty() {
             ui.weak("No session is blocked.");
         } else {
             ui.strong("Blocking chains");
             let mut select = None;
-            for &(depth, pid) in &chains {
-                let p = snap.processes.iter().find(|p| p.pid == pid);
-                let what = p
-                    .map(|p| {
-                        format!(
-                            "{} {} ({}{}) {}",
-                            p.application,
-                            p.user,
-                            p.state,
-                            if p.wait_event.is_empty() {
-                                String::new()
-                            } else {
-                                format!(", {}", p.wait_event)
-                            },
-                            one_line(&p.query)
-                        )
-                    })
-                    .unwrap_or_default();
-                let text = if depth == 0 {
-                    format!("{} Head blocker {pid}: {what}", icon::LOCK)
-                } else {
-                    format!("{} {pid} waits: {what}", icon::HOURGLASS)
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(depth as f32 * 18.0);
-                    let r = ui.add(
-                        egui::Button::selectable(self.selected == Some(pid), text)
-                            .truncate()
-                            .frame_when_inactive(false),
-                    );
-                    if r.clicked() {
-                        select = Some(pid);
+            let row_h = ui.spacing().interact_size.y;
+            egui::ScrollArea::vertical()
+                .id_salt("activity_chains")
+                .max_height(160.0)
+                .show_rows(ui, row_h, chains.len(), |ui, range| {
+                    for (depth, pid, text) in &chains[range] {
+                        ui.horizontal(|ui| {
+                            ui.add_space(*depth as f32 * 18.0);
+                            let r = ui.add(
+                                egui::Button::selectable(
+                                    self.selected == Some(*pid),
+                                    text.as_str(),
+                                )
+                                .truncate()
+                                .frame_when_inactive(false),
+                            );
+                            if r.clicked() {
+                                select = Some(*pid);
+                            }
+                        });
                     }
                 });
-            }
             if let Some(pid) = select {
                 self.selected = Some(pid);
             }

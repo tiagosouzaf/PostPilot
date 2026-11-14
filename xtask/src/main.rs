@@ -2,8 +2,9 @@
 //!
 //! - `bench`: mede o `pgstudio` compilado em release contra as metas do
 //!   projeto: tempo até o primeiro frame e memória em repouso, rolagem de
-//!   uma grade de 1 milhão de linhas e IntelliSense num catálogo de 10 mil
-//!   tabelas.
+//!   uma grade de 1 milhão de linhas, IntelliSense num catálogo de 10 mil
+//!   tabelas, diagramas, Table Designer, um plano de 2.000 nós e o Activity
+//!   Monitor com 5.000 sessões.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -33,12 +34,19 @@ const GRID_RAM_TARGET_MB: f64 = 96.0;
 /// Meta do IntelliSense: sugestões em menos de 50 ms (pior tecla).
 const INTELLISENSE_TARGET_MS: f64 = 50.0;
 /// Meta do frame do diagrama com zoom e pan (p95): 60 FPS, como a grade.
+/// Vale também para o plano e o Activity Monitor.
 const DIAGRAM_FRAME_TARGET_MS: f64 = 20.0;
+/// Nós do plano do cenário `plan`. Igual a
+/// `pgstudio_ui_shell::bench::PLAN_NODES`.
+const PLAN_NODES: f64 = 2000.0;
+/// Sessões do cenário `activity`. Igual a
+/// `pgstudio_ui_shell::bench::ACTIVITY_SESSIONS`.
+const ACTIVITY_SESSIONS: f64 = 5000.0;
 
 const USAGE: &str = "\
 Uso: cargo xtask bench [opções]
 
-Mede o pgstudio (release) em três cenários e compara com as metas:
+Mede o pgstudio (release) em oito cenários e compara com as metas:
 
   startup       do início do processo até o primeiro frame (< 1 s) e memória
                 depois de um tempo parado (< 100 MB; RSS no Linux, working
@@ -56,10 +64,16 @@ Mede o pgstudio (release) em três cenários e compara com as metas:
   designer      Table Designer num banco de 2.000 tabelas, 300 colunas
                 acrescentadas uma por frame: 60 FPS; mede também o tempo de
                 gerar o script de alterações
+  plan          Ctrl+L devolve um plano de 2.000 nós (duas tabelas com 997
+                partições), que passeia do topo ao fim com zoom por 10 s:
+                60 FPS
+  activity      Activity Monitor com 5.000 sessões e 10.000 locks,
+                atualizado a cada segundo por 10 s: 60 FPS; mede também o
+                tempo de cada atualização
 
 Opções:
-  --scenario S   startup, grid, intellisense, diagram, diagram2000, designer
-                 ou all (padrão all)
+  --scenario S   startup, grid, intellisense, diagram, diagram2000, designer,
+                 plan, activity ou all (padrão all)
   --runs N       execuções de cada cenário (padrão 5)
   --idle S       segundos parado antes de medir a memória (padrão 30)
   --no-build     não recompila; usa o binário existente
@@ -145,16 +159,20 @@ enum Scenario {
     Diagram,
     DiagramLarge,
     Designer,
+    Plan,
+    Activity,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 6] = [
+    const ALL: [Scenario; 8] = [
         Scenario::Startup,
         Scenario::Grid,
         Scenario::IntelliSense,
         Scenario::Diagram,
         Scenario::DiagramLarge,
         Scenario::Designer,
+        Scenario::Plan,
+        Scenario::Activity,
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -170,6 +188,8 @@ impl Scenario {
             Scenario::Diagram => "diagram",
             Scenario::DiagramLarge => "diagram2000",
             Scenario::Designer => "designer",
+            Scenario::Plan => "plan",
+            Scenario::Activity => "activity",
         }
     }
 }
@@ -216,6 +236,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     let mut diagram = Vec::new();
     let mut diagram_large = Vec::new();
     let mut designer = Vec::new();
+    let mut plan = Vec::new();
+    let mut activity = Vec::new();
     for scenario in &args.scenarios {
         for run in 1..=args.runs {
             match scenario {
@@ -246,6 +268,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                         Scenario::IntelliSense => intellisense.push(r),
                         Scenario::Diagram => diagram.push(r),
                         Scenario::DiagramLarge => diagram_large.push(r),
+                        Scenario::Plan => plan.push(r),
+                        Scenario::Activity => activity.push(r),
                         _ => designer.push(r),
                     }
                 }
@@ -261,6 +285,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
         diagram,
         diagram_large,
         designer,
+        plan,
+        activity,
     };
     let startup = !samples.is_empty();
     if args.markdown {
@@ -353,6 +379,8 @@ struct ScenarioReport {
     diagram: Vec<ScenarioRun>,
     diagram_large: Vec<ScenarioRun>,
     designer: Vec<ScenarioRun>,
+    plan: Vec<ScenarioRun>,
+    activity: Vec<ScenarioRun>,
 }
 
 /// Mediana e pior valor de uma chave nas execuções.
@@ -395,9 +423,14 @@ impl ScenarioReport {
 
     /// Frame p95 abaixo da meta em todas as execuções, com `tables` tabelas.
     fn frames_ok(runs: &[ScenarioRun], tables: f64) -> bool {
+        Self::frames_ok_with(runs, "tables", tables)
+    }
+
+    /// Frame p95 abaixo da meta em todas as execuções, com `key` = `n`.
+    fn frames_ok_with(runs: &[ScenarioRun], key: &str, n: f64) -> bool {
         runs.is_empty()
             || (stats(runs, |r| r.get("frame_p95")).1 < DIAGRAM_FRAME_TARGET_MS
-                && runs.iter().all(|r| r.get("tables") == tables))
+                && runs.iter().all(|r| r.get(key) == n))
     }
 
     fn diagram_ok(&self) -> bool {
@@ -410,6 +443,8 @@ impl ScenarioReport {
             && self.diagram_ok()
             && Self::frames_ok(&self.diagram_large, 2000.0)
             && Self::frames_ok(&self.designer, 2000.0)
+            && Self::frames_ok_with(&self.plan, "nodes", PLAN_NODES)
+            && Self::frames_ok_with(&self.activity, "sessions", ACTIVITY_SESSIONS)
     }
 
     /// Linhas da tabela: medida, meta, mediana, pior e se passou.
@@ -598,6 +633,84 @@ impl ScenarioReport {
                 "—".into(),
                 ms(med),
                 ms(worst),
+                "—".into(),
+            ]);
+        }
+        if !self.plan.is_empty() {
+            let runs = &self.plan;
+            let (med, worst) = stats(runs, |r| r.get("load_ms"));
+            rows.push([
+                "Plano: 2.000 nós chegam e são desenhados (Ctrl+L)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Plano: frame com zoom e rolagem (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok_with(runs, "nodes", PLAN_NODES)),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("ui_p95"));
+            rows.push([
+                "Plano: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.ram_mb);
+            rows.push([
+                "Plano: RAM com o plano de 2.000 nós".into(),
+                "—".into(),
+                mb(med),
+                mb(worst),
+                "—".into(),
+            ]);
+        }
+        if !self.activity.is_empty() {
+            let runs = &self.activity;
+            let (med, worst) = stats(runs, |r| r.get("load_ms"));
+            rows.push([
+                "Activity Monitor: primeira leitura de 5.000 sessões".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Activity Monitor: frame atualizando a cada 1 s (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok_with(runs, "sessions", ACTIVITY_SESSIONS)),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("ui_p95"));
+            rows.push([
+                "Activity Monitor: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("refresh_p95"));
+            rows.push([
+                "Activity Monitor: atualização pronta (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.ram_mb);
+            rows.push([
+                "Activity Monitor: RAM com 5.000 sessões".into(),
+                "—".into(),
+                mb(med),
+                mb(worst),
                 "—".into(),
             ]);
         }
@@ -953,6 +1066,17 @@ mod tests {
                 ),
                 150.0,
             )],
+            plan: vec![scenario(
+                &format!("{RESULT} scenario=plan load_ms=60 ui_p95=5 frame_p95=17 nodes=2000"),
+                160.0,
+            )],
+            activity: vec![scenario(
+                &format!(
+                    "{RESULT} scenario=activity load_ms=80 ui_p95=6 frame_p95=17 \
+                     sessions=5000 refresh_p95=90"
+                ),
+                170.0,
+            )],
         };
         assert!(good.passed(), "{}", good.text());
         let md = good.markdown();
@@ -1002,6 +1126,20 @@ mod tests {
             ),
             "{md}"
         );
+        assert!(
+            md.contains(
+                "| Activity Monitor: atualização pronta (p95) | — | 90.0 ms | 90.0 ms | — |"
+            ),
+            "{md}"
+        );
+        let few_nodes = ScenarioReport {
+            plan: vec![scenario(
+                &format!("{RESULT} scenario=plan frame_p95=10 nodes=20"),
+                100.0,
+            )],
+            ..Default::default()
+        };
+        assert!(!few_nodes.passed());
         let slow_large = ScenarioReport {
             diagram_large: vec![diagram(30.0, 2000)],
             ..Default::default()

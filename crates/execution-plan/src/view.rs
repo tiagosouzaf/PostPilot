@@ -31,6 +31,8 @@ pub struct PlanView {
     pub size: Vec2,
     pub zoom: f32,
     pub selected: Option<usize>,
+    /// Rolagem a aplicar no próximo frame (a medição passeia pelo plano).
+    pub scroll_to: Option<Vec2>,
     /// Nós desenhados no último frame.
     drawn: usize,
 }
@@ -77,6 +79,7 @@ impl PlanView {
             size,
             zoom: 1.0,
             selected: None,
+            scroll_to: None,
             drawn: 0,
         }
     }
@@ -106,10 +109,11 @@ impl PlanView {
                 self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
             }
         }
-        egui::ScrollArea::both()
-            .id_salt(id_salt)
-            .auto_shrink(false)
-            .show(ui, |ui| self.paint(ui, plan));
+        let mut area = egui::ScrollArea::both().id_salt(id_salt).auto_shrink(false);
+        if let Some(offset) = self.scroll_to.take() {
+            area = area.scroll_offset(offset);
+        }
+        area.show(ui, |ui| self.paint(ui, plan));
     }
 
     fn paint(&mut self, ui: &mut egui::Ui, plan: &Plan) {
@@ -123,25 +127,47 @@ impl PlanView {
         let visuals = ui.visuals().clone();
         let line = visuals.weak_text_color();
 
-        // Setas primeiro, para os nós ficarem por cima.
-        for (id, node) in plan.nodes.iter().enumerate() {
-            let Some(parent) = node.parent else { continue };
-            let child = to_screen(self.node_rect(id));
+        // Setas primeiro, para os nós ficarem por cima. Os filhos de um nó
+        // ficam na mesma coluna, então as setas dividem o tronco vertical
+        // e a ponta: cada filho desenha só o seu trecho horizontal, e o
+        // tronco e a ponta saem uma vez por pai, cortados ao visível (uma
+        // `Append` de mil partições não desenha mil troncos sobrepostos).
+        let arrow_y = |r: Rect| r.top() + ICON_SIZE * 0.5 * zoom + 6.0 * zoom;
+        for (parent, node) in plan.nodes.iter().enumerate() {
+            let Some(&last) = node.children.last() else {
+                continue;
+            };
             let to = to_screen(self.node_rect(parent));
-            let from = pos2(
-                child.left(),
-                child.top() + ICON_SIZE * 0.5 * zoom + 6.0 * zoom,
-            );
-            let end = pos2(to.right(), to.top() + ICON_SIZE * 0.5 * zoom + 6.0 * zoom);
-            let bounds = Rect::from_two_pos(from, end).expand(8.0);
-            if !bounds.intersects(clip) {
+            let end = pos2(to.right(), arrow_y(to));
+            let first = to_screen(self.node_rect(node.children[0]));
+            let bottom = arrow_y(to_screen(self.node_rect(last)));
+            let mid = (first.left() + end.x) / 2.0;
+            let trunk = Rect::from_min_max(
+                pos2(end.x, end.y.min(bottom)),
+                pos2(first.left(), bottom.max(end.y)),
+            )
+            .expand(8.0);
+            if !trunk.intersects(clip) {
                 continue;
             }
-            let width = arrow_width(node) * zoom.max(0.5);
-            let mid = (from.x + end.x) / 2.0;
-            let stroke = Stroke::new(width, line);
-            painter.line(vec![from, pos2(mid, from.y), pos2(mid, end.y), end], stroke);
-            let head = 5.0 * zoom + width;
+            let mut widest = 0.0f32;
+            for &child in &node.children {
+                let c = to_screen(self.node_rect(child));
+                let y = arrow_y(c);
+                let width = arrow_width(&plan.nodes[child]) * zoom.max(0.5);
+                widest = widest.max(width);
+                if y + 8.0 < clip.top() || y - 8.0 > clip.bottom() {
+                    continue;
+                }
+                painter.line_segment([pos2(c.left(), y), pos2(mid, y)], Stroke::new(width, line));
+            }
+            let top = end.y.max(clip.top() - 8.0);
+            let low = bottom.min(clip.bottom() + 8.0);
+            if low > top {
+                painter.line_segment([pos2(mid, top), pos2(mid, low)], Stroke::new(widest, line));
+            }
+            painter.line_segment([pos2(mid, end.y), end], Stroke::new(widest, line));
+            let head = 5.0 * zoom + widest;
             painter.add(egui::Shape::convex_polygon(
                 vec![
                     end,

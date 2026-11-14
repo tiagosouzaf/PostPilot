@@ -661,6 +661,32 @@ impl ShellApp {
                         self.workspace.open(Panel::TableDesigner(id));
                         id
                     }
+                    Scenario::Plan => {
+                        let id = self.documents.new_script(
+                            "select * from pedido join cliente on cliente.id = pedido.cliente_id \
+                             where total > 100 order by total desc;\n"
+                                .into(),
+                            None,
+                        );
+                        if let Some(doc) = self.documents.get_mut(id) {
+                            doc.session =
+                                Some(documents::Session(Arc::new(bench::SyntheticPlanSession)));
+                        }
+                        self.activate_document(id);
+                        self.execute_query(ctx, Ask::Plan);
+                        id
+                    }
+                    Scenario::Activity => {
+                        let mut monitor = activity::ActivityMonitor::new(
+                            Arc::new(bench::SyntheticActivitySession::new()),
+                            "bench".into(),
+                        );
+                        monitor.interval = 1;
+                        monitor.refresh(ctx);
+                        self.activity = Some(monitor);
+                        self.workspace.open(Panel::ActivityMonitor);
+                        0
+                    }
                 };
                 run.phase = Phase::Loading {
                     since: std::time::Instant::now(),
@@ -683,6 +709,15 @@ impl ShellApp {
                         self.designers.get(doc).is_some_and(|d| !d.is_loading())
                             && !self.designers.is_loading()
                     }
+                    Scenario::Plan => self
+                        .documents
+                        .get(doc)
+                        .and_then(|d| d.execution.as_ref())
+                        .is_some_and(|e| !e.is_running() && !e.plans.is_empty()),
+                    Scenario::Activity => self
+                        .activity
+                        .as_ref()
+                        .is_some_and(|a| a.snapshot().is_some()),
                 };
                 if ready {
                     if !matches!(run.scenario, Scenario::Diagram | Scenario::DiagramLarge) {
@@ -753,6 +788,82 @@ impl ShellApp {
                         ]);
                         bench_print(&line);
                         run.phase = Phase::Done;
+                    }
+                }
+                Scenario::Plan => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let start = *run.scroll_start.get_or_insert_with(std::time::Instant::now);
+                    let done = start.elapsed().as_secs_f64() / bench::PLAN_SECONDS;
+                    let plan = self
+                        .documents
+                        .get_mut(doc)
+                        .and_then(|d| d.execution.as_mut())
+                        .and_then(|e| e.plans.first_mut());
+                    match plan {
+                        Some((_, view)) if step == 0 || done < 1.0 => {
+                            run.drawn_max = run.drawn_max.max(view.drawn());
+                            let (zoom, offset) = bench::plan_camera(view.size, done);
+                            view.zoom = zoom;
+                            view.scroll_to = Some(offset);
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        plan => {
+                            let nodes = plan.map_or(0, |(p, _)| p.nodes.len());
+                            let line = run.result_line(&[
+                                ("nodes", nodes as f64),
+                                ("drawn_max", run.drawn_max as f64),
+                            ]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
+                    }
+                }
+                Scenario::Activity => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let start = *run.scroll_start.get_or_insert_with(std::time::Instant::now);
+                    let done = start.elapsed().as_secs_f64() / bench::ACTIVITY_SECONDS;
+                    match &self.activity {
+                        Some(a) if done < 1.0 => {
+                            run.drawn_max = run.drawn_max.max(a.drawn_rows());
+                            // Do pedido à leitura pronta, vista frame a frame.
+                            match (a.is_refreshing(), run.refresh_start) {
+                                (true, None) => run.refresh_start = Some(std::time::Instant::now()),
+                                (false, Some(t)) => {
+                                    run.edit_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                                    run.refresh_start = None;
+                                }
+                                _ => {}
+                            }
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        a => {
+                            let sessions = a
+                                .as_ref()
+                                .and_then(|a| a.snapshot())
+                                .map_or(0, |s| s.processes.len());
+                            let mut refresh = run.edit_ms.clone();
+                            let line = run.result_line(&[
+                                ("sessions", sessions as f64),
+                                ("refreshes", refresh.len() as f64),
+                                (
+                                    "refresh_p95",
+                                    (bench::percentile(&mut refresh, 95.0) * 100.0).round() / 100.0,
+                                ),
+                                ("drawn_max", run.drawn_max as f64),
+                            ]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
                     }
                 }
                 Scenario::Diagram | Scenario::DiagramLarge => {
