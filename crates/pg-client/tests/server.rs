@@ -86,7 +86,7 @@ fn connects_and_reads_the_version() {
         assert!(major >= 13, "{version}");
         assert_eq!(
             first_value(&rt, &session, "SELECT current_setting('application_name')"),
-            "PGStudio"
+            "PostPilot"
         );
     }
 }
