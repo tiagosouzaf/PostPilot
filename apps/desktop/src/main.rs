@@ -22,9 +22,10 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
-//! - `PGSTUDIO_ACTION=select|edit|create|drop`: depois de `PGSTUDIO_EXPAND`,
-//!   faz no nó selecionado (o último expandido) "Select Top 1000 Rows",
-//!   "Edit Top 200 Rows" ou "Script as CREATE/DROP" (para screenshots).
+//! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable`: depois de
+//!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
+//!   Top 1000 Rows", "Edit Top 200 Rows", "Script as CREATE/DROP", "Design"
+//!   ou "New Table..." (para screenshots).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -140,6 +141,8 @@ fn main() -> eframe::Result {
                     "select" => Event::SelectTop,
                     "edit" => Event::EditTop,
                     "create" => |n| Event::Script(n, ScriptAction::Create),
+                    "design" => Event::Design,
+                    "newtable" => Event::NewTable,
                     _ => |n| Event::Script(n, ScriptAction::Drop),
                 };
                 app = app.with_selected_action(make);

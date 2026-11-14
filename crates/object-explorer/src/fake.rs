@@ -4,13 +4,16 @@
 //! índices sintéticos, com um atraso por chamada para imitar a rede. O banco
 //! `stress` tem um schema com 10 mil tabelas, para testar a árvore.
 
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, ScriptAction,
+    DesignTarget, Folder, MetadataError, MetadataProvider, Model, NodeId, NodeKind, ObjectNode,
+    ScriptAction,
 };
+use pgstudio_core::schema::{self, Index, Key};
 
 /// Bancos comuns do servidor falso.
 const DATABASES: usize = 6;
@@ -25,12 +28,79 @@ pub const STRESS_TABLES: usize = 10_000;
 #[derive(Clone, Debug)]
 pub struct FakeProvider {
     delay: Duration,
+    applied: Arc<Mutex<Vec<Applied>>>,
 }
+
+/// DDL aplicado num banco: o banco e os comandos.
+pub type Applied = (String, Vec<String>);
+
+/// Comando que o servidor falso recusa ao aplicar DDL, para testar erros:
+/// qualquer comando que contenha este texto.
+pub const FAILING_DDL: &str = "fail_here";
 
 impl FakeProvider {
     /// Cria o provedor; `delay` é o tempo de cada chamada.
     pub fn new(delay: Duration) -> Self {
-        FakeProvider { delay }
+        FakeProvider {
+            delay,
+            applied: Arc::default(),
+        }
+    }
+
+    /// DDL aplicado com sucesso até agora, por banco, na ordem.
+    pub fn applied(&self) -> Vec<Applied> {
+        self.applied.lock().map(|a| a.clone()).unwrap_or_default()
+    }
+}
+
+fn schema_names(db: &str) -> Vec<String> {
+    let mut v = vec!["public".to_string()];
+    if db != "stress" {
+        v.extend((1..SCHEMAS).map(|i| format!("schema_{i}")));
+    }
+    v
+}
+
+/// Id no modelo da tabela `i` do schema na posição `s`.
+fn table_id(s: usize, i: usize) -> u64 {
+    (s * 10_000 + i + 1) as u64
+}
+
+/// Tabela `i` de um schema, como o modelo do servidor falso a descreve.
+fn model_table(s: usize, schema: &str, i: usize) -> schema::Table {
+    let id = table_id(s, i);
+    let name = format!("table_{i:05}");
+    let ty = |t: &str| match t.trim_end_matches(" NOT NULL") {
+        "timestamptz" => "timestamp with time zone".to_string(),
+        t => t.to_string(),
+    };
+    schema::Table {
+        id,
+        schema: schema.to_string(),
+        columns: COLUMN_DEFS
+            .iter()
+            .enumerate()
+            .map(|(n, (c, t))| schema::Column {
+                id: id << 16 | (n as u64 + 1),
+                name: (*c).to_string(),
+                ty: ty(t),
+                nullable: !t.ends_with("NOT NULL"),
+                ..Default::default()
+            })
+            .collect(),
+        primary_key: Some(Key {
+            name: format!("{name}_pkey"),
+            columns: vec!["id".into()],
+        }),
+        indexes: vec![Index {
+            name: format!("{name}_email_idx"),
+            unique: false,
+            method: "btree".into(),
+            columns: vec!["email".into()],
+            predicate: None,
+        }],
+        name,
+        ..Default::default()
     }
 }
 
@@ -182,6 +252,58 @@ impl MetadataProvider for FakeProvider {
             _ => return Err(MetadataError(format!("unknown node: {id}"))),
         };
         Ok(out)
+    }
+
+    fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {
+        let parts: Vec<&str> = node.0.split('/').collect();
+        match parts.as_slice() {
+            ["srv", "Databases", db, "Schemas", schema, "Tables"] => Some(DesignTarget {
+                database: (*db).to_string(),
+                schema: (*schema).to_string(),
+                table: None,
+            }),
+            ["srv", "Databases", db, "Schemas", schema, "Tables", i] => {
+                let s = schema_names(db).iter().position(|n| n == schema)?;
+                Some(DesignTarget {
+                    database: (*db).to_string(),
+                    schema: (*schema).to_string(),
+                    table: Some(table_id(s, i.parse().ok()?)),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// As tabelas dos schemas comuns (o `stress` fica de fora: 10 mil
+    /// tabelas não servem para o designer).
+    fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
+        thread::sleep(self.delay);
+        if database == "stress" {
+            return Ok(Model::default());
+        }
+        let tables = schema_names(database)
+            .iter()
+            .enumerate()
+            .flat_map(|(s, name)| (0..TABLES).map(move |i| model_table(s, name, i)))
+            .collect();
+        Ok(Model::new(tables))
+    }
+
+    /// Guarda o DDL em [`FakeProvider::applied`]; recusa tudo se algum
+    /// comando tiver [`FAILING_DDL`].
+    fn apply_ddl(&self, database: &str, statements: &[String]) -> Result<(), MetadataError> {
+        thread::sleep(self.delay);
+        if let Some(n) = statements.iter().position(|s| s.contains(FAILING_DDL)) {
+            return Err(MetadataError(format!(
+                "syntax error (statement {} of {})",
+                n + 1,
+                statements.len()
+            )));
+        }
+        if let Ok(mut a) = self.applied.lock() {
+            a.push((database.to_string(), statements.to_vec()));
+        }
+        Ok(())
     }
 
     fn database_of(&self, node: &NodeId) -> Option<String> {

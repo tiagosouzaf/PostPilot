@@ -7,6 +7,7 @@
 
 pub mod bench;
 pub mod connect;
+pub mod designer;
 pub mod documents;
 pub mod execution;
 pub mod intellisense;
@@ -57,6 +58,7 @@ pub struct ShellApp {
     /// Nós a expandir assim que carregarem (demonstração e screenshots).
     pending_expand: std::collections::VecDeque<pgstudio_core::metadata::NodeId>,
     documents: Documents,
+    designers: designer::Designers,
     /// Janela de consulta ativa (a última que teve foco).
     active_doc: Option<u32>,
     focus_editor: Option<u32>,
@@ -145,6 +147,7 @@ impl Default for ShellApp {
             screenshot: None,
             pending_expand: Default::default(),
             documents: Documents::default(),
+            designers: Default::default(),
             active_doc: None,
             focus_editor: None,
             dialogs: Box::new(NoDialogs),
@@ -348,7 +351,9 @@ impl ShellApp {
     pub fn current_layout(&self) -> SavedLayout {
         SavedLayout {
             window: self.window,
-            docking: self.workspace.layout(|p| !matches!(p, Panel::Query(_))),
+            docking: self
+                .workspace
+                .layout(|p| !matches!(p, Panel::Query(_) | Panel::TableDesigner(_))),
         }
     }
 
@@ -711,6 +716,19 @@ impl ShellApp {
         self.workspace.strip_button_rect(&panel)
     }
 
+    /// Pede para fechar um painel como o X da aba faz: um Table Designer
+    /// com alterações pergunta antes.
+    pub fn close_panel_request(&mut self, panel: Panel) {
+        if let Panel::TableDesigner(id) = panel
+            && let Some(d) = self.designers.get_mut(id)
+            && !d.request_close()
+        {
+            self.workspace.open(panel);
+            return;
+        }
+        self.workspace.close(&panel);
+    }
+
     /// Fecha um painel, como o botão de fechar da aba.
     pub fn close_panel(&mut self, panel: Panel) {
         self.workspace.close(&panel);
@@ -778,7 +796,9 @@ impl ShellApp {
             }
             CommandId::Exit => {
                 let dirty = self.documents.dirty();
-                if dirty.is_empty() {
+                if self.ask_dirty_designer() {
+                    self.status = "Save or discard the table changes first.".to_string();
+                } else if dirty.is_empty() {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
@@ -804,6 +824,9 @@ impl ShellApp {
                 for id in self.documents.ids() {
                     self.workspace.open(Panel::Query(id));
                 }
+                for id in self.designers.ids() {
+                    self.workspace.open(Panel::TableDesigner(id));
+                }
                 if let Some(id) = self.active_doc {
                     self.workspace.open(Panel::Query(id));
                 }
@@ -815,7 +838,7 @@ impl ShellApp {
                 };
                 match target {
                     Some(p) if self.workspace.is_hidden(&p) => self.workspace.dock(&p),
-                    Some(p) if !matches!(p, Panel::Query(_)) => {
+                    Some(p) if !matches!(p, Panel::Query(_) | Panel::TableDesigner(_)) => {
                         self.workspace.auto_hide(&p);
                     }
                     _ => self.status = "Select a tool window to auto hide.".to_string(),
@@ -829,6 +852,19 @@ impl ShellApp {
             CommandId::OpenFile => {
                 if let Some(path) = self.dialogs.open_path() {
                     self.open_file(&path);
+                }
+            }
+            CommandId::Save | CommandId::Undo | CommandId::Redo
+                if self.focused_designer().is_some() =>
+            {
+                available = true;
+                let id = self.focused_designer().expect("checado no guard");
+                if let Some(d) = self.designers.get_mut(id) {
+                    match cmd {
+                        CommandId::Save => d.save(ctx),
+                        CommandId::Undo => d.undo(),
+                        _ => d.redo(),
+                    }
                 }
             }
             CommandId::Save | CommandId::SaveAs => match self.active_doc {
@@ -1062,6 +1098,16 @@ impl ShellApp {
                 let db = provider.database_of(&node);
                 let id = self.documents.new_script(String::new(), db);
                 self.activate_document(id);
+                return;
+            }
+            Event::NewTable(node) | Event::Design(node) => {
+                match provider.design_target(&node) {
+                    Some(target) => {
+                        let id = self.designers.open(provider, target, node, ctx);
+                        self.workspace.open(Panel::TableDesigner(id));
+                    }
+                    None => self.status = "This object cannot be designed.".to_string(),
+                }
                 return;
             }
             Event::SelectTop(node) => (node, ScriptAction::SelectTop(SELECT_TOP_ROWS), true, false),
@@ -1339,7 +1385,9 @@ impl ShellApp {
         self.track_window(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             let dirty = self.documents.dirty();
-            if self.allow_close || dirty.is_empty() {
+            if !self.allow_close && self.ask_dirty_designer() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            } else if self.allow_close || dirty.is_empty() {
                 self.save_layout();
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1380,6 +1428,7 @@ impl ShellApp {
                     output: &self.output,
                     explorer: &mut self.explorer,
                     documents: &mut self.documents,
+                    designers: &mut self.designers,
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
                     explorer_events: Vec::new(),
@@ -1402,6 +1451,7 @@ impl ShellApp {
                 }
             });
         self.sync_documents();
+        self.designer_step();
         self.confirm_window(&ctx);
         self.connect_window(&ctx);
 
@@ -1426,6 +1476,55 @@ impl ShellApp {
         }
         for event in explorer_events {
             self.explorer_event(&ctx, event);
+        }
+    }
+
+    /// Table Designer com o foco, se for o painel focado.
+    fn focused_designer(&mut self) -> Option<u32> {
+        match self.workspace.focused() {
+            Some(Panel::TableDesigner(id)) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Se há um Table Designer com alterações, traz ele para a frente e
+    /// pergunta se salva. Devolve se perguntou.
+    fn ask_dirty_designer(&mut self) -> bool {
+        let Some(id) = self.designers.dirty().first().copied() else {
+            return false;
+        };
+        self.workspace.open(Panel::TableDesigner(id));
+        if let Some(d) = self.designers.get_mut(id) {
+            d.request_close();
+        }
+        true
+    }
+
+    /// Table Designers abertos.
+    pub fn designers(&self) -> &designer::Designers {
+        &self.designers
+    }
+
+    /// Table Designers, mutável.
+    pub fn designers_mut(&mut self) -> &mut designer::Designers {
+        &mut self.designers
+    }
+
+    /// Recebe as cargas e gravações dos designers, leva o log ao Output,
+    /// fecha os que pediram e esquece os de abas fechadas.
+    fn designer_step(&mut self) {
+        self.designers.step();
+        self.output.extend(self.designers.take_log());
+        for node in self.designers.take_saved() {
+            self.explorer.refresh(&node);
+        }
+        for id in self.designers.take_closed() {
+            self.workspace.close(&Panel::TableDesigner(id));
+        }
+        for id in self.designers.ids() {
+            if !self.workspace.is_open(&Panel::TableDesigner(id)) {
+                self.designers.remove(id);
+            }
         }
     }
 
@@ -1595,7 +1694,8 @@ impl ShellApp {
             || self.catalogs.is_loading()
             || self.list_members_on_load
             || self.selected_action.is_some()
-            || !self.scripts.is_empty();
+            || !self.scripts.is_empty()
+            || self.designers.is_loading();
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));

@@ -175,4 +175,72 @@ pub trait MetadataProvider: Send + Sync {
             "IntelliSense is not available for this server.".to_string(),
         ))
     }
+
+    /// O que o Table Designer abre a partir do nó: "New Table" na pasta
+    /// Tables de um schema, "Design" numa tabela. None quando o nó não
+    /// tem designer.
+    fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {
+        let _ = node;
+        None
+    }
+
+    /// As tabelas de um banco como modelo editável (Fase 3).
+    fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
+        let _ = database;
+        Err(MetadataError(
+            "Designers are not available for this server.".to_string(),
+        ))
+    }
+
+    /// Aplica DDL numa transação: tudo ou nada. O erro diz qual comando
+    /// falhou.
+    fn apply_ddl(&self, database: &str, statements: &[String]) -> Result<(), MetadataError> {
+        let _ = (database, statements);
+        Err(MetadataError(
+            "Designers are not available for this server.".to_string(),
+        ))
+    }
+
+    /// Tipos que o designer sugere: os comuns do PostgreSQL mais os do
+    /// banco (enums, domínios, tipos compostos), como `format_type` os
+    /// escreve.
+    fn type_names(&self, database: &str) -> Result<Vec<String>, MetadataError> {
+        let _ = database;
+        Ok(COMMON_TYPES.iter().map(|t| (*t).to_string()).collect())
+    }
 }
+
+pub use pgstudio_schema_model::Model;
+
+/// Onde o Table Designer abre.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignTarget {
+    pub database: String,
+    /// Schema da tabela nova (para "Design", o da tabela).
+    pub schema: String,
+    /// Id da tabela no [`Model`] (o oid), ou None para uma tabela nova.
+    pub table: Option<u64>,
+}
+
+/// Tipos sugeridos em qualquer banco, como `format_type` os escreve.
+pub const COMMON_TYPES: &[&str] = &[
+    "bigint",
+    "boolean",
+    "bytea",
+    "character varying",
+    "character",
+    "date",
+    "double precision",
+    "integer",
+    "interval",
+    "json",
+    "jsonb",
+    "numeric",
+    "real",
+    "smallint",
+    "text",
+    "time without time zone",
+    "timestamp with time zone",
+    "timestamp without time zone",
+    "uuid",
+];

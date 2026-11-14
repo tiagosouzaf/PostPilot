@@ -17,6 +17,8 @@ pub enum Panel {
     Output,
     /// Janela de consulta, pelo número do documento.
     Query(u32),
+    /// Table Designer, pelo número dele.
+    TableDesigner(u32),
 }
 
 impl Panel {
@@ -27,6 +29,7 @@ impl Panel {
             Panel::Properties => "Properties",
             Panel::Output => "Output",
             Panel::Query(_) => "Query",
+            Panel::TableDesigner(_) => "Table Designer",
         }
     }
 }
@@ -37,7 +40,7 @@ impl Pane for Panel {
             Panel::ObjectExplorer => Area::Left,
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
-            Panel::Query(_) => Area::Document,
+            Panel::Query(_) | Panel::TableDesigner(_) => Area::Document,
         }
     }
 }
@@ -60,6 +63,8 @@ pub struct Viewer<'a> {
     pub explorer: &'a mut ObjectExplorer,
     /// Janelas de consulta.
     pub documents: &'a mut Documents,
+    /// Table Designers.
+    pub designers: &'a mut crate::designer::Designers,
     /// Documento cujo editor deve receber o foco neste frame.
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
@@ -86,6 +91,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .get(*id)
                 .map(|d| d.title())
                 .unwrap_or_default(),
+            Panel::TableDesigner(id) => self
+                .designers
+                .get(*id)
+                .map(|d| d.title())
+                .unwrap_or_default(),
             _ => pane.title().to_string(),
         }
     }
@@ -96,6 +106,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 self.close_requests.push(*id);
                 false
             }
+            Panel::TableDesigner(id) => self
+                .designers
+                .get_mut(*id)
+                .is_none_or(crate::designer::TableDesigner::request_close),
             _ => true,
         }
     }
@@ -185,6 +199,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .show(ui);
                 if out.cursor.is_some() {
                     doc.cursor = out.cursor;
+                }
+            }
+            Panel::TableDesigner(id) => {
+                if let Some(d) = self.designers.get_mut(*id) {
+                    d.show(ui, *id);
                 }
             }
             Panel::Output => {

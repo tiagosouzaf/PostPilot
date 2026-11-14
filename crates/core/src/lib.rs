@@ -11,6 +11,8 @@ pub mod metadata;
 pub mod query;
 
 pub use command::CommandId;
+/// O modelo do schema dos designers (Fase 3).
+pub use pgstudio_schema_model as schema;
 
 /// Nome do produto exibido na interface.
 pub const APP_NAME: &str = "PGStudio";

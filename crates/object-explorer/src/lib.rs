@@ -46,6 +46,10 @@ pub enum Event {
     EditTop(NodeId),
     /// "Script as" > CREATE ou DROP numa janela de consulta nova.
     Script(NodeId, ScriptAction),
+    /// "New Table..." na pasta Tables: abre o Table Designer vazio.
+    NewTable(NodeId),
+    /// "Design" numa tabela: abre o Table Designer dela.
+    Design(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -366,6 +370,20 @@ impl ObjectExplorer {
                                 }
                                 label.context_menu(|ui| {
                                     select = Some(node.id.clone());
+                                    if node.kind == NodeKind::Folder(Folder::Tables) {
+                                        if ui.button("New Table...").clicked() {
+                                            events.push(Event::NewTable(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
+                                    if node.kind == NodeKind::Table {
+                                        if ui.button("Design").clicked() {
+                                            events.push(Event::Design(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
                                     let queryable = matches!(
                                         node.kind,
                                         NodeKind::Server
