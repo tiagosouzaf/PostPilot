@@ -7,8 +7,10 @@
 //!   Monitor com 5.000 sessões.
 //! - `dist`: pacotes de instalação (.deb, AppImage, Arch, .zip e .msi do
 //!   Windows); veja [`dist`].
+//! - `pgmatrix`: a suíte contra PostgreSQL 13 a 17; veja [`pgmatrix`].
 
 mod dist;
+mod pgmatrix;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -105,8 +107,20 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("bench") => parse_bench(&args[1..]).and_then(bench),
         Some("dist") => dist::parse(&args[1..]).and_then(|a| dist::run(a, &workspace_root())),
+        Some("pgmatrix")
+            if args[1..]
+                .iter()
+                .take_while(|a| *a != "--")
+                .any(|a| a == "-h" || a == "--help") =>
+        {
+            println!("{}", pgmatrix::USAGE);
+            return ExitCode::SUCCESS;
+        }
+        Some("pgmatrix") => {
+            pgmatrix::parse(&args[1..]).and_then(|a| pgmatrix::run(a, &workspace_root()))
+        }
         Some("-h" | "--help") | None => {
-            println!("{USAGE}\n\n{}", dist::USAGE);
+            println!("{USAGE}\n\n{}\n\n{}", dist::USAGE, pgmatrix::USAGE);
             return ExitCode::SUCCESS;
         }
         Some(other) => Err(format!("tarefa desconhecida: {other}\n\n{USAGE}")),

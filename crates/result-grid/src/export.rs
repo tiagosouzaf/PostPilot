@@ -8,7 +8,9 @@
 //! - CSV: como o `COPY ... (FORMAT csv, HEADER)` lê: vírgula, aspas só
 //!   quando precisa, NULL como campo vazio e texto vazio como `""`.
 //! - TSV: o formato texto do `COPY` (tab, `\N` para NULL e barra invertida
-//!   escapando tab, quebra de linha e a própria barra).
+//!   escapando tab, quebra de linha e a própria barra), com uma linha de
+//!   cabeçalho. O `COPY ... (FORMAT text, HEADER)` lê o cabeçalho a partir
+//!   do PostgreSQL 15; antes disso, ele precisa sair do arquivo.
 //! - JSON: uma lista de objetos, coluna por chave, valores como texto ou
 //!   `null`.
 //! - INSERT: um `INSERT INTO` por linha, valores como literais que o banco
