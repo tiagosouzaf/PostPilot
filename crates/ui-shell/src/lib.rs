@@ -1269,6 +1269,7 @@ impl ShellApp {
                 | WorkspaceExplorer
                 | NewWorkspace
                 | OpenWorkspace
+                | CloneWorkspace
                 | CloseWorkspace
                 | NewQuery
                 | OpenFile
@@ -1504,6 +1505,10 @@ impl ShellApp {
             CommandId::NewWorkspace => self.ask_new_workspace(),
             CommandId::OpenWorkspace => self.ask_open_workspace(),
             CommandId::CloseWorkspace => self.close_workspace(),
+            CommandId::CloneWorkspace => {
+                self.workspace_panel.open_clone();
+                self.workspace.open(Panel::WorkspaceExplorer);
+            }
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
