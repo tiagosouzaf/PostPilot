@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
+use pgstudio_i18n::{tr, trf};
 
 use super::vault::{self, DEFAULT_KDF, Kdf, Key, Vault, VaultError};
 use crate::secrets::{SecretError, SecretStore};
@@ -93,6 +94,24 @@ impl SecretStore for WorkspaceSecrets {
             Some(s) => s.delete(key),
             None => Ok(()),
         }
+    }
+}
+
+/// Texto de um erro do cofre, traduzido.
+pub fn vault_error_text(e: &VaultError) -> String {
+    match e {
+        VaultError::WrongPassword => tr("The master password is not correct.").into(),
+        VaultError::Locked => tr("The workspace passwords are locked.").into(),
+        VaultError::WeakPassword(m) if m.starts_with("Use at least") => trf!(
+            "Use at least {n} characters for the master password.",
+            n = vault::MIN_PASSWORD
+        ),
+        VaultError::WeakPassword(_) => tr("The passwords do not match.").into(),
+        VaultError::Tampered(key) => trf!(
+            "The saved password for {key} was changed outside PostPilot and cannot be read.",
+            key = key
+        ),
+        VaultError::File(m) => m.clone(),
     }
 }
 
@@ -260,7 +279,7 @@ impl Passwords {
 
     /// Cria o cofre com esta senha mestra.
     pub fn create(&mut self, password: &str, confirm: &str, remember: bool) -> Result<(), String> {
-        vault::check_new_password(password, confirm).map_err(|e| e.to_string())?;
+        vault::check_new_password(password, confirm).map_err(|e| vault_error_text(&e))?;
         let (root, kdf, password) = (self.root.clone(), self.kdf, password.to_string());
         if remember {
             self.remember = Some(password.clone());
@@ -279,12 +298,12 @@ impl Passwords {
 
     /// Troca a senha mestra (o cofre precisa estar destrancado).
     pub fn change(&mut self, password: &str, confirm: &str, remember: bool) -> Result<(), String> {
-        vault::check_new_password(password, confirm).map_err(|e| e.to_string())?;
+        vault::check_new_password(password, confirm).map_err(|e| vault_error_text(&e))?;
         let current = {
             let slot = self.slot.lock().expect("vault lock");
             match slot.vault.as_ref() {
                 Some(v) if v.is_unlocked() => v.clone(),
-                _ => return Err(VaultError::Locked.to_string()),
+                _ => return Err(vault_error_text(&VaultError::Locked)),
             }
         };
         let (kdf, password) = (self.kdf, password.to_string());
@@ -303,7 +322,7 @@ impl Passwords {
         if let Some(v) = self.slot.lock().expect("vault lock").vault.as_mut() {
             v.lock();
         }
-        self.message = Some("Workspace passwords locked.".into());
+        self.message = Some(tr("Workspace passwords locked.").into());
     }
 
     /// Trata o fim do trabalho em andamento; `true` quando algo terminou.
@@ -312,7 +331,7 @@ impl Passwords {
             Some(Ok(done)) => done,
             Some(Err(TryRecvError::Disconnected)) => {
                 self.job = None;
-                self.message = Some("The master password check stopped unexpectedly.".into());
+                self.message = Some(tr("The master password check stopped unexpectedly.").into());
                 return true;
             }
             _ => return false,
@@ -336,8 +355,8 @@ impl Passwords {
         let ok = match done {
             Done::Vault(Ok(v), what) => {
                 self.message = Some(match what {
-                    "Created" => "Workspace passwords are on: remembered passwords of this workspace's servers are saved encrypted in secrets.json.".into(),
-                    _ => "Master password changed. Commit and push secrets.json.".into(),
+                    "Created" => tr("Workspace passwords are on: remembered passwords of this workspace's servers are saved encrypted in secrets.json.").into(),
+                    _ => tr("Master password changed. Commit and push secrets.json.").into(),
                 });
                 self.slot.lock().expect("vault lock").vault = Some(v);
                 true
@@ -346,11 +365,11 @@ impl Passwords {
                 if let Some(v) = self.slot.lock().expect("vault lock").vault.as_mut() {
                     v.unlock_with(key);
                 }
-                self.message = Some("Workspace passwords unlocked.".into());
+                self.message = Some(tr("Workspace passwords unlocked.").into());
                 true
             }
             Done::Vault(Err(e), _) | Done::Key(Err(e)) => {
-                let text = e.to_string();
+                let text = vault_error_text(&e);
                 match &mut self.dialog {
                     Some(d) => d.error = Some(text.clone()),
                     None if e == VaultError::WrongPassword => {
@@ -376,8 +395,9 @@ impl Passwords {
                 if let Some(id) = id
                     && let Err(e) = store.set(&remembered_key(&id), &password)
                 {
-                    self.message = Some(format!(
-                        "Unlocked, but the master password could not be remembered on this computer: {e}"
+                    self.message = Some(trf!(
+                        "Unlocked, but the master password could not be remembered on this computer: {error}",
+                        error = e
                     ));
                 }
             }
@@ -389,7 +409,7 @@ impl Passwords {
         if self.job.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.weak("Checking the master password...");
+                ui.weak(tr("Checking the master password..."));
             });
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -398,33 +418,37 @@ impl Passwords {
         let (exists, unlocked, count) = (self.exists(), self.is_unlocked(), self.count());
         ui.horizontal(|ui| {
             if !exists {
-                ui.weak(format!("{} Passwords stay on this computer.", icon::KEY));
+                ui.weak(format!(
+                    "{} {}", // i18n-ignore
+                    icon::KEY,
+                    tr("Passwords stay on this computer.")
+                ));
                 if ui
-                    .small_button("Save in workspace...")
-                    .on_hover_text("Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json")
+                    .small_button(tr("Save in workspace..."))
+                    .on_hover_text(tr("Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"))
                     .clicked()
                 {
                     self.open_dialog(DialogKind::Create);
                 }
             } else if !unlocked {
-                ui.label(format!("{} Passwords locked", icon::LOCK));
-                if ui.small_button("Unlock...").clicked() {
+                ui.label(format!("{} {}", icon::LOCK, tr("Passwords locked"))); // i18n-ignore
+                if ui.small_button(tr("Unlock...")).clicked() {
                     self.open_dialog(DialogKind::Unlock);
                 }
             } else {
                 let text = match count {
-                    0 => "No passwords saved yet".to_string(),
-                    1 => "1 password in the workspace".to_string(),
-                    n => format!("{n} passwords in the workspace"),
+                    0 => tr("No passwords saved yet").to_string(),
+                    1 => tr("1 password in the workspace").to_string(),
+                    n => trf!("{n} passwords in the workspace", n = n),
                 };
-                ui.label(format!("{} {text}", icon::LOCK_OPEN))
-                    .on_hover_text("Remembered passwords of this workspace's servers are saved here, encrypted with the master password.");
+                ui.label(format!("{} {text}", icon::LOCK_OPEN)) // i18n-ignore
+                    .on_hover_text(tr("Remembered passwords of this workspace's servers are saved here, encrypted with the master password."));
                 ui.menu_button(icon::DOTS_THREE, |ui| {
-                    if ui.button("Change Master Password...").clicked() {
+                    if ui.button(tr("Change Master Password...")).clicked() {
                         self.open_dialog(DialogKind::Change);
                         ui.close();
                     }
-                    if ui.button("Lock").clicked() {
+                    if ui.button(tr("Lock")).clicked() {
                         self.lock();
                         ui.close();
                     }
@@ -447,31 +471,31 @@ impl Passwords {
         let mut cancel = false;
         if let Some(d) = &mut self.dialog {
             let title = match d.kind {
-                DialogKind::Create => "Save Passwords in Workspace",
-                DialogKind::Unlock => "Unlock Workspace Passwords",
-                DialogKind::Change => "Change Master Password",
+                DialogKind::Create => tr("Save Passwords in Workspace"),
+                DialogKind::Unlock => tr("Unlock Workspace Passwords"),
+                DialogKind::Change => tr("Change Master Password"),
             };
             crate::theme::modal(egui::Id::new("workspace_vault")).show(ctx, |ui| {
                 ui.set_width(420.0);
                 ui.heading(title);
                 match d.kind {
                     DialogKind::Create => {
-                        ui.label("Choose a master password. It encrypts the passwords that go into the repository (secrets.json); it is never saved there.");
-                        ui.weak(format!("At least {} characters. If you forget it, the saved passwords cannot be recovered: you type them again.", vault::MIN_PASSWORD));
+                        ui.label(tr("Choose a master password. It encrypts the passwords that go into the repository (secrets.json); it is never saved there."));
+                        ui.weak(trf!("At least {n} characters. If you forget it, the saved passwords cannot be recovered: you type them again.", n = vault::MIN_PASSWORD));
                     }
                     DialogKind::Unlock => {
-                        ui.label("This workspace keeps its passwords encrypted. Enter the master password.");
+                        ui.label(tr("This workspace keeps its passwords encrypted. Enter the master password."));
                     }
                     DialogKind::Change => {
-                        ui.label("Enter the new master password. The other computers will ask for it after the next pull.");
+                        ui.label(tr("Enter the new master password. The other computers will ask for it after the next pull."));
                     }
                 }
                 ui.add_space(4.0);
                 egui::Grid::new("vault_fields").num_columns(2).show(ui, |ui| {
                     ui.label(if d.kind == DialogKind::Unlock {
-                        "Master password:"
+                        tr("Master password:")
                     } else {
-                        "New master password:"
+                        tr("New master password:")
                     });
                     let first = ui.add(
                         egui::TextEdit::singleline(&mut d.password)
@@ -481,7 +505,7 @@ impl Passwords {
                     ui.end_row();
                     let mut enter = first.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if d.kind != DialogKind::Unlock {
-                        ui.label("Confirm password:");
+                        ui.label(tr("Confirm password:"));
                         let second = ui.add(
                             egui::TextEdit::singleline(&mut d.confirm)
                                 .password(true)
@@ -494,17 +518,17 @@ impl Passwords {
                         ok = true;
                     }
                 });
-                ui.checkbox(&mut d.remember, "Remember on this computer")
-                    .on_hover_text("Keeps the master password in this computer's keyring, so the workspace unlocks by itself.");
+                ui.checkbox(&mut d.remember, tr("Remember on this computer"))
+                    .on_hover_text(tr("Keeps the master password in this computer's keyring, so the workspace unlocks by itself."));
                 if let Some(e) = &d.error {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
-                    if ui.add_enabled(!busy, egui::Button::new("OK")).clicked() {
+                    if ui.add_enabled(!busy, egui::Button::new(tr("OK"))).clicked() {
                         ok = true;
                     }
                     if busy {

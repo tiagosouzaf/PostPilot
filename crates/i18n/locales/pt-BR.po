@@ -667,3 +667,110 @@ msgstr "Permitir o Claude Code (MCP)"
 
 msgid "Check for Updates…"
 msgstr "Verificar se Há Atualizações…"
+
+# Workspace: senhas (Fase R)
+
+msgid "The master password check stopped unexpectedly."
+msgstr "A verificação da senha mestra parou inesperadamente."
+
+msgid "Workspace passwords locked."
+msgstr "Senhas do workspace trancadas."
+
+msgid "Workspace passwords are on: remembered passwords of this workspace's servers are saved encrypted in secrets.json."
+msgstr "Senhas no workspace ativadas: as senhas lembradas dos servidores deste workspace ficam criptografadas em secrets.json."
+
+msgid "Master password changed. Commit and push secrets.json."
+msgstr "Senha mestra trocada. Faça commit e push do secrets.json."
+
+msgid "Workspace passwords unlocked."
+msgstr "Senhas do workspace destrancadas."
+
+msgid "Unlocked, but the master password could not be remembered on this computer: {error}"
+msgstr "Destrancado, mas não foi possível lembrar a senha mestra neste computador: {error}"
+
+msgid "Checking the master password..."
+msgstr "Conferindo a senha mestra..."
+
+msgid "Passwords stay on this computer."
+msgstr "As senhas ficam neste computador."
+
+msgid "Save in workspace..."
+msgstr "Salvar no workspace..."
+
+msgid "Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"
+msgstr "Defina uma senha mestra e salve as senhas lembradas dos servidores deste workspace, criptografadas, em secrets.json"
+
+msgid "Passwords locked"
+msgstr "Senhas trancadas"
+
+msgid "Unlock..."
+msgstr "Destrancar..."
+
+msgid "No passwords saved yet"
+msgstr "Nenhuma senha salva ainda"
+
+msgid "1 password in the workspace"
+msgstr "1 senha no workspace"
+
+msgid "{n} passwords in the workspace"
+msgstr "{n} senhas no workspace"
+
+msgid "Remembered passwords of this workspace's servers are saved here, encrypted with the master password."
+msgstr "As senhas lembradas dos servidores deste workspace ficam aqui, criptografadas com a senha mestra."
+
+msgid "Change Master Password..."
+msgstr "Trocar Senha Mestra..."
+
+msgid "Lock"
+msgstr "Trancar"
+
+msgid "Save Passwords in Workspace"
+msgstr "Salvar Senhas no Workspace"
+
+msgid "Unlock Workspace Passwords"
+msgstr "Destrancar Senhas do Workspace"
+
+msgid "Change Master Password"
+msgstr "Trocar Senha Mestra"
+
+msgid "Choose a master password. It encrypts the passwords that go into the repository (secrets.json); it is never saved there."
+msgstr "Escolha uma senha mestra. Ela criptografa as senhas que vão para o repositório (secrets.json) e nunca é salva lá."
+
+msgid "At least {n} characters. If you forget it, the saved passwords cannot be recovered: you type them again."
+msgstr "Pelo menos {n} caracteres. Se você esquecer, as senhas salvas não podem ser recuperadas: você digita de novo."
+
+msgid "This workspace keeps its passwords encrypted. Enter the master password."
+msgstr "Este workspace guarda as senhas criptografadas. Digite a senha mestra."
+
+msgid "Enter the new master password. The other computers will ask for it after the next pull."
+msgstr "Digite a nova senha mestra. Os outros computadores vão pedi-la depois do próximo pull."
+
+msgid "Master password:"
+msgstr "Senha mestra:"
+
+msgid "New master password:"
+msgstr "Nova senha mestra:"
+
+msgid "Confirm password:"
+msgstr "Confirmar senha:"
+
+msgid "Remember on this computer"
+msgstr "Lembrar neste computador"
+
+msgid "Keeps the master password in this computer's keyring, so the workspace unlocks by itself."
+msgstr "Guarda a senha mestra no cofre deste computador, para o workspace destrancar sozinho."
+
+msgid "The master password is not correct."
+msgstr "A senha mestra não está correta."
+
+msgid "The workspace passwords are locked."
+msgstr "As senhas do workspace estão trancadas."
+
+msgid "Use at least {n} characters for the master password."
+msgstr "Use pelo menos {n} caracteres na senha mestra."
+
+msgid "The passwords do not match."
+msgstr "As senhas não conferem."
+
+msgid "The saved password for {key} was changed outside PostPilot and cannot be read."
+msgstr "A senha salva de {key} foi alterada fora do PostPilot e não pode ser lida."
