@@ -39,12 +39,12 @@ impl Theme {
     /// Todos os temas, na ordem em que aparecem nos menus.
     pub const ALL: [Theme; 2] = [Theme::Light, Theme::Dark];
 
-    /// Nome exibido no menu.
+    /// Nome exibido no menu, no idioma da interface.
     pub fn label(self) -> &'static str {
-        match self {
+        pgstudio_i18n::tr(match self {
             Theme::Light => "Light",
             Theme::Dark => "Dark",
-        }
+        })
     }
 }
 
