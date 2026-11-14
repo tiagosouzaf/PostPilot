@@ -105,6 +105,9 @@ pub struct ShellApp {
     json_viewer: Option<(u32, json_viewer::JsonViewer)>,
     /// JSON Query Guide.
     json_guide: json_guide::JsonGuide,
+    /// O que abrir do JSON assim que der (screenshots): veja
+    /// [`ShellApp::with_json_demo`].
+    json_demo: Option<String>,
     /// Abrir o Query Designer na próxima janela de "New Query" (screenshots).
     design_query_on_open: bool,
     /// Arquivo que o "Restore Database" já abre listando (screenshots).
@@ -270,6 +273,7 @@ impl Default for ShellApp {
             query_designer: None,
             json_viewer: None,
             json_guide: json_guide::JsonGuide::default(),
+            json_demo: None,
             design_query_on_open: false,
             restore_file: None,
             query_on_open: None,
@@ -1814,6 +1818,125 @@ impl ShellApp {
         self
     }
 
+    /// Abre o JSON assim que der (para screenshots): `view` abre o JSON
+    /// Viewer na primeira célula JSON do primeiro resultado da janela
+    /// ativa, `view:items.0.sku` já escolhe esse nó e `view::text` (ou
+    /// `view:caminho:text`) mostra a aba Text; `guide:N` abre o JSON Query
+    /// Guide no tópico N; `edit:linha,coluna` abre o editor de JSON nessa
+    /// célula do Edit Top Rows.
+    pub fn with_json_demo(mut self, spec: String) -> Self {
+        self.json_demo = Some(spec);
+        self
+    }
+
+    fn json_demo_step(&mut self) {
+        let Some(spec) = self.json_demo.clone() else {
+            return;
+        };
+        let mut parts = spec.split(':');
+        let done = match parts.next() {
+            Some("guide") => {
+                let topic = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                self.json_guide.open_at(topic);
+                true
+            }
+            Some("edit") => {
+                let cell = parts.next().and_then(|c| c.split_once(','));
+                let (row, col) = cell
+                    .and_then(|(r, c)| Some((r.parse().ok()?, c.parse().ok()?)))
+                    .unwrap_or((0, 1));
+                match self
+                    .edit_rows
+                    .values_mut()
+                    .find(|e| !e.is_loading() && e.load_error().is_none())
+                {
+                    Some(e) => {
+                        e.select_cell(row, col);
+                        e.open_json_editor(row, col)
+                    }
+                    None => false,
+                }
+            }
+            Some("cell") => self.json_demo_cell(),
+            _ => self.json_demo_view(parts.next(), parts.next() == Some("text")),
+        };
+        if done {
+            self.json_demo = None;
+        }
+    }
+
+    /// Põe o cursor da grade na primeira célula JSON (mostra o botão).
+    fn json_demo_cell(&mut self) -> bool {
+        let Some(exec) = self
+            .active_doc
+            .and_then(|doc| self.documents.get_mut(doc))
+            .and_then(|d| d.execution.as_mut())
+            .filter(|e| !e.is_running())
+        else {
+            return false;
+        };
+        let Some(set) = exec.results.first_mut() else {
+            return false;
+        };
+        let cols = set.columns().len();
+        let cell = {
+            let mut store = set.store();
+            (0..cols)
+                .map(|col| pgstudio_result_grid::Cell { row: 0, col })
+                .find(|c| pgstudio_result_grid::GridState::json_at(&mut store, *c).is_some())
+        };
+        if let Some(cell) = cell {
+            set.grid.selection = Some(pgstudio_result_grid::Selection {
+                anchor: cell,
+                cursor: cell,
+                mode: pgstudio_result_grid::Mode::Cells,
+            });
+        }
+        true
+    }
+
+    fn json_demo_view(&mut self, path: Option<&str>, text: bool) -> bool {
+        let Some(doc) = self.active_doc else {
+            return false;
+        };
+        let cell = {
+            let Some(exec) = self.documents.get(doc).and_then(|d| d.execution.as_ref()) else {
+                return false;
+            };
+            if exec.is_running() {
+                return false;
+            }
+            let Some(set) = exec.results.first() else {
+                return false;
+            };
+            let mut store = set.store();
+            let cols = store.columns().len();
+            (0..cols)
+                .map(|col| pgstudio_result_grid::Cell { row: 0, col })
+                .find(|c| pgstudio_result_grid::GridState::json_at(&mut store, *c).is_some())
+        };
+        let Some(cell) = cell else {
+            return true;
+        };
+        self.open_json_viewer(doc, 0, cell);
+        if let Some((_, v)) = &mut self.json_viewer {
+            let steps = path
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    p.split('.')
+                        .map(|s| match s.parse() {
+                            Ok(i) => pgstudio_result_grid::json::Step::Index(i),
+                            Err(_) => pgstudio_result_grid::json::Step::Key(s.to_string()),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            v.select(steps);
+            v.show_text(text);
+        }
+        true
+    }
+
     /// Se alguma janela de consulta está executando.
     pub fn is_executing(&self) -> bool {
         self.documents.ids().into_iter().any(|id| {
@@ -2597,6 +2720,7 @@ impl ShellApp {
     /// Desenha o JSON Viewer e o guia e põe o SQL pedido na janela de
     /// consulta.
     fn json_step(&mut self, ctx: &egui::Context) {
+        self.json_demo_step();
         let colors = match self.theme {
             Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
             Theme::Dark => pgstudio_sql_editor::Colors::DARK,
@@ -3191,6 +3315,7 @@ impl ShellApp {
                 .any(|e| e.is_loading() || e.is_saving())
             || !self.exports.is_empty()
             || self.query_designer.as_ref().is_some_and(|q| q.is_loading())
+            || self.json_demo.is_some()
             || self.compare.as_ref().is_some_and(|c| c.is_busy());
         // Conta os frames parados: o que acabou de aparecer (um diálogo
         // modal entra com fade) precisa de alguns frames para assentar.

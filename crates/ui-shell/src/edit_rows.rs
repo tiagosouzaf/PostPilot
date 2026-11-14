@@ -629,6 +629,11 @@ impl EditRows {
         self.editing.is_some()
     }
 
+    /// Seleciona a célula sem gravar a linha anterior (screenshots).
+    pub fn select_cell(&mut self, row: usize, col: usize) {
+        self.selected = Some((row, col));
+    }
+
     /// Tipo JSON da coluna, se ela for `json` ou `jsonb`.
     fn json_kind(&self, col: usize) -> Option<crate::json_viewer::JsonKind> {
         let column = self.table.as_ref()?.columns.get(col)?;

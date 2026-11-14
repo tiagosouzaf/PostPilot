@@ -45,6 +45,9 @@
 //!   `restore`, o "Restore Database" (com `PGSTUDIO_RESTORE_FILE`, já
 //!   listando o arquivo). `compare` abre o "Schema Compare" com o banco
 //!   como origem (com `PGSTUDIO_COMPARE=origem,destino`, já comparando os dois).
+//! - `PGSTUDIO_JSON=view[:caminho][:text]|guide:N|edit:linha,coluna`: abre
+//!   o JSON Viewer, o JSON Query Guide ou o editor de JSON do Edit Top Rows
+//!   assim que der (para screenshots; veja `ShellApp::with_json_demo`).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -322,6 +325,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 if let Some(s) = pgstudio_ui_shell::bench::Scenario::parse(&scenario) {
                     app = app.with_bench_scenario(s);
                 }
+            }
+            if let Ok(spec) = std::env::var("PGSTUDIO_JSON") {
+                app = app.with_json_demo(spec);
             }
             if let Some(path) = screenshot {
                 app = app.with_screenshot(path);

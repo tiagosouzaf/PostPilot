@@ -370,7 +370,9 @@ impl JsonGuide {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size([860.0, 620.0])
+            .default_size([900.0, 660.0])
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
             .min_size([520.0, 320.0])
             .show(ctx, |ui| {
                 egui::Panel::left(egui::Id::new("json_guide_topics"))
@@ -378,17 +380,14 @@ impl JsonGuide {
                     .exact_size(190.0)
                     .show(ui, |ui| {
                         ui.add_space(4.0);
-                        for (i, t) in TOPICS.iter().enumerate() {
-                            if ui
-                                .add_sized(
-                                    [ui.available_width(), 24.0],
-                                    egui::Button::selectable(self.topic == i, t.title),
-                                )
-                                .clicked()
-                            {
-                                self.topic = i;
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+                            for (i, t) in TOPICS.iter().enumerate() {
+                                if ui.selectable_label(self.topic == i, t.title).clicked() {
+                                    self.topic = i;
+                                }
                             }
-                        }
+                        });
                     });
                 let topic = &TOPICS[self.topic.min(TOPICS.len() - 1)];
                 egui::ScrollArea::vertical()

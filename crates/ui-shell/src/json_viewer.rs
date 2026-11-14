@@ -380,6 +380,8 @@ pub struct JsonViewer {
     /// estado aberto de cada nó.
     generation: u64,
     expand_all: Option<bool>,
+    /// Nó escolhido por código: os nós acima dele abrem no próximo frame.
+    reveal: Option<Vec<Step>>,
 }
 
 impl JsonViewer {
@@ -400,6 +402,7 @@ impl JsonViewer {
             error: None,
             generation: 0,
             expand_all: None,
+            reveal: None,
         }
     }
 
@@ -441,6 +444,7 @@ impl JsonViewer {
 
     pub fn select(&mut self, path: Vec<Step>) {
         if self.root.get(&path).is_some() {
+            self.reveal = Some(path.clone());
             self.selected = path;
             self.tab = Tab::Tree;
         }
@@ -470,7 +474,9 @@ impl JsonViewer {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size([760.0, 600.0])
+            .default_size([820.0, 680.0])
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
             .min_size([420.0, 300.0])
             .show(ctx, |ui| action = self.ui(ui, sql_colors));
         if !open {
@@ -558,6 +564,7 @@ impl JsonViewer {
                         "Column type. json has no @> or SQL/JSON path, so the queries cast it to jsonb.",
                     );
                 ui.label("Column type:");
+                ui.separator();
             });
         });
     }
@@ -709,6 +716,7 @@ impl JsonViewer {
             });
         self.root = root;
         self.expand_all = None;
+        self.reveal = None;
         if let Some(path) = clicked {
             self.selected = path;
         }
@@ -770,7 +778,15 @@ impl JsonViewer {
         };
         let id = self.id.with(("node", self.generation, &*path));
         let default_open = self.expand_all.unwrap_or(path.len() < 2);
-        CollapsingState::load_with_default_open(ui.ctx(), id, default_open)
+        let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+        if self
+            .reveal
+            .as_ref()
+            .is_some_and(|r| r.len() > path.len() && r.starts_with(path))
+        {
+            state.set_open(true);
+        }
+        state
             .show_header(ui, |ui| row(ui, clicked, path))
             .body(|ui| {
                 for (step, child) in children.iter().take(TREE_CHILDREN_LIMIT) {
@@ -813,8 +829,7 @@ impl JsonViewer {
             RichText::new(format!(
                 "Click a node in the tree to build its query. Replace {TABLE_PLACEHOLDER} with your table."
             ))
-            .weak()
-            .small(),
+            .weak(),
         );
         ui.add_space(4.0);
         let font = FontId::monospace(12.0);
@@ -825,7 +840,7 @@ impl JsonViewer {
                 for (i, e) in self.expressions().into_iter().enumerate() {
                     ui.push_id(i, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(e.label).small().weak());
+                            ui.label(RichText::new(e.label).weak());
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
