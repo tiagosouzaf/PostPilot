@@ -14,6 +14,8 @@ use pgstudio_result_grid::export::{Format, Writer};
 use pgstudio_result_grid::grid::INSERT_TABLE;
 use pgstudio_result_grid::{GridState, ResultStore};
 
+use crate::result_edit::ResultEditor;
+
 /// Linhas recebidas entre um pedido de frame e outro, para a contagem na
 /// tela andar sem pedir um frame por linha.
 const REPAINT_EVERY_ROWS: u64 = 5000;
@@ -35,7 +37,7 @@ pub enum ResultsMode {
 /// canal: assim a memória fica limitada pelo orçamento do buffer mesmo
 /// quando o servidor manda linhas mais rápido do que a tela desenha.
 pub struct ResultSet {
-    store: Arc<Mutex<ResultStore>>,
+    pub(crate) store: Arc<Mutex<ResultStore>>,
     pub grid: GridState,
     /// Larguras do modo texto, calculadas quando ele aparece e de novo
     /// enquanto chegam linhas da amostra.
@@ -44,6 +46,8 @@ pub struct ResultSet {
     pub text_width_rows: u64,
     /// Posição da rolagem do modo texto, em linhas.
     pub text_top: f64,
+    /// Edição na grade (só depois que a execução termina).
+    pub editor: Option<ResultEditor>,
 }
 
 impl ResultSet {
@@ -54,6 +58,7 @@ impl ResultSet {
             text_widths: None,
             text_width_rows: 0,
             text_top: 0.0,
+            editor: None,
         }
     }
 
@@ -307,6 +312,7 @@ pub struct Execution {
     /// Results to File: os resultados vão para este arquivo, não para a
     /// grade.
     file: Option<PathBuf>,
+    ctx: egui::Context,
 }
 
 impl std::fmt::Debug for Execution {
@@ -357,6 +363,7 @@ impl Execution {
         ctx: &egui::Context,
     ) -> Self {
         let (tx, events) = mpsc::channel();
+        let ui_ctx = ctx.clone();
         let ctx = ctx.clone();
         let mut current: Option<Arc<Mutex<ResultStore>>> = None;
         let mut since_repaint = 0;
@@ -412,6 +419,7 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: None,
+            ctx: ui_ctx,
         }
     }
 
@@ -429,6 +437,7 @@ impl Execution {
         let format = Format::from_path(path);
         let batch = Batch::plain(&sql);
         let (tx, events) = mpsc::channel();
+        let ui_ctx = ctx.clone();
         let ctx = ctx.clone();
         let shown = path.display().to_string();
         let mut idle: Option<BufWriter<std::fs::File>> = Some(BufWriter::new(file));
@@ -521,6 +530,7 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: Some(path.to_path_buf()),
+            ctx: ui_ctx,
         })
     }
 
@@ -712,10 +722,47 @@ impl Execution {
                 } else if self.results.is_empty() || self.outcome == Outcome::Failed {
                     self.tab = Tab::Messages;
                 }
+                self.start_editors();
                 return true;
             }
         }
         false
+    }
+
+    /// Depois da execução, vê se a grade pode ser editada: só quando o
+    /// lote é um comando que só lê e trouxe um resultado; o resto fica
+    /// só leitura com o motivo.
+    fn start_editors(&mut self) {
+        if self.plan_mode || self.file.is_some() || self.results.is_empty() {
+            return;
+        }
+        let statements = pgstudio_sql_editor::lexer::statements(&self.sql);
+        let reason = if self.batch.segments.is_empty() {
+            Some("The results are read-only: they were produced by PostPilot, not by a query.")
+        } else if self.outcome != Outcome::Succeeded {
+            Some("The results are read-only: the query did not complete successfully.")
+        } else if statements.len() != 1 || self.results.len() != 1 {
+            Some(
+                "The results are read-only: the batch has more than one statement. \
+                 Run the SELECT by itself to edit its results.",
+            )
+        } else if changes_data(&self.sql) {
+            Some("The results are read-only: the statement changes data.")
+        } else {
+            None
+        };
+        let session = self.session.clone();
+        match reason {
+            Some(reason) => {
+                for set in &mut self.results {
+                    set.editor = Some(ResultEditor::read_only(session.clone(), reason, &self.ctx));
+                }
+            }
+            None => {
+                let sql = self.sql[statements[0].clone()].to_string();
+                self.results[0].editor = Some(ResultEditor::new(session, &sql, &self.ctx));
+            }
+        }
     }
 
     /// O resultado que acabou de chegar é a saída de um `EXPLAIN (FORMAT
@@ -750,6 +797,12 @@ impl Execution {
                 position: None,
             }),
         }
+    }
+
+    /// Acrescenta uma linha informativa à aba Messages (o que a edição na
+    /// grade gravou, por exemplo).
+    pub fn push_info(&mut self, text: String) {
+        self.info(text);
     }
 
     fn info(&mut self, text: String) {
