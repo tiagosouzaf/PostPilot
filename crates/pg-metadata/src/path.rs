@@ -15,6 +15,8 @@ pub enum Path {
     /// Security > Roles.
     Roles,
     Database(String),
+    /// Database > Database Diagrams.
+    Diagrams(String),
     /// Database > Schemas.
     Schemas(String),
     Schema(String, String),
@@ -57,6 +59,7 @@ fn folder(label: &str) -> Option<Folder> {
     use Folder::*;
     [
         Databases,
+        Diagrams,
         Schemas,
         Tables,
         Views,
@@ -83,6 +86,7 @@ impl Path {
             ["server", f] => folder(f).map_or(Path::Leaf, Path::ServerFolder),
             ["db", db] => Path::Database(dec(db)),
             ["db", db, "Schemas"] => Path::Schemas(dec(db)),
+            ["db", db, "Database Diagrams"] => Path::Diagrams(dec(db)),
             ["db", db, "s", s] => Path::Schema(dec(db), dec(s)),
             ["db", db, "s", s, f] => {
                 folder(f).map_or(Path::Leaf, |f| Path::SchemaFolder(dec(db), dec(s), f))
@@ -112,6 +116,7 @@ impl Path {
             Path::Roles => "server/Security/Roles".into(),
             Path::Database(db) => format!("db/{}", enc(db)),
             Path::Schemas(db) => format!("db/{}/Schemas", enc(db)),
+            Path::Diagrams(db) => format!("db/{}/Database Diagrams", enc(db)),
             Path::Schema(db, s) => format!("db/{}/s/{}", enc(db), enc(s)),
             Path::SchemaFolder(db, s, f) => format!("db/{}/s/{}/{}", enc(db), enc(s), f.label()),
             Path::Table(db, o) => format!("db/{}/t/{o}", enc(db)),
@@ -149,6 +154,7 @@ mod tests {
             Path::Roles,
             Path::Database(db.clone()),
             Path::Schemas(db.clone()),
+            Path::Diagrams(db.clone()),
             Path::Schema(db.clone(), s.clone()),
             Path::SchemaFolder(db.clone(), s.clone(), Folder::Tables),
             Path::SchemaFolder(db.clone(), s.clone(), Folder::Sequences),

@@ -32,6 +32,8 @@ const GRID_FRAME_TARGET_MS: f64 = 20.0;
 const GRID_RAM_TARGET_MB: f64 = 96.0;
 /// Meta do IntelliSense: sugestões em menos de 50 ms (pior tecla).
 const INTELLISENSE_TARGET_MS: f64 = 50.0;
+/// Meta do frame do diagrama com zoom e pan (p95): 60 FPS, como a grade.
+const DIAGRAM_FRAME_TARGET_MS: f64 = 20.0;
 
 const USAGE: &str = "\
 Uso: cargo xtask bench [opções]
@@ -47,9 +49,12 @@ Mede o pgstudio (release) em três cenários e compara com as metas:
                 < 96 MB (buffer de 64 MB + folga)
   intellisense  digita SQL uma tecla por frame num banco de 10 mil tabelas
                 com a lista de sugestões aberta: pior tecla < 50 ms
+  diagram       um Database Diagram de 500 tabelas passeia de um canto a
+                outro com zoom e pan por 10 s: 60 FPS (p95 < 20 ms por
+                frame)
 
 Opções:
-  --scenario S   startup, grid, intellisense ou all (padrão all)
+  --scenario S   startup, grid, intellisense, diagram ou all (padrão all)
   --runs N       execuções de cada cenário (padrão 5)
   --idle S       segundos parado antes de medir a memória (padrão 30)
   --no-build     não recompila; usa o binário existente
@@ -132,10 +137,16 @@ enum Scenario {
     Startup,
     Grid,
     IntelliSense,
+    Diagram,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 3] = [Scenario::Startup, Scenario::Grid, Scenario::IntelliSense];
+    const ALL: [Scenario; 4] = [
+        Scenario::Startup,
+        Scenario::Grid,
+        Scenario::IntelliSense,
+        Scenario::Diagram,
+    ];
 
     fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.name() == name)
@@ -147,6 +158,7 @@ impl Scenario {
             Scenario::Startup => "startup",
             Scenario::Grid => "grid",
             Scenario::IntelliSense => "intellisense",
+            Scenario::Diagram => "diagram",
         }
     }
 }
@@ -190,6 +202,7 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     let mut samples = Vec::new();
     let mut grid = Vec::new();
     let mut intellisense = Vec::new();
+    let mut diagram = Vec::new();
     for scenario in &args.scenarios {
         for run in 1..=args.runs {
             match scenario {
@@ -206,7 +219,7 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                     );
                     samples.push(s);
                 }
-                Scenario::Grid | Scenario::IntelliSense => {
+                Scenario::Grid | Scenario::IntelliSense | Scenario::Diagram => {
                     let r = measure_scenario(&exe, &root, *scenario)?;
                     eprintln!(
                         "{} {run}/{}: {} (RAM {:.1} MB)",
@@ -215,10 +228,10 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                         r.line,
                         r.ram_mb
                     );
-                    if *scenario == Scenario::Grid {
-                        grid.push(r);
-                    } else {
-                        intellisense.push(r);
+                    match scenario {
+                        Scenario::Grid => grid.push(r),
+                        Scenario::IntelliSense => intellisense.push(r),
+                        _ => diagram.push(r),
                     }
                 }
             }
@@ -230,6 +243,7 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
         idle_mb: (!samples.is_empty()).then_some(report.idle_median),
         grid,
         intellisense,
+        diagram,
     };
     let startup = !samples.is_empty();
     if args.markdown {
@@ -319,6 +333,7 @@ struct ScenarioReport {
     idle_mb: Option<f64>,
     grid: Vec<ScenarioRun>,
     intellisense: Vec<ScenarioRun>,
+    diagram: Vec<ScenarioRun>,
 }
 
 /// Mediana e pior valor de uma chave nas execuções.
@@ -355,8 +370,18 @@ impl ScenarioReport {
                 && self.intellisense.iter().all(|r| r.get("popup_keys") > 0.0))
     }
 
+    fn diagram_frame(&self) -> (f64, f64) {
+        stats(&self.diagram, |r| r.get("frame_p95"))
+    }
+
+    fn diagram_ok(&self) -> bool {
+        self.diagram.is_empty()
+            || (self.diagram_frame().1 < DIAGRAM_FRAME_TARGET_MS
+                && self.diagram.iter().all(|r| r.get("tables") == 500.0))
+    }
+
     fn passed(&self) -> bool {
-        self.grid_ok() && self.intellisense_ok()
+        self.grid_ok() && self.intellisense_ok() && self.diagram_ok()
     }
 
     /// Linhas da tabela: medida, meta, mediana, pior e se passou.
@@ -438,6 +463,40 @@ impl ScenarioReport {
             let (med, worst) = stats(&self.intellisense, |r| r.ram_mb);
             rows.push([
                 "IntelliSense: RAM com o catálogo".into(),
+                "—".into(),
+                mb(med),
+                mb(worst),
+                "—".into(),
+            ]);
+        }
+        if !self.diagram.is_empty() {
+            let (med, worst) = stats(&self.diagram, |r| r.get("load_ms"));
+            rows.push([
+                "Diagrama: 500 tabelas montadas (layout)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = self.diagram_frame();
+            rows.push([
+                "Diagrama: frame com zoom e pan (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(self.diagram_ok()),
+            ]);
+            let (med, worst) = stats(&self.diagram, |r| r.get("ui_p95"));
+            rows.push([
+                "Diagrama: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(&self.diagram, |r| r.ram_mb);
+            rows.push([
+                "Diagrama: RAM com 500 tabelas".into(),
                 "—".into(),
                 mb(med),
                 mb(worst),
@@ -775,10 +834,19 @@ mod tests {
                 140.0,
             )
         };
+        let diagram = |p95: f64, tables: u32| {
+            scenario(
+                &format!(
+                    "{RESULT} scenario=diagram load_ms=4 ui_p95=3 frame_p95={p95} tables={tables}"
+                ),
+                130.0,
+            )
+        };
         let good = ScenarioReport {
             idle_mb: Some(120.0),
             grid: vec![grid(15.0, 190.0), grid(16.0, 200.0)],
             intellisense: vec![keys(4.0), keys(6.0)],
+            diagram: vec![diagram(16.0, 500), diagram(17.0, 500)],
         };
         assert!(good.passed(), "{}", good.text());
         let md = good.markdown();
@@ -816,5 +884,18 @@ mod tests {
             ..Default::default()
         };
         assert!(!slow.passed());
+        assert!(
+            md.contains(
+                "| Diagrama: frame com zoom e pan (p95) | < 20 ms (60 FPS) | 16.5 ms | 17.0 ms | ✅ dentro |"
+            ),
+            "{md}"
+        );
+        for bad in [diagram(25.0, 500), diagram(10.0, 3)] {
+            let r = ScenarioReport {
+                diagram: vec![bad],
+                ..Default::default()
+            };
+            assert!(!r.passed());
+        }
     }
 }

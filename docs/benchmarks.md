@@ -2,7 +2,8 @@
 
 Números do `pgstudio` contra as metas do projeto. Gerados com
 `cargo xtask bench`, que compila o app em release, abre e fecha o app várias
-vezes e mede três cenários (`--scenario startup|grid|intellisense|all`):
+vezes e mede quatro cenários
+(`--scenario startup|grid|intellisense|diagram|all`):
 
 - **startup, até o primeiro frame:** do início do processo até o primeiro
   frame exibido (o app avisa pela saída padrão no modo `PGSTUDIO_BENCH=1`).
@@ -25,6 +26,12 @@ vezes e mede três cenários (`--scenario startup|grid|intellisense|all`):
   por frame, com a lista de sugestões aberta depois de `FROM`, `JOIN` e
   `t.`. Mede o tempo de cada frame com tecla, que inclui recalcular as
   sugestões, refazer o realce e desenhar a lista.
+- **diagram:** com `PGSTUDIO_BENCH=diagram`, o app abre um Database Diagram
+  com 500 tabelas sintéticas (4 a 11 colunas cada, cerca de 740 FKs) e passa
+  10 s passeando do canto de cima à esquerda ao de baixo à direita, com o
+  zoom indo de 120% a 8% e voltando duas vezes. Mede o tempo de montar o
+  diagrama (layout automático), o intervalo entre frames e a CPU da
+  interface em cada frame.
 
 Os cenários rodam no app de verdade, com a janela, a GPU (ou o renderizador
 por software) e o servidor de demonstração, sem PostgreSQL. Ao terminar, o
@@ -53,6 +60,7 @@ xvfb-run -a cargo xtask bench        # Linux sem tela
 | Grade: rolando 1 milhão de linhas | 60 FPS: intervalo entre frames (p95) < 20 ms |
 | Grade: memória | limitada pelo buffer: < 96 MB a mais que o repouso |
 | IntelliSense: 5 mil tabelas | sugestões em < 50 ms (pior tecla) |
+| Diagrama: 500 tabelas com zoom e pan | 60 FPS: intervalo entre frames (p95) < 20 ms |
 
 - **60 FPS como p95 < 20 ms:** um frame a 60 Hz dura 16,7 ms. Com vsync, o
   intervalo medido oscila em volta disso mesmo sem nenhum frame perdido, e um
@@ -141,6 +149,34 @@ Medido localmente (Linux x86_64 num container, Xvfb + lavapipe, sem GPU),
 - **IntelliSense:** a pior tecla leva 4,5 ms com 10 mil tabelas, dez vezes
   abaixo da meta, contando realce, sugestões e desenho.
 - **RAM em repouso** segue acima da meta no Linux sem GPU, como no marco 1.8.
+
+### Marco 3.4 (diagrama do banco)
+
+Medido localmente (Linux x86_64 num container de 4 núcleos, Xvfb + llvmpipe,
+sem GPU), 3 execuções de `cargo xtask bench --scenario diagram`:
+
+| Cenário | Meta | Mediana | Pior | Situação |
+| --- | --- | --- | --- | --- |
+| Diagrama: 500 tabelas montadas (layout) | — | 2.4 ms | 2.8 ms | — |
+| Diagrama: frame com zoom e pan (p95) | < 20 ms (60 FPS) | 18.5 ms | 19.7 ms | ✅ dentro |
+| Diagrama: CPU da interface por frame (p95) | — | 0.7 ms | 0.8 ms | — |
+| Diagrama: RAM com 500 tabelas | — | 136.4 MB | 136.9 MB | — |
+
+- **Só o visível é desenhado:** com o zoom em 120%, 4 a 5 tabelas vão para
+  a tela; afastado, todas as 500.
+- **Afastado, menos detalhe:** abaixo de 50% de zoom as colunas não
+  aparecem (o texto teria menos de 7 px) e caixas e linhas viram uma malha
+  só de retângulos, sem cantos arredondados nem suavização; abaixo de 20%,
+  nem o nome da tabela. A primeira versão, que desenhava tudo com
+  suavização, ficou em 24,7 ms de p95 aqui.
+- **Fontes em pixels inteiros:** com o zoom mudando a cada frame, tamanhos
+  quebrados faziam o egui rasterizar glifos novos quase todo frame; arredondar
+  o tamanho baixou a RAM de 212 MB para 136 MB e a CPU da interface de 2,3 ms
+  para 0,7 ms.
+- A folga para a meta é pequena porque o renderizador por software gasta uns
+  14 ms por frame só para desenhar a janela (a interface gasta menos de 1
+  ms). Com GPU, o intervalo deve ficar preso ao vsync. Os números de Windows
+  ficam para o marco 3.7.
 
 ## Como ler
 

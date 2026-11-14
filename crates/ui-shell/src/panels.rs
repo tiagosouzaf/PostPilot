@@ -19,6 +19,8 @@ pub enum Panel {
     Query(u32),
     /// Table Designer, pelo número dele.
     TableDesigner(u32),
+    /// Database Diagram, pelo número dele.
+    Diagram(u32),
 }
 
 impl Panel {
@@ -30,6 +32,7 @@ impl Panel {
             Panel::Output => "Output",
             Panel::Query(_) => "Query",
             Panel::TableDesigner(_) => "Table Designer",
+            Panel::Diagram(_) => "Database Diagram",
         }
     }
 }
@@ -40,7 +43,7 @@ impl Pane for Panel {
             Panel::ObjectExplorer => Area::Left,
             Panel::Properties => Area::Right,
             Panel::Output => Area::Bottom,
-            Panel::Query(_) | Panel::TableDesigner(_) => Area::Document,
+            Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_) => Area::Document,
         }
     }
 }
@@ -65,6 +68,8 @@ pub struct Viewer<'a> {
     pub documents: &'a mut Documents,
     /// Table Designers.
     pub designers: &'a mut crate::designer::Designers,
+    /// Database Diagrams.
+    pub diagrams: &'a mut crate::diagrams::Diagrams,
     /// Documento cujo editor deve receber o foco neste frame.
     pub focus_editor: Option<u32>,
     /// Comandos pedidos pelos painéis neste frame.
@@ -93,6 +98,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 .unwrap_or_default(),
             Panel::TableDesigner(id) => self
                 .designers
+                .get(*id)
+                .map(|d| d.title())
+                .unwrap_or_default(),
+            Panel::Diagram(id) => self
+                .diagrams
                 .get(*id)
                 .map(|d| d.title())
                 .unwrap_or_default(),
@@ -203,6 +213,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
             }
             Panel::TableDesigner(id) => {
                 if let Some(d) = self.designers.get_mut(*id) {
+                    d.show(ui, *id);
+                }
+            }
+            Panel::Diagram(id) => {
+                if let Some(d) = self.diagrams.get_mut(*id) {
                     d.show(ui, *id);
                 }
             }

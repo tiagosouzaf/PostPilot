@@ -8,6 +8,7 @@
 pub mod bench;
 pub mod connect;
 pub mod designer;
+pub mod diagrams;
 pub mod documents;
 pub mod execution;
 pub mod intellisense;
@@ -59,6 +60,10 @@ pub struct ShellApp {
     pending_expand: std::collections::VecDeque<pgstudio_core::metadata::NodeId>,
     documents: Documents,
     designers: designer::Designers,
+    /// Database Diagrams abertos.
+    diagrams: diagrams::Diagrams,
+    /// Novos diagramas já com todas as tabelas (screenshots).
+    diagram_all_tables: bool,
     /// Janela de consulta ativa (a última que teve foco).
     active_doc: Option<u32>,
     focus_editor: Option<u32>,
@@ -148,6 +153,8 @@ impl Default for ShellApp {
             pending_expand: Default::default(),
             documents: Documents::default(),
             designers: Default::default(),
+            diagrams: Default::default(),
+            diagram_all_tables: false,
             active_doc: None,
             focus_editor: None,
             dialogs: Box::new(NoDialogs),
@@ -351,9 +358,12 @@ impl ShellApp {
     pub fn current_layout(&self) -> SavedLayout {
         SavedLayout {
             window: self.window,
-            docking: self
-                .workspace
-                .layout(|p| !matches!(p, Panel::Query(_) | Panel::TableDesigner(_))),
+            docking: self.workspace.layout(|p| {
+                !matches!(
+                    p,
+                    Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_)
+                )
+            }),
         }
     }
 
@@ -537,6 +547,14 @@ impl ShellApp {
                         self.activate_document(id);
                         id
                     }
+                    Scenario::Diagram => {
+                        let start = std::time::Instant::now();
+                        let model = bench::synthetic_model(bench::DIAGRAM_TABLES);
+                        let id = self.diagrams.open_model("bench".into(), model, true);
+                        self.workspace.open(Panel::Diagram(id));
+                        run.load_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        id
+                    }
                 };
                 run.phase = Phase::Loading {
                     since: std::time::Instant::now(),
@@ -554,9 +572,12 @@ impl ShellApp {
                     Scenario::IntelliSense => {
                         self.catalog_for(doc).is_some() && !self.catalogs.is_loading()
                     }
+                    Scenario::Diagram => true,
                 };
                 if ready {
-                    run.load_ms = since.elapsed().as_secs_f64() * 1000.0;
+                    if run.scenario != Scenario::Diagram {
+                        run.load_ms = since.elapsed().as_secs_f64() * 1000.0;
+                    }
                     run.phase = Phase::Running { doc, step: 0 };
                 }
             }
@@ -584,6 +605,40 @@ impl ShellApp {
                         }
                         _ => {
                             let line = run.result_line(&[("rows", rows as f64)]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
+                    }
+                }
+                Scenario::Diagram => {
+                    if step > 0 {
+                        run.record(ui_ms);
+                    }
+                    let canvas = self
+                        .workspace
+                        .group_rect(&Panel::Diagram(doc))
+                        .map_or(egui::vec2(1000.0, 600.0), |r| r.size());
+                    let start = *run.scroll_start.get_or_insert_with(std::time::Instant::now);
+                    let done = start.elapsed().as_secs_f64() / bench::DIAGRAM_SECONDS;
+                    match self.diagrams.get_mut(doc) {
+                        Some(view) if step == 0 || done < 1.0 => {
+                            let d = view.diagram_mut();
+                            run.drawn_max = run.drawn_max.max(d.drawn().0);
+                            d.camera = bench::diagram_camera(d.bounds(), canvas, done);
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        view => {
+                            let (tables, edges) = view.map_or((0, 0), |v| {
+                                (v.diagram().nodes.len(), v.diagram().edges.len())
+                            });
+                            let line = run.result_line(&[
+                                ("tables", tables as f64),
+                                ("relationships", edges as f64),
+                                ("drawn_max", run.drawn_max as f64),
+                            ]);
                             bench_print(&line);
                             run.phase = Phase::Done;
                         }
@@ -827,6 +882,9 @@ impl ShellApp {
                 for id in self.designers.ids() {
                     self.workspace.open(Panel::TableDesigner(id));
                 }
+                for id in self.diagrams.ids() {
+                    self.workspace.open(Panel::Diagram(id));
+                }
                 if let Some(id) = self.active_doc {
                     self.workspace.open(Panel::Query(id));
                 }
@@ -838,7 +896,12 @@ impl ShellApp {
                 };
                 match target {
                     Some(p) if self.workspace.is_hidden(&p) => self.workspace.dock(&p),
-                    Some(p) if !matches!(p, Panel::Query(_) | Panel::TableDesigner(_)) => {
+                    Some(p)
+                        if !matches!(
+                            p,
+                            Panel::Query(_) | Panel::TableDesigner(_) | Panel::Diagram(_)
+                        ) =>
+                    {
                         self.workspace.auto_hide(&p);
                     }
                     _ => self.status = "Select a tool window to auto hide.".to_string(),
@@ -1107,6 +1170,17 @@ impl ShellApp {
                         self.workspace.open(Panel::TableDesigner(id));
                     }
                     None => self.status = "This object cannot be designed.".to_string(),
+                }
+                return;
+            }
+            Event::NewDiagram(node) => {
+                match provider.database_of(&node) {
+                    Some(db) => {
+                        let all = self.diagram_all_tables;
+                        let id = self.diagrams.open(provider, db, all, ctx);
+                        self.workspace.open(Panel::Diagram(id));
+                    }
+                    None => self.status = "Select a database to diagram.".to_string(),
                 }
                 return;
             }
@@ -1429,6 +1503,7 @@ impl ShellApp {
                     explorer: &mut self.explorer,
                     documents: &mut self.documents,
                     designers: &mut self.designers,
+                    diagrams: &mut self.diagrams,
                     focus_editor: self.focus_editor.take(),
                     commands: Vec::new(),
                     explorer_events: Vec::new(),
@@ -1452,6 +1527,7 @@ impl ShellApp {
             });
         self.sync_documents();
         self.designer_step();
+        self.diagram_step();
         self.confirm_window(&ctx);
         self.connect_window(&ctx);
 
@@ -1508,6 +1584,33 @@ impl ShellApp {
     /// Table Designers, mutável.
     pub fn designers_mut(&mut self) -> &mut designer::Designers {
         &mut self.designers
+    }
+
+    /// Database Diagrams abertos.
+    pub fn diagrams(&self) -> &diagrams::Diagrams {
+        &self.diagrams
+    }
+
+    /// Database Diagrams, mutável.
+    pub fn diagrams_mut(&mut self) -> &mut diagrams::Diagrams {
+        &mut self.diagrams
+    }
+
+    /// Novos diagramas abrem com todas as tabelas do banco, sem o "Add
+    /// Table" (para screenshots).
+    pub fn with_diagram_all_tables(mut self) -> Self {
+        self.diagram_all_tables = true;
+        self
+    }
+
+    /// Recebe os modelos dos diagramas e esquece os de abas fechadas.
+    fn diagram_step(&mut self) {
+        self.diagrams.step();
+        for id in self.diagrams.ids() {
+            if !self.workspace.is_open(&Panel::Diagram(id)) {
+                self.diagrams.remove(id);
+            }
+        }
     }
 
     /// Recebe as cargas e gravações dos designers, leva o log ao Output,
@@ -1695,7 +1798,8 @@ impl ShellApp {
             || self.list_members_on_load
             || self.selected_action.is_some()
             || !self.scripts.is_empty()
-            || self.designers.is_loading();
+            || self.designers.is_loading()
+            || self.diagrams.is_loading();
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));

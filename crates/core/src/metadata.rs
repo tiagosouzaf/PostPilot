@@ -9,6 +9,8 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Folder {
     Databases,
+    /// Database Diagrams (diagramas salvos em arquivo `.pgsdiagram`).
+    Diagrams,
     Schemas,
     Tables,
     Views,
@@ -26,6 +28,7 @@ impl Folder {
     pub fn label(self) -> &'static str {
         match self {
             Folder::Databases => "Databases",
+            Folder::Diagrams => "Database Diagrams",
             Folder::Schemas => "Schemas",
             Folder::Tables => "Tables",
             Folder::Views => "Views",

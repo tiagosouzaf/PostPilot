@@ -2596,6 +2596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-diagram-engine"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_kittest",
+ "pgstudio-schema-model",
+]
+
+[[package]]
 name = "pgstudio-docking"
 version = "0.1.0"
 dependencies = [
@@ -2669,6 +2678,7 @@ dependencies = [
  "egui_kittest",
  "image",
  "pgstudio-core",
+ "pgstudio-diagram-engine",
  "pgstudio-docking",
  "pgstudio-object-explorer",
  "pgstudio-result-grid",

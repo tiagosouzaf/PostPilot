@@ -50,6 +50,7 @@ pub(crate) fn database_of(id: &NodeId) -> Option<String> {
     match Path::parse(id) {
         Path::Database(db)
         | Path::Schemas(db)
+        | Path::Diagrams(db)
         | Path::Schema(db, _)
         | Path::SchemaFolder(db, _, _)
         | Path::Table(db, _)
