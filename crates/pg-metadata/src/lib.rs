@@ -513,7 +513,10 @@ impl MetadataProvider for CatalogExplorer {
                 Ok(vec![folder_node(Path::Roles, Folder::Roles)])
             }
             Path::Roles => self.roles(),
-            Path::Database(db) => Ok(vec![folder_node(Path::Schemas(db), Folder::Schemas)]),
+            Path::Database(db) => Ok(vec![
+                folder_node(Path::Diagrams(db.clone()), Folder::Diagrams),
+                folder_node(Path::Schemas(db), Folder::Schemas),
+            ]),
             Path::Schemas(db) => self.schemas(&db),
             Path::Schema(db, s) => Ok([
                 Folder::Tables,
@@ -534,7 +537,7 @@ impl MetadataProvider for CatalogExplorer {
                 Folder::Columns,
             )]),
             Path::RelationFolder(db, _, oid, f) => self.relation_folder(&db, oid, f),
-            Path::ServerFolder(_) | Path::Leaf => Ok(Vec::new()),
+            Path::ServerFolder(_) | Path::Diagrams(_) | Path::Leaf => Ok(Vec::new()),
         }
     }
 

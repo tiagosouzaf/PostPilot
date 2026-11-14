@@ -11,6 +11,7 @@ members = [
     "crates/sql-editor",
     "crates/result-grid",
     "crates/schema-model",
+    "crates/diagram-engine",
     "xtask",
 ]
 exclude = ["spikes"]
@@ -32,6 +33,7 @@ pgstudio-pg-metadata = { path = "crates/pg-metadata" }
 pgstudio-sql-editor = { path = "crates/sql-editor" }
 pgstudio-result-grid = { path = "crates/result-grid" }
 pgstudio-schema-model = { path = "crates/schema-model" }
+pgstudio-diagram-engine = { path = "crates/diagram-engine" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"

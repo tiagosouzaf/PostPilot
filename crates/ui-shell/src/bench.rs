@@ -9,6 +9,10 @@
 //!   de demonstração ([`STRESS_TABLES`] tabelas) recebe [`INTELLISENSE_SCRIPT`]
 //!   uma tecla por frame, com a lista de sugestões aberta.
 //!
+//! - **Diagrama:** um Database Diagram com [`DIAGRAM_TABLES`] tabelas
+//!   sintéticas (com FKs) passeia de um canto a outro com o zoom indo e
+//!   voltando entre [`DIAGRAM_ZOOM`] em [`DIAGRAM_SECONDS`] segundos.
+//!
 //! Ao terminar, o app escreve uma linha [`RESULT_PREFIX`] com os números
 //! (`chave=valor`) e fica parado para a memória ser lida de fora.
 
@@ -32,6 +36,12 @@ pub const INTELLISENSE_SCRIPT: &str = "select t.id from table_0123 t where t.na\
 select t.email from table_0456 t where t.ac\n\
 select t.balance from table_0789 t where t.cr\n\
 select t.name from table_09 t join table_08 u on u.id = t.id\n";
+/// Tabelas do cenário do diagrama.
+pub const DIAGRAM_TABLES: usize = 500;
+/// Duração do passeio pelo diagrama.
+pub const DIAGRAM_SECONDS: f64 = 10.0;
+/// Zoom mínimo e máximo do passeio (de tudo na tela a colunas legíveis).
+pub const DIAGRAM_ZOOM: (f32, f32) = (0.08, 1.2);
 /// Início da linha com os resultados de um cenário.
 pub const RESULT_PREFIX: &str = "pgstudio-bench: result";
 
@@ -40,6 +50,7 @@ pub const RESULT_PREFIX: &str = "pgstudio-bench: result";
 pub enum Scenario {
     Grid,
     IntelliSense,
+    Diagram,
 }
 
 impl Scenario {
@@ -48,6 +59,7 @@ impl Scenario {
         match name {
             "grid" => Some(Scenario::Grid),
             "intellisense" => Some(Scenario::IntelliSense),
+            "diagram" => Some(Scenario::Diagram),
             _ => None,
         }
     }
@@ -56,6 +68,7 @@ impl Scenario {
         match self {
             Scenario::Grid => "grid",
             Scenario::IntelliSense => "intellisense",
+            Scenario::Diagram => "diagram",
         }
     }
 }
@@ -90,6 +103,8 @@ pub(crate) struct Run {
     pub last_frame: Option<Instant>,
     /// Teclas depois das quais a lista de sugestões estava aberta.
     pub popup_keys: usize,
+    /// Mais tabelas desenhadas num frame (diagrama).
+    pub drawn_max: usize,
     /// Tecla a mandar no próximo frame (IntelliSense).
     pub next_key: Option<char>,
     /// Frames esperando o editor receber o foco antes de digitar.
@@ -108,6 +123,7 @@ impl Run {
             frame_ms: Vec::new(),
             last_frame: None,
             popup_keys: 0,
+            drawn_max: 0,
             next_key: None,
             warmup: 0,
             scroll_start: None,
@@ -218,6 +234,95 @@ impl QuerySession for SyntheticSession {
     }
 }
 
+/// Modelo com `n` tabelas de 4 a 11 colunas; a maioria aponta para uma ou
+/// duas tabelas anteriores, como num sistema de verdade.
+pub fn synthetic_model(n: usize) -> pgstudio_core::metadata::Model {
+    use pgstudio_core::schema::{Column, ForeignKey, Key, Table};
+    let tables = (0..n)
+        .map(|i| {
+            let id = i as u64 + 1;
+            let mut columns = vec![Column {
+                id: id << 16 | 1,
+                name: "id".into(),
+                ty: "bigint".into(),
+                ..Default::default()
+            }];
+            let mut foreign_keys = Vec::new();
+            let parents = [i / 2, i / 3 + i % 7]
+                .into_iter()
+                .filter(|p| *p < i)
+                .take(1 + i % 2);
+            for p in parents {
+                let col = format!("table_{p:04}_id");
+                if columns.iter().any(|c| c.name == col) {
+                    continue;
+                }
+                columns.push(Column {
+                    id: id << 16 | (columns.len() as u64 + 1),
+                    name: col.clone(),
+                    ty: "bigint".into(),
+                    ..Default::default()
+                });
+                foreign_keys.push(ForeignKey {
+                    name: format!("table_{i:04}_{col}_fkey"),
+                    columns: vec![col],
+                    ref_schema: "public".into(),
+                    ref_table: format!("table_{p:04}"),
+                    ref_columns: vec!["id".into()],
+                    ..Default::default()
+                });
+            }
+            for k in 0..(3 + i % 8) {
+                columns.push(Column {
+                    id: id << 16 | (columns.len() as u64 + 1),
+                    name: format!("field_{k}"),
+                    ty: [
+                        "text",
+                        "integer",
+                        "numeric(12,2)",
+                        "timestamp with time zone",
+                    ][k % 4]
+                        .into(),
+                    nullable: true,
+                    ..Default::default()
+                });
+            }
+            Table {
+                id,
+                schema: "public".into(),
+                name: format!("table_{i:04}"),
+                columns,
+                primary_key: Some(Key {
+                    name: format!("table_{i:04}_pkey"),
+                    columns: vec!["id".into()],
+                }),
+                foreign_keys,
+                ..Default::default()
+            }
+        })
+        .collect();
+    pgstudio_core::metadata::Model::new(tables)
+}
+
+/// Câmera do passeio pelo diagrama no instante `t` (0 a 1): o centro vai do
+/// canto de cima à esquerda ao de baixo à direita e o zoom afasta e
+/// aproxima duas vezes.
+pub fn diagram_camera(
+    bounds: eframe::egui::Rect,
+    canvas: eframe::egui::Vec2,
+    t: f64,
+) -> pgstudio_diagram_engine::Camera {
+    let t = t.clamp(0.0, 1.0) as f32;
+    let (lo, hi) = DIAGRAM_ZOOM;
+    let wave = 0.5 - 0.5 * (t * std::f32::consts::TAU * 2.0).cos();
+    let zoom = hi - (hi - lo) * wave;
+    let center = bounds.min + bounds.size() * t;
+    pgstudio_diagram_engine::Camera {
+        pan: canvas / 2.0 - center.to_vec2() * zoom,
+        zoom,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +342,37 @@ mod tests {
             assert_eq!(Scenario::parse(s.name()), Some(s));
         }
         assert_eq!(Scenario::parse("1"), None);
+    }
+
+    #[test]
+    fn synthetic_diagram_model_has_foreign_keys_to_existing_tables() {
+        let m = synthetic_model(DIAGRAM_TABLES);
+        assert_eq!(m.tables.len(), DIAGRAM_TABLES);
+        let fks: usize = m.tables.iter().map(|t| t.foreign_keys.len()).sum();
+        assert!(fks > DIAGRAM_TABLES, "{fks}");
+        for t in &m.tables {
+            for fk in &t.foreign_keys {
+                assert!(m.find(&fk.ref_schema, &fk.ref_table).is_some());
+                assert!(t.column(&fk.columns[0]).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn diagram_tour_goes_corner_to_corner_zooming_out_and_in() {
+        use eframe::egui::{Rect, pos2, vec2};
+        let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 500.0));
+        let canvas = vec2(800.0, 600.0);
+        let center = |t| {
+            let c = diagram_camera(bounds, canvas, t);
+            (c.to_world(pos2(0.0, 0.0), (canvas / 2.0).to_pos2()), c.zoom)
+        };
+        let (start, z0) = center(0.0);
+        let (end, z1) = center(1.0);
+        let (_, z_mid) = center(0.25);
+        assert!((start - bounds.min).length() < 1e-3);
+        assert!((end - bounds.max).length() < 1e-2);
+        assert_eq!((z0, z1), (DIAGRAM_ZOOM.1, DIAGRAM_ZOOM.1));
+        assert!((z_mid - DIAGRAM_ZOOM.0).abs() < 1e-4);
     }
 }

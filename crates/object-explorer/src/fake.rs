@@ -168,7 +168,10 @@ impl MetadataProvider for FakeProvider {
                 .into_iter()
                 .map(|db| node(format!("{id}/{db}"), db, NodeKind::Database, true))
                 .collect(),
-            ["srv", "Databases", _db] => vec![folder(id, Folder::Schemas)],
+            ["srv", "Databases", _db] => {
+                vec![folder(id, Folder::Diagrams), folder(id, Folder::Schemas)]
+            }
+            ["srv", "Databases", _, "Database Diagrams"] => Vec::new(),
             ["srv", "Databases", db, "Schemas"] => {
                 let names: Vec<String> = if *db == "stress" {
                     vec!["public".into()]
@@ -445,7 +448,10 @@ mod tests {
         let folders = children(&p, &srv.id.0);
         let dbs = children(&p, &folders[0].id.0);
         assert_eq!(dbs.len(), DATABASES);
-        let schemas_folder = &children(&p, &dbs[0].id.0)[0];
+        let db_folders = children(&p, &dbs[0].id.0);
+        assert_eq!(db_folders[0].kind, NodeKind::Folder(Folder::Diagrams));
+        assert!(children(&p, &db_folders[0].id.0).is_empty());
+        let schemas_folder = &db_folders[1];
         let schema = &children(&p, &schemas_folder.id.0)[0];
         let tables_folder = &children(&p, &schema.id.0)[0];
         let tables = children(&p, &tables_folder.id.0);

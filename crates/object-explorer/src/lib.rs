@@ -50,6 +50,9 @@ pub enum Event {
     NewTable(NodeId),
     /// "Design" numa tabela: abre o Table Designer dela.
     Design(NodeId),
+    /// "New Database Diagram" na pasta Database Diagrams: escolhe as
+    /// tabelas e abre o diagrama delas.
+    NewDiagram(NodeId),
 }
 
 /// Linhas do "Select Top N Rows", como no SSMS.
@@ -377,6 +380,13 @@ impl ObjectExplorer {
                                         }
                                         ui.separator();
                                     }
+                                    if node.kind == NodeKind::Folder(Folder::Diagrams) {
+                                        if ui.button("New Database Diagram").clicked() {
+                                            events.push(Event::NewDiagram(node.id.clone()));
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
                                     if node.kind == NodeKind::Table {
                                         if ui.button("Design").clicked() {
                                             events.push(Event::Design(node.id.clone()));
@@ -516,6 +526,7 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
         NodeKind::Server => icon::DESKTOP_TOWER,
         NodeKind::Folder(Folder::Databases) => icon::HARD_DRIVES,
         NodeKind::Folder(Folder::Security) => icon::SHIELD,
+        NodeKind::Folder(Folder::Diagrams) => icon::TREE_STRUCTURE,
         NodeKind::Folder(_) if expanded => icon::FOLDER_OPEN,
         NodeKind::Folder(_) => icon::FOLDER,
         NodeKind::Database => icon::DATABASE,

@@ -1,0 +1,18 @@
+[package]
+name = "pgstudio-diagram-engine"
+description = "Diagrama do banco do PGStudio: tabelas e relacionamentos num canvas com zoom e pan, layout automático e desenho só do que está visível."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eframe.workspace = true
+pgstudio-schema-model.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true
