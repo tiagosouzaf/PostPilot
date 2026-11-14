@@ -26,6 +26,15 @@
 //! - **Activity Monitor:** um servidor com [`ACTIVITY_SESSIONS`] sessões
 //!   (e o dobro de locks, um décimo delas bloqueadas) atualizado a cada
 //!   segundo por [`ACTIVITY_SECONDS`] segundos.
+//! - **Edição na grade:** o Edit Top 200 Rows de uma tabela sintética de
+//!   [`EDIT_COLUMNS`] colunas; por [`EDIT_SECONDS`] segundos, cada frame sem
+//!   gravação pendente muda uma célula e desce uma linha, o que grava a
+//!   linha alterada (o servidor sintético responde depois de
+//!   [`EDIT_LATENCY_MS`] ms, como uma rede local).
+//! - **Exportação:** Results to File de [`EXPORT_ROWS`] linhas da consulta
+//!   sintética da grade para um CSV temporário, medindo os frames enquanto
+//!   o arquivo é escrito e a memória no fim (as linhas não ficam na
+//!   memória).
 //!
 //! Ao terminar, o app escreve uma linha [`RESULT_PREFIX`] com os números
 //! (`chave=valor`) e fica parado para a memória ser lida de fora.
@@ -76,6 +85,14 @@ pub const PLAN_ZOOM: (f32, f32) = (0.25, 1.0);
 pub const ACTIVITY_SESSIONS: usize = 5_000;
 /// Duração do cenário do Activity Monitor (uma atualização por segundo).
 pub const ACTIVITY_SECONDS: f64 = 10.0;
+/// Colunas da tabela sintética da edição na grade.
+pub const EDIT_COLUMNS: usize = 12;
+/// Duração do cenário de edição na grade.
+pub const EDIT_SECONDS: f64 = 10.0;
+/// Ida e volta de cada gravação no servidor sintético.
+pub const EDIT_LATENCY_MS: u64 = 2;
+/// Linhas do cenário de exportação.
+pub const EXPORT_ROWS: u64 = 1_000_000;
 /// Início da linha com os resultados de um cenário.
 pub const RESULT_PREFIX: &str = "pgstudio-bench: result";
 
@@ -93,6 +110,10 @@ pub enum Scenario {
     Plan,
     /// Activity Monitor com [`ACTIVITY_SESSIONS`] sessões.
     Activity,
+    /// Edit Top 200 Rows gravando uma linha por vez.
+    Edit,
+    /// Results to File de [`EXPORT_ROWS`] linhas.
+    Export,
 }
 
 impl Scenario {
@@ -106,6 +127,8 @@ impl Scenario {
             "designer" => Some(Scenario::Designer),
             "plan" => Some(Scenario::Plan),
             "activity" => Some(Scenario::Activity),
+            "edit" => Some(Scenario::Edit),
+            "export" => Some(Scenario::Export),
             _ => None,
         }
     }
@@ -119,6 +142,8 @@ impl Scenario {
             Scenario::Designer => "designer",
             Scenario::Plan => "plan",
             Scenario::Activity => "activity",
+            Scenario::Edit => "edit",
+            Scenario::Export => "export",
         }
     }
 
@@ -414,6 +439,61 @@ pub fn plan_camera(size: eframe::egui::Vec2, t: f64) -> (f32, eframe::egui::Vec2
     let wave = 0.5 - 0.5 * (t * std::f32::consts::TAU * 2.0).cos();
     let zoom = hi - (hi - lo) * wave;
     (zoom, size * zoom * t)
+}
+
+/// Servidor sintético da edição na grade: uma tabela de
+/// [`EDIT_COLUMNS`] colunas (`id` é a chave) com 200 linhas; cada UPDATE
+/// volta depois de [`EDIT_LATENCY_MS`] ms com uma linha.
+pub(crate) struct SyntheticEditSession;
+
+impl QuerySession for SyntheticEditSession {
+    fn execute(&self, sql: String, mut sink: QuerySink) {
+        std::thread::spawn(move || {
+            let rows: Vec<Vec<Option<String>>> = if sql.contains("attidentity") {
+                (0..EDIT_COLUMNS)
+                    .map(|c| {
+                        let name = if c == 0 {
+                            "id".to_string()
+                        } else {
+                            format!("col_{c:02}")
+                        };
+                        let key = if c == 0 { "t" } else { "f" };
+                        [&name, "text", key, "f", "public.bench", "public.bench"]
+                            .map(|v| Some(v.to_string()))
+                            .into()
+                    })
+                    .collect()
+            } else if sql.starts_with("SELECT") {
+                (0..200)
+                    .map(|r| {
+                        (0..EDIT_COLUMNS)
+                            .map(|c| Some(format!("value {r}.{c}")))
+                            .collect()
+                    })
+                    .collect()
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(EDIT_LATENCY_MS));
+                vec![
+                    (0..EDIT_COLUMNS)
+                        .map(|c| Some(format!("saved {c}")))
+                        .collect(),
+                ]
+            };
+            sink(QueryEvent::Columns(vec!["c".into()]));
+            let n = rows.len() as u64;
+            for r in rows {
+                sink(QueryEvent::Row(r));
+            }
+            sink(QueryEvent::CommandComplete { rows: n });
+            sink(QueryEvent::Finished { canceled: false });
+        });
+    }
+
+    fn cancel(&self) {}
+
+    fn database(&self) -> String {
+        "bench".to_string()
+    }
 }
 
 /// Servidor sintético do Activity Monitor: [`ACTIVITY_SESSIONS`] sessões,
