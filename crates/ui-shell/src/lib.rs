@@ -8,6 +8,7 @@
 pub mod activity;
 pub mod backup;
 pub mod bench;
+pub mod claude;
 pub mod connect;
 pub mod designer;
 pub mod diagrams;
@@ -156,6 +157,8 @@ pub struct ShellApp {
     /// (Registered Servers > Connect > New Query).
     new_query_on_connect: Option<String>,
     selected_action: Option<fn(pgstudio_core::metadata::NodeId) -> pgstudio_object_explorer::Event>,
+    /// Ponte com o Claude (MCP e painel): pedidos e confirmações.
+    claude: claude::Bridge,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -283,6 +286,7 @@ impl Default for ShellApp {
             doc_servers: Default::default(),
             last_active_doc: None,
             new_query_on_connect: None,
+            claude: Default::default(),
         }
     }
 }
@@ -2218,11 +2222,13 @@ impl ShellApp {
         self.connect_step();
         self.expand_step();
         self.execution_step(&ctx);
+        self.claude_step(&ctx);
         self.intellisense_step(&ctx);
         self.script_step(&ctx);
         let mut commands = if self.confirm.is_some()
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
+            || self.claude.is_confirming()
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
             || self.security.is_some()
             || self.backup.is_some()
@@ -2338,6 +2344,7 @@ impl ShellApp {
         }
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
+        self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
         self.backup_window(&ctx);
         self.restore_window(&ctx);
