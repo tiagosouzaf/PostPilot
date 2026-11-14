@@ -61,6 +61,8 @@ pub const BENCH_FIRST_FRAME: &str = "pgstudio-bench: first-frame";
 pub struct ShellApp {
     theme: Theme,
     about_open: bool,
+    /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
+    renderer: Option<String>,
     keymap: Keymap,
     chords: ChordMatcher,
     status: String,
@@ -226,6 +228,7 @@ impl Default for ShellApp {
         Self {
             theme: Theme::default(),
             about_open: false,
+            renderer: None,
             keymap: Keymap::ssms(),
             chords: ChordMatcher::default(),
             status: READY.to_string(),
@@ -574,6 +577,12 @@ impl ShellApp {
     /// documentos.
     pub fn confirm_pending(&self) -> Option<&[u32]> {
         self.confirm.as_ref().map(|c| c.save.as_slice())
+    }
+
+    /// Descreve o renderizador gráfico em uso no "About".
+    pub fn with_renderer(mut self, renderer: impl Into<String>) -> Self {
+        self.renderer = Some(renderer.into());
+        self
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -1891,6 +1900,10 @@ impl ShellApp {
                 self.open_activity_monitor(ctx);
                 return;
             }
+            Event::Register(_) => {
+                self.register_active_server();
+                return;
+            }
             Event::BackUp(node) => {
                 match provider.database_of(&node) {
                     Some(db) => self.open_backup(ctx, db),
@@ -2257,6 +2270,7 @@ impl ShellApp {
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
         let default_db = self.default_database();
+        let doc_servers = self.document_servers();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut activate = None;
@@ -2281,6 +2295,7 @@ impl ShellApp {
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
                     },
                     server,
+                    doc_servers,
                     catalogs: &self.catalogs,
                     default_database: default_db,
                     servers: &mut self.servers,
@@ -2338,6 +2353,9 @@ impl ShellApp {
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
                     ui.label(format!("Version {VERSION}"));
+                    if let Some(renderer) = &self.renderer {
+                        ui.label(format!("Renderer: {renderer}"));
+                    }
                     ui.label("PostgreSQL management studio.");
                     ui.label("Licensed under MIT or Apache-2.0.");
                 });
@@ -2619,10 +2637,11 @@ impl ShellApp {
             c.metadata.clone(),
             c.queries.clone(),
             ctx,
-        );
+        )
+        .with_connector(self.connector.clone(), &c.settings);
         if let Some((source, target)) = self.compare_target.take() {
-            dialog.source = source;
-            dialog.target = target;
+            dialog.source.database = source;
+            dialog.target.database = target;
             dialog.compare(ctx);
         }
         self.compare = Some(dialog);
@@ -2642,7 +2661,7 @@ impl ShellApp {
         let Some(dialog) = &mut self.compare else {
             return;
         };
-        match dialog.show(ctx) {
+        match dialog.show(ctx, &mut *self.dialogs) {
             None => {}
             Some(schema_compare::Request::Log(lines)) => self.output.extend(lines),
             Some(schema_compare::Request::Script(sql, db)) => {
@@ -3030,7 +3049,8 @@ impl ShellApp {
                 .values()
                 .any(|e| e.is_loading() || e.is_saving())
             || !self.exports.is_empty()
-            || self.query_designer.as_ref().is_some_and(|q| q.is_loading());
+            || self.query_designer.as_ref().is_some_and(|q| q.is_loading())
+            || self.compare.as_ref().is_some_and(|c| c.is_busy());
         // Conta os frames parados: o que acabou de aparecer (um diálogo
         // modal entra com fade) precisa de alguns frames para assentar.
         if busy {

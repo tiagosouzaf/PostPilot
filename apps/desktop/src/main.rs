@@ -1,8 +1,14 @@
 //! Ponto de entrada do PGStudio.
 //!
-//! Uso: `pgstudio [arquivo.sql ...]` abre os arquivos em janelas de consulta.
+//! Uso: `pgstudio [--renderer wgpu|glow] [arquivo.sql ...]` abre os arquivos
+//! em janelas de consulta.
+//!
+//! `--renderer` escolhe o renderizador gráfico (veja o módulo `renderer`):
+//! `wgpu` (o padrão) ou `glow` (OpenGL). Sem escolha, o app tenta o wgpu e
+//! reabre com o glow se ele falhar.
 //!
 //! Variáveis de ambiente opcionais:
+//! - `PGSTUDIO_RENDERER=wgpu|glow`: o mesmo que `--renderer`.
 //! - `PGSTUDIO_SCREENSHOT=arquivo.png`: salva um PNG da janela depois dos
 //!   primeiros frames e fecha. Usado pelo CI.
 //! - `PGSTUDIO_BENCH=1`: modo de medição usado por `cargo xtask bench`; avisa
@@ -77,12 +83,58 @@ use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
 use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
 
+mod renderer;
+
 /// Identificador do app no Wayland e no X11 (`WM_CLASS`).
 const APP_ID: &str = "pgstudio";
 /// Ícone da janela e da barra de tarefas (o mesmo dos pacotes).
 const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/pgstudio-256.png");
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
+    let launch = renderer::Launch::parse(
+        std::env::args_os().skip(1),
+        std::env::var(renderer::ENV).ok().as_deref(),
+    );
+    for warning in &launch.warnings {
+        eprintln!("pgstudio: {warning}");
+    }
+    match run(&launch) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) if launch.should_fall_back(&e) => {
+            eprintln!("pgstudio: the wgpu renderer failed ({e}); trying again with glow (OpenGL)");
+            relaunch_with_glow()
+        }
+        Err(e) => {
+            eprintln!("pgstudio: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Abre o app de novo com `PGSTUDIO_RENDERER=glow` e sai com o código dele.
+/// Um processo novo porque o winit não deixa criar um segundo event loop no
+/// mesmo processo.
+fn relaunch_with_glow() -> std::process::ExitCode {
+    let status = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env(renderer::ENV, "glow")
+            .status()
+    });
+    match status {
+        Ok(s) if s.success() => std::process::ExitCode::SUCCESS,
+        Ok(s) => {
+            let code = s.code().and_then(|c| u8::try_from(c).ok()).unwrap_or(1);
+            std::process::ExitCode::from(code)
+        }
+        Err(e) => {
+            eprintln!("pgstudio: could not restart with glow: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(launch: &renderer::Launch) -> eframe::Result {
     let screenshot: Option<PathBuf> = std::env::var_os("PGSTUDIO_SCREENSHOT").map(Into::into);
     let bench = std::env::var_os("PGSTUDIO_BENCH").is_some();
     // O screenshot e a medição usam sempre o layout padrão.
@@ -114,6 +166,7 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         viewport,
+        renderer: launch.eframe_renderer(),
         ..Default::default()
     };
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
@@ -121,7 +174,7 @@ fn main() -> eframe::Result {
         _ => Theme::Light,
     };
     let (keymap, keymap_status) = load_keymap();
-    let files: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let files = launch.files.clone();
     let connect = std::env::var("PGSTUDIO_CONNECT").ok();
     let demo = (screenshot.is_some() || bench) && connect.is_none();
     let recent = if screenshot.is_some() || bench {
@@ -137,7 +190,8 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let mut app = ShellApp::new(&cc.egui_ctx)
                 .with_keymap(keymap)
-                .with_file_dialogs(NativeDialogs::default());
+                .with_file_dialogs(NativeDialogs::default())
+                .with_renderer(renderer::describe(cc));
             if let Some(status) = keymap_status {
                 app = app.with_status(status);
             }
@@ -195,6 +249,7 @@ fn main() -> eframe::Result {
                     "newtable" => Event::NewTable,
                     "diagram" => Event::NewDiagram,
                     "activity" => Event::ActivityMonitor,
+                    "register" => Event::Register,
                     "properties" => Event::Properties,
                     "backup" => Event::BackUp,
                     "restore" => Event::Restore,

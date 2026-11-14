@@ -37,12 +37,23 @@ Novas crates entram na fase do roteiro que as usa.
 - **Ubuntu, Debian e derivados:** `sudo apt install ./pgstudio_<versão>_amd64.deb`.
   O PGStudio aparece no menu de aplicativos; para remover,
   `sudo apt remove pgstudio`.
+- **Arch Linux e derivados (Omarchy, Manjaro, EndeavourOS):**
+  `sudo pacman -U pgstudio-<versão>-1-x86_64.pkg.tar.zst`, ou compile do código
+  com `cd packaging/arch && makepkg -si`. O atalho aparece no lançador de
+  aplicativos; para remover, `sudo pacman -R pgstudio`.
 - **Outras distribuições Linux:** `chmod +x PGStudio-<versão>-x86_64.AppImage`
   e execute. Sem FUSE (alguns containers), use
   `./PGStudio-<versão>-x86_64.AppImage --appimage-extract-and-run`.
-- **Windows 10 e 11 (64 bits):** extraia o `.zip` e abra `pgstudio.exe`. Não
-  há instalador; o SmartScreen pode avisar porque o exe não é assinado ("Mais
-  informações" > "Executar assim mesmo").
+- **Windows 10 e 11 (64 bits):** dê dois cliques em
+  `PGStudio-<versão>-x86_64.msi` (ou `msiexec /i PGStudio-<versão>-x86_64.msi`).
+  Ele instala para todos os usuários em `C:\Program Files\PGStudio`, pede
+  elevação, põe o atalho no menu Iniciar e o PGStudio no "Abrir com" dos
+  arquivos `.sql` (sem virar o programa padrão). Uma versão nova substitui a
+  anterior; para remover, Configurações > Aplicativos > PGStudio. Sem
+  instalar, extraia o `.zip` e abra `pgstudio.exe`. O exe e o msi não são
+  assinados, então o SmartScreen pode avisar ("Mais informações" > "Executar
+  assim mesmo"). O instalador só foi testado no Wine (`msiexec` do Wine 9), não
+  num Windows de verdade.
 
 No Linux, o binário é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
 posteriores) e precisa de Vulkan ou OpenGL ES (o Mesa de qualquer desktop
@@ -51,10 +62,41 @@ binário carrega, mas o renderizador por software do Mesa daquela versão é
 antigo demais para o wgpu (numa GPU de verdade deve abrir, mas não foi
 testado).
 
+### Renderizador e Wayland
+
+O PGStudio desenha a janela com o **wgpu** (Vulkan no Linux, Direct3D 12 no
+Windows) e traz o **glow** (OpenGL) como alternativa. Para escolher:
+
+```sh
+pgstudio --renderer glow            # ou --renderer=glow
+PGSTUDIO_RENDERER=glow pgstudio     # o mesmo, por variável de ambiente
+```
+
+A opção da linha de comando vence a variável. Sem nenhuma das duas, o app
+tenta o wgpu e, se ele não abrir (sem driver Vulkan nem GL que sirva), reabre
+sozinho com o glow e avisa no terminal. Help > About mostra o renderizador em
+uso (no wgpu, também o backend e a placa). Para deixar o glow fixo no
+Hyprland, ponha `env = PGSTUDIO_RENDERER,glow` no `hyprland.conf`.
+
+No Wayland o app abre nativo, sem XWayland, com o `app_id` `pgstudio` (o mesmo
+do `.desktop`, para o ícone e para as regras de janela do compositor, que
+veem `pgstudio` como class). A escala fracionária ou inteira do
+monitor vem do compositor. O copiar e colar usa a área de transferência do
+Wayland (a mesma do `wl-copy`/`wl-paste`). Os diálogos de abrir e salvar
+arquivo passam pelo xdg-desktop-portal, que precisa de um backend com seletor
+de arquivos: o portal do Hyprland e o do sway (`-wlr`) não têm, então instale
+também o `xdg-desktop-portal-gtk` (`pacman -Q xdg-desktop-portal-gtk` diz se
+já está instalado). Sem ele, File > Open não abre nada.
+
+Testado num sway sem tela (headless, sem X), com escala 2, nos dois
+renderizadores (Mesa por software): abrir, conectar, copiar do editor para o
+`wl-paste`, colar do `wl-copy` no editor e abrir um arquivo pelo diálogo do
+portal (GTK). Não foi testado no Hyprland nem com GPU de verdade.
+
 ## Uso
 
 ```sh
-pgstudio [arquivo.sql ...]
+pgstudio [--renderer wgpu|glow] [arquivo.sql ...]
 ```
 
 Ao abrir, o PGStudio mostra o "Connect to Server", como o SSMS: Server name
@@ -162,8 +204,9 @@ avisa na status bar. Window > Reset Window Layout volta ao padrão a qualquer
 momento.
 
 Como no SSMS, um painel pode ser desafixado (auto-hide): "Auto Hide" no menu de
-contexto da aba ou no menu Window o esconde numa faixa na borda; clicar na
-faixa mostra o painel por cima dos documentos, e o alfinete o fixa de novo.
+contexto da aba ou no menu Window o esconde numa faixa na borda; passar o mouse
+ou clicar na faixa faz o painel deslizar por cima dos documentos, arrastar a
+borda dele muda o tamanho (que fica salvo no layout), e o alfinete o fixa de novo.
 
 ## Atalhos de teclado
 
@@ -220,7 +263,9 @@ gera em `target/packages/`, com um `SHA256SUMS`:
 | --- | --- |
 | `pgstudio_<versão>_amd64.deb` | `dpkg-deb` |
 | `PGStudio-<versão>-x86_64.AppImage` | `mksquashfs` (squashfs-tools); o runtime do AppImage é baixado na primeira vez para `target/packages/tools/`, ou use `APPIMAGE_RUNTIME=caminho` |
+| `pgstudio-<versão>-1-x86_64.pkg.tar.zst` | `bsdtar` (libarchive-tools no Ubuntu; no Arch já vem); `packaging/arch/PKGBUILD` gera o mesmo pacote com o `makepkg` |
 | `PGStudio-<versão>-windows-x86_64.zip` | no Linux, compilação cruzada: `rustup target add x86_64-pc-windows-gnu`, o mingw-w64 e o `zip` |
+| `PGStudio-<versão>-x86_64.msi` | o mesmo exe do zip e o `wixl` (pacote `wixl` no Ubuntu, `msitools` no Arch), que lê `packaging/windows/pgstudio.wxs` |
 
 O binário Linux sai ligado contra a glibc 2.31 quando há o
 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
@@ -228,12 +273,15 @@ O binário Linux sai ligado contra a glibc 2.31 quando há o
 `--native`, sai um build comum, que só roda com a glibc da máquina que
 compilou ou mais nova.
 
-`--only deb,appimage,zip` escolhe os formatos e `--no-build` reaproveita os
+`--only deb,appimage,arch,zip,msi` escolhe os formatos e `--no-build` reaproveita os
 binários. No Ubuntu, as ferramentas vêm de
-`sudo apt install dpkg-dev squashfs-tools zip mingw-w64`. O ícone fica em
+`sudo apt install dpkg-dev squashfs-tools libarchive-tools zip mingw-w64 wixl`. O ícone fica em
 `packaging/icons/` (gerado por `make_icon.py`); o exe do Windows o recebe pelo
-`windres` do MinGW. O `.msi` fica para quando houver uma máquina ou CI com
-Windows.
+`windres` do MinGW, e o msi o usa no menu Iniciar e em Aplicativos instalados.
+
+O `wixl` não tem as telas do WiX: o msi abre direto na barra de progresso, sem
+escolher pasta. O `UpgradeCode` do `.wxs` é fixo; é ele que faz a versão nova
+substituir a velha, então não o troque.
 
 ## Roteiro
 

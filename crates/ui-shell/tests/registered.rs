@@ -437,3 +437,199 @@ fn two_real_servers_and_a_restart_with_the_remembered_password() {
     }
     assert_eq!(harness.state().connected_servers().len(), 2);
 }
+
+// --- Marco 6.3: arrastar, Register..., Import/Export e a faixa de status ---
+
+/// Diálogos de arquivo com respostas prontas.
+struct Answer(std::path::PathBuf);
+
+impl pgstudio_ui_shell::documents::FileDialogs for Answer {
+    fn save_path(&mut self, _: &str, _: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+        Some(self.0.clone())
+    }
+
+    fn open_path(&mut self) -> Option<std::path::PathBuf> {
+        Some(self.0.clone())
+    }
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("pgstudio-6.3-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Abre a janela Registered Servers, com a árvore deste arquivo.
+fn registered_harness(file: &std::path::Path, dialogs: Answer) -> Harness<'static, ShellApp> {
+    let mut app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_registered_servers(RegisteredServers::open(file))
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_connector(Arc::new(FakeConnector))
+        .with_file_dialogs(dialogs);
+    app.show_registered_servers();
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    harness.run();
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    harness
+}
+
+#[test]
+fn dragging_a_server_to_another_group_survives_a_restart() {
+    let dir = temp_dir("drag");
+    let file = dir.join("registered_servers.json");
+    let mut r = RegisteredServers::open(&file);
+    r.add_group(
+        &[],
+        ServerGroup {
+            name: "Production".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let dev = r
+        .add_group(
+            &[],
+            ServerGroup {
+                name: "Development".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    r.add_server(
+        &[0],
+        RegisteredServer {
+            name: "sales-db".into(),
+            description: String::new(),
+            settings: settings("sales-db"),
+        },
+    )
+    .unwrap();
+    drop(r);
+
+    let mut harness = registered_harness(&file, Answer(dir.join("unused")));
+    let from = harness.get_by_label_contains("sales-db").rect().center();
+    let to = harness.get_by_label_contains("Development").rect().center();
+    harness.drag_at(from);
+    harness.run();
+    // O arrasto começa depois de o ponteiro andar um pouco.
+    for i in 1..=10 {
+        harness.hover_at(from + (to - from) * (i as f32 / 10.0));
+        harness.run();
+    }
+    harness.drop_at(to);
+    harness.run();
+    let r = harness.state().registered().servers();
+    assert!(r.group(&[0]).unwrap().servers.is_empty(), "left Production");
+    assert_eq!(r.group(&dev).unwrap().servers[0].name, "sales-db");
+    assert!(
+        harness.state().status().contains("Moved"),
+        "{}",
+        harness.state().status()
+    );
+    drop(harness);
+
+    let again = RegisteredServers::open(&file);
+    assert_eq!(again.group(&dev).unwrap().servers[0].name, "sales-db");
+    assert!(again.group(&[0]).unwrap().servers.is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn export_then_import_from_the_group_menu() {
+    let dir = temp_dir("export");
+    let exported = dir.join("RegisteredServers.json");
+    let file = dir.join("registered_servers.json");
+    {
+        let mut r = RegisteredServers::open(&file);
+        let t = tree();
+        for g in &t.root().groups {
+            r.add_group(&[], g.clone()).unwrap();
+        }
+    }
+    let mut harness = registered_harness(&file, Answer(exported.clone()));
+    // A primeira: a árvore vazia tem uma dica que cita o grupo raiz.
+    harness
+        .query_all_by_label_contains("Local Server Groups")
+        .next()
+        .unwrap()
+        .click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Tasks").hover();
+    harness.run();
+    harness.get_by_label("Export...").click();
+    harness.run();
+    let text = std::fs::read_to_string(&exported).unwrap();
+    assert!(text.contains("sales-db") && !text.to_lowercase().contains("password"));
+    let original = harness.state().registered().servers().root().clone();
+    drop(harness);
+
+    // Outra máquina: árvore vazia, importa o arquivo.
+    let other = dir.join("other.json");
+    let mut harness = registered_harness(&other, Answer(exported));
+    // A primeira: a árvore vazia tem uma dica que cita o grupo raiz.
+    harness
+        .query_all_by_label_contains("Local Server Groups")
+        .next()
+        .unwrap()
+        .click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Tasks").hover();
+    harness.run();
+    harness.get_by_label("Import...").click();
+    harness.run();
+    assert_eq!(harness.state().status(), "Imported 2 registered servers.");
+    assert_eq!(harness.state().registered().servers().root(), &original);
+    harness.get_by_label_contains("hr-db");
+    drop(harness);
+    assert_eq!(RegisteredServers::open(&other).root(), &original);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn register_from_the_object_explorer_server_menu() {
+    let dir = temp_dir("register");
+    let file = dir.join("registered_servers.json");
+    let mut harness = registered_harness(&file, Answer(dir.join("unused")));
+    connect_with_dialog(&mut harness, "web-db", false);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().execute(&ctx, CommandId::ObjectExplorer);
+    harness.run();
+    harness
+        .get_by_label_contains(pgstudio_object_explorer::fake::SERVER_NAME)
+        .click_secondary();
+    harness.run();
+    harness.get_by_label("Register...").click();
+    harness.run();
+    assert!(harness.state().is_panel_open(Panel::RegisteredServers));
+    let d = harness
+        .state_mut()
+        .registered_mut()
+        .server_dialog_mut()
+        .expect("New Server Registration");
+    assert_eq!((d.server.as_str(), d.user.as_str()), ("web-db", "alice"));
+    harness.get_by_label("Save").click();
+    harness.run();
+    let r = RegisteredServers::open(&file);
+    assert_eq!(r.root().servers[0].settings, settings("web-db"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn query_status_strip_shows_the_window_server_not_the_active_one() {
+    let mut harness = harness(Arc::new(MemoryStore::default()), Vec::new());
+    connect_with_dialog(&mut harness, "sales-db", false);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    connect_with_dialog(&mut harness, "hr-db", false);
+    // O hr-db é o ativo, mas a janela aberta é do sales-db.
+    harness.run();
+    assert_eq!(harness.state().connection().unwrap().settings.host, "hr-db");
+    harness.get_by_label("Connected.");
+    harness.get_by_label("sales-db (alice)");
+}

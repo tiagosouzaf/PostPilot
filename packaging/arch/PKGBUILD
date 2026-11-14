@@ -1,0 +1,59 @@
+# PKGBUILD do PGStudio para Arch Linux (e derivados, como o Omarchy).
+#
+# Compila a partir desta cópia do repositório:
+#
+#   cd packaging/arch && makepkg -si
+#
+# O `cargo xtask dist` gera o mesmo pacote sem o makepkg (de qualquer
+# distro, com o bsdtar). As dependências abaixo são as mesmas de
+# ARCH_DEPENDS em xtask/src/dist.rs; um teste confere.
+
+pkgname=pgstudio
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='PostgreSQL management studio inspired by SSMS'
+arch=('x86_64')
+url='https://github.com/tiagosouzaf/postpilot'
+license=('MIT OR Apache-2.0')
+# O winit, o wgpu e o glow abrem estas bibliotecas com dlopen.
+depends=(
+  'glibc'
+  'gcc-libs'
+  'hicolor-icon-theme'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'libx11'
+  'libxcursor'
+  'libxrandr'
+  'libxi'
+  'wayland'
+  'libglvnd'
+  'vulkan-icd-loader'
+)
+optdepends=(
+  'vulkan-driver: renderização por Vulkan (sem ele, usa OpenGL ES)'
+  'xdg-desktop-portal: diálogos de abrir e salvar arquivo'
+  'xdg-desktop-portal-gtk: seletor de arquivos no Hyprland e no sway (os portais deles não têm)'
+)
+makedepends=('cargo')
+options=('!lto' '!debug')
+
+_root="$startdir/../.."
+
+build() {
+  cd "$_root"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --profile dist --locked -p pgstudio-desktop
+}
+
+package() {
+  cd "$_root"
+  install -Dm755 "$srcdir/target/dist/pgstudio" "$pkgdir/usr/bin/pgstudio"
+  install -Dm644 packaging/linux/pgstudio.desktop \
+    "$pkgdir/usr/share/applications/pgstudio.desktop"
+  for n in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "packaging/icons/pgstudio-$n.png" \
+      "$pkgdir/usr/share/icons/hicolor/${n}x${n}/apps/pgstudio.png"
+  done
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

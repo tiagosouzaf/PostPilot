@@ -1,6 +1,6 @@
 # ADR 0002: auto-hide de painéis (pin/unpin)
 
-- **Status:** aceita (Tiago, 2026-11-13); implementada
+- **Status:** aceita (Tiago, 2026-11-13); implementada, completada no marco 6.4
 - **Data:** 2026-11-13
 
 ## Contexto
@@ -49,5 +49,23 @@ Opção 1, feita depois do marco 1.8, antes da Fase 2.
 - O `layout.json` guarda a lista `hidden`; arquivos sem ela continuam válidos
   (versão 1).
 
-Fica de fora, por enquanto: abrir ao passar o mouse sobre a faixa (o SSMS faz
-isso), animação de deslizar e redimensionar o painel aberto.
+## Complemento (marco 6.4)
+
+O que tinha ficado de fora foi feito no marco 6.4, também na
+`pgstudio-docking`:
+
+- **Abrir com o mouse.** Parar o mouse sobre o botão da faixa por 0,3 s abre o
+  painel, como no SSMS. Aberto assim, ele some 0,5 s depois que o mouse sai do
+  painel e do botão. Clicar dentro dele (ou no botão, ou arrastar a borda)
+  faz o painel ficar até perder o foco, como se tivesse sido aberto com
+  clique. Depois de fechar com o mouse parado no botão, o painel só reabre
+  quando o mouse sai e volta.
+- **Deslizar.** O painel desliza a partir da faixa ao abrir e volta para ela
+  ao esconder (0,15 s, com desaceleração). Com as animações do tema
+  desligadas (`animation_time` zero), aparece e some de uma vez. Fixar ou
+  fechar o painel não anima, porque ele já foi para outro lugar.
+- **Redimensionar.** A borda que dá para os documentos é uma alça: arrastar
+  muda a largura (ou a altura, embaixo), entre 120 px e 90% do espaço. O
+  tamanho é de cada painel e fica no `layout.json` em `flyout_sizes`; arquivos
+  sem o campo continuam válidos e usam o padrão (300 px, ou 80% do espaço se
+  for menor). Tamanhos inválidos no arquivo são ignorados.
