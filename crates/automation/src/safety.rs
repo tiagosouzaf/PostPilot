@@ -38,7 +38,7 @@ impl Safety {
             Safety::ReadOnly => "This SQL only reads data.".into(),
             Safety::Writes { reason } => format!("This SQL can change the database ({reason})."),
             Safety::Unknown { reason } => {
-                format!("PGStudio could not confirm that this SQL only reads data ({reason}).")
+                format!("PostPilot could not confirm that this SQL only reads data ({reason}).")
             }
         }
     }

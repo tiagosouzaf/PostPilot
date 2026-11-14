@@ -13,11 +13,13 @@
 //! Ctrl+Z desfaz. Cada chamada deixa uma linha na janela Output.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 
 use eframe::egui;
 use pgstudio_automation::collect::{self, Collector, DEFAULT_ROWS, MAX_BYTES, MAX_ROWS};
+use pgstudio_automation::endpoint::Listener;
 use pgstudio_automation::safety::read_only_batch;
 use pgstudio_automation::{
     Client, EditMode, Inbox, Origin, Pending, Reply, Responder, Safety, ToolCall, catalog, classify,
@@ -46,6 +48,15 @@ pub struct Bridge {
     /// Fim das consultas em conexão própria, para a janela Output.
     done_tx: Option<mpsc::Sender<String>>,
     done_rx: Option<mpsc::Receiver<String>>,
+    /// Lado de quem chama, criado uma vez e dividido entre o MCP e o
+    /// painel.
+    client: Option<Client>,
+    /// "Allow Claude Code (MCP)" ligado: o canal local escutando.
+    listener: Option<Listener>,
+    /// Arquivo do canal local (`mcp-endpoint.json`).
+    endpoint: Option<PathBuf>,
+    /// Onde a escolha "Allow Claude Code" fica salva (`claude.json`).
+    settings: Option<PathBuf>,
 }
 
 impl Bridge {
@@ -53,6 +64,18 @@ impl Bridge {
     pub fn is_confirming(&self) -> bool {
         !self.confirms.is_empty()
     }
+
+    /// Se o Claude Code pode conectar (o canal local está aberto).
+    pub fn is_listening(&self) -> bool {
+        self.listener.is_some()
+    }
+}
+
+/// O que fica em `claude.json`.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Settings {
+    #[serde(default)]
+    allow_claude_code: bool,
 }
 
 /// SQL esperando a confirmação.
@@ -111,6 +134,9 @@ impl ShellApp {
     /// Liga a ponte e devolve o lado de quem chama (o servidor MCP, o
     /// painel e os testes). Uma chamada nova troca a anterior.
     pub fn automation(&mut self, ctx: &egui::Context) -> Client {
+        if let Some(client) = &self.claude.client {
+            return client.clone();
+        }
         let repaint = ctx.clone();
         let (client, inbox) =
             pgstudio_automation::hub::channel(Arc::new(move || repaint.request_repaint()));
@@ -118,7 +144,104 @@ impl ShellApp {
         self.claude.inbox = Some(inbox);
         self.claude.done_tx = Some(tx);
         self.claude.done_rx = Some(rx);
+        self.claude.client = Some(client.clone());
         client
+    }
+
+    /// Usa estes arquivos para o canal do `postpilot mcp` e para a escolha
+    /// "Allow Claude Code (MCP)"; se ela estava ligada, abre o canal.
+    pub fn with_claude_code(
+        mut self,
+        ctx: &egui::Context,
+        endpoint: PathBuf,
+        settings: PathBuf,
+    ) -> Self {
+        let saved: Settings = std::fs::read_to_string(&settings)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        self.claude.endpoint = Some(endpoint);
+        self.claude.settings = Some(settings);
+        if saved.allow_claude_code {
+            self.start_claude_code(ctx);
+        }
+        self
+    }
+
+    /// Tools > "Allow Claude Code (MCP)": abre ou fecha o canal local e
+    /// guarda a escolha.
+    pub fn set_claude_code_access(&mut self, ctx: &egui::Context, on: bool) {
+        if on {
+            self.start_claude_code(ctx);
+        } else if self.claude.listener.take().is_some() {
+            self.status = "Claude Code can no longer reach PostPilot.".to_string();
+            self.output
+                .push("Claude Code: access turned off.".to_string());
+        }
+        if let Some(path) = &self.claude.settings {
+            let text = serde_json::to_string_pretty(&Settings {
+                allow_claude_code: self.claude.listener.is_some(),
+            })
+            .unwrap_or_default();
+            let saved = path
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|_| std::fs::write(path, text));
+            if let Err(e) = saved {
+                eprintln!("claude: could not save {}: {e}", path.display());
+            }
+        }
+    }
+
+    fn start_claude_code(&mut self, ctx: &egui::Context) {
+        if self.claude.listener.is_some() {
+            return;
+        }
+        let Some(path) = self.claude.endpoint.clone() else {
+            self.status = "Claude Code access is not available in this mode.".to_string();
+            return;
+        };
+        let client = self.automation(ctx);
+        match Listener::start(client, path) {
+            Ok(l) => {
+                self.output.push(format!(
+                    "Claude Code: access on. Add it once with: claude mcp add postpilot -- postpilot mcp (channel {})",
+                    l.path().display()
+                ));
+                self.status = "Claude Code can now use PostPilot.".to_string();
+                self.claude.listener = Some(l);
+            }
+            Err(e) => {
+                let text = format!("Could not turn on Claude Code access: {e}");
+                self.output.push(text.clone());
+                self.status = text;
+            }
+        }
+    }
+
+    /// Canal local do Claude Code, se ligado (testes).
+    pub fn claude_code_listener(&self) -> Option<&Listener> {
+        self.claude.listener.as_ref()
+    }
+
+    /// Indicador na status bar enquanto o Claude Code pode conectar.
+    pub(crate) fn claude_status(&self, ui: &mut egui::Ui, color: egui::Color32) {
+        let Some(l) = &self.claude.listener else {
+            return;
+        };
+        ui.separator();
+        let busy = l.running() > 0 || self.claude.is_confirming();
+        let text = if busy {
+            "Claude Code: working"
+        } else {
+            "Claude Code: on"
+        };
+        ui.label(egui::RichText::new(text).color(color))
+            .on_hover_text(format!(
+                "Claude Code can use PostPilot through `postpilot mcp`. {} call(s) so far. \
+             Turn it off in Tools > Allow Claude Code (MCP).",
+                l.calls()
+            ));
     }
 
     /// SQL e motivo do diálogo de confirmação aberto (testes).
@@ -141,7 +264,7 @@ impl ShellApp {
                 c.origin.label()
             ));
             c.action.responder().send(Reply::error(
-                "The user declined to run this SQL in PGStudio.",
+                "The user declined to run this SQL in PostPilot.",
             ));
             return;
         }
@@ -605,14 +728,14 @@ impl ShellApp {
                 .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
-                    egui::ScrollArea::both()
+                    egui::ScrollArea::vertical()
                         .max_height(280.0)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
                             ui.add(
                                 egui::Label::new(egui::RichText::new(&c.sql).monospace())
                                     .selectable(true)
-                                    .extend(),
+                                    .wrap(),
                             );
                         });
                 });
@@ -707,7 +830,7 @@ impl ShellApp {
                             .map(|(c, _)| server_key(&c.settings))
                             .collect();
                         return Err(format!(
-                            "Server \"{wanted}\" is not connected in PGStudio. Connected: {}.",
+                            "Server \"{wanted}\" is not connected in PostPilot. Connected: {}.",
                             known.join(", ")
                         ));
                     }
@@ -858,7 +981,7 @@ impl ShellApp {
     }
 }
 
-const NOT_CONNECTED: &str = "No server is connected in PGStudio. Ask the user to connect \
+const NOT_CONNECTED: &str = "No server is connected in PostPilot. Ask the user to connect \
 (File > Connect Object Explorer, or the Registered Servers window).";
 
 /// SQL numa linha só, cortado, para a janela Output.
