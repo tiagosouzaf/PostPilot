@@ -741,6 +741,27 @@ fn clicking_the_strip_shows_the_panel_over_the_documents() {
 }
 
 #[test]
+fn hovering_the_strip_slides_the_panel_out_and_back() {
+    let mut harness = harness();
+    auto_hide_all(&mut harness);
+    let button = harness
+        .state()
+        .strip_button_rect(Panel::ObjectExplorer)
+        .unwrap();
+    harness.hover_at(button.center());
+    // Cada passo do harness avança 0,25 s; o painel abre depois de 0,3 s.
+    harness.run_steps(2);
+    assert_eq!(harness.state().flyout_panel(), None, "ainda não abriu");
+    harness.run();
+    assert_eq!(harness.state().flyout_panel(), Some(Panel::ObjectExplorer));
+    let flyout = harness.state().panel_rect(Panel::ObjectExplorer).unwrap();
+    harness.hover_at(flyout.right_center() + eframe::egui::vec2(200.0, 0.0));
+    harness.run_steps(4);
+    assert_eq!(harness.state().flyout_panel(), None);
+    assert!(harness.state().is_panel_hidden(Panel::ObjectExplorer));
+}
+
+#[test]
 fn escape_and_second_click_hide_the_panel() {
     let mut harness = harness();
     auto_hide_all(&mut harness);
