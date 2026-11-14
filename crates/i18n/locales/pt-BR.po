@@ -612,3 +612,38 @@ msgstr "Mostrar saída de:"
 
 msgid "General"
 msgstr "Geral"
+
+# Formatador e troca de banco
+
+msgid "Clone Workspace…"
+msgstr "Clonar Workspace…"
+
+msgid "Format Document"
+msgstr "Formatar Documento"
+
+msgid "Change Database"
+msgstr "Alterar Banco de Dados"
+
+msgid "Formatted."
+msgstr "Formatado."
+
+msgid "Couldn't format the SQL: {error} The text was not changed."
+msgstr "Não foi possível formatar o SQL: {error} O texto não foi alterado."
+
+msgid "Changing database to {database}..."
+msgstr "Alterando o banco de dados para {database}..."
+
+msgid "Changed database context to '{database}'."
+msgstr "Contexto de banco de dados alterado para '{database}'."
+
+msgid "{name} has an open transaction. Changing to {database} closes this window's connection, and PostgreSQL rolls the transaction back."
+msgstr "{name} tem uma transação aberta. Mudar para {database} fecha a conexão desta janela, e o PostgreSQL reverte a transação."
+
+msgid "Roll Back and Change"
+msgstr "Reverter e Alterar"
+
+msgid "Cannot change the database while a query is executing."
+msgstr "Não é possível alterar o banco de dados enquanto uma consulta está em execução."
+
+msgid "The database was not changed."
+msgstr "O banco de dados não foi alterado."

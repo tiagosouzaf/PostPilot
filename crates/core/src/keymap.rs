@@ -271,6 +271,11 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::UncommentSelection, "Ctrl+K, Ctrl+U"),
     (CommandId::MakeUppercase, "Ctrl+Shift+U"),
     (CommandId::MakeLowercase, "Ctrl+Shift+L"),
+    // O SSMS não formata SQL: estes são os do VS Code (Windows e Linux) e o
+    // Format Document do Visual Studio.
+    (CommandId::FormatDocument, "Shift+Alt+F"),
+    (CommandId::FormatDocument, "Ctrl+Shift+I"),
+    (CommandId::FormatDocument, "Ctrl+K, Ctrl+D"),
     (CommandId::ObjectExplorer, "F8"),
     (CommandId::ObjectExplorerDetails, "F7"),
     (CommandId::RegisteredServers, "Ctrl+Alt+G"),
@@ -280,6 +285,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::Output, "Ctrl+Alt+O"),
     (CommandId::ActivityMonitor, "Ctrl+Alt+A"),
     (CommandId::FullScreen, "Shift+Alt+Enter"),
+    (CommandId::ChangeDatabase, "Ctrl+U"),
     (CommandId::Execute, "F5"),
     (CommandId::Execute, "Ctrl+E"),
     (CommandId::Parse, "Ctrl+F5"),
@@ -489,6 +495,7 @@ mod tests {
             ("Ctrl+L", CommandId::EstimatedPlan),
             ("Ctrl+M", CommandId::ActualPlan),
             ("Alt+F1", CommandId::ObjectInfo),
+            ("Ctrl+U", CommandId::ChangeDatabase),
             ("Ctrl+Shift+Q", CommandId::DesignQuery),
             ("Ctrl+K, Ctrl+C", CommandId::CommentSelection),
             ("Ctrl+K, Ctrl+U", CommandId::UncommentSelection),

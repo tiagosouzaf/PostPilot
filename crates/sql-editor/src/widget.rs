@@ -577,7 +577,22 @@ pub(crate) fn show(
             ed.refresh_popup(true);
         }
         let events = ui.input(|i| i.events.clone());
+        let mut alt_chord = false;
         for event in events {
+            // No Linux, Shift+Alt+F (Format Document) também manda o texto
+            // "F" depois da tecla: um atalho com Alt (sem Ctrl, que é AltGr
+            // no Windows) não digita. No macOS, Option digita caracteres.
+            if let Event::Key {
+                pressed: true,
+                modifiers,
+                ..
+            } = &event
+            {
+                alt_chord = modifiers.alt && !modifiers.ctrl && !cfg!(target_os = "macos");
+            } else if alt_chord && matches!(event, Event::Text(_)) {
+                alt_chord = false;
+                continue;
+            }
             handle_event(ui, &mut ed, &f, event);
         }
     } else if !over_popup {

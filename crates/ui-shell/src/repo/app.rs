@@ -95,6 +95,34 @@ impl ShellApp {
         self.status = "Workspace closed.".to_string();
     }
 
+    /// Clona `url` numa pasta nova dentro de `parent` (com o nome do
+    /// repositório) numa thread separada; ao terminar, abre o workspace.
+    pub fn clone_workspace(&mut self, url: &str, parent: &Path) {
+        let dest = parent.join(super::git::repo_name(url));
+        let busy = std::fs::read_dir(&dest).is_ok_and(|mut d| d.next().is_some());
+        if busy {
+            self.status = format!("{} already exists and is not empty.", dest.display());
+            return;
+        }
+        self.status = format!("Cloning {url}...");
+        self.workspace_panel.start_clone(url, &dest);
+        self.workspace.open(Panel::WorkspaceExplorer);
+    }
+
+    /// Fim do clone: abre o workspace clonado. Um repositório sem workspace
+    /// (recém-criado no GitHub, por exemplo) vira um.
+    pub fn finish_clone(&mut self, result: Result<PathBuf, super::git::GitError>) {
+        match result {
+            Ok(root) if root.join(super::MANIFEST).exists() => {
+                self.open_workspace(&root);
+            }
+            Ok(root) => {
+                self.create_workspace(&root);
+            }
+            Err(e) => self.status = format!("Clone failed: {e}"),
+        }
+    }
+
     pub(crate) fn ask_new_workspace(&mut self) {
         if let Some(root) = self.dialogs.folder_path("New Workspace") {
             self.create_workspace(&root);
@@ -304,6 +332,14 @@ impl ShellApp {
         }
         if let Some(status) = self.workspace_panel.show_windows(ctx) {
             self.status = status;
+        }
+        if let Some(url) = self.workspace_panel.take_clone_request()
+            && let Some(parent) = self.dialogs.folder_path("Clone Workspace into")
+        {
+            self.clone_workspace(&url, &parent);
+        }
+        if let Some(result) = self.workspace_panel.take_cloned() {
+            self.finish_clone(result);
         }
     }
 }
