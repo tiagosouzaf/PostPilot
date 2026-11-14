@@ -19,7 +19,11 @@
 //!   quando o primeiro frame aparece e ignora o layout salvo. Com `grid` ou
 //!   `intellisense`, roda também esse cenário e escreve os números (veja
 //!   `pgstudio_ui_shell::bench`).
-//! - `PGSTUDIO_THEME=light|dark`: abre com esse tema (sem ela, o escuro).
+//! - `PGSTUDIO_THEME=light|dark`: abre com esse tema (sem ela, o salvo em
+//!   Tools > Options, ou o escuro).
+//! - `PGSTUDIO_LANG=pt-BR|en`: idioma da interface, no lugar do escolhido
+//!   em Tools > Options (ou do idioma do sistema).
+//! - `PGSTUDIO_OPTIONS=1`: abre Tools > Options (para screenshots).
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
@@ -70,6 +74,11 @@
 //! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
 //! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
 //! de medição não usam o cofre.
+//!
+//! Ao abrir, o app procura versão nova nos Releases do GitHub (no máximo a
+//! cada 6 horas; desligável em Help > Check for Updates, guardado em
+//! `<config>/PostPilot/update.json`). Os modos de screenshot e de medição não
+//! consultam a rede.
 
 // Sem console no Windows nos builds de release (os pacotes de `cargo xtask
 // dist`); em debug o console fica, para ver os logs.
@@ -84,13 +93,16 @@ use std::sync::Arc;
 use pgstudio_core::Theme;
 use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE};
 use pgstudio_core::keymap::Keymap;
+use pgstudio_i18n::{tr, trf};
 use pgstudio_pg_metadata::{PgConnector, Runtime as DbRuntime};
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::documents::FileDialogs;
 use pgstudio_ui_shell::layout::{LayoutStore, MIN_SIZE};
+use pgstudio_ui_shell::preferences::{Preferences, PreferencesStore};
 use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
+use pgstudio_ui_shell::update::Updater;
 
 mod migrate;
 mod renderer;
@@ -101,6 +113,8 @@ const APP_ID: &str = "postpilot";
 const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/postpilot-256.png");
 
 fn main() -> std::process::ExitCode {
+    // O .exe antigo que uma atualização da cópia portátil deixou para trás.
+    pgstudio_ui_shell::update::cleanup_old_binary();
     if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
         return pgstudio_automation::mcp::serve_stdio();
     }
@@ -190,11 +204,31 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         renderer: launch.eframe_renderer(),
         ..Default::default()
     };
+    // Preferências (Tools > Options). O screenshot e a medição usam as
+    // padrão, como fazem com o layout.
+    let (prefs_store, prefs) = match config_dir() {
+        Some(dir) if screenshot.is_none() && !bench => {
+            let (store, prefs) = PreferencesStore::open(
+                dir.join(pgstudio_core::CONFIG_DIR_NAME)
+                    .join("settings.json"),
+            );
+            (Some(store), prefs)
+        }
+        _ => (None, Preferences::default()),
+    };
+    prefs.apply();
+    // PGSTUDIO_THEME vale mais que o tema salvo.
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
         Ok("light") => Theme::Light,
         Ok("dark") => Theme::Dark,
-        _ => Theme::default(),
+        _ => prefs.theme(),
     };
+    if let Some(language) = std::env::var("PGSTUDIO_LANG")
+        .ok()
+        .and_then(|l| pgstudio_i18n::Language::from_locale(&l))
+    {
+        pgstudio_i18n::set_language(language);
+    }
     let (keymap, keymap_status) = load_keymap();
     let files = launch.files.clone();
     let connect = std::env::var("PGSTUDIO_CONNECT").ok();
@@ -216,6 +250,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = ShellApp::new(&cc.egui_ctx)
+                .with_preferences(prefs_store, prefs)
                 .with_keymap(keymap)
                 .with_file_dialogs(NativeDialogs::default())
                 .with_renderer(renderer::describe(cc));
@@ -241,6 +276,13 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     app = app.with_registered_servers(RegisteredServers::open(file));
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
+            }
+            if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                let file = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("update.json");
+                app = app.with_updater(&cc.egui_ctx, Updater::detect(file));
             }
             // Claude Code pelo MCP (Tools > Allow Claude Code), fora dos
             // modos de screenshot e medição, a menos que o canal seja dado.
@@ -273,7 +315,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     }
                     Err(e) => {
                         eprintln!("could not start the database runtime: {e}");
-                        app = app.with_status("Could not start the database runtime.");
+                        app = app.with_status(tr("Could not start the database runtime."));
                     }
                 }
                 if let Some(servers) = connect.as_deref().filter(|c| *c != "dialog") {
@@ -288,6 +330,9 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             }
             if std::env::var_os("PGSTUDIO_LIST_MEMBERS").is_some() {
                 app = app.with_list_members_on_load();
+            }
+            if std::env::var_os("PGSTUDIO_OPTIONS").is_some() {
+                app.execute(&cc.egui_ctx, pgstudio_core::CommandId::Options);
             }
             if std::env::var_os("PGSTUDIO_DATABASES").is_some() {
                 app = app.with_database_list_on_load();
@@ -451,7 +496,10 @@ fn load_keymap() -> (Keymap, Option<String>) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (keymap, None),
         Err(e) => {
             eprintln!("keymap: não foi possível ler {}: {e}", path.display());
-            return (keymap, Some(format!("Could not read {}.", path.display())));
+            return (
+                keymap,
+                Some(trf!("Could not read {path}.", path = path.display())),
+            );
         }
     };
     let errors = keymap.apply_overrides(&text);
@@ -459,10 +507,10 @@ fn load_keymap() -> (Keymap, Option<String>) {
         eprintln!("keymap: {}: {e}", path.display());
     }
     let status = (!errors.is_empty()).then(|| {
-        format!(
-            "{} invalid line(s) ignored in {}.",
-            errors.len(),
-            path.display()
+        trf!(
+            "{n} invalid line(s) ignored in {path}.",
+            n = errors.len(),
+            path = path.display()
         )
     });
     (keymap, status)
@@ -477,8 +525,8 @@ struct NativeDialogs {
 impl NativeDialogs {
     fn dialog(&self) -> rfd::FileDialog {
         let dialog = rfd::FileDialog::new()
-            .add_filter("SQL Files (*.sql)", &["sql"])
-            .add_filter("All Files (*.*)", &["*"]);
+            .add_filter(tr("SQL Files (*.sql)"), &["sql"])
+            .add_filter(tr("All Files (*.*)"), &["*"]);
         match &self.last_dir {
             Some(dir) => dialog.set_directory(dir),
             None => dialog,
@@ -495,7 +543,10 @@ impl NativeDialogs {
 
 impl FileDialogs for NativeDialogs {
     fn save_path(&mut self, name: &str, current: Option<&Path>) -> Option<PathBuf> {
-        let mut dialog = self.dialog().set_title("Save File As").set_file_name(name);
+        let mut dialog = self
+            .dialog()
+            .set_title(tr("Save File As"))
+            .set_file_name(name);
         if let Some(dir) = current.and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
@@ -504,19 +555,19 @@ impl FileDialogs for NativeDialogs {
     }
 
     fn open_path(&mut self) -> Option<PathBuf> {
-        let path = self.dialog().set_title("Open File").pick_file();
+        let path = self.dialog().set_title(tr("Open File")).pick_file();
         self.remember(path)
     }
 
     fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
         let path = self
             .dialog()
-            .set_title("Save Grid Results")
+            .set_title(tr("Save Grid Results"))
             .set_file_name(name)
-            .add_filter("CSV (Comma delimited)", &["csv"])
-            .add_filter("Text (Tab delimited)", &["tsv", "txt"])
+            .add_filter(tr("CSV (Comma delimited)"), &["csv"])
+            .add_filter(tr("Text (Tab delimited)"), &["tsv", "txt"])
             .add_filter("JSON", &["json"])
-            .add_filter("SQL INSERT statements", &["sql"])
+            .add_filter(tr("SQL INSERT statements"), &["sql"])
             .save_file();
         self.remember(path)
     }

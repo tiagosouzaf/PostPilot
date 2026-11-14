@@ -172,7 +172,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Help",
-        entries: &[I(ViewHelp), SEP, I(About)],
+        entries: &[I(ViewHelp), SEP, I(CheckForUpdates), I(About)],
     },
 ];
 
@@ -241,6 +241,37 @@ mod tests {
             titles,
             ["File", "Edit", "View", "Query", "Tools", "Window", "Help"]
         );
+    }
+
+    #[test]
+    fn menu_and_toolbar_texts_have_translations() {
+        use pgstudio_i18n::{Language, has_translation};
+        fn labels(entries: &'static [Entry], out: &mut Vec<&'static str>) {
+            for entry in entries {
+                if let Entry::Submenu { label, entries } = *entry {
+                    out.push(label);
+                    labels(entries, out);
+                }
+            }
+        }
+        let mut texts = Vec::new();
+        for menu in MENUS {
+            texts.push(menu.title);
+            labels(menu.entries, &mut texts);
+        }
+        for tool in TOOLBAR {
+            if let Tool::Button { text, .. } = *tool
+                && !text.is_empty()
+            {
+                texts.push(text);
+            }
+        }
+        for text in texts {
+            assert!(
+                has_translation(Language::PortugueseBrazil, None, text),
+                "sem tradução em locales/pt-BR.po: {text:?}"
+            );
+        }
     }
 
     #[test]

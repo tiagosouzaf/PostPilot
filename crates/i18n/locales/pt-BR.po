@@ -1,0 +1,990 @@
+# Tradução do PGStudio para português do Brasil.
+#
+# A chave (msgid) é o texto em inglês do código. Termos de interface seguem a
+# tradução do SSMS e do Visual Studio em português; termos de SQL e nomes do
+# PostgreSQL não se traduzem. Marcadores {nome} precisam continuar na
+# tradução (a ordem pode mudar).
+msgid ""
+msgstr ""
+"Language: pt_BR\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Version {version}"
+msgstr "Versão {version}"
+
+# Menus, comandos e toolbar
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "View"
+msgstr "Exibir"
+
+msgid "Query"
+msgstr "Consulta"
+
+msgid "Tools"
+msgstr "Ferramentas"
+
+msgid "Window"
+msgstr "Janela"
+
+msgid "Help"
+msgstr "Ajuda"
+
+msgid "New"
+msgstr "Novo"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Find and Replace"
+msgstr "Localizar e Substituir"
+
+msgid "Color Theme"
+msgstr "Tema de Cores"
+
+msgid "New Query"
+msgstr "Nova Consulta"
+
+msgid "Execute"
+msgstr "Executar"
+
+msgid "Connect Object Explorer…"
+msgstr "Conectar Pesquisador de Objetos…"
+
+msgid "Disconnect Object Explorer"
+msgstr "Desconectar Pesquisador de Objetos"
+
+msgid "Query with Current Connection"
+msgstr "Consulta com Conexão Atual"
+
+msgid "Database Engine Query"
+msgstr "Consulta do Mecanismo de Banco de Dados"
+
+msgid "File…"
+msgstr "Arquivo…"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Save As…"
+msgstr "Salvar Como…"
+
+msgid "Save All"
+msgstr "Salvar Tudo"
+
+msgid "Exit"
+msgstr "Sair"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Redo"
+msgstr "Refazer"
+
+msgid "Cut"
+msgstr "Recortar"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Delete"
+msgstr "Excluir"
+
+msgid "Select All"
+msgstr "Selecionar Tudo"
+
+msgid "Quick Find"
+msgstr "Localização Rápida"
+
+msgid "Quick Replace"
+msgstr "Substituição Rápida"
+
+msgid "Go To…"
+msgstr "Ir Para…"
+
+msgid "List Members"
+msgstr "Listar Membros"
+
+msgid "Parameter Info"
+msgstr "Informações de Parâmetro"
+
+msgid "Quick Info"
+msgstr "Informações Rápidas"
+
+msgid "Complete Word"
+msgstr "Completar Palavra"
+
+msgid "Refresh Local Cache"
+msgstr "Atualizar Cache Local"
+
+msgid "Comment Selection"
+msgstr "Comentar Seleção"
+
+msgid "Uncomment Selection"
+msgstr "Remover Marca de Comentário da Seleção"
+
+msgid "Make Uppercase"
+msgstr "Converter em Maiúsculas"
+
+msgid "Make Lowercase"
+msgstr "Converter em Minúsculas"
+
+msgid "Object Explorer"
+msgstr "Pesquisador de Objetos"
+
+msgid "Object Explorer Details"
+msgstr "Detalhes do Pesquisador de Objetos"
+
+msgid "Registered Servers"
+msgstr "Servidores Registrados"
+
+msgid "Template Explorer"
+msgstr "Gerenciador de Modelos"
+
+msgid "Properties Window"
+msgstr "Janela Propriedades"
+
+msgid "Output"
+msgstr "Saída"
+
+msgid "Activity Monitor"
+msgstr "Monitor de Atividade"
+
+msgid "Light"
+msgstr "Claro"
+
+msgid "Dark"
+msgstr "Escuro"
+
+msgid "Full Screen"
+msgstr "Tela Inteira"
+
+msgid "Connect…"
+msgstr "Conectar…"
+
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgid "Change Connection…"
+msgstr "Alterar Conexão…"
+
+msgid "Parse"
+msgstr "Analisar"
+
+msgid "Design Query in Editor…"
+msgstr "Criar Consulta no Editor…"
+
+msgid "Cancel Executing Query"
+msgstr "Cancelar Consulta em Execução"
+
+msgid "Display Estimated Execution Plan"
+msgstr "Exibir Plano de Execução Estimado"
+
+msgid "Include Actual Execution Plan"
+msgstr "Incluir Plano de Execução Real"
+
+msgid "Results to Text"
+msgstr "Resultados em Texto"
+
+msgid "Results to Grid"
+msgstr "Resultados em Grade"
+
+msgid "Results to File"
+msgstr "Resultados em Arquivo"
+
+msgid "Object Information"
+msgstr "Informações do Objeto"
+
+msgid "Query Options…"
+msgstr "Opções de Consulta…"
+
+msgid "Schema Compare…"
+msgstr "Comparação de Esquemas…"
+
+msgid "Options…"
+msgstr "Opções…"
+
+msgid "New Horizontal Tab Group"
+msgstr "Novo Grupo de Guias Horizontais"
+
+msgid "New Vertical Tab Group"
+msgstr "Novo Grupo de Guias Verticais"
+
+msgid "Show Results Pane"
+msgstr "Mostrar Painel de Resultados"
+
+msgid "Auto Hide"
+msgstr "Ocultar Automaticamente"
+
+msgid "Auto Hide All"
+msgstr "Ocultar Tudo Automaticamente"
+
+msgid "Reset Window Layout"
+msgstr "Redefinir Layout da Janela"
+
+msgid "Close All Documents"
+msgstr "Fechar Todos os Documentos"
+
+msgid "View Help"
+msgstr "Exibir Ajuda"
+
+msgid "About PostPilot"
+msgstr "Sobre o PostPilot"
+
+# Janela principal
+
+msgid "Ready"
+msgstr "Pronto"
+
+msgid "\"{command}\" is not available yet."
+msgstr "\"{command}\" ainda não está disponível."
+
+msgid "(no database)"
+msgstr "(nenhum banco de dados)"
+
+msgid "(not available yet)"
+msgstr "(ainda não disponível)"
+
+msgid "({first}) was pressed. Waiting for second key of chord..."
+msgstr "({first}) foi pressionada. Aguardando a segunda tecla do acorde..."
+
+msgid "The key combination ({first}, {second}) is not a command."
+msgstr "A combinação de teclas ({first}, {second}) não é um comando."
+
+msgid "A query is already executing in this window."
+msgstr "Já há uma consulta em execução nesta janela."
+
+msgid "About {app}"
+msgstr "Sobre o {app}"
+
+msgid "Activity Monitor: monitoring {server}."
+msgstr "Monitor de Atividade: monitorando {server}."
+
+msgid "Canceling query..."
+msgstr "Cancelando a consulta..."
+
+msgid "Choose a database for the query window first."
+msgstr "Escolha primeiro um banco de dados para a janela de consulta."
+
+msgid "Connect to a PostgreSQL server to back up a database."
+msgstr "Conecte-se a um servidor PostgreSQL para fazer backup de um banco de dados."
+
+msgid "Connect to a PostgreSQL server to compare schemas."
+msgstr "Conecte-se a um servidor PostgreSQL para comparar esquemas."
+
+msgid "Connect to a PostgreSQL server to edit security."
+msgstr "Conecte-se a um servidor PostgreSQL para editar a segurança."
+
+msgid "Connect to a PostgreSQL server to restore a database."
+msgstr "Conecte-se a um servidor PostgreSQL para restaurar um banco de dados."
+
+msgid "Connect to a server to design a query."
+msgstr "Conecte-se a um servidor para criar uma consulta."
+
+msgid "Connect to a server to open the Activity Monitor."
+msgstr "Conecte-se a um servidor para abrir o Monitor de Atividade."
+
+msgid "Connect to a server to run queries."
+msgstr "Conecte-se a um servidor para executar consultas."
+
+msgid "Connect to a server to use IntelliSense."
+msgstr "Conecte-se a um servidor para usar o IntelliSense."
+
+msgid "Connect to the server of the diagram first."
+msgstr "Conecte-se primeiro ao servidor do diagrama."
+
+msgid "Connected to {name} (PostgreSQL {version}) as {user}."
+msgstr "Conectado a {name} (PostgreSQL {version}) como {user}."
+
+msgid "Connected to {name}."
+msgstr "Conectado a {name}."
+
+msgid "Connection failed: {error}"
+msgstr "Falha na conexão: {error}"
+
+msgid "Could not create {path}: {error}"
+msgstr "Não foi possível criar {path}: {error}"
+
+msgid "Could not open {path}: {error}"
+msgstr "Não foi possível abrir {path}: {error}"
+
+msgid "Could not save the options to {path}: {error}"
+msgstr "Não foi possível salvar as opções em {path}: {error}"
+
+msgid "Could not save the results to {path}: {error}"
+msgstr "Não foi possível salvar os resultados em {path}: {error}"
+
+msgid "Could not save {path}: {error}"
+msgstr "Não foi possível salvar {path}: {error}"
+
+msgid "Demo server"
+msgstr "Servidor de demonstração"
+
+msgid "Disconnected from {server}."
+msgstr "Desconectado de {server}."
+
+msgid "Generating script..."
+msgstr "Gerando script..."
+
+msgid "IntelliSense could not read the catalog of {database}: {error}"
+msgstr "O IntelliSense não conseguiu ler o catálogo de {database}: {error}"
+
+msgid "IntelliSense: {n} objects loaded from {database}."
+msgstr "IntelliSense: {n} objetos carregados de {database}."
+
+msgid "Item(s) Saved"
+msgstr "Item(ns) Salvo(s)"
+
+msgid "Licensed under MIT or Apache-2.0."
+msgstr "Licenciado sob MIT ou Apache-2.0."
+
+msgid "Ln {line}   Col {col}"
+msgstr "Ln {line}   Col {col}"
+
+msgid "Local cache refreshed."
+msgstr "Cache local atualizado."
+
+msgid "No"
+msgstr "Não"
+
+msgid "Yes"
+msgstr "Sim"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "No query is executing."
+msgstr "Nenhuma consulta em execução."
+
+msgid "No query window is open."
+msgstr "Nenhuma janela de consulta aberta."
+
+msgid "Not connected"
+msgstr "Não conectado"
+
+msgid "Open a query window to design a query."
+msgstr "Abra uma janela de consulta para criar uma consulta."
+
+msgid "PostgreSQL management studio."
+msgstr "Estúdio de gerenciamento do PostgreSQL."
+
+msgid "Query canceled: no file chosen for the results."
+msgstr "Consulta cancelada: nenhum arquivo escolhido para os resultados."
+
+msgid "Refreshing local cache..."
+msgstr "Atualizando o cache local..."
+
+msgid "Renderer: {renderer}"
+msgstr "Renderizador: {renderer}"
+
+msgid "Results"
+msgstr "Resultados"
+
+msgid "Run and Keep Changes"
+msgstr "Executar e Manter as Alterações"
+
+msgid "Run and Roll Back"
+msgstr "Executar e Reverter"
+
+msgid "Save changes to the following items?"
+msgstr "Salvar as alterações nos seguintes itens?"
+
+msgid "Save or discard the table changes first."
+msgstr "Salve ou descarte primeiro as alterações da tabela."
+
+msgid "Saved 1 row to {path}."
+msgstr "1 linha salva em {path}."
+
+msgid "Saved {n} rows to {path}."
+msgstr "{n} linhas salvas em {path}."
+
+msgid "Saving results to {path}..."
+msgstr "Salvando os resultados em {path}..."
+
+msgid "Schema Compare: the script was opened in a new query window."
+msgstr "Comparação de Esquemas: o script foi aberto em uma nova janela de consulta."
+
+msgid "Script failed: {error}"
+msgstr "Falha no script: {error}"
+
+msgid "Script generation failed."
+msgstr "Falha ao gerar o script."
+
+msgid "Security: the changes were scripted to a new query window."
+msgstr "Segurança: as alterações foram geradas como script em uma nova janela de consulta."
+
+msgid "Select a database to back up."
+msgstr "Selecione um banco de dados para fazer backup."
+
+msgid "Select a database to diagram."
+msgstr "Selecione um banco de dados para o diagrama."
+
+msgid "Select a node to refresh."
+msgstr "Selecione um nó para atualizar."
+
+msgid "Select a tool window to auto hide."
+msgstr "Selecione uma janela de ferramentas para ocultar automaticamente."
+
+msgid "Select an object name, or place the cursor on one, for Object Information."
+msgstr "Selecione o nome de um objeto, ou ponha o cursor sobre um, para ver as Informações do Objeto."
+
+msgid "The actual execution plan will be included (the next run uses EXPLAIN ANALYZE)."
+msgstr "O plano de execução real será incluído (a próxima execução usa EXPLAIN ANALYZE)."
+
+msgid "The actual execution plan will not be included."
+msgstr "O plano de execução real não será incluído."
+
+msgid "The actual plan is collected with EXPLAIN ANALYZE, which runs the statements. This batch changes data (INSERT, UPDATE, DELETE or MERGE)."
+msgstr "O plano real é coletado com EXPLAIN ANALYZE, que executa as instruções. Este lote altera dados (INSERT, UPDATE, DELETE ou MERGE)."
+
+msgid "The changes were applied to {database}."
+msgstr "As alterações foram aplicadas a {database}."
+
+msgid "The changes were applied."
+msgstr "As alterações foram aplicadas."
+
+msgid "The demo server cannot run queries. Connect to a PostgreSQL server."
+msgstr "O servidor de demonstração não executa consultas. Conecte-se a um servidor PostgreSQL."
+
+msgid "The query was not executed."
+msgstr "A consulta não foi executada."
+
+msgid "The restore completed."
+msgstr "A restauração foi concluída."
+
+msgid "The saved options could not be read; using the defaults."
+msgstr "Não foi possível ler as opções salvas; usando o padrão."
+
+msgid "The saved window layout could not be read; using the default layout."
+msgstr "Não foi possível ler o layout de janelas salvo; usando o layout padrão."
+
+msgid "There is no statement to show a plan for."
+msgstr "Não há instrução para mostrar o plano."
+
+msgid "This object cannot be designed."
+msgstr "Este objeto não pode ser criado no designer."
+
+# Tools > Options
+
+msgid "Options"
+msgstr "Opções"
+
+msgid "Environment"
+msgstr "Ambiente"
+
+msgid "International Settings"
+msgstr "Configurações Internacionais"
+
+msgid "Language:"
+msgstr "Idioma:"
+
+msgid "Same as system"
+msgstr "Igual ao sistema"
+
+msgid "SQL keywords and object names are not translated."
+msgstr "Palavras-chave do SQL e nomes de objetos não são traduzidos."
+
+msgid "Messages from PostgreSQL follow the lc_messages setting of the server."
+msgstr "As mensagens do PostgreSQL seguem a configuração lc_messages do servidor."
+
+# Aplicativo
+
+msgid "Could not start the database runtime."
+msgstr "Não foi possível iniciar o runtime do banco de dados."
+
+msgid "Could not read {path}."
+msgstr "Não foi possível ler {path}."
+
+msgid "{n} invalid line(s) ignored in {path}."
+msgstr "{n} linha(s) inválida(s) ignorada(s) em {path}."
+
+# Diálogos de arquivo
+
+msgid "SQL Files (*.sql)"
+msgstr "Arquivos SQL (*.sql)"
+
+msgid "All Files (*.*)"
+msgstr "Todos os Arquivos (*.*)"
+
+msgid "Save File As"
+msgstr "Salvar Arquivo Como"
+
+msgid "Open File"
+msgstr "Abrir Arquivo"
+
+msgid "Save Grid Results"
+msgstr "Salvar Resultados da Grade"
+
+msgid "CSV (Comma delimited)"
+msgstr "CSV (separado por vírgulas)"
+
+msgid "Text (Tab delimited)"
+msgstr "Texto (separado por tabulações)"
+
+msgid "SQL INSERT statements"
+msgstr "Instruções SQL INSERT"
+
+# Nomes que não mudam
+
+msgid "IntelliSense"
+msgstr "IntelliSense"
+
+# Menus
+
+msgid "Advanced"
+msgstr "Avançado"
+
+# Menus
+
+msgid "Connection"
+msgstr "Conexão"
+
+# Menus
+
+msgid "Results To"
+msgstr "Resultados em"
+
+# Workspace (menus)
+
+msgid "Workspace…"
+msgstr "Workspace…"
+
+msgid "Close Workspace"
+msgstr "Fechar Workspace"
+
+msgid "Workspace Explorer"
+msgstr "Gerenciador de Workspace"
+
+# Painéis
+
+msgid "Properties"
+msgstr "Propriedades"
+
+msgid "Table Designer"
+msgstr "Designer de Tabelas"
+
+msgid "Database Diagram"
+msgstr "Diagrama de Banco de Dados"
+
+msgid "Edit Rows"
+msgstr "Editar Linhas"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "Connect Object Explorer"
+msgstr "Conectar Pesquisador de Objetos"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Path"
+msgstr "Caminho"
+
+msgid "Loading..."
+msgstr "Carregando..."
+
+msgid "No object selected."
+msgstr "Nenhum objeto selecionado."
+
+msgid "Connect to a server to monitor its activity."
+msgstr "Conecte-se a um servidor para monitorar a atividade dele."
+
+msgid "Show output from:"
+msgstr "Mostrar saída de:"
+
+msgid "General"
+msgstr "Geral"
+
+# Formatador e troca de banco
+
+msgid "Clone Workspace…"
+msgstr "Clonar Workspace…"
+
+msgid "Format Document"
+msgstr "Formatar Documento"
+
+msgid "Change Database"
+msgstr "Alterar Banco de Dados"
+
+msgid "Formatted."
+msgstr "Formatado."
+
+msgid "Couldn't format the SQL: {error} The text was not changed."
+msgstr "Não foi possível formatar o SQL: {error} O texto não foi alterado."
+
+msgid "Changing database to {database}..."
+msgstr "Alterando o banco de dados para {database}..."
+
+msgid "Changed database context to '{database}'."
+msgstr "Contexto de banco de dados alterado para '{database}'."
+
+msgid "{name} has an open transaction. Changing to {database} closes this window's connection, and PostgreSQL rolls the transaction back."
+msgstr "{name} tem uma transação aberta. Mudar para {database} fecha a conexão desta janela, e o PostgreSQL reverte a transação."
+
+msgid "Roll Back and Change"
+msgstr "Reverter e Alterar"
+
+msgid "Cannot change the database while a query is executing."
+msgstr "Não é possível alterar o banco de dados enquanto uma consulta está em execução."
+
+msgid "The database was not changed."
+msgstr "O banco de dados não foi alterado."
+
+# Tools > Options
+
+msgid "Color theme:"
+msgstr "Tema de cores:"
+
+# Formatador e troca de banco
+
+msgid "Available Databases"
+msgstr "Bancos de Dados Disponíveis"
+
+# Claude
+
+msgid "Allow Claude Code (MCP)"
+msgstr "Permitir o Claude Code (MCP)"
+
+# Atualização
+
+msgid "Check for Updates…"
+msgstr "Verificar se Há Atualizações…"
+
+# Workspace: senhas (Fase R)
+
+msgid "The master password check stopped unexpectedly."
+msgstr "A verificação da senha mestra parou inesperadamente."
+
+msgid "Workspace passwords locked."
+msgstr "Senhas do workspace trancadas."
+
+msgid "Workspace passwords are on: remembered passwords of this workspace's servers are saved encrypted in secrets.json."
+msgstr "Senhas no workspace ativadas: as senhas lembradas dos servidores deste workspace ficam criptografadas em secrets.json."
+
+msgid "Master password changed. Commit and push secrets.json."
+msgstr "Senha mestra trocada. Faça commit e push do secrets.json."
+
+msgid "Workspace passwords unlocked."
+msgstr "Senhas do workspace destrancadas."
+
+msgid "Unlocked, but the master password could not be remembered on this computer: {error}"
+msgstr "Destrancado, mas não foi possível lembrar a senha mestra neste computador: {error}"
+
+msgid "Checking the master password..."
+msgstr "Conferindo a senha mestra..."
+
+msgid "Passwords stay on this computer."
+msgstr "As senhas ficam neste computador."
+
+msgid "Save in workspace..."
+msgstr "Salvar no workspace..."
+
+msgid "Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"
+msgstr "Defina uma senha mestra e salve as senhas lembradas dos servidores deste workspace, criptografadas, em secrets.json"
+
+msgid "Passwords locked"
+msgstr "Senhas trancadas"
+
+msgid "Unlock..."
+msgstr "Destrancar..."
+
+msgid "No passwords saved yet"
+msgstr "Nenhuma senha salva ainda"
+
+msgid "1 password in the workspace"
+msgstr "1 senha no workspace"
+
+msgid "{n} passwords in the workspace"
+msgstr "{n} senhas no workspace"
+
+msgid "Remembered passwords of this workspace's servers are saved here, encrypted with the master password."
+msgstr "As senhas lembradas dos servidores deste workspace ficam aqui, criptografadas com a senha mestra."
+
+msgid "Change Master Password..."
+msgstr "Trocar Senha Mestra..."
+
+msgid "Lock"
+msgstr "Trancar"
+
+msgid "Save Passwords in Workspace"
+msgstr "Salvar Senhas no Workspace"
+
+msgid "Unlock Workspace Passwords"
+msgstr "Destrancar Senhas do Workspace"
+
+msgid "Change Master Password"
+msgstr "Trocar Senha Mestra"
+
+msgid "Choose a master password. It encrypts the passwords that go into the repository (secrets.json); it is never saved there."
+msgstr "Escolha uma senha mestra. Ela criptografa as senhas que vão para o repositório (secrets.json) e nunca é salva lá."
+
+msgid "At least {n} characters. If you forget it, the saved passwords cannot be recovered: you type them again."
+msgstr "Pelo menos {n} caracteres. Se você esquecer, as senhas salvas não podem ser recuperadas: você digita de novo."
+
+msgid "This workspace keeps its passwords encrypted. Enter the master password."
+msgstr "Este workspace guarda as senhas criptografadas. Digite a senha mestra."
+
+msgid "Enter the new master password. The other computers will ask for it after the next pull."
+msgstr "Digite a nova senha mestra. Os outros computadores vão pedi-la depois do próximo pull."
+
+msgid "Master password:"
+msgstr "Senha mestra:"
+
+msgid "New master password:"
+msgstr "Nova senha mestra:"
+
+msgid "Confirm password:"
+msgstr "Confirmar senha:"
+
+msgid "Remember on this computer"
+msgstr "Lembrar neste computador"
+
+msgid "Keeps the master password in this computer's keyring, so the workspace unlocks by itself."
+msgstr "Guarda a senha mestra no cofre deste computador, para o workspace destrancar sozinho."
+
+msgid "The master password is not correct."
+msgstr "A senha mestra não está correta."
+
+msgid "The workspace passwords are locked."
+msgstr "As senhas do workspace estão trancadas."
+
+msgid "Use at least {n} characters for the master password."
+msgstr "Use pelo menos {n} caracteres na senha mestra."
+
+msgid "The passwords do not match."
+msgstr "As senhas não conferem."
+
+msgid "The saved password for {key} was changed outside PostPilot and cannot be read."
+msgstr "A senha salva de {key} foi alterada fora do PostPilot e não pode ser lida."
+# Conexão e Servidores Registrados
+
+msgid "\"{port}\" is not a valid port."
+msgstr "\"{port}\" não é uma porta válida."
+
+msgid "A group cannot be moved into itself."
+msgstr "Um grupo não pode ser movido para dentro dele mesmo."
+
+msgid "A group named \"{name}\" already exists in this group."
+msgstr "Já existe um grupo chamado \"{name}\" neste grupo."
+
+msgid "A server named \"{name}\" already exists in this group."
+msgstr "Já existe um servidor chamado \"{name}\" neste grupo."
+
+msgid "Are you sure you want to delete the server group \"{name}\" and everything in it?"
+msgstr "Tem certeza de que deseja excluir o grupo de servidores \"{name}\" e tudo o que há nele?"
+
+msgid "Are you sure you want to delete the server registration \"{name}\"?"
+msgstr "Tem certeza de que deseja excluir o registro de servidor \"{name}\"?"
+
+msgid "Authentication:"
+msgstr "Autenticação:"
+
+msgid "Connect to Server"
+msgstr "Conectar ao Servidor"
+
+msgid "Connecting to {server}…"
+msgstr "Conectando a {server}…"
+
+msgid "Could not read {path}: {error}"
+msgstr "Não foi possível ler {path}: {error}"
+
+msgid "Could not write {path}: {error}"
+msgstr "Não foi possível gravar {path}: {error}"
+
+msgid "Database Engine"
+msgstr "Mecanismo de Banco de Dados"
+
+msgid "Database:"
+msgstr "Banco de dados:"
+
+msgid "Deleted \"{name}\"."
+msgstr "\"{name}\" excluído."
+
+msgid "Edit Server Group Properties"
+msgstr "Editar Propriedades do Grupo de Servidores"
+
+msgid "Edit Server Registration Properties"
+msgstr "Editar Propriedades do Registro de Servidor"
+
+msgid "Encryption:"
+msgstr "Criptografia:"
+
+msgid "Enter a group name."
+msgstr "Digite um nome de grupo."
+
+msgid "Enter a login."
+msgstr "Digite um logon."
+
+msgid "Enter a server name."
+msgstr "Digite um nome de servidor."
+
+msgid "Export..."
+msgstr "Exportar..."
+
+msgid "Exported registered servers to {path} (passwords are not exported)."
+msgstr "Servidores registrados exportados para {path} (as senhas não são exportadas)."
+
+msgid "Group description:"
+msgstr "Descrição do grupo:"
+
+msgid "Group name:"
+msgstr "Nome do grupo:"
+
+msgid "Import..."
+msgstr "Importar..."
+
+msgid "Imported 1 registered server."
+msgstr "1 servidor registrado importado."
+
+msgid "Imported {n} registered servers."
+msgstr "{n} servidores registrados importados."
+
+msgid "Login:"
+msgstr "Logon:"
+
+msgid "Looking for the saved password…"
+msgstr "Procurando a senha salva…"
+
+msgid "Missing \"]\" after the IPv6 address."
+msgstr "Falta \"]\" depois do endereço IPv6."
+
+msgid "Moved \"{name}\" to \"{group}\"."
+msgstr "\"{name}\" movido para \"{group}\"."
+
+msgid "New Server Group Properties"
+msgstr "Propriedades do Novo Grupo de Servidores"
+
+msgid "New Server Group..."
+msgstr "Novo Grupo de Servidores..."
+
+msgid "New Server Registration"
+msgstr "Novo Registro de Servidor"
+
+msgid "New Server Registration..."
+msgstr "Novo Registro de Servidor..."
+
+msgid "No registered servers. Right-click \"{group}\" and choose \"New Server Registration...\"."
+msgstr "Nenhum servidor registrado. Clique com o botão direito em \"{group}\" e escolha \"Novo Registro de Servidor...\"."
+
+msgid "No system keyring."
+msgstr "Sem cofre de senhas do sistema."
+
+msgid "Not a server."
+msgstr "Não é um servidor."
+
+msgid "Only a real connection can be registered."
+msgstr "Só uma conexão real pode ser registrada."
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Password:"
+msgstr "Senha:"
+
+msgid "PostgreSQL"
+msgstr "PostgreSQL"
+
+msgid "Recent servers"
+msgstr "Servidores recentes"
+
+msgid "Registered server \"{name}\" saved."
+msgstr "Servidor registrado \"{name}\" salvo."
+
+msgid "Registered server description:"
+msgstr "Descrição do servidor registrado:"
+
+msgid "Registered server name:"
+msgstr "Nome do servidor registrado:"
+
+msgid "Registered servers need a real connection."
+msgstr "Servidores registrados precisam de uma conexão real."
+
+msgid "Remember password"
+msgstr "Lembrar senha"
+
+msgid "Server group \"{name}\" saved."
+msgstr "Grupo de servidores \"{name}\" salvo."
+
+msgid "Server name:"
+msgstr "Nome do servidor:"
+
+msgid "Server type:"
+msgstr "Tipo de servidor:"
+
+msgid "Tasks"
+msgstr "Tarefas"
+
+msgid "The connection attempt stopped unexpectedly."
+msgstr "A tentativa de conexão parou inesperadamente."
+
+msgid "The group no longer exists."
+msgstr "O grupo não existe mais."
+
+msgid "The root group cannot be moved."
+msgstr "O grupo raiz não pode ser movido."
+
+msgid "The root group cannot be renamed."
+msgstr "O grupo raiz não pode ser renomeado."
+
+msgid "The server no longer exists."
+msgstr "O servidor não existe mais."
+
+msgid "The system keyring failed: {error}"
+msgstr "O cofre de senhas do sistema falhou: {error}"
+
+msgid "The system keyring is not available: {error}"
+msgstr "O cofre de senhas do sistema não está disponível: {error}"
+
+msgid "The target group no longer exists."
+msgstr "O grupo de destino não existe mais."
+
+msgid "Unexpected \"{after}\" after the address."
+msgstr "\"{after}\" inesperado depois do endereço."
+
+msgid "Wait for the current connection attempt."
+msgstr "Aguarde a tentativa de conexão atual."
+
+msgid "host or host,port"
+msgstr "host ou host,porta"
+
+msgid "same as the server name"
+msgstr "igual ao nome do servidor"
+
+msgid "{path} has an unsupported version ({version})."
+msgstr "{path} tem uma versão sem suporte ({version})."
+
+msgid "{path} is not a registered servers file: {error}"
+msgstr "{path} não é um arquivo de servidores registrados: {error}"
+
+msgid "Local Server Groups"
+msgstr "Grupos de Servidores Locais"
+
+msgid "Disable"
+msgstr "Desabilitar"
+
+msgid "Prefer"
+msgstr "Preferir"
+
+msgid "Require"
+msgstr "Exigir"
+
+msgid "Verify full"
+msgstr "Verificação completa"

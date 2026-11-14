@@ -14,6 +14,8 @@ members = [
     "crates/diagram-engine",
     "crates/execution-plan",
     "crates/automation",
+    "crates/updater",
+    "crates/i18n",
     "xtask",
 ]
 exclude = ["spikes"]
@@ -38,6 +40,8 @@ pgstudio-schema-model = { path = "crates/schema-model" }
 pgstudio-diagram-engine = { path = "crates/diagram-engine" }
 pgstudio-execution-plan = { path = "crates/execution-plan" }
 pgstudio-automation = { path = "crates/automation" }
+pgstudio-updater = { path = "crates/updater" }
+pgstudio-i18n = { path = "crates/i18n" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -47,6 +51,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Idioma do sistema para a interface (GetUserDefaultLocaleName / LANG).
+sys-locale = "0.3"
 # Lê o SELECT do editor no Query Designer (marco 5.5).
 sqlparser = { version = "0.64", features = ["visitor"] }
 # PostgreSQL (Fase 2). tokio-postgres em vez de SQLx: vários comandos por
@@ -60,12 +66,25 @@ rustls-native-certs = "0.8"
 # Cofre do sistema para "Remember password" (marco 5.4). A 3.x pela MSRV 1.87;
 # no Linux, Secret Service por zbus (Rust puro, sem libdbus).
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "apple-native", "async-secret-service", "async-io", "crypto-rust"] }
+# Cofre de senhas do workspace (Fase R): Argon2id para a senha mestra e
+# XChaCha20-Poly1305 para cada senha, ambos do RustCrypto.
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+base64 = "0.22"
+zeroize = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# O Argon2 sem otimização leva segundos para destravar o cofre em debug.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 lto = "thin"
