@@ -8,6 +8,7 @@
 pub mod connect;
 pub mod documents;
 pub mod execution;
+pub mod intellisense;
 pub mod keys;
 pub mod layout;
 pub mod menus;
@@ -75,6 +76,11 @@ pub struct ShellApp {
     /// Executar a janela ativa assim que conectar (demonstração e
     /// screenshots).
     run_on_connect: bool,
+    /// Catálogos para o IntelliSense, por banco.
+    catalogs: intellisense::Catalogs,
+    /// Abrir o IntelliSense no fim da janela ativa quando o catálogo chegar
+    /// (screenshots).
+    list_members_on_load: bool,
 }
 
 /// Pergunta "salvar alterações?" antes de fechar documentos ou sair.
@@ -130,6 +136,8 @@ impl Default for ShellApp {
             connection: None,
             recent: RecentConnections::default(),
             run_on_connect: false,
+            catalogs: Default::default(),
+            list_members_on_load: false,
         }
     }
 }
@@ -237,6 +245,7 @@ impl ShellApp {
                 ));
                 self.status = format!("Connected to {name}.");
                 self.connection = Some(connected);
+                self.catalogs.clear();
             }
             None if was_connecting => {
                 if let Some(error) = dialog.error() {
@@ -564,6 +573,9 @@ impl ShellApp {
                 | UncommentSelection
                 | QuickFind
                 | GoTo
+                | ListMembers
+                | CompleteWord
+                | RefreshLocalCache
                 | Execute
                 | CancelQuery
                 | ResultsToText
@@ -663,6 +675,8 @@ impl ShellApp {
             CommandId::CommentSelection
             | CommandId::UncommentSelection
             | CommandId::QuickFind
+            | CommandId::ListMembers
+            | CommandId::CompleteWord
             | CommandId::GoTo => match self.active_doc {
                 Some(id) => self.editor_command(ctx, id, cmd),
                 None => self.status = "No query window is open.".to_string(),
@@ -690,6 +704,20 @@ impl ShellApp {
                         .push(format!("Disconnected from {}.", c.settings.server_name()));
                 }
                 self.explorer.disconnect();
+                self.catalogs.clear();
+            }
+            CommandId::RefreshLocalCache => {
+                let db = self.active_doc.and_then(|id| self.document_database(id));
+                match (
+                    self.explorer.provider(),
+                    db.or_else(|| self.default_database()),
+                ) {
+                    (Some(provider), Some(db)) => {
+                        self.catalogs.refresh(&db, &provider, ctx);
+                        self.status = "Refreshing local cache...".to_string();
+                    }
+                    _ => self.status = "Connect to a server to use IntelliSense.".to_string(),
+                }
             }
             _ => {
                 self.status = format!("\"{}\" is not available yet.", cmd.label());
@@ -804,8 +832,9 @@ impl ShellApp {
                 // Atualiza o relógio da faixa de status.
                 ctx.request_repaint_after(std::time::Duration::from_millis(250));
             }
-            if let Some(pos) = exec.take_error_position() {
+            if let Some((pos, message)) = exec.take_error_position() {
                 pgstudio_sql_editor::set_selection(ctx, panels::editor_id(id), (pos, pos));
+                doc.editor.mark_error(pos, message);
                 doc.editor.focus_editor();
             }
             if finished {
@@ -820,6 +849,81 @@ impl ShellApp {
                 }
             }
         }
+    }
+
+    /// Banco da conexão do Object Explorer (o servidor de demonstração usa
+    /// `postgres`).
+    fn default_database(&self) -> Option<String> {
+        match &self.connection {
+            Some(c) => Some(c.settings.database.clone()),
+            None if self.explorer.is_connected() => Some("postgres".to_string()),
+            None => None,
+        }
+    }
+
+    /// Banco da janela de consulta: o da conexão dela, ou o padrão.
+    fn document_database(&self, id: u32) -> Option<String> {
+        let doc = self.documents.get(id)?;
+        match &doc.session {
+            Some(s) => Some(s.0.database()),
+            None => self.default_database(),
+        }
+    }
+
+    /// Lê os catálogos que as janelas de consulta precisam e recebe os que
+    /// chegaram.
+    fn intellisense_step(&mut self, ctx: &egui::Context) {
+        if let Some(provider) = self.explorer.provider() {
+            for id in self.documents.ids() {
+                if let Some(db) = self.document_database(id) {
+                    self.catalogs.ensure(&db, &provider, ctx);
+                }
+            }
+        }
+        if self.list_members_on_load
+            && let Some(id) = self.active_doc
+            && self.catalog_for(id).is_some()
+            && let Some(doc) = self.documents.get_mut(id)
+        {
+            self.list_members_on_load = false;
+            let end = doc.text.trim_end().chars().count();
+            pgstudio_sql_editor::set_selection(ctx, panels::editor_id(id), (end, end));
+            doc.editor.list_members();
+        }
+        for loaded in self.catalogs.poll() {
+            match loaded.result {
+                Ok(n) => {
+                    self.output.push(format!(
+                        "IntelliSense: {n} objects loaded from {}.",
+                        loaded.database
+                    ));
+                    if self.status == "Refreshing local cache..." {
+                        self.status = "Local cache refreshed.".to_string();
+                    }
+                }
+                Err(e) => self.output.push(format!(
+                    "IntelliSense could not read the catalog of {}: {e}",
+                    loaded.database
+                )),
+            }
+        }
+    }
+
+    /// Catálogo do banco da janela, se já foi lido.
+    pub fn catalog_for(&self, id: u32) -> Option<&pgstudio_core::catalog::Catalog> {
+        self.catalogs.get(&self.document_database(id)?)
+    }
+
+    /// Abre o IntelliSense no fim da janela ativa assim que o catálogo dela
+    /// chegar (para screenshots).
+    pub fn with_list_members_on_load(mut self) -> Self {
+        self.list_members_on_load = true;
+        self
+    }
+
+    /// Se algum catálogo do IntelliSense está sendo lido.
+    pub fn is_loading_catalog(&self) -> bool {
+        self.catalogs.is_loading()
     }
 
     /// Comandos do editor de SQL no documento `id`.
@@ -843,6 +947,7 @@ impl ShellApp {
                 doc.editor.open_find(selected);
             }
             CommandId::GoTo => doc.editor.open_goto(),
+            CommandId::ListMembers | CommandId::CompleteWord => doc.editor.list_members(),
             _ => {}
         }
         self.workspace.open(Panel::Query(id));
@@ -970,6 +1075,7 @@ impl ShellApp {
         let ctx = ui.ctx().clone();
         self.connect_step();
         self.execution_step(&ctx);
+        self.intellisense_step(&ctx);
         let mut commands = if self.confirm.is_some() || self.connect_dialog.is_some() {
             Vec::new()
         } else {
@@ -1010,6 +1116,7 @@ impl ShellApp {
             )
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
+        let default_db = self.default_database();
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -1025,6 +1132,8 @@ impl ShellApp {
                         Theme::Dark => pgstudio_sql_editor::Colors::DARK,
                     },
                     server,
+                    catalogs: &self.catalogs,
+                    default_database: default_db,
                 };
                 self.workspace.show(ui, &mut viewer);
                 commands.extend(viewer.commands);
@@ -1214,7 +1323,12 @@ impl ShellApp {
             .as_ref()
             .is_some_and(ConnectDialog::is_connecting);
         let expanding = !self.pending_expand.is_empty() && self.explorer.is_connected();
-        let busy = self.explorer.is_loading() || expanding || connecting || executing;
+        let busy = self.explorer.is_loading()
+            || expanding
+            || connecting
+            || executing
+            || self.catalogs.is_loading()
+            || self.list_members_on_load;
         if !shot.requested && shot.frames >= 5 && !busy {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));

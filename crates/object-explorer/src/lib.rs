@@ -76,6 +76,11 @@ impl Default for ObjectExplorer {
 
 impl ObjectExplorer {
     /// Conecta a um provedor e começa a carregar as raízes.
+    /// Provedor conectado (o IntelliSense lê o catálogo por ele).
+    pub fn provider(&self) -> Option<Arc<dyn MetadataProvider>> {
+        self.provider.clone()
+    }
+
     pub fn connect(&mut self, provider: Arc<dyn MetadataProvider>) {
         self.disconnect();
         self.provider = Some(provider);

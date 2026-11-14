@@ -11,13 +11,16 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, CursorIcon, Event, FontId, Galley, Id, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui,
-    Vec2, pos2, text::CCursor, vec2,
+    self, Color32, CursorIcon, Event, FontId, Galley, Id, Key, Modifiers, Pos2, Rect, Sense,
+    Stroke, Ui, Vec2, pos2, text::CCursor, vec2,
 };
 
 use crate::buffer::{Change, EditKind, History, LineIndex, is_word, line_text};
+use crate::complete::{Completion, Kind, best, complete};
+use crate::diagnostics::{Diagnostic, server_range};
 use crate::highlight::{Colors, line_job};
 use crate::lexer::{Token, tokenize};
+use pgstudio_core::catalog::Catalog;
 
 /// Espaços de um Tab.
 pub const TAB_SIZE: usize = 4;
@@ -55,7 +58,31 @@ pub struct Buffer {
     tokens: Vec<Token>,
     history: History,
     synced: bool,
+    /// Lista do IntelliSense aberta.
+    popup: Option<Popup>,
+    /// Erros de sintaxe vistos pelos tokens.
+    diagnostics: Vec<Diagnostic>,
+    /// Erro da última execução, até o texto mudar.
+    server_error: Option<Diagnostic>,
+    /// Erro pedido por `EditorState::mark_error` (caractere, mensagem).
+    pub(crate) pending_error: Option<(usize, String)>,
+    /// Onde a lista foi desenhada no último frame: um clique nela tira o
+    /// foco do editor, mas não pode fechá-la.
+    popup_rect: Option<Rect>,
 }
+
+/// A lista de sugestões aberta embaixo do cursor.
+#[derive(Clone, Debug)]
+struct Popup {
+    completion: Completion,
+    selected: usize,
+    /// Primeira linha visível da lista.
+    top: usize,
+}
+
+/// Linhas visíveis da lista de sugestões.
+const POPUP_ROWS: usize = 10;
+const POPUP_WIDTH: f32 = 420.0;
 
 impl Buffer {
     fn sync(&mut self, text: &str, view: &View) {
@@ -78,6 +105,30 @@ impl Buffer {
         self.shadow
             .replace_range(at..at + removed, &text[at..at + inserted]);
         self.index = LineIndex::new(text);
+        self.text_changed(text);
+    }
+
+    fn text_changed(&mut self, text: &str) {
+        self.diagnostics = crate::diagnostics::check(text, &self.tokens);
+        self.server_error = None;
+    }
+
+    pub(crate) fn errors(&self) -> Vec<(Range<usize>, String)> {
+        self.diagnostics
+            .iter()
+            .chain(self.server_error.iter())
+            .map(|d| (d.range.clone(), d.message.clone()))
+            .collect()
+    }
+
+    pub(crate) fn is_completing(&self) -> bool {
+        self.popup.is_some()
+    }
+
+    pub(crate) fn completion_labels(&self) -> Vec<String> {
+        self.popup.as_ref().map_or(Vec::new(), |p| {
+            p.completion.items.iter().map(|i| i.label.clone()).collect()
+        })
     }
 
     fn rebuild(&mut self, text: &str) {
@@ -86,6 +137,7 @@ impl Buffer {
         self.index = LineIndex::new(text);
         self.tokens = tokenize(text);
         self.synced = true;
+        self.text_changed(text);
     }
 }
 
@@ -110,9 +162,71 @@ struct Editing<'a> {
     buf: &'a mut Buffer,
     view: &'a mut View,
     moved: bool,
+    catalog: Option<&'a Catalog>,
 }
 
 impl Editing<'_> {
+    /// Recalcula a lista do IntelliSense no cursor. Com `open`, abre se
+    /// estiver fechada; sem, só atualiza a que já está aberta. Fecha se não
+    /// houver sugestões.
+    fn refresh_popup(&mut self, open: bool) {
+        if self.buf.popup.is_none() && !open {
+            return;
+        }
+        if !self.range().is_empty() {
+            self.buf.popup = None;
+            return;
+        }
+        let at = self.buf.index.byte_of(self.text, self.view.cursor);
+        let c = complete(self.text, &self.buf.tokens, at, self.catalog);
+        if c.items.is_empty() {
+            self.buf.popup = None;
+            return;
+        }
+        let selected = best(&c);
+        self.buf.popup = Some(Popup {
+            completion: c,
+            selected,
+            top: selected.saturating_sub(POPUP_ROWS / 2),
+        });
+    }
+
+    /// Troca a palavra digitada pela sugestão escolhida.
+    fn accept(&mut self) {
+        let Some(p) = self.buf.popup.take() else {
+            return;
+        };
+        let Some(item) = p.completion.items.get(p.selected) else {
+            return;
+        };
+        let n = p.completion.prefix.chars().count();
+        let cur = self.view.cursor;
+        self.replace(cur.saturating_sub(n)..cur, &item.insert, EditKind::Other);
+        self.buf.history.seal();
+    }
+
+    /// Se o que foi digitado já é exatamente a sugestão escolhida.
+    fn typed_selection(&self) -> bool {
+        self.buf.popup.as_ref().is_some_and(|p| {
+            p.completion
+                .items
+                .get(p.selected)
+                .is_some_and(|i| i.insert == p.completion.prefix)
+        })
+    }
+
+    fn move_popup(&mut self, delta: i64) {
+        if let Some(p) = &mut self.buf.popup {
+            let last = p.completion.items.len() as i64 - 1;
+            p.selected = (p.selected as i64 + delta).clamp(0, last) as usize;
+            if p.selected < p.top {
+                p.top = p.selected;
+            } else if p.selected >= p.top + POPUP_ROWS {
+                p.top = p.selected + 1 - POPUP_ROWS;
+            }
+        }
+    }
+
     fn range(&self) -> Range<usize> {
         self.view.anchor.min(self.view.cursor)..self.view.anchor.max(self.view.cursor)
     }
@@ -380,10 +494,19 @@ pub(crate) fn show(
     font: FontId,
     select: Option<(usize, usize)>,
     focus: bool,
+    catalog: Option<&Catalog>,
+    list_members: bool,
 ) -> Output {
     let ctx = ui.ctx().clone();
     let mut view = load(&ctx, id);
     buf.sync(text, &view);
+    if let Some((at, message)) = buf.pending_error.take() {
+        let byte = buf.index.byte_of(text, at);
+        buf.server_error = Some(Diagnostic {
+            range: server_range(text, &buf.tokens, byte),
+            message,
+        });
+    }
     let total = buf.index.len_chars();
     view.anchor = view.anchor.min(total);
     view.cursor = view.cursor.min(total);
@@ -421,11 +544,16 @@ pub(crate) fn show(
     }
     let focused = ui.memory(|m| m.has_focus(id));
 
+    let over_popup = buf.popup.is_some()
+        && buf
+            .popup_rect
+            .is_some_and(|r| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.contains(p))));
     let mut ed = Editing {
         text,
         buf,
         view: &mut view,
         moved: false,
+        catalog,
     };
     if let Some((a, c)) = select {
         ed.view.anchor = a.min(total);
@@ -440,14 +568,20 @@ pub(crate) fn show(
                     tab: true,
                     horizontal_arrows: true,
                     vertical_arrows: true,
-                    escape: false,
+                    // Com a lista aberta, Esc fecha a lista e o foco fica.
+                    escape: ed.buf.popup.is_some(),
                 },
             )
         });
+        if list_members {
+            ed.refresh_popup(true);
+        }
         let events = ui.input(|i| i.events.clone());
         for event in events {
             handle_event(ui, &mut ed, &f, event);
         }
+    } else if !over_popup {
+        ed.buf.popup = None;
     }
     mouse(ui, &response, &mut ed, &f);
 
@@ -472,6 +606,12 @@ pub(crate) fn show(
     ed.view.scroll = ed.view.scroll.clamp(Vec2::ZERO, max);
 
     paint(ui, &ed, &f, gutter, focused);
+    squiggles(ui, &response, &ed, &f);
+    ed.buf.popup_rect = None;
+    if (focused || over_popup) && popup(ui, id, &mut ed, &f) {
+        ui.memory_mut(|m| m.request_focus(id));
+        ctx.request_repaint();
+    }
 
     let (line, col) = ed.index().line_col(ed.view.cursor);
     if focused {
@@ -508,10 +648,18 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
             if !s.is_empty() {
                 ed.insert(&s, EditKind::Typing);
                 ed.view.preferred_x = None;
+                // Letras e `.` abrem (ou atualizam) a lista, como no SSMS;
+                // o resto fecha.
+                let mut chars = s.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) if is_word(c) || c == '.' => ed.refresh_popup(true),
+                    _ => ed.buf.popup = None,
+                }
             }
         }
         Event::Ime(egui::ImeEvent::Commit(s)) if !s.is_empty() => {
             ed.insert(&s, EditKind::Other);
+            ed.refresh_popup(false);
         }
         Event::Copy => {
             let s = ed.selected();
@@ -521,6 +669,7 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
         }
         Event::Cut => {
             let s = ed.selected();
+            ed.buf.popup = None;
             if !s.is_empty() {
                 ui.ctx().copy_text(s);
                 ed.insert("", EditKind::Other);
@@ -529,6 +678,7 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
         }
         Event::Paste(s) => {
             let s = s.replace("\r\n", "\n").replace('\r', "\n");
+            ed.buf.popup = None;
             ed.insert(&s, EditKind::Other);
             ed.buf.history.seal();
         }
@@ -548,6 +698,54 @@ fn key_pressed(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifiers)
     if m.alt {
         return;
     }
+    if ed.buf.popup.is_some() && !ctrl && !shift {
+        match key {
+            Key::Escape => {
+                ed.buf.popup = None;
+                return;
+            }
+            Key::ArrowUp => return ed.move_popup(-1),
+            Key::ArrowDown => return ed.move_popup(1),
+            Key::PageUp => return ed.move_popup(-(POPUP_ROWS as i64)),
+            Key::PageDown => return ed.move_popup(POPUP_ROWS as i64),
+            Key::Enter | Key::Tab => {
+                // A palavra já está inteira: a tecla faz o que faria sem a
+                // lista (Enter quebra a linha).
+                if ed.typed_selection() {
+                    ed.buf.popup = None;
+                } else {
+                    return ed.accept();
+                }
+            }
+            _ => {}
+        }
+    }
+    // Ctrl+Espaço completa a palavra (direto, se só houver uma opção);
+    // Ctrl+J lista os membros.
+    if ctrl && !shift && matches!(key, Key::Space | Key::J) {
+        ed.refresh_popup(true);
+        if key == Key::Space
+            && ed
+                .buf
+                .popup
+                .as_ref()
+                .is_some_and(|p| p.completion.items.len() == 1)
+        {
+            ed.accept();
+        }
+        return;
+    }
+    key_action(ui, ed, f, key, m);
+    if matches!(key, Key::Backspace | Key::Delete) && !ctrl {
+        ed.refresh_popup(false);
+    } else {
+        ed.buf.popup = None;
+    }
+}
+
+fn key_action(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifiers) {
+    let ctrl = m.ctrl || m.command || m.mac_cmd;
+    let shift = m.shift;
     let vertical = matches!(
         key,
         Key::ArrowUp | Key::ArrowDown | Key::PageUp | Key::PageDown
@@ -721,6 +919,7 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         return;
     }
     if pressed {
+        ed.buf.popup = None;
         ed.view.drag_words = None;
         ed.view.preferred_x = None;
         ed.move_to(c, shift);
@@ -896,5 +1095,182 @@ fn paint(ui: &Ui, ed: &Editing<'_>, f: &Frame, gutter: Rect, focused: bool) {
                 f.colors.operator
             },
         );
+    }
+}
+
+/// Desenha a lista de sugestões embaixo da palavra. Devolve `true` se uma
+/// sugestão foi escolhida com o mouse.
+fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
+    let Some(p) = &ed.buf.popup else {
+        return false;
+    };
+    let start = ed
+        .view
+        .cursor
+        .saturating_sub(p.completion.prefix.chars().count());
+    let (line, col) = ed.index().line_col(start);
+    let galley = line_galley(ui, ed.text, ed.buf, line, f);
+    let x = f.text_rect.left() + col_x(&galley, col) - ed.view.scroll.x;
+    let y = f.text_rect.top() + (line + 1) as f32 * f.line_h - ed.view.scroll.y;
+    let row_h = f.line_h + 4.0;
+    let rows = p.completion.items.len().min(POPUP_ROWS);
+    let height = rows as f32 * row_h;
+    // Embaixo da linha; se não couber, em cima.
+    let screen = ui.ctx().content_rect();
+    let pos = if y + height + 8.0 > screen.bottom() {
+        pos2(x, y - f.line_h - height - 8.0)
+    } else {
+        pos2(x, y)
+    };
+    let v = ui.visuals().clone();
+    let mut clicked = None;
+    let mut scroll = 0.0;
+    let font = f.font.clone();
+    let colors = f.colors;
+    let area = egui::Area::new(id.with("intellisense"))
+        .order(egui::Order::Foreground)
+        // Sem o fade: a lista aparece inteira já no primeiro frame.
+        .fade_in(false)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(2.0)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let items = &p.completion.items;
+                    for (i, item) in items.iter().enumerate().skip(p.top).take(rows) {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(vec2(POPUP_WIDTH, row_h), Sense::click());
+                        let painter = ui.painter();
+                        let selected = i == p.selected;
+                        if selected {
+                            painter.rect_filled(rect, 2.0, v.selection.bg_fill);
+                        } else if resp.hovered() {
+                            painter.rect_filled(rect, 2.0, v.widgets.hovered.weak_bg_fill);
+                        }
+                        // Texto branco na linha escolhida, como no SSMS.
+                        let text_color = if selected {
+                            Color32::WHITE
+                        } else {
+                            colors.text
+                        };
+                        let glyph_color = match item.kind {
+                            Kind::Column | Kind::Alias => colors.identifier_quoted,
+                            Kind::Table | Kind::View | Kind::Schema => colors.keyword,
+                            Kind::Function => colors.number,
+                            Kind::Keyword => colors.operator,
+                        };
+                        let glyph_color = if selected {
+                            Color32::WHITE
+                        } else {
+                            glyph_color
+                        };
+                        let mid = rect.left_center();
+                        painter.text(
+                            mid + vec2(6.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            item.kind.glyph(),
+                            font.clone(),
+                            glyph_color,
+                        );
+                        painter.text(
+                            mid + vec2(24.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            &item.label,
+                            font.clone(),
+                            text_color,
+                        );
+                        if !item.detail.is_empty() {
+                            painter.text(
+                                rect.right_center() - vec2(6.0, 0.0),
+                                egui::Align2::RIGHT_CENTER,
+                                &item.detail,
+                                FontId::proportional(11.0),
+                                if selected {
+                                    Color32::WHITE
+                                } else {
+                                    v.weak_text_color()
+                                },
+                            );
+                        }
+                        if resp.clicked() {
+                            clicked = Some(i);
+                        }
+                    }
+                });
+        });
+    ed.buf.popup_rect = Some(area.response.rect);
+    if area.response.hovered() {
+        scroll = ui.input(|i| i.smooth_scroll_delta.y);
+    }
+    if scroll != 0.0
+        && let Some(p) = &mut ed.buf.popup
+    {
+        let max = p.completion.items.len().saturating_sub(POPUP_ROWS);
+        let step = (scroll / row_h).round() as i64;
+        p.top = (p.top as i64 - step).clamp(0, max as i64) as usize;
+    }
+    match clicked {
+        Some(i) => {
+            if let Some(p) = &mut ed.buf.popup {
+                p.selected = i;
+            }
+            ed.accept();
+            true
+        }
+        None => false,
+    }
+}
+
+/// Sublinha os erros com uma linha ondulada vermelha; parar o mouse em cima
+/// mostra a mensagem.
+fn squiggles(ui: &Ui, response: &egui::Response, ed: &Editing<'_>, f: &Frame) {
+    let buf = &ed.buf;
+    if buf.diagnostics.is_empty() && buf.server_error.is_none() {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(f.text_rect);
+    let color = Color32::from_rgb(0xE5, 0x14, 0x00);
+    let first = (ed.view.scroll.y / f.line_h).floor().max(0.0) as usize;
+    let count = (f.text_rect.height() / f.line_h).ceil() as usize + 1;
+    let last = (first + count).min(ed.index().line_count());
+    let hover = response.hover_pos();
+    let mut tip = None;
+    let left = f.text_rect.left() - ed.view.scroll.x;
+    for d in buf.diagnostics.iter().chain(buf.server_error.iter()) {
+        for line in first..last {
+            let bytes = ed.index().line_bytes(line);
+            // Um erro no `\n` (ou vazio) ainda aparece: meio caractere.
+            let a = d.range.start.max(bytes.start);
+            let b = d.range.end.min(bytes.end);
+            let before = d.range.end <= bytes.start && d.range.start < bytes.start;
+            if a > b || d.range.start > bytes.end || before {
+                continue;
+            }
+            let galley = line_galley(ui, ed.text, ed.buf, line, f);
+            let col = |byte: usize| ed.text[bytes.start..byte].chars().count();
+            let x0 = left + col_x(&galley, col(a));
+            let x1 = (left + col_x(&galley, col(b))).max(x0 + f.char_w * 0.5);
+            let y = f.text_rect.top() + (line + 1) as f32 * f.line_h - ed.view.scroll.y - 1.5;
+            let mut points = Vec::new();
+            let mut x = x0;
+            let mut up = false;
+            while x < x1 {
+                points.push(pos2(x, if up { y - 2.0 } else { y }));
+                x += 2.0;
+                up = !up;
+            }
+            points.push(pos2(x1, if up { y - 2.0 } else { y }));
+            painter.add(egui::Shape::line(points, Stroke::new(1.0, color)));
+            let rect = Rect::from_min_max(pos2(x0, y - f.line_h), pos2(x1, y + 2.0));
+            if hover.is_some_and(|p| rect.contains(p)) {
+                tip = Some(d.message.clone());
+            }
+        }
+    }
+    if let Some(message) = tip
+        && ed.buf.popup.is_none()
+    {
+        response.show_tooltip_text(message);
     }
 }

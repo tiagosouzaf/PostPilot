@@ -272,6 +272,17 @@ fn an_error_moves_the_cursor_to_its_position() {
         Some((17, 17))
     );
     harness.get(by().label("Ln 2   Col 8"));
+    // O trecho do erro fica sublinhado até o texto mudar.
+    let doc = harness.state().documents().get(id).unwrap();
+    let text = doc.text.clone();
+    let errors = doc.editor.errors();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(&text[errors[0].0.clone()], "bad");
+    assert_eq!(errors[0].1, "column \"bad\" does not exist");
+    harness.event(Event::Text("x".into()));
+    harness.run();
+    let doc = harness.state().documents().get(id).unwrap();
+    assert!(doc.editor.errors().is_empty());
 }
 
 #[test]

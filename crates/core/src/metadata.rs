@@ -119,4 +119,12 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Filhos de um nó.
     fn children(&self, parent: &NodeId) -> Result<Vec<ObjectNode>, MetadataError>;
+
+    /// Catálogo inteiro de um banco, para o IntelliSense.
+    fn catalog(&self, database: &str) -> Result<crate::catalog::Catalog, MetadataError> {
+        let _ = database;
+        Err(MetadataError(
+            "IntelliSense is not available for this server.".to_string(),
+        ))
+    }
 }

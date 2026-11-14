@@ -252,3 +252,50 @@ fn refresh_sees_new_objects_and_missing_databases_fail_cleanly() {
     let err = meta.children(&gone).unwrap_err();
     assert!(err.0.contains("pgstudio_no_such_db"), "{err}");
 }
+
+#[test]
+fn reads_the_whole_catalog_for_intellisense() {
+    let Some((settings, password)) = server() else {
+        return;
+    };
+    let db = TestDb::create(&settings, &password, "intellisense");
+    let connected = PgConnector::new(DbRuntime::new().unwrap())
+        .connect(&settings, &password)
+        .unwrap();
+    let cat = connected.metadata.catalog(&db.name).unwrap();
+    assert_eq!(cat.database, db.name);
+    assert!(cat.search_path.iter().any(|s| s == "pg_catalog"));
+    assert!(cat.search_path.iter().any(|s| s == "public"));
+
+    let sales = cat.schema("\"sales/2024\"").unwrap();
+    let names: Vec<&str> = sales.relations.iter().map(|r| r.name.as_str()).collect();
+    // Partições ficam de fora, como no Object Explorer.
+    assert_eq!(
+        names,
+        ["big_orders", "customer", "events", "order_count", "orders"]
+    );
+    let orders = cat.relation(Some("\"sales/2024\""), "orders").unwrap();
+    let cols: Vec<(&str, &str)> = orders
+        .columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.ty.as_str()))
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            ("id", "bigint"),
+            ("customer_id", "integer"),
+            ("amount", "numeric(10,2)")
+        ]
+    );
+    assert_eq!(
+        cat.relation(Some("\"sales/2024\""), "big_orders")
+            .unwrap()
+            .kind,
+        pgstudio_core::catalog::RelationKind::View
+    );
+    assert_eq!(sales.functions, ["add", "noop"]);
+    let builtins = cat.schema("pg_catalog").unwrap();
+    assert!(builtins.functions.iter().any(|f| f == "now"));
+    assert!(builtins.relations.is_empty());
+}

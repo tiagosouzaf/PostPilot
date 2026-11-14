@@ -70,6 +70,10 @@ pub struct Viewer<'a> {
     pub editor_colors: pgstudio_sql_editor::Colors,
     /// Servidor e usuário, para a faixa de status das janelas de consulta.
     pub server: String,
+    /// Catálogos do IntelliSense.
+    pub catalogs: &'a crate::intellisense::Catalogs,
+    /// Banco das janelas sem conexão própria.
+    pub default_database: Option<String>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -167,12 +171,18 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         doc.editor.focus_editor();
                     }
                 }
+                let db = match &doc.session {
+                    Some(s) => Some(s.0.database()),
+                    None => self.default_database.clone(),
+                };
+                let catalog = db.and_then(|db| self.catalogs.get(&db));
                 let out = pgstudio_sql_editor::SqlEditor::new(
                     &mut doc.text,
                     &mut doc.editor,
                     editor_id(*id),
                 )
                 .colors(self.editor_colors)
+                .catalog(catalog)
                 .show(ui);
                 if out.cursor.is_some() {
                     doc.cursor = out.cursor;
