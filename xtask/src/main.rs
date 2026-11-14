@@ -42,7 +42,7 @@ Mede o pgstudio (release) em três cenários e compara com as metas:
                 depois de um tempo parado (< 100 MB; RSS no Linux, working
                 set no Windows)
   grid          1 milhão de linhas sintéticas chegam e a grade rola do começo
-                ao fim em 600 frames: 60 FPS (p95 < 20 ms por frame: 16,7 ms
+                ao fim em 10 s: 60 FPS (p95 < 20 ms por frame: 16,7 ms
                 mais folga para o vsync) e memória a mais que o repouso
                 < 96 MB (buffer de 64 MB + folga)
   intellisense  digita SQL uma tecla por frame num banco de 10 mil tabelas

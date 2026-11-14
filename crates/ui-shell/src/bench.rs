@@ -3,7 +3,8 @@
 //!
 //! - **Grade:** uma consulta sintética de [`GRID_ROWS`] linhas chega pela
 //!   mesma execução que uma consulta real usa; depois a grade rola do começo
-//!   ao fim em [`GRID_FRAMES`] frames.
+//!   ao fim em [`GRID_SCROLL_SECONDS`] segundos (cerca de 600 frames a 60
+//!   FPS; menos numa máquina lenta, para o cenário não demorar demais).
 //! - **IntelliSense:** uma janela de consulta no banco `stress` do servidor
 //!   de demonstração ([`STRESS_TABLES`] tabelas) recebe [`INTELLISENSE_SCRIPT`]
 //!   uma tecla por frame, com a lista de sugestões aberta.
@@ -20,8 +21,8 @@ pub use pgstudio_object_explorer::fake::STRESS_TABLES;
 
 /// Linhas da consulta sintética do cenário da grade.
 pub const GRID_ROWS: u64 = 1_000_000;
-/// Frames da rolagem do começo ao fim da grade.
-pub const GRID_FRAMES: usize = 600;
+/// Duração da rolagem do começo ao fim da grade.
+pub const GRID_SCROLL_SECONDS: f64 = 10.0;
 /// Banco do servidor de demonstração com [`STRESS_TABLES`] tabelas.
 pub const INTELLISENSE_DATABASE: &str = "stress";
 /// Texto digitado no cenário do IntelliSense, uma tecla por frame. Cada
@@ -93,6 +94,8 @@ pub(crate) struct Run {
     pub next_key: Option<char>,
     /// Frames esperando o editor receber o foco antes de digitar.
     pub warmup: usize,
+    /// Quando a rolagem da grade começou.
+    pub scroll_start: Option<Instant>,
 }
 
 impl Run {
@@ -107,6 +110,7 @@ impl Run {
             popup_keys: 0,
             next_key: None,
             warmup: 0,
+            scroll_start: None,
         }
     }
 

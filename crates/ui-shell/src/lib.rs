@@ -566,17 +566,22 @@ impl ShellApp {
                         .and_then(|d| d.execution.as_mut())
                         .and_then(|e| e.results.first_mut());
                     let rows = set.as_ref().map_or(0, |s| s.len());
-                    if step == bench::GRID_FRAMES || set.is_none() {
-                        let line = run.result_line(&[("rows", rows as f64)]);
-                        bench_print(&line);
-                        run.phase = Phase::Done;
-                    } else if let Some(set) = set {
-                        let last = rows.saturating_sub(40) as f64;
-                        set.grid.top = last * step as f64 / (bench::GRID_FRAMES - 1) as f64;
-                        run.phase = Phase::Running {
-                            doc,
-                            step: step + 1,
-                        };
+                    let start = *run.scroll_start.get_or_insert_with(std::time::Instant::now);
+                    let done = start.elapsed().as_secs_f64() / bench::GRID_SCROLL_SECONDS;
+                    match set {
+                        Some(set) if step == 0 || done < 1.0 => {
+                            let last = rows.saturating_sub(40) as f64;
+                            set.grid.top = last * done.min(1.0);
+                            run.phase = Phase::Running {
+                                doc,
+                                step: step + 1,
+                            };
+                        }
+                        _ => {
+                            let line = run.result_line(&[("rows", rows as f64)]);
+                            bench_print(&line);
+                            run.phase = Phase::Done;
+                        }
                     }
                 }
                 Scenario::IntelliSense => {
