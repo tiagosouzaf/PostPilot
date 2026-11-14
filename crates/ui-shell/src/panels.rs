@@ -101,6 +101,9 @@ pub struct Viewer<'a> {
     pub editor_colors: pgstudio_sql_editor::Colors,
     /// Servidor e usuário, para a faixa de status das janelas de consulta.
     pub server: String,
+    /// Servidor de cada janela de consulta, para a faixa de status dela
+    /// (o ativo pode ser outro).
+    pub doc_servers: std::collections::HashMap<u32, String>,
     /// Catálogos do IntelliSense.
     pub catalogs: &'a crate::intellisense::Catalogs,
     /// Banco das janelas sem conexão própria.
@@ -258,13 +261,14 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 if self.focus_editor == Some(*id) {
                     doc.editor.focus_editor();
                 }
+                let server = self.doc_servers.get(id).unwrap_or(&self.server);
                 if let Some(exec) = &mut doc.execution {
                     let height = ui.available_height();
                     let action = egui::Panel::bottom(egui::Id::new(("results_pane", *id)))
                         .resizable(true)
                         .default_size(height * 0.45)
                         .min_size(90.0)
-                        .show(ui, |ui| crate::results::show(ui, *id, exec, &self.server))
+                        .show(ui, |ui| crate::results::show(ui, *id, exec, server))
                         .inner;
                     if let Some(i) = action.save_results {
                         self.save_results.push((*id, i));
@@ -278,6 +282,17 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     Some(s) => Some(s.0.database()),
                     None => doc.database.clone().or(self.default_database.clone()),
                 };
+                if doc.execution.is_none()
+                    && let Some(server) = self.doc_servers.get(id)
+                {
+                    // Antes de executar, a faixa já diz onde a janela roda.
+                    egui::Panel::bottom(egui::Id::new(("query_status", *id)))
+                        .resizable(false)
+                        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2)))
+                        .show(ui, |ui| {
+                            crate::results::connected_strip(ui, db.as_deref().unwrap_or(""), server)
+                        });
+                }
                 let catalog = db.and_then(|db| self.catalogs.get(&db));
                 let out = pgstudio_sql_editor::SqlEditor::new(
                     &mut doc.text,

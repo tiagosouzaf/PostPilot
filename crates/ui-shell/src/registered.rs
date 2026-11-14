@@ -280,6 +280,118 @@ impl RegisteredServers {
         removed
     }
 
+    /// Move um servidor ou um grupo (com tudo o que há dentro) para o grupo
+    /// `to`, no fim dele, como arrastar no SSMS. Devolve o caminho novo. A
+    /// raiz não se move, e um grupo não vai para dentro dele mesmo.
+    pub fn move_node(&mut self, from: &NodePath, to: &[usize]) -> Result<NodePath, String> {
+        self.group(to).ok_or("The target group no longer exists.")?;
+        if let Some(index) = from.server {
+            if from.groups == to {
+                return Ok(from.clone());
+            }
+            let server = self
+                .server(from)
+                .ok_or("The server no longer exists.")?
+                .clone();
+            let target = self.group(to).expect("checked above");
+            check_name(
+                &server.name,
+                target.servers.iter().map(|s| s.name.as_str()),
+                "server",
+            )?;
+            // Tirar um servidor não muda os índices dos grupos.
+            self.group_mut(&from.groups)
+                .expect("checked above")
+                .servers
+                .remove(index);
+            let g = self.group_mut(to).expect("checked above");
+            g.servers.push(server);
+            let path = NodePath::server(to, g.servers.len() - 1);
+            self.save_or_log();
+            return Ok(path);
+        }
+        let Some((&last, parent)) = from.groups.split_last() else {
+            return Err("The root group cannot be moved.".into());
+        };
+        if to.starts_with(&from.groups) {
+            return Err("A group cannot be moved into itself.".into());
+        }
+        if to == parent {
+            return Ok(from.clone());
+        }
+        let group = self
+            .group(&from.groups)
+            .ok_or("The group no longer exists.")?
+            .clone();
+        let target = self.group(to).expect("checked above");
+        check_name(
+            &group.name,
+            target.groups.iter().map(|g| g.name.as_str()),
+            "group",
+        )?;
+        // Tirar o grupo desloca os irmãos seguintes: o destino pode passar
+        // por um deles.
+        let mut to = to.to_vec();
+        if to.len() > parent.len() && to.starts_with(parent) && to[parent.len()] > last {
+            to[parent.len()] -= 1;
+        }
+        self.group_mut(parent)
+            .expect("checked above")
+            .groups
+            .remove(last);
+        let g = self.group_mut(&to).expect("same group, index adjusted");
+        g.groups.push(group);
+        to.push(g.groups.len() - 1);
+        self.save_or_log();
+        Ok(NodePath::group(&to))
+    }
+
+    /// Exporta o grupo `groups` (a raiz é `&[]`), com subgrupos e
+    /// servidores, para um arquivo no mesmo formato de
+    /// `registered_servers.json`. Senhas nunca vão para o arquivo: elas
+    /// ficam só no cofre do sistema.
+    pub fn export(&self, groups: &[usize], path: &Path) -> Result<(), String> {
+        let root = self
+            .group(groups)
+            .ok_or("The group no longer exists.")?
+            .clone();
+        let file = File {
+            version: VERSION,
+            root,
+        };
+        let text = serde_json::to_string_pretty(&file).expect("always serializable");
+        std::fs::write(path, text).map_err(|e| format!("Could not write {}: {e}", path.display()))
+    }
+
+    /// Importa um arquivo exportado para dentro do grupo `parent`. Um
+    /// arquivo da árvore inteira junta os grupos e servidores dele aos de
+    /// `parent`; o de um grupo entra como subgrupo. Grupos de mesmo nome
+    /// se juntam e um servidor de mesmo nome é substituído. Devolve
+    /// quantos servidores vieram.
+    pub fn import(&mut self, parent: &[usize], path: &Path) -> Result<usize, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        let file: File = serde_json::from_str(&text)
+            .map_err(|e| format!("{} is not a registered servers file: {e}", path.display()))?;
+        if file.version != VERSION {
+            return Err(format!(
+                "{} has an unsupported version ({}).",
+                path.display(),
+                file.version
+            ));
+        }
+        let target = self
+            .group_mut(parent)
+            .ok_or("The group no longer exists.")?;
+        let count = if file.root.name == ROOT_NAME || file.root.name.trim().is_empty() {
+            merge(target, file.root)
+        } else {
+            merge_group(target, file.root)
+        };
+        self.save_or_log();
+        Ok(count)
+    }
+
     fn save_or_log(&self) {
         if let Err(e) = self.save()
             && let Some(path) = &self.path
@@ -304,6 +416,55 @@ impl RegisteredServers {
         std::fs::write(&tmp, text)?;
         std::fs::rename(&tmp, path)
     }
+}
+
+/// Junta os subgrupos e servidores de `from` aos de `into`. Devolve
+/// quantos servidores vieram.
+fn merge(into: &mut ServerGroup, from: ServerGroup) -> usize {
+    let mut count = 0;
+    for group in from.groups {
+        count += merge_group(into, group);
+    }
+    for server in from.servers {
+        let server = clean(server);
+        if server.name.is_empty() {
+            continue;
+        }
+        match into
+            .servers
+            .iter_mut()
+            .find(|s| s.name.eq_ignore_ascii_case(&server.name))
+        {
+            Some(old) => *old = server,
+            None => into.servers.push(server),
+        }
+        count += 1;
+    }
+    count
+}
+
+/// Põe `group` dentro de `into`, juntando com um subgrupo de mesmo nome.
+fn merge_group(into: &mut ServerGroup, group: ServerGroup) -> usize {
+    let name = group.name.trim().to_string();
+    if name.is_empty() {
+        return merge(into, group);
+    }
+    let i = match into
+        .groups
+        .iter()
+        .position(|g| g.name.eq_ignore_ascii_case(&name))
+    {
+        Some(i) => i,
+        None => {
+            into.groups.push(ServerGroup {
+                name,
+                description: group.description.trim().to_string(),
+                ..Default::default()
+            });
+            into.groups.len() - 1
+        }
+    };
+    merge(&mut into.groups[i], group)
 }
 
 fn clean(server: RegisteredServer) -> RegisteredServer {
@@ -342,6 +503,10 @@ pub enum Action {
     ConnectExplorer(ConnectionSettings),
     /// Conectar e abrir uma janela de consulta (Connect > New Query).
     NewQuery(ConnectionSettings),
+    /// Tasks > Import... num grupo: escolher o arquivo e importar nele.
+    Import(Vec<usize>),
+    /// Tasks > Export... num grupo: escolher onde salvar o grupo.
+    Export(Vec<usize>),
 }
 
 /// Janela Registered Servers: a árvore, a seleção e os diálogos.
@@ -353,6 +518,8 @@ pub struct RegisteredPanel {
     server_dialog: Option<ServerDialog>,
     group_dialog: Option<GroupDialog>,
     confirm_delete: Option<NodePath>,
+    /// Mensagem para a status bar vinda da árvore (arrastar).
+    message: Option<String>,
     /// Conexão ativa, para preencher "New Server Registration".
     pub current: Option<ConnectionSettings>,
 }
@@ -372,6 +539,7 @@ impl RegisteredPanel {
             server_dialog: None,
             group_dialog: None,
             confirm_delete: None,
+            message: None,
             current: None,
         }
     }
@@ -421,6 +589,51 @@ impl RegisteredPanel {
             settings,
         };
         self.server_dialog = Some(ServerDialog::new(parent.to_vec(), None, &server, store));
+    }
+
+    /// "Register..." no servidor do Object Explorer: "New Server
+    /// Registration" em "Local Server Groups", preenchido com a conexão
+    /// dele.
+    pub fn register(
+        &mut self,
+        settings: &ConnectionSettings,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) {
+        let server = RegisteredServer {
+            name: String::new(),
+            description: String::new(),
+            settings: settings.clone(),
+        };
+        self.server_dialog = Some(ServerDialog::new(Vec::new(), None, &server, store));
+    }
+
+    /// Move um nó para o grupo `to` (o que arrastar faz), selecionando-o
+    /// no lugar novo. Devolve a mensagem para a status bar.
+    pub fn move_node(&mut self, from: &NodePath, to: &[usize]) -> String {
+        let name = match from.server {
+            Some(_) => self.servers.server(from).map(|s| s.name.clone()),
+            None => self.servers.group(&from.groups).map(|g| g.name.clone()),
+        }
+        .unwrap_or_default();
+        match self.servers.move_node(from, to) {
+            Ok(path) if &path == from => String::new(),
+            Ok(path) => {
+                // Grupos recolhidos guardam caminhos: depois de mover um
+                // grupo eles podem apontar para outro lugar.
+                if from.server.is_none() {
+                    self.collapsed.clear();
+                }
+                self.collapsed.remove(to);
+                self.selected = Some(path);
+                let group = self
+                    .servers
+                    .group(to)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                format!("Moved \"{name}\" to \"{group}\".")
+            }
+            Err(e) => e,
+        }
     }
 
     /// "Properties" de um servidor registrado.
@@ -476,6 +689,12 @@ impl RegisteredPanel {
             Some(Menu::Edit(path)) if path.server.is_some() => self.edit_server(&path, store),
             Some(Menu::Edit(path)) => self.edit_group(&path.groups),
             Some(Menu::Delete(path)) => self.confirm_delete = Some(path),
+            Some(Menu::Move(from, to)) => {
+                let message = self.move_node(&from, &to);
+                if !message.is_empty() {
+                    self.message = Some(message);
+                }
+            }
             None => {}
         }
         actions
@@ -514,13 +733,23 @@ impl RegisteredPanel {
             } else {
                 icon::FOLDER
             };
+            let sense = if is_root {
+                egui::Sense::click()
+            } else {
+                egui::Sense::click_and_drag()
+            };
             let label = ui.add(
                 egui::Button::selectable(
                     self.selected.as_ref() == Some(&here),
                     format!("{folder} {name}"),
                 )
-                .frame_when_inactive(false),
+                .frame_when_inactive(false)
+                .sense(sense),
             );
+            if !is_root {
+                label.dnd_set_drag_payload(here.clone());
+            }
+            drop_target(ui, &label, &here, groups, menu);
             let label = if description.is_empty() {
                 label
             } else {
@@ -542,6 +771,17 @@ impl RegisteredPanel {
                     *menu = Some(Menu::NewServer(groups.to_vec()));
                     ui.close();
                 }
+                ui.separator();
+                ui.menu_button("Tasks", |ui| {
+                    if ui.button("Import...").clicked() {
+                        actions.push(Action::Import(groups.to_vec()));
+                        ui.close();
+                    }
+                    if ui.button("Export...").clicked() {
+                        actions.push(Action::Export(groups.to_vec()));
+                        ui.close();
+                    }
+                });
                 if !is_root {
                     ui.separator();
                     if ui.button("Delete").clicked() {
@@ -580,8 +820,12 @@ impl RegisteredPanel {
                         self.selected.as_ref() == Some(&path),
                         format!("{} {}", icon::DESKTOP_TOWER, server.name),
                     )
-                    .frame_when_inactive(false),
+                    .frame_when_inactive(false)
+                    .sense(egui::Sense::click_and_drag()),
                 );
+                label.dnd_set_drag_payload(path.clone());
+                // Soltar em cima de um servidor põe no grupo dele.
+                drop_target(ui, &label, &path, groups, menu);
                 let tip = if server.description.is_empty() {
                     format!(
                         "{} ({})",
@@ -633,7 +877,7 @@ impl RegisteredPanel {
     /// Desenha os diálogos abertos. Devolve uma mensagem para a status bar
     /// quando algo mudou.
     pub fn show_windows(&mut self, ctx: &egui::Context) -> Option<String> {
-        let mut status = None;
+        let mut status = self.message.take();
         if let Some(dialog) = &mut self.server_dialog {
             match dialog.show(ctx) {
                 Reply::None => {}
@@ -743,6 +987,37 @@ enum Menu {
     NewGroup(Vec<usize>),
     Edit(NodePath),
     Delete(NodePath),
+    /// Arrastou o nó para o grupo.
+    Move(NodePath, Vec<usize>),
+}
+
+/// Uma linha que aceita um nó arrastado: realça enquanto ele está em cima
+/// e, ao soltar, pede para movê-lo para o grupo `group`.
+fn drop_target(
+    ui: &egui::Ui,
+    label: &egui::Response,
+    row: &NodePath,
+    group: &[usize],
+    menu: &mut Option<Menu>,
+) {
+    let Some(dragged) = label.dnd_hover_payload::<NodePath>() else {
+        return;
+    };
+    if *dragged == *row {
+        // Ainda em cima de onde saiu.
+        return;
+    }
+    let allowed = dragged.server.is_some() || !group.starts_with(&dragged.groups);
+    let stroke = if allowed {
+        ui.visuals().selection.stroke
+    } else {
+        egui::Stroke::new(1.0, ui.visuals().error_fg_color)
+    };
+    ui.painter()
+        .rect_stroke(label.rect, 2.0, stroke, egui::StrokeKind::Inside);
+    if allowed && let Some(dragged) = label.dnd_release_payload::<NodePath>() {
+        *menu = Some(Menu::Move((*dragged).clone(), group.to_vec()));
+    }
 }
 
 enum Reply {
@@ -1120,6 +1395,103 @@ mod tests {
         assert!(r.remove(&NodePath::group(&prod)));
         assert_eq!(r.all_servers().len(), 1);
         assert!(!r.remove(&NodePath::group(&[])));
+    }
+
+    fn group(name: &str) -> ServerGroup {
+        ServerGroup {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn moving_servers_and_groups_between_groups() {
+        let mut r = RegisteredServers::default();
+        let prod = r.add_group(&[], group("Production")).unwrap();
+        let dev = r.add_group(&[], group("Dev")).unwrap();
+        let eu = r.add_group(&prod, group("EU")).unwrap();
+        let a = r.add_server(&prod, server("a", "a")).unwrap();
+        r.add_server(&dev, server("b", "b")).unwrap();
+
+        // Servidor para outro grupo.
+        let moved = r.move_node(&a, &dev).unwrap();
+        assert_eq!(moved, NodePath::server(&dev, 1));
+        assert!(r.group(&prod).unwrap().servers.is_empty());
+        // Nome repetido no destino é recusado e nada muda.
+        r.add_server(&prod, server("b", "other")).unwrap();
+        assert!(r.move_node(&NodePath::server(&prod, 0), &dev).is_err());
+        assert_eq!(r.group(&prod).unwrap().servers.len(), 1);
+
+        // Grupo não entra nele mesmo nem num filho; a raiz não se move.
+        assert!(r.move_node(&NodePath::group(&prod), &prod).is_err());
+        assert!(r.move_node(&NodePath::group(&prod), &eu).is_err());
+        assert!(r.move_node(&NodePath::group(&[]), &dev).is_err());
+
+        // "Production" (índice 0) para dentro de "Dev" (índice 1): o
+        // caminho de "Dev" muda ao tirar "Production".
+        let moved = r.move_node(&NodePath::group(&prod), &dev).unwrap();
+        assert_eq!(moved, NodePath::group(&[0, 0]));
+        assert_eq!(r.root().groups.len(), 1);
+        assert_eq!(r.group(&[0]).unwrap().name, "Dev");
+        assert_eq!(r.group(&[0, 0]).unwrap().name, "Production");
+        assert_eq!(r.group(&[0, 0, 0]).unwrap().name, "EU");
+        // E de volta para a raiz.
+        let back = r.move_node(&moved, &[]).unwrap();
+        assert_eq!(back, NodePath::group(&[1]));
+        assert_eq!(r.group(&[1]).unwrap().servers[0].name, "b");
+    }
+
+    #[test]
+    fn export_and_import_round_trip_without_passwords() {
+        let dir = std::env::temp_dir().join(format!("pgstudio-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut r = RegisteredServers::default();
+        let prod = r.add_group(&[], group("Production")).unwrap();
+        let eu = r.add_group(&prod, group("EU")).unwrap();
+        r.add_server(&eu, server("eu-db", "eu.example.com"))
+            .unwrap();
+        r.add_server(&prod, server("main", "main.example.com"))
+            .unwrap();
+        r.add_server(&[], server("local", "localhost")).unwrap();
+
+        // A árvore inteira: importar numa árvore vazia devolve a mesma.
+        let all = dir.join("all.json");
+        r.export(&[], &all).unwrap();
+        let text = std::fs::read_to_string(&all).unwrap();
+        assert!(!text.to_lowercase().contains("password"), "{text}");
+        let mut other = RegisteredServers::default();
+        assert_eq!(other.import(&[], &all).unwrap(), 3);
+        assert_eq!(other.root(), r.root());
+        // De novo: junta os grupos e substitui os servidores, sem duplicar.
+        assert_eq!(other.import(&[], &all).unwrap(), 3);
+        assert_eq!(other.root(), r.root());
+
+        // Um grupo só entra como subgrupo do grupo escolhido.
+        let one = dir.join("prod.json");
+        r.export(&prod, &one).unwrap();
+        let mut other = RegisteredServers::default();
+        let dev = other.add_group(&[], group("Dev")).unwrap();
+        assert_eq!(other.import(&dev, &one).unwrap(), 2);
+        assert_eq!(other.group(&[0, 0]).unwrap(), r.group(&prod).unwrap());
+
+        // Uma senha num arquivo editado à mão é ignorada.
+        let hand = dir.join("hand.json");
+        std::fs::write(
+            &hand,
+            r#"{"version":1,"root":{"name":"Local Server Groups","servers":[
+                {"name":"x","password":"pw","settings":{"host":"x","port":5432,
+                 "database":"postgres","user":"u","password":"pw"}}]}}"#,
+        )
+        .unwrap();
+        let mut other = RegisteredServers::default();
+        assert_eq!(other.import(&[], &hand).unwrap(), 1);
+        let dump = serde_json::to_string(other.root()).unwrap();
+        assert!(!dump.contains("pw"), "{dump}");
+
+        std::fs::write(&hand, "not json").unwrap();
+        assert!(other.import(&[], &hand).is_err());
+        assert!(other.import(&[], &dir.join("missing.json")).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

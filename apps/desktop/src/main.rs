@@ -249,6 +249,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                     "newtable" => Event::NewTable,
                     "diagram" => Event::NewDiagram,
                     "activity" => Event::ActivityMonitor,
+                    "register" => Event::Register,
                     "properties" => Event::Properties,
                     "backup" => Event::BackUp,
                     "restore" => Event::Restore,

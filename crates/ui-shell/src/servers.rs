@@ -265,6 +265,72 @@ impl ShellApp {
         self.new_query_on_connect = new_query.then_some(key);
     }
 
+    /// "Register..." no servidor do Object Explorer: abre a janela
+    /// Registered Servers com "New Server Registration" preenchido com a
+    /// conexão do servidor ativo (a árvore que recebeu o clique).
+    pub fn register_active_server(&mut self) {
+        let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
+            self.status = "Only a real connection can be registered.".to_string();
+            return;
+        };
+        self.workspace.open(Panel::RegisteredServers);
+        self.registered.register(&settings, self.secrets.as_ref());
+    }
+
+    /// Tasks > Import... num grupo do Registered Servers.
+    fn import_registered(&mut self, group: &[usize]) {
+        let Some(path) = self.dialogs.open_path() else {
+            return;
+        };
+        self.status = match self.registered.servers_mut().import(group, &path) {
+            Ok(1) => "Imported 1 registered server.".to_string(),
+            Ok(n) => format!("Imported {n} registered servers."),
+            Err(e) => e,
+        };
+    }
+
+    /// Tasks > Export... num grupo do Registered Servers (sem senhas).
+    fn export_registered(&mut self, group: &[usize]) {
+        let Some(path) = self.dialogs.save_path("RegisteredServers.json", None) else {
+            return;
+        };
+        self.status = match self.registered.servers().export(group, &path) {
+            Ok(()) => format!(
+                "Exported registered servers to {} (passwords are not exported).",
+                path.display()
+            ),
+            Err(e) => e,
+        };
+    }
+
+    /// Servidor de cada janela de consulta, como "servidor (usuário)",
+    /// para a faixa de status dela. Uma janela cujo servidor já foi
+    /// desconectado mostra a chave dele.
+    pub fn document_servers(&self) -> std::collections::HashMap<u32, String> {
+        let mut labels = std::collections::HashMap::new();
+        let connections = self.connection.iter().chain(
+            self.servers
+                .parked
+                .iter()
+                .filter_map(|p| p.connection.as_ref()),
+        );
+        for c in connections {
+            labels.insert(
+                server_key(&c.settings),
+                format!("{} ({})", c.settings.server_name(), c.settings.user),
+            );
+        }
+        self.doc_servers
+            .iter()
+            .map(|(doc, key)| {
+                (
+                    *doc,
+                    labels.get(key).cloned().unwrap_or_else(|| key.clone()),
+                )
+            })
+            .collect()
+    }
+
     /// Conecta este servidor quando as conexões em andamento terminarem,
     /// como um duplo clique no Registered Servers (linha de comando e
     /// screenshots).
@@ -397,6 +463,8 @@ impl ShellApp {
             match action {
                 Action::ConnectExplorer(s) => self.connect_registered(&s, false),
                 Action::NewQuery(s) => self.connect_registered(&s, true),
+                Action::Import(group) => self.import_registered(&group),
+                Action::Export(group) => self.export_registered(&group),
             }
         }
         if let Some(status) = self.registered.show_windows(ctx) {
