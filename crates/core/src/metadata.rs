@@ -187,6 +187,14 @@ pub trait MetadataProvider: Send + Sync {
         None
     }
 
+    /// O que a janela de propriedades de segurança abre a partir do nó:
+    /// uma role (ou a pasta Roles, para uma nova) ou um objeto com
+    /// permissões. None quando o nó não tem.
+    fn securable(&self, node: &NodeId) -> Option<Securable> {
+        let _ = node;
+        None
+    }
+
     /// As tabelas de um banco como modelo editável (Fase 3).
     fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
         let _ = database;
@@ -223,6 +231,45 @@ pub struct DesignTarget {
     pub schema: String,
     /// Id da tabela no [`Model`] (o oid), ou None para uma tabela nova.
     pub table: Option<u64>,
+}
+
+/// Alvo das propriedades de segurança (roles e permissões).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Securable {
+    /// Uma role existente, pelo oid.
+    Role(u32),
+    /// A pasta Roles: "New Role...".
+    NewRole,
+    Database(String),
+    /// Schema, pelo banco e nome.
+    Schema {
+        database: String,
+        name: String,
+    },
+    /// Tabela ou view, pelo oid.
+    Relation {
+        database: String,
+        oid: u32,
+    },
+    /// Função ou procedure, pelo oid.
+    Function {
+        database: String,
+        oid: u32,
+    },
+}
+
+impl Securable {
+    /// Banco onde as permissões são lidas e alteradas (as roles são do
+    /// servidor: None).
+    pub fn database(&self) -> Option<&str> {
+        match self {
+            Securable::Role(_) | Securable::NewRole => None,
+            Securable::Database(db) => Some(db),
+            Securable::Schema { database, .. }
+            | Securable::Relation { database, .. }
+            | Securable::Function { database, .. } => Some(database),
+        }
+    }
 }
 
 /// Tipos sugeridos em qualquer banco, como `format_type` os escreve.

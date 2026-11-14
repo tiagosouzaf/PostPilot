@@ -53,6 +53,27 @@ impl QuerySession for FakeSession {
                 sink(QueryEvent::Finished { canceled: true });
                 return;
             }
+            if sql.contains("aclexplode") {
+                // Permissões de uma tabela: app tem SELECT.
+                let results: [Vec<Vec<&str>>; 3] = [
+                    vec![vec!["public.table_00003", "postgres", "r"]],
+                    vec![vec!["app", "SELECT", "f"]],
+                    vec![vec!["app"], vec!["leitor"], vec!["postgres"]],
+                ];
+                for rows in results {
+                    sink(QueryEvent::Columns(vec!["c".into()]));
+                    for r in &rows {
+                        sink(QueryEvent::Row(
+                            r.iter().map(|v| Some(v.to_string())).collect(),
+                        ));
+                    }
+                    sink(QueryEvent::CommandComplete {
+                        rows: rows.len() as u64,
+                    });
+                }
+                sink(QueryEvent::Finished { canceled: false });
+                return;
+            }
             if sql.contains("notice") {
                 sink(QueryEvent::Notice(ServerMessage {
                     severity: "NOTICE".into(),
@@ -851,4 +872,93 @@ fn alt_f1_without_a_name_only_warns() {
             .status()
             .starts_with("Select an object name")
     );
+}
+
+fn table_permissions(harness: &mut Harness<'static, ShellApp>) {
+    harness
+        .get_by_label_contains("public.table_00003")
+        .click_secondary();
+    harness.run();
+    // A aba do painel Properties tem o mesmo nome: o item do menu é o
+    // botão.
+    harness
+        .query_all_by_label("Properties")
+        .next()
+        .unwrap()
+        .click();
+    harness.step();
+    let start = Instant::now();
+    while harness
+        .state()
+        .security_dialog()
+        .is_none_or(|d| d.is_loading())
+    {
+        harness.step();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{} {:?}",
+            harness.state().status(),
+            harness.state().security_dialog().map(|d| d.error())
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run_steps(3);
+    harness.get_by_label("Table Properties - public.table_00003");
+    harness.get_by_label("Permissions for app");
+}
+
+#[test]
+fn table_permissions_are_scripted_before_they_are_applied() {
+    let (mut harness, log) = harness_with_tables();
+    table_permissions(&mut harness);
+    harness.get_by_label("Grant INSERT").click();
+    harness.get_by_label("With Grant SELECT").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Script").click();
+    let id = wait_document(&mut harness);
+    harness.run_steps(2);
+    let doc = harness.state().documents().get(id).unwrap();
+    assert_eq!(
+        doc.text,
+        "GRANT INSERT ON TABLE public.table_00003 TO app;\n\
+         GRANT SELECT ON TABLE public.table_00003 TO app WITH GRANT OPTION;\n"
+    );
+    assert_eq!(doc.database.as_deref(), Some("app_01"));
+    // O Script não aplica nada; o OK aplica numa transação.
+    assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("BEGIN")));
+    harness.get_by_label("OK").click();
+    let start = Instant::now();
+    while harness.state().security_dialog().is_some() {
+        harness.step();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run_steps(2);
+    assert!(
+        log.lock().unwrap().contains(
+            &"BEGIN;\nGRANT INSERT ON TABLE public.table_00003 TO app;\n\
+          GRANT SELECT ON TABLE public.table_00003 TO app WITH GRANT OPTION;\nCOMMIT"
+                .to_string()
+        )
+    );
+    assert!(
+        harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l == "  GRANT INSERT ON TABLE public.table_00003 TO app;")
+    );
+}
+
+#[test]
+fn permissions_without_changes_have_nothing_to_script() {
+    let (mut harness, log) = harness_with_tables();
+    table_permissions(&mut harness);
+    harness.get_by_label_contains("Script").click();
+    harness.run_steps(2);
+    harness.get_by_label("There are no changes to script.");
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(2);
+    assert!(harness.state().security_dialog().is_none());
+    assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("BEGIN")));
 }

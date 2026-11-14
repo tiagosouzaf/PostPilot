@@ -45,6 +45,25 @@ fn object(id: &NodeId) -> Option<Object> {
     })
 }
 
+/// Alvo de segurança de um nó: roles, a pasta Roles e objetos com
+/// permissões (banco, schema, tabela, view e função).
+pub(crate) fn securable(id: &NodeId) -> Option<pgstudio_core::metadata::Securable> {
+    use pgstudio_core::metadata::Securable;
+    if Path::parse(id) == Path::Roles {
+        return Some(Securable::NewRole);
+    }
+    if let Some(oid) = id.0.strip_prefix("role/") {
+        return oid.parse().ok().map(Securable::Role);
+    }
+    Some(match object(id)? {
+        Object::Database(db) => Securable::Database(db),
+        Object::Schema(database, name) => Securable::Schema { database, name },
+        Object::Relation(database, oid) => Securable::Relation { database, oid },
+        Object::Function(database, oid) => Securable::Function { database, oid },
+        _ => return None,
+    })
+}
+
 /// Banco de um nó, pelo caminho.
 pub(crate) fn database_of(id: &NodeId) -> Option<String> {
     match Path::parse(id) {
@@ -393,5 +412,43 @@ mod tests {
             Some("loja")
         );
         assert_eq!(database_of(&id("server/Security/Roles")), None);
+    }
+
+    #[test]
+    fn securables_come_from_the_node_paths() {
+        use pgstudio_core::metadata::Securable;
+        let id = |s: &str| NodeId(s.into());
+        assert_eq!(
+            securable(&id("server/Security/Roles")),
+            Some(Securable::NewRole)
+        );
+        assert_eq!(securable(&id("role/10")), Some(Securable::Role(10)));
+        assert_eq!(
+            securable(&id("db/loja")),
+            Some(Securable::Database("loja".into()))
+        );
+        assert_eq!(
+            securable(&id("db/loja/s/public")),
+            Some(Securable::Schema {
+                database: "loja".into(),
+                name: "public".into()
+            })
+        );
+        assert_eq!(
+            securable(&id("db/loja/t/42")),
+            Some(Securable::Relation {
+                database: "loja".into(),
+                oid: 42
+            })
+        );
+        assert_eq!(
+            securable(&id("db/loja/fn/7")),
+            Some(Securable::Function {
+                database: "loja".into(),
+                oid: 7
+            })
+        );
+        assert_eq!(securable(&id("db/loja/idx/7")), None);
+        assert_eq!(securable(&id("server")), None);
     }
 }

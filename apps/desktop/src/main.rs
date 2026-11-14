@@ -22,7 +22,7 @@
 //! - `PGSTUDIO_LIST_MEMBERS=1`: põe o cursor no fim da janela de consulta
 //!   ativa e abre o IntelliSense assim que o catálogo chegar (para
 //!   screenshots).
-//! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign|plan|actualplan|info|activity`:
+//! - `PGSTUDIO_ACTION=select|edit|create|drop|design|newtable|diagram|querydesign|plan|actualplan|info|activity|properties`:
 //!   depois de
 //!   `PGSTUDIO_EXPAND`, faz no nó selecionado (o último expandido) "Select
 //!   Top 1000 Rows", "Edit Top 200 Rows", "Script as CREATE/DROP", "Design"
@@ -33,7 +33,8 @@
 //!   uma janela de consulta no banco com o texto de `PGSTUDIO_QUERY` e pede
 //!   o plano estimado (Ctrl+L); `actualplan` faz o mesmo com o plano real
 //!   (Ctrl+M e F5) e `info` com o Alt+F1 no começo do texto. `activity`
-//!   abre o Activity Monitor.
+//!   abre o Activity Monitor e `properties`, as propriedades de segurança
+//!   (Permissions ou Role Properties).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
 //!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
@@ -153,6 +154,7 @@ fn main() -> eframe::Result {
                     "newtable" => Event::NewTable,
                     "diagram" => Event::NewDiagram,
                     "activity" => Event::ActivityMonitor,
+                    "properties" => Event::Properties,
                     "querydesign" | "plan" | "actualplan" | "info" => Event::NewQuery,
                     _ => |n| Event::Script(n, ScriptAction::Drop),
                 };

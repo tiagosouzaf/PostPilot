@@ -34,7 +34,7 @@ use pgstudio_core::catalog::{self, Catalog, Column, RelationKind, Schema};
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_core::metadata::{
     DesignTarget, Folder, MetadataError, MetadataProvider, Model, NodeId, NodeKind, ObjectNode,
-    ScriptAction,
+    ScriptAction, Securable,
 };
 use pgstudio_pg_client::{DbRuntime, PgQueryService, Session, describe};
 use tokio_postgres::Row;
@@ -567,6 +567,10 @@ impl MetadataProvider for CatalogExplorer {
             }),
             _ => None,
         }
+    }
+
+    fn securable(&self, node: &NodeId) -> Option<Securable> {
+        script::securable(node)
     }
 
     fn load_model(&self, database: &str) -> Result<Model, MetadataError> {
