@@ -61,6 +61,8 @@ pub const BENCH_FIRST_FRAME: &str = "pgstudio-bench: first-frame";
 pub struct ShellApp {
     theme: Theme,
     about_open: bool,
+    /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
+    renderer: Option<String>,
     keymap: Keymap,
     chords: ChordMatcher,
     status: String,
@@ -226,6 +228,7 @@ impl Default for ShellApp {
         Self {
             theme: Theme::default(),
             about_open: false,
+            renderer: None,
             keymap: Keymap::ssms(),
             chords: ChordMatcher::default(),
             status: READY.to_string(),
@@ -574,6 +577,12 @@ impl ShellApp {
     /// documentos.
     pub fn confirm_pending(&self) -> Option<&[u32]> {
         self.confirm.as_ref().map(|c| c.save.as_slice())
+    }
+
+    /// Descreve o renderizador gráfico em uso no "About".
+    pub fn with_renderer(mut self, renderer: impl Into<String>) -> Self {
+        self.renderer = Some(renderer.into());
+        self
     }
 
     /// Mostra uma mensagem inicial na status bar no lugar de "Ready".
@@ -2338,6 +2347,9 @@ impl ShellApp {
                 .show(&ctx, |ui| {
                     ui.heading(APP_NAME);
                     ui.label(format!("Version {VERSION}"));
+                    if let Some(renderer) = &self.renderer {
+                        ui.label(format!("Renderer: {renderer}"));
+                    }
                     ui.label("PostgreSQL management studio.");
                     ui.label("Licensed under MIT or Apache-2.0.");
                 });

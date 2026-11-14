@@ -55,10 +55,41 @@ binário carrega, mas o renderizador por software do Mesa daquela versão é
 antigo demais para o wgpu (numa GPU de verdade deve abrir, mas não foi
 testado).
 
+### Renderizador e Wayland
+
+O PGStudio desenha a janela com o **wgpu** (Vulkan no Linux, Direct3D 12 no
+Windows) e traz o **glow** (OpenGL) como alternativa. Para escolher:
+
+```sh
+pgstudio --renderer glow            # ou --renderer=glow
+PGSTUDIO_RENDERER=glow pgstudio     # o mesmo, por variável de ambiente
+```
+
+A opção da linha de comando vence a variável. Sem nenhuma das duas, o app
+tenta o wgpu e, se ele não abrir (sem driver Vulkan nem GL que sirva), reabre
+sozinho com o glow e avisa no terminal. Help > About mostra o renderizador em
+uso (no wgpu, também o backend e a placa). Para deixar o glow fixo no
+Hyprland, ponha `env = PGSTUDIO_RENDERER,glow` no `hyprland.conf`.
+
+No Wayland o app abre nativo, sem XWayland, com o `app_id` `pgstudio` (o mesmo
+do `.desktop`, para o ícone e para as regras de janela do compositor, que
+veem `pgstudio` como class). A escala fracionária ou inteira do
+monitor vem do compositor. O copiar e colar usa a área de transferência do
+Wayland (a mesma do `wl-copy`/`wl-paste`). Os diálogos de abrir e salvar
+arquivo passam pelo xdg-desktop-portal, que precisa de um backend com seletor
+de arquivos: o portal do Hyprland e o do sway (`-wlr`) não têm, então instale
+também o `xdg-desktop-portal-gtk` (`pacman -Q xdg-desktop-portal-gtk` diz se
+já está instalado). Sem ele, File > Open não abre nada.
+
+Testado num sway sem tela (headless, sem X), com escala 2, nos dois
+renderizadores (Mesa por software): abrir, conectar, copiar do editor para o
+`wl-paste`, colar do `wl-copy` no editor e abrir um arquivo pelo diálogo do
+portal (GTK). Não foi testado no Hyprland nem com GPU de verdade.
+
 ## Uso
 
 ```sh
-pgstudio [arquivo.sql ...]
+pgstudio [--renderer wgpu|glow] [arquivo.sql ...]
 ```
 
 Ao abrir, o PGStudio mostra o "Connect to Server", como o SSMS: Server name
