@@ -9,6 +9,8 @@ use std::sync::Arc;
 use eframe::egui;
 use egui_phosphor::regular as icon;
 
+use super::git::{Done, Git, GitError, Job};
+use super::source_control::SourceControl;
 use super::{Folder, Workspace};
 use crate::registered::{self, RegisteredPanel};
 use crate::secrets::SecretStore;
@@ -35,6 +37,13 @@ struct Opened {
     /// Pastas recolhidas (as demais aparecem abertas).
     collapsed: HashSet<PathBuf>,
     selected: Option<PathBuf>,
+    git: SourceControl,
+}
+
+/// "Clone Workspace" esperando a URL.
+struct CloneDialog {
+    url: String,
+    error: Option<String>,
 }
 
 /// "New Folder" esperando o nome.
@@ -50,6 +59,10 @@ pub struct WorkspacePanel {
     opened: Option<Opened>,
     new_folder: Option<NewFolder>,
     message: Option<String>,
+    clone: Option<CloneDialog>,
+    clone_job: Option<Job>,
+    /// URL confirmada no "Clone Workspace", esperando a pasta.
+    pending_clone: Option<String>,
 }
 
 impl WorkspacePanel {
@@ -57,12 +70,14 @@ impl WorkspacePanel {
     pub fn open(&mut self, workspace: Workspace) {
         let servers = RegisteredPanel::new(workspace.servers());
         let queries = workspace.queries();
+        let git = SourceControl::new(workspace.root());
         self.opened = Some(Opened {
             workspace,
             servers,
             queries,
             collapsed: HashSet::new(),
             selected: None,
+            git,
         });
         self.new_folder = None;
     }
@@ -94,15 +109,77 @@ impl WorkspacePanel {
     }
 
     /// Lê de novo as consultas e os servidores do disco (depois de salvar,
-    /// de um pull do git ou de mudanças fora do PGStudio).
+    /// de um pull do git ou de mudanças fora do PostPilot).
     pub fn refresh(&mut self) {
         if let Some(o) = &mut self.opened {
+            o.git.refresh();
             o.queries = o.workspace.queries();
             if !o.servers.has_dialog() {
                 let current = o.servers.current.take();
                 o.servers = RegisteredPanel::new(o.workspace.servers());
                 o.servers.current = current;
             }
+        }
+    }
+
+    /// O git do workspace.
+    pub fn source_control(&self) -> Option<&SourceControl> {
+        self.opened.as_ref().map(|o| &o.git)
+    }
+
+    /// O git do workspace, mutável.
+    pub fn source_control_mut(&mut self) -> Option<&mut SourceControl> {
+        self.opened.as_mut().map(|o| &mut o.git)
+    }
+
+    /// Abre "Clone Workspace".
+    pub fn open_clone(&mut self) {
+        self.clone = Some(CloneDialog {
+            url: String::new(),
+            error: None,
+        });
+    }
+
+    /// Clona `url` em `dest` numa thread separada; o fim chega por
+    /// [`Self::take_cloned`].
+    pub fn start_clone(&mut self, url: &str, dest: &Path) {
+        if self.clone_job.is_some() {
+            self.message = Some("Wait for the current clone.".into());
+            return;
+        }
+        let (url, dest) = (url.to_string(), dest.to_path_buf());
+        self.clone_job = Some(Job::spawn("Cloning...", move || {
+            Done::Cloned(Git::clone(&url, &dest).map(|g| g.root().to_path_buf()))
+        }));
+    }
+
+    /// URL confirmada no "Clone Workspace" (a casca pede a pasta).
+    pub fn take_clone_request(&mut self) -> Option<String> {
+        self.pending_clone.take()
+    }
+
+    /// Se um clone está rodando.
+    pub fn is_cloning(&self) -> bool {
+        self.clone_job.is_some()
+    }
+
+    /// O clone que terminou, se algum.
+    pub fn take_cloned(&mut self) -> Option<Result<PathBuf, GitError>> {
+        let done = self.clone_job.as_ref()?.poll()?;
+        self.clone_job = None;
+        match done {
+            Done::Cloned(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Espera o clone (testes).
+    pub fn wait_clone(&mut self) -> Option<Result<PathBuf, GitError>> {
+        let job = self.clone_job.take()?;
+        match job.wait() {
+            Done::Cloned(r) => Some(r),
+            Done::Status(Err(e)) => Some(Err(e)),
+            _ => None,
         }
     }
 
@@ -171,6 +248,18 @@ impl WorkspacePanel {
             {
                 actions.push(Action::Open);
             }
+            if ui
+                .button(format!("{} Clone Workspace...", icon::GIT_BRANCH))
+                .clicked()
+            {
+                self.open_clone();
+            }
+            if let Some(job) = &self.clone_job {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.weak(job.label);
+                });
+            }
             return actions;
         };
         let mut refresh = false;
@@ -187,6 +276,7 @@ impl WorkspacePanel {
                 }
             });
         });
+        o.git.show(ui);
         ui.separator();
 
         // Servidores em cima, num retângulo próprio: a árvore do Registered
@@ -240,6 +330,62 @@ impl WorkspacePanel {
             && let Some(s) = o.servers.show_windows(ctx)
         {
             status = Some(s);
+        }
+        if let Some(o) = &mut self.opened {
+            if let Some(s) = o.git.show_windows(ctx) {
+                status = Some(s);
+            }
+            if o.git.take_files_changed() {
+                o.queries = o.workspace.queries();
+                if !o.servers.has_dialog() {
+                    let current = o.servers.current.take();
+                    o.servers = RegisteredPanel::new(o.workspace.servers());
+                    o.servers.current = current;
+                }
+            }
+        }
+        if self.clone_job.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        let mut clone_ok = None;
+        let mut clone_cancel = false;
+        if let Some(dialog) = &mut self.clone {
+            egui::Modal::new(egui::Id::new("workspace_clone")).show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.heading("Clone Workspace");
+                ui.label("Repository URL, for example git@github.com:you/sql.git:");
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut dialog.url).desired_width(f32::INFINITY),
+                );
+                if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    clone_ok = Some(dialog.url.clone());
+                }
+                ui.weak("Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper.");
+                if let Some(e) = &dialog.error {
+                    ui.colored_label(ui.visuals().error_fg_color, e);
+                }
+                ui.add_space(6.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        clone_cancel = true;
+                    }
+                    if ui.button("Clone").clicked() {
+                        clone_ok = Some(dialog.url.clone());
+                    }
+                });
+            });
+        }
+        if clone_cancel {
+            self.clone = None;
+        } else if let Some(url) = clone_ok
+            && let Some(dialog) = &mut self.clone
+        {
+            if url.trim().is_empty() {
+                dialog.error = Some("Enter the repository URL.".into());
+            } else {
+                self.clone = None;
+                self.pending_clone = Some(url.trim().to_string());
+            }
         }
         let mut ok = None;
         let mut cancel = false;
