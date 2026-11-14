@@ -42,6 +42,13 @@ const PLAN_NODES: f64 = 2000.0;
 /// Sessões do cenário `activity`. Igual a
 /// `pgstudio_ui_shell::bench::ACTIVITY_SESSIONS`.
 const ACTIVITY_SESSIONS: f64 = 5000.0;
+/// Linhas do Edit Top 200 Rows sintético.
+const EDIT_ROWS: f64 = 200.0;
+/// `pgstudio_ui_shell::bench::EXPORT_ROWS`.
+const EXPORT_ROWS: f64 = 1_000_000.0;
+/// Results to File não guarda as linhas: no fim, a RAM fica perto da de
+/// repouso (folga para a janela de consulta e o buffer do arquivo).
+const EXPORT_RAM_TARGET_MB: f64 = 32.0;
 
 const USAGE: &str = "\
 Uso: cargo xtask bench [opções]
@@ -70,10 +77,17 @@ Mede o pgstudio (release) em oito cenários e compara com as metas:
   activity      Activity Monitor com 5.000 sessões e 10.000 locks,
                 atualizado a cada segundo por 10 s: 60 FPS; mede também o
                 tempo de cada atualização
+  edit          Edit Top 200 Rows de uma tabela de 12 colunas, mudando uma
+                célula e gravando a linha a cada frame por 10 s: 60 FPS;
+                mede também a ida e volta de cada gravação
+  export        Results to File de 1 milhão de linhas para um CSV: 60 FPS
+                enquanto o arquivo é escrito, todas as linhas no arquivo e
+                memória a mais que o repouso < 32 MB (as linhas não ficam
+                na memória)
 
 Opções:
   --scenario S   startup, grid, intellisense, diagram, diagram2000, designer,
-                 plan, activity ou all (padrão all)
+                 plan, activity, edit, export ou all (padrão all)
   --runs N       execuções de cada cenário (padrão 5)
   --idle S       segundos parado antes de medir a memória (padrão 30)
   --no-build     não recompila; usa o binário existente
@@ -121,6 +135,7 @@ fn parse_bench(args: &[String]) -> Result<BenchArgs, String> {
         markdown: false,
         check: false,
     };
+    let mut default_scenarios = true;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut number = |name: &str| -> Result<u64, String> {
@@ -130,14 +145,24 @@ fn parse_bench(args: &[String]) -> Result<BenchArgs, String> {
         };
         match arg.as_str() {
             "--runs" => out.runs = number("--runs")?.max(1) as usize,
+            // Repetido, junta os cenários (`--scenario startup --scenario
+            // edit` mede a RAM de repouso junto).
             "--scenario" => {
-                out.scenarios = match it.next().map(String::as_str) {
+                let chosen = match it.next().map(String::as_str) {
                     Some("all") => Scenario::ALL.to_vec(),
                     Some(name) => vec![
                         Scenario::parse(name)
                             .ok_or_else(|| format!("cenário desconhecido: {name}"))?,
                     ],
                     None => return Err("--scenario precisa de um nome".into()),
+                };
+                if std::mem::take(&mut default_scenarios) {
+                    out.scenarios.clear();
+                }
+                for s in chosen {
+                    if !out.scenarios.contains(&s) {
+                        out.scenarios.push(s);
+                    }
                 }
             }
             "--idle" => out.idle = number("--idle")?,
@@ -161,10 +186,12 @@ enum Scenario {
     Designer,
     Plan,
     Activity,
+    Edit,
+    Export,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 8] = [
+    const ALL: [Scenario; 10] = [
         Scenario::Startup,
         Scenario::Grid,
         Scenario::IntelliSense,
@@ -173,6 +200,8 @@ impl Scenario {
         Scenario::Designer,
         Scenario::Plan,
         Scenario::Activity,
+        Scenario::Edit,
+        Scenario::Export,
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -190,6 +219,8 @@ impl Scenario {
             Scenario::Designer => "designer",
             Scenario::Plan => "plan",
             Scenario::Activity => "activity",
+            Scenario::Edit => "edit",
+            Scenario::Export => "export",
         }
     }
 }
@@ -238,6 +269,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
     let mut designer = Vec::new();
     let mut plan = Vec::new();
     let mut activity = Vec::new();
+    let mut edit = Vec::new();
+    let mut export = Vec::new();
     for scenario in &args.scenarios {
         for run in 1..=args.runs {
             match scenario {
@@ -270,6 +303,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
                         Scenario::DiagramLarge => diagram_large.push(r),
                         Scenario::Plan => plan.push(r),
                         Scenario::Activity => activity.push(r),
+                        Scenario::Edit => edit.push(r),
+                        Scenario::Export => export.push(r),
                         _ => designer.push(r),
                     }
                 }
@@ -287,6 +322,8 @@ fn bench(args: BenchArgs) -> Result<bool, String> {
         designer,
         plan,
         activity,
+        edit,
+        export,
     };
     let startup = !samples.is_empty();
     if args.markdown {
@@ -381,6 +418,8 @@ struct ScenarioReport {
     designer: Vec<ScenarioRun>,
     plan: Vec<ScenarioRun>,
     activity: Vec<ScenarioRun>,
+    edit: Vec<ScenarioRun>,
+    export: Vec<ScenarioRun>,
 }
 
 /// Mediana e pior valor de uma chave nas execuções.
@@ -445,6 +484,21 @@ impl ScenarioReport {
             && Self::frames_ok(&self.designer, 2000.0)
             && Self::frames_ok_with(&self.plan, "nodes", PLAN_NODES)
             && Self::frames_ok_with(&self.activity, "sessions", ACTIVITY_SESSIONS)
+            && Self::frames_ok_with(&self.edit, "rows", EDIT_ROWS)
+            && self.export_ok()
+    }
+
+    /// RAM no fim da exportação, a mais que o repouso.
+    fn export_ram(&self) -> Option<(f64, f64)> {
+        let idle = self.idle_mb?;
+        Some(stats(&self.export, |r| r.ram_mb - idle))
+    }
+
+    /// Exportação: frames na meta, todas as linhas no arquivo e a memória
+    /// sem crescer com as linhas.
+    fn export_ok(&self) -> bool {
+        Self::frames_ok_with(&self.export, "rows", EXPORT_ROWS)
+            && self.export_ram().is_none_or(|r| r.1 < EXPORT_RAM_TARGET_MB)
     }
 
     /// Linhas da tabela: medida, meta, mediana, pior e se passou.
@@ -713,6 +767,87 @@ impl ScenarioReport {
                 mb(worst),
                 "—".into(),
             ]);
+        }
+        if !self.edit.is_empty() {
+            let runs = &self.edit;
+            let (med, worst) = stats(runs, |r| r.get("load_ms"));
+            rows.push([
+                "Edição na grade: 200 linhas de 12 colunas abertas".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Edição na grade: frame editando e gravando (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok_with(runs, "rows", EDIT_ROWS)),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("ui_p95"));
+            rows.push([
+                "Edição na grade: CPU da interface por frame (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("save_p95"));
+            rows.push([
+                "Edição na grade: linha gravada, ida e volta (p95)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("saves"));
+            rows.push([
+                "Edição na grade: linhas gravadas em 10 s".into(),
+                "—".into(),
+                format!("{med:.0}"),
+                format!("{worst:.0}"),
+                "—".into(),
+            ]);
+        }
+        if !self.export.is_empty() {
+            let runs = &self.export;
+            let (med, worst) = stats(runs, |r| r.get("export_ms"));
+            rows.push([
+                "Exportação: 1 milhão de linhas para CSV (Results to File)".into(),
+                "—".into(),
+                ms(med),
+                ms(worst),
+                "—".into(),
+            ]);
+            let (med, worst) = stats(runs, |r| r.get("frame_p95"));
+            rows.push([
+                "Exportação: frame enquanto o arquivo é escrito (p95)".into(),
+                format!("< {DIAGRAM_FRAME_TARGET_MS:.0} ms (60 FPS)"),
+                ms(med),
+                ms(worst),
+                ok(Self::frames_ok_with(runs, "rows", EXPORT_ROWS)),
+            ]);
+            match self.export_ram() {
+                Some((med, worst)) => rows.push([
+                    "Exportação: RAM a mais que o repouso".into(),
+                    format!("< {EXPORT_RAM_TARGET_MB:.0} MB"),
+                    mb(med),
+                    mb(worst),
+                    ok(worst < EXPORT_RAM_TARGET_MB),
+                ]),
+                None => {
+                    let (med, worst) = stats(runs, |r| r.ram_mb);
+                    rows.push([
+                        "Exportação: RAM depois de 1 milhão de linhas".into(),
+                        "—".into(),
+                        mb(med),
+                        mb(worst),
+                        "—".into(),
+                    ]);
+                }
+            }
         }
         rows
     }
@@ -1077,6 +1212,19 @@ mod tests {
                 ),
                 170.0,
             )],
+            edit: vec![scenario(
+                &format!(
+                    "{RESULT} scenario=edit load_ms=5 ui_p95=2 frame_p95=17 rows=200 \
+                     saves=500 save_p95=12"
+                ),
+                130.0,
+            )],
+            export: vec![scenario(
+                &format!(
+                    "{RESULT} scenario=export ui_p95=1 frame_p95=17 rows=1000000 export_ms=900"
+                ),
+                130.0,
+            )],
         };
         assert!(good.passed(), "{}", good.text());
         let md = good.markdown();
@@ -1132,6 +1280,29 @@ mod tests {
             ),
             "{md}"
         );
+        assert!(
+            md.contains(
+                "| Exportação: RAM a mais que o repouso | < 32 MB | 10.0 MB | 10.0 MB | ✅ dentro |"
+            ),
+            "{md}"
+        );
+        let heavy_export = ScenarioReport {
+            idle_mb: Some(100.0),
+            export: vec![scenario(
+                &format!("{RESULT} scenario=export frame_p95=10 rows=1000000"),
+                400.0,
+            )],
+            ..Default::default()
+        };
+        assert!(!heavy_export.passed());
+        let lost_rows = ScenarioReport {
+            export: vec![scenario(
+                &format!("{RESULT} scenario=export frame_p95=10 rows=10"),
+                100.0,
+            )],
+            ..Default::default()
+        };
+        assert!(!lost_rows.passed());
         let few_nodes = ScenarioReport {
             plan: vec![scenario(
                 &format!("{RESULT} scenario=plan frame_p95=10 nodes=20"),
