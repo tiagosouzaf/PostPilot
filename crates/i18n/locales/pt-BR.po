@@ -662,3 +662,8 @@ msgstr "Bancos de Dados Disponíveis"
 
 msgid "Allow Claude Code (MCP)"
 msgstr "Permitir o Claude Code (MCP)"
+
+# Atualização
+
+msgid "Check for Updates…"
+msgstr "Verificar se Há Atualizações…"

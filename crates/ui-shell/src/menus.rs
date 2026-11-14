@@ -171,7 +171,7 @@ pub const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Help",
-        entries: &[I(ViewHelp), SEP, I(About)],
+        entries: &[I(ViewHelp), SEP, I(CheckForUpdates), I(About)],
     },
 ];
 
