@@ -668,6 +668,175 @@ msgstr "Permitir o Claude Code (MCP)"
 msgid "Check for Updates…"
 msgstr "Verificar se Há Atualizações…"
 
+# JSON (visualizador, editor e guia)
+
+msgid "Start here"
+msgstr "Comece aqui"
+
+msgid "Every example in this guide uses the same small table, orders_demo, with one jsonb column called data. Insert the script below in a query window and run it once (F5): it creates a temporary table that lives while the window stays connected. Then insert any example after it and run only the example (select it and press F5).\n\nTip: double-click a JSON cell in the results (or click its {…} button) to open the JSON Viewer. Click any node in its tree and it writes the query for that node."
+msgstr "Todos os exemplos deste guia usam a mesma tabela pequena, orders_demo, com uma coluna jsonb chamada data. Insira o script abaixo numa janela de consulta e execute uma vez (F5): ele cria uma tabela temporária que existe enquanto a janela estiver conectada. Depois insira qualquer exemplo depois dele e execute só o exemplo (selecione e aperte F5).\n\nDica: dê dois cliques numa célula JSON dos resultados (ou clique no botão {…} dela) para abrir o Visualizador de JSON. Clique em qualquer nó da árvore e ele escreve a consulta daquele nó."
+
+msgid "Create the sample table"
+msgstr "Criar a tabela de exemplo"
+
+msgid "CREATE TABLE, then INSERT 0 3."
+msgstr "CREATE TABLE, depois INSERT 0 3."
+
+msgid "Read a value"
+msgstr "Ler um valor"
+
+msgid "-> returns JSON (to keep walking into it), ->> returns text (to show or compare). Use a key name for objects and a position (from 0) for arrays. #> and #>> take the whole path at once, as a text array."
+msgstr "-> devolve JSON (para continuar descendo nele), ->> devolve texto (para mostrar ou comparar). Use o nome da chave em objetos e a posição (a partir de 0) em arrays. #> e #>> recebem o caminho inteiro de uma vez, como array de texto."
+
+msgid "Customer name as text"
+msgstr "Nome do cliente como texto"
+
+msgid "First item of each order (still JSON)"
+msgstr "Primeiro item de cada pedido (ainda JSON)"
+
+msgid "The same path in one go"
+msgstr "O mesmo caminho de uma vez"
+
+msgid "Numbers come back as text: cast them"
+msgstr "Números voltam como texto: converta com cast"
+
+msgid "Filter rows"
+msgstr "Filtrar linhas"
+
+msgid "@> (contains) is the fastest filter: it uses a GIN index and checks types for you. ? asks if a key (or array string) exists. For ranges and comparisons, extract the value with ->> and cast it."
+msgstr "@> (contém) é o filtro mais rápido: usa um índice GIN e confere os tipos para você. ? pergunta se uma chave (ou string de array) existe. Para intervalos e comparações, extraia o valor com ->> e faça o cast."
+
+msgid "Orders that are paid"
+msgstr "Pedidos pagos"
+
+msgid "Nested: customers from São Paulo"
+msgstr "Aninhado: clientes de São Paulo"
+
+msgid "Any item with sku A-1 (arrays match any element)"
+msgstr "Algum item com sku A-1 (arrays casam com qualquer elemento)"
+
+msgid "Tagged vip"
+msgstr "Com a tag vip"
+
+msgid "Has a phone key (even if it is null)"
+msgstr "Tem a chave phone (mesmo que seja null)"
+
+msgid "Total above 100"
+msgstr "Total acima de 100"
+
+msgid "Any of these tags (?|) or all of them (?&)"
+msgstr "Alguma destas tags (?|) ou todas elas (?&)"
+
+msgid "Arrays to rows"
+msgstr "Arrays em linhas"
+
+msgid "jsonb_array_elements turns an array into one row per element. Put it in a CROSS JOIN LATERAL to keep the columns of the row it came from. Use LEFT JOIN LATERAL ... ON true to keep rows whose array is empty."
+msgstr "jsonb_array_elements transforma um array em uma linha por elemento. Use num CROSS JOIN LATERAL para manter as colunas da linha de onde ele veio. Use LEFT JOIN LATERAL ... ON true para manter as linhas cujo array está vazio."
+
+msgid "One row per item"
+msgstr "Uma linha por item"
+
+msgid "5 rows: 1 A-1 2, 1 B-7 1, 2 C-3 1, 3 A-1 4, 3 D-9 2"
+msgstr "5 linhas: 1 A-1 2, 1 B-7 1, 2 C-3 1, 3 A-1 4, 3 D-9 2"
+
+msgid "Quantity sold per sku"
+msgstr "Quantidade vendida por sku"
+
+msgid "Tags as text, keeping orders without tags"
+msgstr "Tags como texto, mantendo pedidos sem tags"
+
+msgid "Element position with WITH ORDINALITY"
+msgstr "Posição do elemento com WITH ORDINALITY"
+
+msgid "n counts from 1 inside each order"
+msgstr "n conta a partir de 1 dentro de cada pedido"
+
+msgid "How many items"
+msgstr "Quantos itens"
+
+msgid "Objects to rows and columns"
+msgstr "Objetos em linhas e colunas"
+
+msgid "jsonb_each gives one row per key, jsonb_object_keys only the keys. jsonb_to_record and jsonb_to_recordset turn JSON into typed columns, which is the easiest way to read many fields at once."
+msgstr "jsonb_each dá uma linha por chave, jsonb_object_keys só as chaves. jsonb_to_record e jsonb_to_recordset transformam JSON em colunas com tipo, o jeito mais fácil de ler vários campos de uma vez."
+
+msgid "Every key of the customer"
+msgstr "Todas as chaves do cliente"
+
+msgid "name, city (and phone for order 3)"
+msgstr "name, city (e phone no pedido 3)"
+
+msgid "Which keys exist"
+msgstr "Quais chaves existem"
+
+msgid "Typed columns from an object"
+msgstr "Colunas com tipo a partir de um objeto"
+
+msgid "Typed columns from an array of objects"
+msgstr "Colunas com tipo a partir de um array de objetos"
+
+msgid "5 rows with sku, qty and price as real columns"
+msgstr "5 linhas com sku, qty e price como colunas de verdade"
+
+msgid "SQL/JSON path"
+msgstr "SQL/JSON path"
+
+msgid "A JSON path ($.items[*].sku) walks the document in one string, and ? (...) filters inside it, with @ as the current element. @? tests if the path finds anything, @@ tests a condition; both use a GIN index. Strings in a path use double quotes."
+msgstr "Um JSON path ($.items[*].sku) percorre o documento numa string só, e ? (...) filtra dentro dele, com @ como o elemento atual. @? testa se o caminho acha algo, @@ testa uma condição; os dois usam índice GIN. Strings num path usam aspas duplas."
+
+msgid "Every sku of every order"
+msgstr "Todos os skus de todos os pedidos"
+
+msgid "one row per sku"
+msgstr "uma linha por sku"
+
+msgid "Items that cost more than 60"
+msgstr "Itens que custam mais de 60"
+
+msgid "Orders with an item of qty 4 or more"
+msgstr "Pedidos com um item de qty 4 ou mais"
+
+msgid "The same with @@ (a condition)"
+msgstr "O mesmo com @@ (uma condição)"
+
+msgid "All skus of an order as one array"
+msgstr "Todos os skus de um pedido num array só"
+
+msgid "Variables instead of literals"
+msgstr "Variáveis no lugar de literais"
+
+msgid "PostgreSQL 17+: JSON_VALUE and JSON_TABLE (standard SQL)"
+msgstr "PostgreSQL 17+: JSON_VALUE e JSON_TABLE (SQL padrão)"
+
+msgid "one row per item, with the customer name"
+msgstr "uma linha por item, com o nome do cliente"
+
+msgid "Build and change JSON"
+msgstr "Montar e alterar JSON"
+
+msgid "jsonb_build_object and jsonb_agg build JSON from rows. To change a document, jsonb_set replaces a value at a path, || merges objects, - removes a key and #- removes a path. They return the new value: use them in UPDATE ... SET data = ...."
+msgstr "jsonb_build_object e jsonb_agg montam JSON a partir de linhas. Para alterar um documento, jsonb_set troca o valor num caminho, || junta objetos, - remove uma chave e #- remove um caminho. Eles devolvem o novo valor: use em UPDATE ... SET data = ...."
+
+msgid "Rows as JSON"
+msgstr "Linhas como JSON"
+
+msgid "Change one value"
+msgstr "Trocar um valor"
+
+msgid "Add or overwrite keys"
+msgstr "Acrescentar ou sobrescrever chaves"
+
+msgid "order 2 now has priority and is paid"
+msgstr "o pedido 2 agora tem priority e está pago"
+
+msgid "Remove a key and a nested path"
+msgstr "Remover uma chave e um caminho aninhado"
+
+msgid "order 3 without tags and without customer.phone"
+msgstr "o pedido 3 sem tags e sem customer.phone"
+
+msgid "Append to an array"
+msgstr "Acrescentar a um array"
 # Workspace: senhas (Fase R)
 
 msgid "The master password check stopped unexpectedly."
@@ -1290,6 +1459,218 @@ msgstr "Colunas"
 msgid "Indexes"
 msgstr "Índices"
 
+msgid "A GIN index on the column speeds up @>, ?, ?|, ?&, @? and @@ on that column. jsonb_path_ops is smaller and faster but only supports @>, @? and @@. For ->> comparisons, ORDER BY or ranges, index the expression itself with a normal (btree) index. The query has to use the same expression as the index."
+msgstr "Um índice GIN na coluna acelera @>, ?, ?|, ?&, @? e @@ nessa coluna. jsonb_path_ops é menor e mais rápido, mas só atende @>, @? e @@. Para comparações com ->>, ORDER BY ou intervalos, indexe a própria expressão com um índice normal (btree). A consulta precisa usar a mesma expressão do índice."
+
+msgid "GIN for containment and path filters"
+msgstr "GIN para contém e filtros de caminho"
+
+msgid "used by WHERE data @> '...' and WHERE data @? '...'"
+msgstr "usado por WHERE data @> '...' e WHERE data @? '...'"
+
+msgid "GIN with the default operator class (also ?, ?|, ?&)"
+msgstr "GIN com a classe de operadores padrão (também ?, ?|, ?&)"
+
+msgid "used by WHERE data ? 'status' too"
+msgstr "usado também por WHERE data ? 'status'"
+
+msgid "Btree on one field, for = and ranges"
+msgstr "Btree num campo, para = e intervalos"
+
+msgid "used by WHERE (data ->> 'total')::numeric > 100"
+msgstr "usado por WHERE (data ->> 'total')::numeric > 100"
+
+msgid "Check that the index is used"
+msgstr "Conferir se o índice é usado"
+
+msgid "Bitmap Index Scan on orders_demo_data_gin (on a tiny table the planner prefers a Seq Scan, hence the SET)"
+msgstr "Bitmap Index Scan on orders_demo_data_gin (numa tabela minúscula o planejador prefere Seq Scan, daí o SET)"
+
+msgid "json or jsonb, and pitfalls"
+msgstr "json ou jsonb, e armadilhas"
+
+msgid "Prefer jsonb: it is stored parsed, has indexes and the operators @>, ?, @? and @@. json keeps the text exactly (spaces, key order, duplicate keys) and only has ->, ->>, #>, #>> and json_* functions; cast it with ::jsonb to use the rest.\n\nPitfalls:\n• ->> returns text: '10' > '9' is false. Cast before comparing numbers or dates.\n• A JSON null is not SQL NULL: data -> 'customer' -> 'phone' is the JSON null, but ->> turns it into SQL NULL.\n• A missing key returns NULL, not an error: a typo looks like empty data.\n• = compares whole jsonb documents; json has no = at all.\n• jsonb sorts keys (shorter first) and keeps only the last of duplicate keys."
+msgstr "Prefira jsonb: ele é guardado já interpretado, tem índices e os operadores @>, ?, @? e @@. json guarda o texto exatamente como veio (espaços, ordem das chaves, chaves repetidas) e só tem ->, ->>, #>, #>> e as funções json_*; faça cast com ::jsonb para usar o resto.\n\nArmadilhas:\n• ->> devolve texto: '10' > '9' é falso. Faça cast antes de comparar números ou datas.\n• null do JSON não é NULL do SQL: data -> 'customer' -> 'phone' é o null do JSON, mas ->> o transforma em NULL do SQL.\n• Chave que não existe devolve NULL, não erro: um erro de digitação parece dado vazio.\n• = compara documentos jsonb inteiros; json não tem = nenhum.\n• jsonb ordena as chaves (as mais curtas primeiro) e mantém só a última de chaves repetidas."
+
+msgid "JSON null versus SQL NULL"
+msgstr "null do JSON versus NULL do SQL"
+
+msgid "order 3: null, true, null; others: NULL, true, NULL"
+msgstr "pedido 3: null, true, null; os outros: NULL, true, NULL"
+
+msgid "Text comparison trap"
+msgstr "Armadilha da comparação de texto"
+
+msgid "json to jsonb"
+msgstr "json para jsonb"
+
+msgid "{\"b\": 1, \"a\": 2, \"a\": 3} versus {\"a\": 3, \"b\": 1}"
+msgstr "{\"b\": 1, \"a\": 2, \"a\": 3} versus {\"a\": 3, \"b\": 1}"
+
+msgid "JSON Query Guide"
+msgstr "Guia de Consultas JSON"
+
+msgid "Open a query window first."
+msgstr "Abra uma janela de consulta primeiro."
+
+msgid "Put this SQL in the query window."
+msgstr "Põe este SQL na janela de consulta."
+
+msgid "Insert"
+msgstr "Inserir"
+
+msgid "JSON Viewer - {column} (row {row})"
+msgstr "Visualizador de JSON - {column} (linha {row})"
+
+msgid "Edit JSON - {column} (row {row})"
+msgstr "Editar JSON - {column} (linha {row})"
+
+msgid "Tree"
+msgstr "Árvore"
+
+msgid "Text"
+msgstr "Texto"
+
+msgid "Copy the formatted JSON."
+msgstr "Copia o JSON formatado."
+
+msgid "Copy compact"
+msgstr "Copiar compacto"
+
+msgid "Copy the JSON in one line."
+msgstr "Copia o JSON numa linha só."
+
+msgid "Expand all"
+msgstr "Expandir tudo"
+
+msgid "Collapse all"
+msgstr "Recolher tudo"
+
+msgid "How to query json and jsonb, with examples."
+msgstr "Como consultar json e jsonb, com exemplos."
+
+msgid "Column type. json has no @> or SQL/JSON path, so the queries cast it to jsonb."
+msgstr "Tipo da coluna. json não tem @> nem SQL/JSON path, então as consultas fazem cast para jsonb."
+
+msgid "Valid JSON"
+msgstr "JSON válido"
+
+msgid "Fix the JSON first."
+msgstr "Corrija o JSON primeiro."
+
+msgid "Format"
+msgstr "Formatar"
+
+msgid "The JSON has errors. Fix it in the Text tab to see the tree."
+msgstr "O JSON tem erros. Corrija na aba Texto para ver a árvore."
+
+msgid "… {n} more (see the Text tab)"
+msgstr "… mais {n} (veja a aba Texto)"
+
+msgid "Query this value"
+msgstr "Consultar este valor"
+
+msgid "Click a node in the tree to build its query. Replace {table} with your table."
+msgstr "Clique num nó da árvore para montar a consulta dele. Troque {table} pela sua tabela."
+
+msgid "{message} (line {line}, column {column})"
+msgstr "{message} (linha {line}, coluna {column})"
+
+msgid "The query window was closed."
+msgstr "A janela de consulta foi fechada."
+
+msgid "View JSON..."
+msgstr "Ver JSON..."
+
+msgid "Edit JSON..."
+msgstr "Editar JSON..."
+
+msgid "Double-click or click {…} to open the JSON Viewer."
+msgstr "Dê dois cliques ou clique em {…} para abrir o Visualizador de JSON."
+
+msgid "The selected cell has no JSON object or array."
+msgstr "A célula selecionada não tem um objeto ou array JSON."
+
+msgid "Get this value"
+msgstr "Obter este valor"
+
+msgid "Same, by path"
+msgstr "O mesmo, pelo caminho"
+
+msgid "Get this value as text"
+msgstr "Obter este valor como texto"
+
+msgid "Rows that contain this value (any array element; GIN index)"
+msgstr "Linhas que contêm este valor (qualquer elemento do array; índice GIN)"
+
+msgid "Rows that contain this value (uses a GIN index)"
+msgstr "Linhas que contêm este valor (usa índice GIN)"
+
+msgid "Rows where this exact position has this value"
+msgstr "Linhas em que esta posição exata tem este valor"
+
+msgid "Rows where this path exists"
+msgstr "Linhas em que este caminho existe"
+
+msgid "SQL/JSON path, every array element"
+msgstr "SQL/JSON path, todos os elementos do array"
+
+msgid "One row per element"
+msgstr "Uma linha por elemento"
+
+msgid "Number of elements"
+msgstr "Número de elementos"
+
+msgid "One row per key"
+msgstr "Uma linha por chave"
+
+msgid "Keys"
+msgstr "Chaves"
+
+msgid "Formatted text"
+msgstr "Texto formatado"
+
+msgid "Control character in string"
+msgstr "Caractere de controle na string"
+
+msgid "Expected ',' or ']'"
+msgstr "Esperava ',' ou ']'"
+
+msgid "Expected ',' or '}'"
+msgstr "Esperava ',' ou '}'"
+
+msgid "Expected ':' after the key"
+msgstr "Esperava ':' depois da chave"
+
+msgid "Expected a JSON value"
+msgstr "Esperava um valor JSON"
+
+msgid "Expected a key in double quotes"
+msgstr "Esperava uma chave entre aspas duplas"
+
+msgid "Invalid \\u escape"
+msgstr "Escape \\u inválido"
+
+msgid "Invalid escape in string"
+msgstr "Escape inválido na string"
+
+msgid "Invalid number"
+msgstr "Número inválido"
+
+msgid "JSON nested too deeply"
+msgstr "JSON aninhado demais"
+
+msgid "Unexpected end of JSON"
+msgstr "Fim inesperado do JSON"
+
+msgid "Unpaired surrogate in \\u escape"
+msgstr "Surrogate sem par no escape \\u"
+
+msgid "Unterminated string"
+msgstr "String sem fechar"
+
+msgid "Unexpected text after the JSON value"
+msgstr "Texto inesperado depois do valor JSON"
 msgid "Sequences"
 msgstr "Sequências"
 

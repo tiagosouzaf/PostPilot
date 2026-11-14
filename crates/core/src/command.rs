@@ -120,6 +120,7 @@ commands! {
     CloseAllDocuments => "Window.CloseAllDocuments", "Close All Documents";
     // Help
     ViewHelp => "Help.ViewHelp", "View Help";
+    JsonGuide => "Help.JsonGuide", "JSON Query Guide";
     CheckForUpdates => "Help.CheckForUpdates", "Check for Updates…";
     About => "Help.About", "About PostPilot";
 }

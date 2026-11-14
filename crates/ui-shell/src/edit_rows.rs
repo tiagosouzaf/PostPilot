@@ -302,6 +302,10 @@ pub struct EditRows {
     /// Fecha quando a gravação pendente terminar bem.
     close_after_save: bool,
     closed: bool,
+    /// Editor de JSON aberto numa célula (linha, coluna).
+    json_editor: Option<(usize, usize, crate::json_viewer::JsonViewer)>,
+    /// O editor de JSON pediu o JSON Query Guide.
+    guide_requested: bool,
 }
 
 impl EditRows {
@@ -325,6 +329,8 @@ impl EditRows {
             log: Vec::new(),
             close_after_save: false,
             closed: false,
+            json_editor: None,
+            guide_requested: false,
         };
         e.load_columns(ctx);
         e
@@ -624,6 +630,95 @@ impl EditRows {
         self.editing.is_some()
     }
 
+    /// Seleciona a célula sem gravar a linha anterior (screenshots).
+    pub fn select_cell(&mut self, row: usize, col: usize) {
+        self.selected = Some((row, col));
+    }
+
+    /// Tipo JSON da coluna, se ela for `json` ou `jsonb`.
+    fn json_kind(&self, col: usize) -> Option<crate::json_viewer::JsonKind> {
+        let column = self.table.as_ref()?.columns.get(col)?;
+        crate::json_viewer::JsonKind::from_type_name(&column.type_name)
+    }
+
+    /// Abre o editor de JSON na célula (só leitura se a célula não for
+    /// editável). Devolve se abriu.
+    pub fn open_json_editor(&mut self, row: usize, col: usize) -> bool {
+        let Some(kind) = self.json_kind(col) else {
+            return false;
+        };
+        let Some(column) = self.table.as_ref().map(|t| t.columns[col].name.clone()) else {
+            return false;
+        };
+        let value = self.value(row, col).unwrap_or("").to_string();
+        let id = egui::Id::new(("edit_rows_json", self.oid));
+        let editable = self.editable() && !self.column_read_only(col) && self.busy != Some(row);
+        let viewer = if editable {
+            crate::json_viewer::JsonViewer::editor(id, &column, row, &value, kind)
+        } else {
+            let Ok(node) = pgstudio_result_grid::json::parse(&value) else {
+                return false;
+            };
+            let mut v = crate::json_viewer::JsonViewer::new(id, &column, row as u64, node);
+            v.kind = kind;
+            v.set_can_insert(false);
+            v
+        };
+        self.finish_edit();
+        self.json_editor = Some((row, col, viewer));
+        true
+    }
+
+    /// O editor de JSON aberto.
+    pub fn json_editor_mut(&mut self) -> Option<&mut crate::json_viewer::JsonViewer> {
+        self.json_editor.as_mut().map(|(_, _, v)| v)
+    }
+
+    /// Se o editor de JSON pediu o guia (uma vez).
+    pub fn take_guide_request(&mut self) -> bool {
+        std::mem::take(&mut self.guide_requested)
+    }
+
+    /// OK no editor de JSON: grava o valor dele na célula, como se o
+    /// usuário tivesse digitado. Devolve se havia um valor válido.
+    pub fn json_editor_ok(&mut self) -> bool {
+        let Some((row, col, value)) = self
+            .json_editor
+            .as_ref()
+            .and_then(|(r, c, v)| Some((*r, *c, v.ok_value()?)))
+        else {
+            return false;
+        };
+        self.save_json(row, col, value);
+        true
+    }
+
+    fn save_json(&mut self, row: usize, col: usize, text: String) {
+        self.json_editor = None;
+        let value = (!text.is_empty()).then_some(text);
+        if value.as_deref() != self.value(row, col) {
+            self.set_cell(row, col, value);
+        }
+    }
+
+    fn json_window(&mut self, ctx: &egui::Context) {
+        let Some((row, col, viewer)) = &mut self.json_editor else {
+            return;
+        };
+        let colors = if ctx.global_style().visuals.dark_mode {
+            pgstudio_sql_editor::Colors::DARK
+        } else {
+            pgstudio_sql_editor::Colors::LIGHT
+        };
+        let (row, col) = (*row, *col);
+        match viewer.show(ctx, &colors) {
+            Some(crate::json_viewer::ViewerAction::Save(text)) => self.save_json(row, col, text),
+            Some(crate::json_viewer::ViewerAction::Close) => self.json_editor = None,
+            Some(crate::json_viewer::ViewerAction::Guide) => self.guide_requested = true,
+            Some(crate::json_viewer::ViewerAction::Insert(_)) | None => {}
+        }
+    }
+
     fn save(&mut self, row: usize, ctx: &egui::Context) {
         if self.busy.is_some() {
             return;
@@ -799,6 +894,7 @@ impl EditRows {
         self.keys(ui, &ctx);
         self.grid(ui, id, &ctx);
         self.confirm_window(&ctx);
+        self.json_window(&ctx);
     }
 
     /// Teclado fora da edição: setas, F2/Enter, Esc, Ctrl+0, Delete e
@@ -907,6 +1003,10 @@ impl EditRows {
         let mut delete: Option<usize> = None;
         let mut edited: Option<(usize, usize, String, bool)> = None;
         let mut cancel_edit = false;
+        let mut json_menu: Option<(usize, usize)> = None;
+        let json_cols: Vec<bool> = (0..table.columns.len())
+            .map(|c| self.json_kind(c).is_some())
+            .collect();
         let editable = self.editable();
         egui::ScrollArea::horizontal()
             .id_salt(("edit_rows_h", id))
@@ -1059,6 +1159,26 @@ impl EditRows {
                                                 &label,
                                             )
                                         });
+                                        if json_cols[c] && !last_blank {
+                                            resp.context_menu(|ui| {
+                                                let label = if editable && !col.read_only {
+                                                    "Edit JSON..."
+                                                } else {
+                                                    "View JSON..."
+                                                };
+                                                if ui
+                                                    .button(format!(
+                                                        "{} {}",
+                                                        icon::BRACKETS_CURLY,
+                                                        pgstudio_i18n::tr(label)
+                                                    ))
+                                                    .clicked()
+                                                {
+                                                    json_menu = Some((r, c));
+                                                    ui.close();
+                                                }
+                                            });
+                                        }
                                         if resp.double_clicked() {
                                             clicked = Some((r, c, true));
                                         } else if resp.clicked() {
@@ -1087,9 +1207,14 @@ impl EditRows {
         }
         if let Some((r, c, edit)) = clicked {
             self.select(r, c, ctx);
-            if edit {
+            // Nas colunas json/jsonb o duplo clique abre o editor de JSON.
+            if edit && !self.open_json_editor(r, c) {
                 self.start_edit(r, c, None);
             }
+        }
+        if let Some((r, c)) = json_menu {
+            self.select(r, c, ctx);
+            self.open_json_editor(r, c);
         }
         if let Some(r) = delete {
             self.request_delete(r);
