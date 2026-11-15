@@ -89,13 +89,68 @@ pub const FOLDER_COLORS: [Rgb; 8] = [
     Rgb([0x8B, 0x8B, 0x8B]),
 ];
 
-/// Um servidor registrado.
+/// Ambientes que todo arquivo tem enquanto ninguém mexe na lista. Os nomes
+/// ficam em inglês no arquivo (ele vai para o git e pode ser aberto em
+/// outro idioma) e saem traduzidos na tela.
+pub const DEVELOPMENT: &str = "Development";
+pub const STAGING: &str = "Staging";
+pub const PRODUCTION: &str = "Production";
+
+/// Um ambiente (desenvolvimento, homologação, produção...): um nome e uma
+/// cor, que aparece no servidor e nas janelas de consulta abertas nele.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Environment {
+    pub name: String,
+    pub color: Rgb,
+}
+
+/// Desenvolvimento (verde), homologação (laranja) e produção (vermelho).
+pub fn default_environments() -> Vec<Environment> {
+    vec![
+        Environment {
+            name: DEVELOPMENT.into(),
+            color: FOLDER_COLORS[3],
+        },
+        Environment {
+            name: STAGING.into(),
+            color: FOLDER_COLORS[1],
+        },
+        Environment {
+            name: PRODUCTION.into(),
+            color: FOLDER_COLORS[0],
+        },
+    ]
+}
+
+/// Nome de um ambiente na tela: os três padrão saem traduzidos.
+pub fn environment_name(name: &str) -> &str {
+    match name {
+        DEVELOPMENT => trc("environment", DEVELOPMENT),
+        STAGING => trc("environment", STAGING),
+        PRODUCTION => trc("environment", PRODUCTION),
+        other => other,
+    }
+}
+
+/// Como mostrar um servidor registrado: o ambiente dele (próprio ou da
+/// pasta) e a cor, que é a do ambiente ou, sem ambiente, a da pasta.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerTag {
+    /// Nome do ambiente, já traduzido.
+    pub environment: Option<String>,
+    pub color: Rgb,
+}
+
+/// Um servidor registrado.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredServer {
     /// "Registered server name": o nome mostrado na árvore.
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Ambiente do servidor. Sem um, vale o da pasta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     /// Como conectar (sem senha).
     pub settings: ConnectionSettings,
 }
@@ -110,6 +165,9 @@ pub struct ServerGroup {
     /// cor usam a da pasta de cima.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Rgb>,
+    /// Ambiente dos servidores da pasta (e das subpastas) que não têm um.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     #[serde(default)]
     pub groups: Vec<ServerGroup>,
     #[serde(default)]
@@ -145,6 +203,10 @@ impl NodePath {
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,
+    /// Lista de ambientes. Ausente: os três padrão (arquivos antigos e
+    /// quem nunca mexeu na lista).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environments: Option<Vec<Environment>>,
     root: ServerGroup,
 }
 
@@ -153,6 +215,8 @@ struct File {
 pub struct RegisteredServers {
     path: Option<PathBuf>,
     root: ServerGroup,
+    /// `None`: os ambientes padrão.
+    environments: Option<Vec<Environment>>,
 }
 
 impl Default for RegisteredServers {
@@ -165,11 +229,11 @@ impl RegisteredServers {
     /// Lê o arquivo. Arquivo ausente ou ruim vira árvore vazia.
     pub fn open(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let root = std::fs::read_to_string(&path)
+        let (root, environments) = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str::<File>(&text).ok())
             .filter(|f| f.version == VERSION)
-            .map(|f| f.root)
+            .map(|f| (f.root, f.environments))
             .unwrap_or_default();
         RegisteredServers {
             path: Some(path),
@@ -177,6 +241,7 @@ impl RegisteredServers {
                 name: ROOT_NAME.into(),
                 ..root
             },
+            environments,
         }
     }
 
@@ -188,6 +253,7 @@ impl RegisteredServers {
                 name: ROOT_NAME.into(),
                 ..root
             },
+            environments: None,
         }
     }
 
@@ -221,6 +287,167 @@ impl RegisteredServers {
     /// Um servidor pelo caminho.
     pub fn server(&self, path: &NodePath) -> Option<&RegisteredServer> {
         self.group(&path.groups)?.servers.get(path.server?)
+    }
+
+    /// Os ambientes, na ordem da lista.
+    pub fn environments(&self) -> Vec<Environment> {
+        self.environments
+            .clone()
+            .unwrap_or_else(default_environments)
+    }
+
+    /// Os ambientes, se a lista foi mudada (`None`: os padrão).
+    pub fn custom_environments(&self) -> Option<&[Environment]> {
+        self.environments.as_deref()
+    }
+
+    /// Troca a lista de ambientes. `renamed` diz o nome antigo de cada
+    /// ambiente da lista nova (`None` para um novo): servidores e pastas
+    /// de um ambiente renomeado passam para o nome novo, e os de um
+    /// ambiente apagado ficam sem ambiente.
+    pub fn set_environments(
+        &mut self,
+        list: Vec<Environment>,
+        renamed: &[Option<String>],
+    ) -> Result<(), String> {
+        let mut list: Vec<Environment> = list
+            .into_iter()
+            .map(|e| Environment {
+                name: e.name.trim().to_string(),
+                ..e
+            })
+            .collect();
+        for (i, e) in list.iter().enumerate() {
+            if e.name.is_empty() {
+                return Err(tr("Enter an environment name.").into());
+            }
+            if list[..i]
+                .iter()
+                .any(|o| o.name.eq_ignore_ascii_case(&e.name))
+            {
+                return Err(trf!(
+                    "There are two environments named \"{name}\".",
+                    name = e.name
+                ));
+            }
+        }
+        let mut map: std::collections::HashMap<String, Option<String>> = self
+            .environments()
+            .into_iter()
+            .map(|e| (e.name, None))
+            .collect();
+        for (e, old) in list.iter().zip(renamed) {
+            if let Some(old) = old {
+                map.insert(old.clone(), Some(e.name.clone()));
+            }
+        }
+        fn walk(g: &mut ServerGroup, map: &std::collections::HashMap<String, Option<String>>) {
+            let fix = |env: &mut Option<String>| {
+                if let Some(name) = env.as_ref()
+                    && let Some(new) = map.get(name)
+                {
+                    *env = new.clone();
+                }
+            };
+            fix(&mut g.environment);
+            for s in &mut g.servers {
+                fix(&mut s.environment);
+            }
+            for sub in &mut g.groups {
+                walk(sub, map);
+            }
+        }
+        walk(&mut self.root, &map);
+        list.truncate(64);
+        self.environments = if list == default_environments() {
+            None
+        } else {
+            Some(list)
+        };
+        self.save_or_log();
+        Ok(())
+    }
+
+    /// Junta ambientes de outro arquivo aos daqui: os de nome novo entram
+    /// no fim da lista; os de mesmo nome ficam como estão.
+    pub fn merge_environments(&mut self, other: &[Environment]) {
+        let mut list = self.environments();
+        let before = list.len();
+        for e in other {
+            if !list.iter().any(|o| o.name.eq_ignore_ascii_case(&e.name)) {
+                list.push(e.clone());
+            }
+        }
+        if list.len() != before {
+            self.environments = Some(list);
+            self.save_or_log();
+        }
+    }
+
+    /// Um ambiente pelo nome.
+    pub fn environment(&self, name: &str) -> Option<Environment> {
+        self.environments().into_iter().find(|e| e.name == name)
+    }
+
+    /// O ambiente de um grupo: o dele ou o do grupo de cima mais próximo.
+    pub fn group_environment(&self, groups: &[usize]) -> Option<Environment> {
+        (0..=groups.len()).rev().find_map(|n| {
+            self.group(&groups[..n])
+                .and_then(|g| g.environment.as_deref())
+                .and_then(|name| self.environment(name))
+        })
+    }
+
+    /// O ambiente de um nó: o do servidor ou o da pasta.
+    pub fn node_environment(&self, path: &NodePath) -> Option<Environment> {
+        self.server(path)
+            .and_then(|s| s.environment.as_deref())
+            .and_then(|name| self.environment(name))
+            .or_else(|| self.group_environment(&path.groups))
+    }
+
+    /// Como mostrar um nó: ambiente e cor (a do ambiente ou, sem ambiente,
+    /// a da pasta). `None`: nem ambiente nem cor.
+    pub fn node_tag(&self, path: &NodePath) -> Option<ServerTag> {
+        match self.node_environment(path) {
+            Some(e) => Some(ServerTag {
+                environment: Some(environment_name(&e.name).to_string()),
+                color: e.color,
+            }),
+            None => self.color(&path.groups).map(|color| ServerTag {
+                environment: None,
+                color,
+            }),
+        }
+    }
+
+    /// O que mostrar para uma conexão (`usuario@host:porta`): o primeiro
+    /// servidor registrado com essa chave que tenha ambiente ou cor.
+    pub fn tag_for_key(&self, key: &str) -> Option<ServerTag> {
+        fn walk(
+            r: &RegisteredServers,
+            g: &ServerGroup,
+            path: &mut Vec<usize>,
+            key: &str,
+        ) -> Option<ServerTag> {
+            for (i, s) in g.servers.iter().enumerate() {
+                if secrets::password_key(&s.settings) == key
+                    && let Some(tag) = r.node_tag(&NodePath::server(path, i))
+                {
+                    return Some(tag);
+                }
+            }
+            for (i, sub) in g.groups.iter().enumerate() {
+                path.push(i);
+                let found = walk(r, sub, path, key);
+                path.pop();
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        walk(self, &self.root, &mut Vec::new(), key)
     }
 
     /// A cor de um grupo: a dele ou, sem cor, a do grupo de cima mais
@@ -289,6 +516,7 @@ impl RegisteredServers {
         name: &str,
         description: &str,
         color: Option<Rgb>,
+        environment: Option<String>,
     ) -> Result<(), String> {
         let Some((&last, parent)) = groups.split_last() else {
             return Err(tr("The root group cannot be renamed.").into());
@@ -311,6 +539,7 @@ impl RegisteredServers {
         g.name = name;
         g.description = description.trim().to_string();
         g.color = color;
+        g.environment = environment;
         self.save_or_log();
         Ok(())
     }
@@ -463,6 +692,7 @@ impl RegisteredServers {
             .clone();
         let file = File {
             version: VERSION,
+            environments: Some(self.environments()),
             root,
         };
         let text = serde_json::to_string_pretty(&file).expect("always serializable");
@@ -501,6 +731,9 @@ impl RegisteredServers {
                 path = path.display(),
                 version = file.version
             ));
+        }
+        if let Some(envs) = &file.environments {
+            self.merge_environments(envs);
         }
         let target = self
             .group_mut(parent)
@@ -544,6 +777,7 @@ impl RegisteredServers {
         }
         let file = File {
             version: VERSION,
+            environments: self.environments.clone(),
             root: self.root.clone(),
         };
         let text = serde_json::to_string_pretty(&file).expect("always serializable");
@@ -595,6 +829,7 @@ fn merge_group(into: &mut ServerGroup, group: ServerGroup) -> usize {
                 name,
                 description: group.description.trim().to_string(),
                 color: group.color,
+                environment: group.environment.clone(),
                 ..Default::default()
             });
             into.groups.len() - 1
@@ -667,6 +902,7 @@ pub struct RegisteredPanel {
     collapsed: HashSet<Vec<usize>>,
     server_dialog: Option<ServerDialog>,
     group_dialog: Option<GroupDialog>,
+    environments_dialog: Option<EnvironmentsDialog>,
     confirm_delete: Option<NodePath>,
     /// Mensagem para a status bar vinda da árvore (arrastar).
     message: Option<String>,
@@ -688,6 +924,7 @@ impl RegisteredPanel {
             collapsed: HashSet::new(),
             server_dialog: None,
             group_dialog: None,
+            environments_dialog: None,
             confirm_delete: None,
             message: None,
             current: None,
@@ -726,7 +963,10 @@ impl RegisteredPanel {
 
     /// Se algum diálogo da janela está aberto.
     pub fn has_dialog(&self) -> bool {
-        self.server_dialog.is_some() || self.group_dialog.is_some() || self.confirm_delete.is_some()
+        self.server_dialog.is_some()
+            || self.group_dialog.is_some()
+            || self.environments_dialog.is_some()
+            || self.confirm_delete.is_some()
     }
 
     /// "New Server Registration..." no grupo `parent`, preenchido com a
@@ -734,11 +974,13 @@ impl RegisteredPanel {
     pub fn new_server(&mut self, parent: &[usize], store: Option<&Arc<dyn SecretStore>>) {
         let settings = self.current.clone().unwrap_or_default();
         let server = RegisteredServer {
-            name: String::new(),
-            description: String::new(),
             settings,
+            ..Default::default()
         };
-        self.server_dialog = Some(ServerDialog::new(parent.to_vec(), None, &server, store));
+        let mut dialog = ServerDialog::new(parent.to_vec(), None, &server, store);
+        dialog.environments = self.servers.environments();
+        dialog.folder_environment = self.servers.group_environment(parent);
+        self.server_dialog = Some(dialog);
     }
 
     /// "Register..." no servidor do Object Explorer: "New Server
@@ -750,11 +992,12 @@ impl RegisteredPanel {
         store: Option<&Arc<dyn SecretStore>>,
     ) {
         let server = RegisteredServer {
-            name: String::new(),
-            description: String::new(),
             settings: settings.clone(),
+            ..Default::default()
         };
-        self.server_dialog = Some(ServerDialog::new(Vec::new(), None, &server, store));
+        let mut dialog = ServerDialog::new(Vec::new(), None, &server, store);
+        dialog.environments = self.servers.environments();
+        self.server_dialog = Some(dialog);
     }
 
     /// Move um nó para o grupo `to` (o que arrastar faz), selecionando-o
@@ -793,9 +1036,35 @@ impl RegisteredPanel {
     /// "Properties" de um servidor registrado.
     pub fn edit_server(&mut self, path: &NodePath, store: Option<&Arc<dyn SecretStore>>) {
         if let Some(server) = self.servers.server(path) {
-            let dialog = ServerDialog::new(path.groups.clone(), Some(path.clone()), server, store);
+            let mut dialog =
+                ServerDialog::new(path.groups.clone(), Some(path.clone()), server, store);
+            dialog.environments = self.servers.environments();
+            dialog.folder_environment = self.servers.group_environment(&path.groups);
             self.server_dialog = Some(dialog);
         }
+    }
+
+    /// "Environments..." no grupo raiz: a lista de ambientes.
+    pub fn edit_environments(&mut self) {
+        self.environments_dialog = Some(EnvironmentsDialog {
+            rows: self
+                .servers
+                .environments()
+                .into_iter()
+                .map(|e| EnvironmentRow {
+                    original: Some(e.name.clone()),
+                    name: environment_name(&e.name).to_string(),
+                    stored: e.name,
+                    color: e.color,
+                })
+                .collect(),
+            error: None,
+        });
+    }
+
+    /// Diálogo "Environments" aberto, se houver.
+    pub fn environments_dialog_mut(&mut self) -> Option<&mut EnvironmentsDialog> {
+        self.environments_dialog.as_mut()
     }
 
     /// "New Server Group..." dentro de `parent`.
@@ -806,6 +1075,8 @@ impl RegisteredPanel {
             name: String::new(),
             description: String::new(),
             color: None,
+            environment: None,
+            environments: self.servers.environments(),
             error: None,
         });
     }
@@ -820,6 +1091,8 @@ impl RegisteredPanel {
             name: g.name.clone(),
             description: g.description.clone(),
             color: g.color,
+            environment: g.environment.clone(),
+            environments: self.servers.environments(),
             error: None,
         });
     }
@@ -848,6 +1121,7 @@ impl RegisteredPanel {
             Some(Menu::Edit(path)) if path.server.is_some() => self.edit_server(&path, store),
             Some(Menu::Edit(path)) => self.edit_group(&path.groups),
             Some(Menu::Delete(path)) => self.confirm_delete = Some(path),
+            Some(Menu::Environments) => self.edit_environments(),
             Some(Menu::Move(from, to)) => {
                 let message = self.move_node(&from, &to);
                 if !message.is_empty() {
@@ -877,6 +1151,10 @@ impl RegisteredPanel {
         let description = group.description.clone();
         let (subgroups, servers) = (group.groups.len(), group.servers.clone());
         let color = self.servers.color(groups);
+        let own_environment = group
+            .environment
+            .as_deref()
+            .and_then(|n| self.servers.environment(n));
         let mut toggle = false;
         ui.horizontal(|ui| {
             ui.add_space(depth as f32 * 16.0 + 8.0);
@@ -908,6 +1186,9 @@ impl RegisteredPanel {
                 label.dnd_set_drag_payload(here.clone());
             }
             drop_target(ui, &label, &here, groups, menu);
+            if let Some(e) = &own_environment {
+                environment_badge(ui, environment_name(&e.name), e.color);
+            }
             let label = if description.is_empty() {
                 label
             } else {
@@ -927,6 +1208,10 @@ impl RegisteredPanel {
                 }
                 if ui.button(tr("New Server Registration...")).clicked() {
                     *menu = Some(Menu::NewServer(groups.to_vec()));
+                    ui.close();
+                }
+                if is_root && ui.button(tr("Environments...")).clicked() {
+                    *menu = Some(Menu::Environments);
                     ui.close();
                 }
                 ui.separator();
@@ -983,6 +1268,13 @@ impl RegisteredPanel {
                 label.dnd_set_drag_payload(path.clone());
                 // Soltar em cima de um servidor põe no grupo dele.
                 drop_target(ui, &label, &path, groups, menu);
+                // A etiqueta só aparece quando o servidor tem um ambiente
+                // diferente do da pasta: o da pasta já está na linha dela.
+                if let Some(e) = self.servers.node_environment(&path)
+                    && Some(&e) != self.servers.group_environment(groups).as_ref()
+                {
+                    environment_badge(ui, environment_name(&e.name), e.color);
+                }
                 let tip = if server.description.is_empty() {
                     format!(
                         "{} ({})",
@@ -1111,6 +1403,7 @@ impl RegisteredPanel {
                                 &dialog.name,
                                 &dialog.description,
                                 dialog.color,
+                                dialog.environment.clone(),
                             )
                             .map(|()| dialog.parent.clone())
                     } else {
@@ -1120,6 +1413,7 @@ impl RegisteredPanel {
                                 name: dialog.name.clone(),
                                 description: dialog.description.clone(),
                                 color: dialog.color,
+                                environment: dialog.environment.clone(),
                                 ..Default::default()
                             },
                         )
@@ -1132,6 +1426,22 @@ impl RegisteredPanel {
                             ));
                             self.selected = Some(NodePath::group(&path));
                             self.group_dialog = None;
+                        }
+                        Err(e) => dialog.error = Some(e),
+                    }
+                }
+            }
+        }
+        if let Some(dialog) = &mut self.environments_dialog {
+            match dialog.show(ctx) {
+                Reply::None => {}
+                Reply::Cancel => self.environments_dialog = None,
+                Reply::Ok => {
+                    let (list, renamed) = dialog.result();
+                    match self.servers.set_environments(list, &renamed) {
+                        Ok(()) => {
+                            status = Some(tr("Environments saved.").to_string());
+                            self.environments_dialog = None;
                         }
                         Err(e) => dialog.error = Some(e),
                     }
@@ -1229,6 +1539,64 @@ fn color_choice(ui: &mut egui::Ui, color: &mut Option<Rgb>) {
     });
 }
 
+/// Combo de ambiente. `None` é "Nenhum" ou, quando a pasta tem um
+/// ambiente, "Da pasta (...)".
+fn environment_choice(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut Option<String>,
+    list: &[Environment],
+    inherited: Option<&Environment>,
+) -> egui::Response {
+    let none = match inherited {
+        Some(e) => trf!("From folder ({name})", name = environment_name(&e.name)),
+        None => trc("environment", "None").to_string(),
+    };
+    let selected = match value {
+        Some(name) => environment_name(name).to_string(),
+        None => none.clone(),
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .width(260.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, None, none);
+            for e in list {
+                let text = icon_text(ui, icon::CIRCLE, Some(e.color), environment_name(&e.name));
+                ui.selectable_value(value, Some(e.name.clone()), text);
+            }
+            // Um ambiente que não está mais na lista continua escolhido até
+            // o usuário trocar.
+            if let Some(name) = value.clone()
+                && !list.iter().any(|e| e.name == name)
+            {
+                ui.selectable_value(value, Some(name.clone()), name);
+            }
+        })
+        .response
+}
+
+/// Etiqueta do ambiente: o nome em letras pequenas, numa caixa da cor dele.
+pub fn environment_badge(ui: &mut egui::Ui, name: &str, color: Rgb) -> egui::Response {
+    let fill = color.color32();
+    // Texto escuro em cor clara, claro em cor escura.
+    let [r, g, b] = color.0;
+    let light = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32 > 150.0;
+    let text = if light {
+        egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)
+    } else {
+        egui::Color32::WHITE
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(5, 0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(name).strong().color(text))
+        })
+        .response
+}
+
 /// Ícone colorido seguido do nome, para as linhas da árvore.
 fn icon_text(ui: &egui::Ui, glyph: &str, color: Option<Rgb>, text: &str) -> egui::WidgetText {
     let mut job = egui::text::LayoutJob::default();
@@ -1253,6 +1621,7 @@ fn icon_text(ui: &egui::Ui, glyph: &str, color: Option<Rgb>, text: &str) -> egui
 }
 
 enum Menu {
+    Environments,
     NewServer(Vec<usize>),
     NewGroup(Vec<usize>),
     Edit(NodePath),
@@ -1308,6 +1677,11 @@ pub struct ServerDialog {
     pub ssl: SslMode,
     pub name: String,
     pub description: String,
+    /// Ambiente do servidor (`None`: o da pasta).
+    pub environment: Option<String>,
+    environments: Vec<Environment>,
+    /// Ambiente que a pasta dá ao servidor sem ambiente próprio.
+    folder_environment: Option<Environment>,
     /// Uma connection string colada: preenche os campos acima e é limpa
     /// (a senha vai para o campo de senha, nunca para o arquivo).
     pub connection_string: String,
@@ -1338,6 +1712,9 @@ impl ServerDialog {
             ssl: s.ssl,
             name: server.name.clone(),
             description: server.description.clone(),
+            environment: server.environment.clone(),
+            environments: default_environments(),
+            folder_environment: None,
             connection_string: String::new(),
             connection_error: None,
             error: None,
@@ -1441,6 +1818,7 @@ impl ServerDialog {
         let server = RegisteredServer {
             name: self.name.clone(),
             description: self.description.clone(),
+            environment: self.environment.clone(),
             settings: settings.clone(),
         };
         let result = match &self.editing {
@@ -1564,6 +1942,17 @@ impl ServerDialog {
                     .labelled_by(label.id);
                     ui.end_row();
 
+                    let label = ui.label(tr("Environment:"));
+                    environment_choice(
+                        ui,
+                        "registered_server_environment",
+                        &mut self.environment,
+                        &self.environments,
+                        self.folder_environment.as_ref(),
+                    )
+                    .labelled_by(label.id);
+                    ui.end_row();
+
                     let label = ui.label(tr("Registered server description:"));
                     ui.add(
                         egui::TextEdit::multiline(&mut self.description)
@@ -1594,6 +1983,120 @@ impl ServerDialog {
     }
 }
 
+/// Uma linha do diálogo "Environments".
+pub struct EnvironmentRow {
+    /// Nome no arquivo antes de abrir o diálogo (`None`: ambiente novo).
+    original: Option<String>,
+    /// Nome no arquivo, para comparar com o editado: um padrão aparece
+    /// traduzido e, sem mudança, continua gravado em inglês.
+    stored: String,
+    pub name: String,
+    pub color: Rgb,
+}
+
+/// "Environments": nome e cor de cada ambiente, adicionar e remover.
+pub struct EnvironmentsDialog {
+    pub rows: Vec<EnvironmentRow>,
+    error: Option<String>,
+}
+
+impl EnvironmentsDialog {
+    /// Mensagem de erro da última tentativa de salvar.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Acrescenta um ambiente novo no fim.
+    pub fn add(&mut self, name: &str, color: Rgb) {
+        self.rows.push(EnvironmentRow {
+            original: None,
+            stored: String::new(),
+            name: name.into(),
+            color,
+        });
+    }
+
+    /// A lista nova e, para cada ambiente, o nome antigo.
+    fn result(&self) -> (Vec<Environment>, Vec<Option<String>>) {
+        self.rows
+            .iter()
+            .map(|r| {
+                // Nome padrão que só aparece traduzido: grava em inglês.
+                let name = if r.original.is_some() && r.name.trim() == environment_name(&r.stored) {
+                    r.stored.clone()
+                } else {
+                    r.name.trim().to_string()
+                };
+                (
+                    Environment {
+                        name,
+                        color: r.color,
+                    },
+                    r.original.clone(),
+                )
+            })
+            .unzip()
+    }
+
+    fn show(&mut self, ctx: &egui::Context) -> Reply {
+        let mut reply = Reply::None;
+        let modal = crate::theme::modal(egui::Id::new("registered_environments")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.heading(tr("Environments"));
+            ui.add_space(4.0);
+            ui.weak(tr(
+                "Servers and folders can belong to an environment. Query windows show its color.",
+            ));
+            ui.add_space(6.0);
+            let mut remove = None;
+            egui::Grid::new("registered_environments_rows")
+                .num_columns(3)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    for (i, row) in self.rows.iter_mut().enumerate() {
+                        let mut rgb = row.color.0;
+                        if egui::color_picker::color_edit_button_srgb(ui, &mut rgb).changed() {
+                            row.color = Rgb(rgb);
+                        }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut row.name)
+                                .id_salt(("environment_name", i))
+                                .desired_width(260.0),
+                        );
+                        if ui.button(icon::TRASH).on_hover_text(tr("Remove")).clicked() {
+                            remove = Some(i);
+                        }
+                        ui.end_row();
+                    }
+                });
+            if let Some(i) = remove {
+                self.rows.remove(i);
+            }
+            if ui.button(tr("Add Environment")).clicked() {
+                let color = FOLDER_COLORS[(self.rows.len() + 5) % FOLDER_COLORS.len()];
+                self.add("", color);
+            }
+            if let Some(error) = &self.error {
+                ui.add_space(6.0);
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    reply = Reply::Cancel;
+                }
+                if ui.button(tr("OK")).clicked() {
+                    reply = Reply::Ok;
+                }
+            });
+        });
+        if modal.should_close() && matches!(reply, Reply::None) {
+            reply = Reply::Cancel;
+        }
+        reply
+    }
+}
+
 /// "New Server Group Properties" e "Edit Server Group Properties".
 pub struct GroupDialog {
     /// Grupo pai (novo) ou o próprio grupo (editando).
@@ -1603,6 +2106,9 @@ pub struct GroupDialog {
     pub description: String,
     /// Cor da pasta (`None`: sem cor própria).
     pub color: Option<Rgb>,
+    /// Ambiente da pasta (`None`: o da pasta de cima, se houver).
+    pub environment: Option<String>,
+    environments: Vec<Environment>,
     error: Option<String>,
 }
 
@@ -1642,6 +2148,16 @@ impl GroupDialog {
                     ui.label(tr("Color:"));
                     color_choice(ui, &mut self.color);
                     ui.end_row();
+                    let label = ui.label(tr("Environment:"));
+                    environment_choice(
+                        ui,
+                        "registered_group_environment",
+                        &mut self.environment,
+                        &self.environments,
+                        None,
+                    )
+                    .labelled_by(label.id);
+                    ui.end_row();
                 });
             if let Some(error) = &self.error {
                 ui.add_space(6.0);
@@ -1672,6 +2188,7 @@ mod tests {
         RegisteredServer {
             name: name.into(),
             description: String::new(),
+            environment: None,
             settings: ConnectionSettings {
                 host: host.into(),
                 ..Default::default()
@@ -1722,7 +2239,7 @@ mod tests {
         assert_eq!(r.color(&eu), Some(FOLDER_COLORS[0]));
         assert_eq!(r.color(&dev), None);
         assert_eq!(r.color(&[]), None);
-        r.update_group(&dev, "Dev", "", Some(FOLDER_COLORS[3]))
+        r.update_group(&dev, "Dev", "", Some(FOLDER_COLORS[3]), None)
             .unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("\"color\": \"#e5534b\""), "{text}");
@@ -1731,11 +2248,7 @@ mod tests {
         assert_eq!(text.matches("\"color\"").count(), 2, "{text}");
         let again = RegisteredServers::open(&file);
         assert_eq!(again.root(), r.root());
-        let groups: Vec<_> = again
-            .all_groups()
-            .into_iter()
-            .map(|(p, d, n)| (p, d, n))
-            .collect();
+        let groups: Vec<_> = again.all_groups().into_iter().collect();
         assert_eq!(
             groups,
             vec![
@@ -1746,6 +2259,133 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn environments_are_inherited_renamed_and_saved_in_english() {
+        let dir = std::env::temp_dir().join(format!("pgstudio-envs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("servers.json");
+        let mut r = RegisteredServers::open(&file);
+        assert_eq!(r.environments(), default_environments());
+        let prod = r
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "Clientes".into(),
+                    environment: Some(PRODUCTION.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let eu = r
+            .add_group(
+                &prod,
+                ServerGroup {
+                    name: "EU".into(),
+                    color: Some(FOLDER_COLORS[5]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let a = r.add_server(&eu, server("a", "db-a")).unwrap();
+        let b = r
+            .add_server(
+                &eu,
+                RegisteredServer {
+                    environment: Some(STAGING.into()),
+                    ..server("b", "db-b")
+                },
+            )
+            .unwrap();
+        let loose = r.add_server(&[], server("c", "db-c")).unwrap();
+        // "a" herda Production da pasta de cima; "b" tem o dele.
+        assert_eq!(r.node_environment(&a).unwrap().name, PRODUCTION);
+        assert_eq!(r.node_environment(&b).unwrap().name, STAGING);
+        assert_eq!(r.node_environment(&loose), None);
+        let tag = r.node_tag(&a).unwrap();
+        assert_eq!(tag.environment.as_deref(), Some("Production"));
+        assert_eq!(tag.color, FOLDER_COLORS[0], "environment color wins");
+        assert_eq!(r.node_tag(&loose), None);
+        assert_eq!(
+            r.tag_for_key(&secrets::password_key(&r.server(&b).unwrap().settings))
+                .unwrap()
+                .color,
+            FOLDER_COLORS[1]
+        );
+        // Sem ambiente, a cor da pasta.
+        r.update_group(&prod, "Clientes", "", None, None).unwrap();
+        assert_eq!(
+            r.node_tag(&a),
+            Some(ServerTag {
+                environment: None,
+                color: FOLDER_COLORS[5]
+            })
+        );
+        r.update_group(&prod, "Clientes", "", None, Some(PRODUCTION.into()))
+            .unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"environment\": \"Production\""), "{text}");
+        // Com a lista padrão, o arquivo não grava a lista.
+        assert!(!text.contains("\"environments\""), "{text}");
+
+        // Renomear Production para "Prod" e apagar Staging.
+        let mut list = r.environments();
+        list[2].name = "Prod".into();
+        list[2].color = FOLDER_COLORS[6];
+        list.remove(1);
+        r.set_environments(list, &[Some(DEVELOPMENT.into()), Some(PRODUCTION.into())])
+            .unwrap();
+        assert_eq!(r.node_environment(&a).unwrap().name, "Prod");
+        assert_eq!(
+            r.node_environment(&b).unwrap().name,
+            "Prod",
+            "Staging is gone"
+        );
+        assert_eq!(r.server(&b).unwrap().environment, None);
+        let again = RegisteredServers::open(&file);
+        assert_eq!(again.environments().len(), 2);
+        assert_eq!(again.node_environment(&a).unwrap().color, FOLDER_COLORS[6]);
+        assert!(
+            r.set_environments(
+                vec![
+                    Environment {
+                        name: "QA".into(),
+                        color: FOLDER_COLORS[0]
+                    },
+                    Environment {
+                        name: "qa".into(),
+                        color: FOLDER_COLORS[1]
+                    }
+                ],
+                &[None, None]
+            )
+            .is_err()
+        );
+
+        // Exportar leva a lista; importar junta os ambientes novos.
+        let exported = dir.join("export.json");
+        r.export(&[], &exported).unwrap();
+        let mut other = RegisteredServers::in_memory(ServerGroup::default());
+        other.import(&[], &exported).unwrap();
+        let names: Vec<_> = other.environments().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, [DEVELOPMENT, STAGING, PRODUCTION, "Prod"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn environments_dialog_keeps_default_names_in_english() {
+        let mut panel = RegisteredPanel::default();
+        panel.edit_environments();
+        let dialog = panel.environments_dialog.as_mut().unwrap();
+        // O nome aparece traduzido; sem mudança, volta em inglês.
+        dialog.rows[0].name = environment_name(DEVELOPMENT).to_string();
+        dialog.add("QA", FOLDER_COLORS[5]);
+        let (list, renamed) = dialog.result();
+        assert_eq!(list[0].name, DEVELOPMENT);
+        assert_eq!(list[3].name, "QA");
+        assert_eq!(renamed[3], None);
+        assert_eq!(renamed[0].as_deref(), Some(DEVELOPMENT));
     }
 
     #[test]
@@ -1804,9 +2444,9 @@ mod tests {
         let names: Vec<_> = r.all_servers().iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["db1.example.com", "local"]);
 
-        r.update_group(&eu, "Europe", "west", None).unwrap();
+        r.update_group(&eu, "Europe", "west", None, None).unwrap();
         assert_eq!(r.group(&eu).unwrap().description, "west");
-        assert!(r.update_group(&[], "x", "", None).is_err());
+        assert!(r.update_group(&[], "x", "", None, None).is_err());
         r.update_server(&a, server("primary", "db1.example.com"))
             .unwrap();
         assert_eq!(r.server(&a).unwrap().name, "primary");

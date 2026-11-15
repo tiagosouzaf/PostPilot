@@ -457,6 +457,7 @@ mod tests {
                 servers: vec![RegisteredServer {
                     name: "Prod".into(),
                     description: String::new(),
+                    environment: None,
                     settings: ConnectionSettings {
                         host: "db".into(),
                         ..Default::default()

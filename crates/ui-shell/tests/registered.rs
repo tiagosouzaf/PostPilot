@@ -63,6 +63,7 @@ fn tree() -> RegisteredServers {
             RegisteredServer {
                 name: host.into(),
                 description: String::new(),
+                environment: None,
                 settings: settings(host),
             },
         )
@@ -505,6 +506,7 @@ fn dragging_a_server_to_another_group_survives_a_restart() {
         RegisteredServer {
             name: "sales-db".into(),
             description: String::new(),
+            environment: None,
             settings: settings("sales-db"),
         },
     )
@@ -559,6 +561,7 @@ fn move_to_menu_and_folder_color_survive_a_restart() {
         RegisteredServer {
             name: "sales-db".into(),
             description: String::new(),
+            environment: None,
             settings: settings("sales-db"),
         },
     )
@@ -708,4 +711,56 @@ fn query_status_strip_shows_the_window_server_not_the_active_one() {
     assert_eq!(harness.state().connection().unwrap().settings.host, "hr-db");
     harness.get_by_label("Connected.");
     harness.get_by_label("sales-db (alice)");
+}
+
+#[test]
+fn query_windows_show_the_environment_of_their_registered_server() {
+    use pgstudio_ui_shell::registered::{DEVELOPMENT, NodePath, PRODUCTION};
+    // A pasta Production é do ambiente Production; o hr-db, dentro dela,
+    // é Development.
+    let mut r = tree();
+    r.update_group(&[0], "Production", "", None, Some(PRODUCTION.into()))
+        .unwrap();
+    let hr_path = NodePath::server(&[0], 1);
+    let mut hr = r.server(&hr_path).unwrap().clone();
+    assert_eq!(hr.name, "hr-db");
+    hr.environment = Some(DEVELOPMENT.into());
+    r.update_server(&hr_path, hr).unwrap();
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_registered_servers(r)
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_connector(Arc::new(FakeConnector));
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+
+    connect_with_dialog(&mut harness, "sales-db", false);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    let tag = harness.state().active_tag().expect("sales-db has a tag");
+    assert_eq!(tag.environment.as_deref(), Some("Production"));
+    // Na faixa da janela e na status bar.
+    assert!(harness.query_all_by_label("Production").count() >= 2);
+
+    connect_with_dialog(&mut harness, "hr-db", false);
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    let tag = harness.state().active_tag().expect("hr-db has a tag");
+    assert_eq!(tag.environment.as_deref(), Some("Development"));
+    let mut envs: Vec<_> = harness
+        .state()
+        .document_tags()
+        .into_values()
+        .filter_map(|t| t.environment)
+        .collect();
+    envs.sort();
+    assert_eq!(envs, ["Development", "Production"]);
+
+    // Uma conexão que não está nos Registered Servers não tem etiqueta.
+    connect_with_dialog(&mut harness, "web-db", false);
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    assert_eq!(harness.state().active_tag(), None);
 }

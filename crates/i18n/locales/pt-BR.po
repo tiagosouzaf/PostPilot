@@ -3876,3 +3876,46 @@ msgstr "Outra cor..."
 
 msgid "Move To"
 msgstr "Mover Para"
+
+msgctxt "environment"
+msgid "None"
+msgstr "Nenhum"
+
+msgctxt "environment"
+msgid "Development"
+msgstr "Desenvolvimento"
+
+msgctxt "environment"
+msgid "Staging"
+msgstr "Homologação"
+
+msgctxt "environment"
+msgid "Production"
+msgstr "Produção"
+
+msgid "Environment:"
+msgstr "Ambiente:"
+
+msgid "From folder ({name})"
+msgstr "Da pasta ({name})"
+
+msgid "Environments..."
+msgstr "Ambientes..."
+
+msgid "Environments"
+msgstr "Ambientes"
+
+msgid "Environments saved."
+msgstr "Ambientes salvos."
+
+msgid "Servers and folders can belong to an environment. Query windows show its color."
+msgstr "Servidores e pastas podem pertencer a um ambiente. As janelas de consulta mostram a cor dele."
+
+msgid "Add Environment"
+msgstr "Adicionar Ambiente"
+
+msgid "Enter an environment name."
+msgstr "Digite o nome do ambiente."
+
+msgid "There are two environments named \"{name}\"."
+msgstr "Há dois ambientes com o nome \"{name}\"."
