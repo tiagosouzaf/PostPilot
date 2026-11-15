@@ -43,6 +43,30 @@ impl Engine {
         }
     }
 
+    /// O nome como entra no SQL escrito para ler: com aspas (PostgreSQL)
+    /// ou colchetes (SQL Server) só quando precisa.
+    pub fn ident(self, name: &str) -> String {
+        match self {
+            Engine::PostgreSql => crate::schema::quote_ident(name),
+            Engine::SqlServer => {
+                let mut chars = name.chars();
+                // As palavras reservadas do PostgreSQL servem de lista
+                // (pecam por excesso: colchetes a mais não atrapalham).
+                let lower = name.to_lowercase();
+                let plain = chars
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '#')
+                    && chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '@' | '#' | '$'))
+                    && crate::schema::quote_ident(&lower) == lower;
+                if plain {
+                    name.to_string()
+                } else {
+                    self.quote_ident(name)
+                }
+            }
+        }
+    }
+
     /// Texto como literal SQL do motor (`None` é `NULL`). O servidor
     /// converte para o tipo da coluna.
     pub fn literal(self, value: Option<&str>) -> String {
@@ -106,6 +130,7 @@ impl Engine {
                     | Feature::Security
                     | Feature::Backup
                     | Feature::ObjectInfo
+                    | Feature::QueryDesigner
             ),
         }
     }

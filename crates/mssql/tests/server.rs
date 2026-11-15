@@ -478,6 +478,54 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
         Some(Securable::Database("pp_explorer".into()))
     );
 
+    // O modelo dos designers.
+    let model = meta.load_model("pp_explorer").expect("model");
+    let names: Vec<_> = model.tables.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["cliente", "pedido"]);
+    let (cli, ped) = (&model.tables[0], &model.tables[1]);
+    assert_eq!(cli.schema, "dbo");
+    assert_eq!(cli.primary_key.as_ref().unwrap().columns, ["id"]);
+    assert_eq!(cli.uniques[0].columns, ["nome"]);
+    let cols: Vec<_> = ped
+        .columns
+        .iter()
+        .map(|c| {
+            format!(
+                "{} {} {} {:?} {:?} {}",
+                c.name,
+                c.ty,
+                c.nullable,
+                c.default,
+                c.generated,
+                c.identity.is_some()
+            )
+        })
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            "id int false None None true",
+            "cliente_id int false None None false",
+            "total decimal(10,2) true Some(\"(0)\") None false",
+            "dobro decimal(12,2) true None Some(\"[total]*(2)\") false",
+        ]
+    );
+    assert_eq!(ped.checks[0].expr, "[total]>=(0)");
+    let fk = &ped.foreign_keys[0];
+    assert_eq!(
+        (
+            fk.columns.as_slice(),
+            fk.ref_schema.as_str(),
+            fk.ref_table.as_str()
+        ),
+        (["cliente_id".to_string()].as_slice(), "dbo", "cliente")
+    );
+    assert_eq!(fk.ref_columns, ["id"]);
+    assert_eq!(ped.indexes.len(), 1);
+    assert_eq!(ped.indexes[0].name, "ix_pedido_cliente");
+    assert_eq!(ped.indexes[0].columns, ["cliente_id"]);
+    assert_eq!(ped.indexes[0].method, "nonclustered");
+
     // O catálogo do IntelliSense.
     let cat = meta.catalog("pp_explorer").expect("catalog");
     assert_eq!(cat.engine, pgstudio_core::connection::Engine::SqlServer);

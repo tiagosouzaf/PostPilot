@@ -89,22 +89,7 @@ impl Catalog {
     /// O nome como entra no SQL: com aspas (PostgreSQL) ou colchetes (SQL
     /// Server) só quando precisa.
     pub fn quote(&self, name: &str) -> String {
-        match self.engine {
-            crate::connection::Engine::PostgreSql => quote_ident(name),
-            crate::connection::Engine::SqlServer => {
-                let mut chars = name.chars();
-                let plain = chars
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '#')
-                    && chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '@' | '#' | '$'))
-                    && quote_ident(&name.to_lowercase()) == name.to_lowercase();
-                if plain {
-                    name.to_string()
-                } else {
-                    self.engine.quote_ident(name)
-                }
-            }
-        }
+        self.engine.ident(name)
     }
 
     /// Schema pelo nome como escrito no SQL.
