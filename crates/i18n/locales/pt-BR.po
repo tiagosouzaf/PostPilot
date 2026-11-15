@@ -4016,6 +4016,99 @@ msgstr "Gravações"
 msgid "I/O (MB)"
 msgstr "E/S (MB)"
 
+msgid "Logins"
+msgstr "Logins"
+
+msgid "Server Roles"
+msgstr "Roles do Servidor"
+
+msgid "Users"
+msgstr "Usuários"
+
+msgid "Database Roles"
+msgstr "Roles do Banco"
+
+msgid "New Login..."
+msgstr "Novo Login..."
+
+msgid "New Server Role..."
+msgstr "Nova Role do Servidor..."
+
+msgid "New User..."
+msgstr "Novo Usuário..."
+
+msgid "New Database Role..."
+msgstr "Nova Role do Banco..."
+
+msgid "Login Properties - {name}"
+msgstr "Propriedades do Login - {name}"
+
+msgid "Server Role Properties - {name}"
+msgstr "Propriedades da Role do Servidor - {name}"
+
+msgid "Database User - {name}"
+msgstr "Usuário do Banco - {name}"
+
+msgid "Database Role Properties - {name}"
+msgstr "Propriedades da Role do Banco - {name}"
+
+msgid "Login - New"
+msgstr "Login - Novo"
+
+msgid "Server Role - New"
+msgstr "Role do Servidor - Nova"
+
+msgid "Database User - New"
+msgstr "Usuário do Banco - Novo"
+
+msgid "Database Role - New"
+msgstr "Role do Banco - Nova"
+
+msgid "The name is required."
+msgstr "O nome é obrigatório."
+
+msgid "A new login needs a password."
+msgstr "Um login novo precisa de senha."
+
+msgid "Server roles"
+msgstr "Roles do servidor"
+
+msgid "Database roles"
+msgstr "Roles do banco"
+
+msgid "Login name:"
+msgstr "Nome do login:"
+
+msgid "User name:"
+msgstr "Nome do usuário:"
+
+msgid "Default database:"
+msgstr "Banco padrão:"
+
+msgid "Default schema:"
+msgstr "Schema padrão:"
+
+msgid "(without login)"
+msgstr "(sem login)"
+
+msgid "(server default)"
+msgstr "(padrão do servidor)"
+
+msgid "Enforce password policy"
+msgstr "Exigir a política de senhas"
+
+msgid "Login is disabled"
+msgstr "O login está desabilitado"
+
+msgid "This is a fixed role: only its members can change."
+msgstr "Esta é uma role fixa: só os membros dela podem mudar."
+
+msgid "The login, user or role could not be read."
+msgstr "Não foi possível ler o login, usuário ou role."
+
+msgid "The login, user or role no longer exists."
+msgstr "O login, usuário ou role não existe mais."
+
 msgid "Search databases"
 msgstr "Pesquisar bancos"
 

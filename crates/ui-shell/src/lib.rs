@@ -40,6 +40,7 @@ pub mod results;
 pub mod schema_compare;
 pub mod secrets;
 pub mod security;
+pub mod security_mssql;
 pub mod servers;
 pub mod system_theme;
 pub mod theme;
@@ -3665,6 +3666,11 @@ impl ShellApp {
             pgstudio_core::metadata::Securable::Role(_)
                 | pgstudio_core::metadata::Securable::NewRole
         );
+        // A pasta que lista o principal (SQL Server), para atualizar.
+        let folder = self
+            .explorer
+            .provider()
+            .and_then(|p| p.security_folder(dialog.securable()));
         match dialog.show(ctx) {
             None => {}
             Some(properties::Request::Closed) => self.security = None,
@@ -3678,7 +3684,9 @@ impl ShellApp {
                 self.security = None;
                 self.output.extend(log);
                 self.status = tr("The changes were applied.").to_string();
-                if roles {
+                if let Some(folder) = folder {
+                    self.explorer.refresh(&folder);
+                } else if roles {
                     self.explorer.refresh(&pgstudio_core::metadata::NodeId(
                         "server/Security/Roles".into(),
                     ));

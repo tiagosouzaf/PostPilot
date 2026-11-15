@@ -421,6 +421,55 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
     let pedido = child(meta, &tables.id, "dbo.pedido");
     assert_eq!(meta.database_of(&pedido.id).as_deref(), Some("pp_explorer"));
 
+    // Security: logins e server roles no servidor, usuários e roles no banco.
+    use pgstudio_core::metadata::{PrincipalKind, Securable};
+    let security = child(meta, &server.id, "Security");
+    let logins = child(meta, &security.id, "Logins");
+    let sa = child(meta, &logins.id, "sa");
+    assert_eq!(
+        meta.securable(&sa.id),
+        Some(Securable::Principal {
+            kind: PrincipalKind::Login,
+            database: None,
+            name: Some("sa".into()),
+        })
+    );
+    assert_eq!(
+        meta.securable(&logins.id),
+        Some(Securable::Principal {
+            kind: PrincipalKind::Login,
+            database: None,
+            name: None,
+        })
+    );
+    assert_eq!(
+        meta.security_folder(&meta.securable(&sa.id).unwrap()),
+        Some(logins.id.clone())
+    );
+    assert!(!meta.properties(&sa.id).unwrap().is_empty());
+    let server_roles = child(meta, &security.id, "Server Roles");
+    child(meta, &server_roles.id, "sysadmin");
+    let db_security = child(meta, &db.id, "Security");
+    let users = child(meta, &db_security.id, "Users");
+    let dbo_user = child(meta, &users.id, "dbo");
+    let target = meta.securable(&dbo_user.id).unwrap();
+    assert_eq!(
+        target,
+        Securable::Principal {
+            kind: PrincipalKind::User,
+            database: Some("pp_explorer".into()),
+            name: Some("dbo".into()),
+        }
+    );
+    assert_eq!(meta.security_folder(&target), Some(users.id.clone()));
+    let db_roles = child(meta, &db_security.id, "Database Roles");
+    let owner = child(meta, &db_roles.id, "db_owner");
+    assert_eq!(
+        meta.securable(&owner.id).unwrap().database(),
+        Some("pp_explorer")
+    );
+    assert_eq!(meta.securable(&pedido.id), None);
+
     // O catálogo do IntelliSense.
     let cat = meta.catalog("pp_explorer").expect("catalog");
     assert_eq!(cat.engine, pgstudio_core::connection::Engine::SqlServer);
