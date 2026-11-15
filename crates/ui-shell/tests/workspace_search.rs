@@ -56,14 +56,24 @@ fn harness(root: &Path) -> Harness<'static, ShellApp> {
     harness
 }
 
+/// Os campos de pesquisa do painel, de cima para baixo: o dos servidores
+/// e o das consultas.
+const SERVERS_FIELD: usize = 0;
+const QUERIES_FIELD: usize = 1;
+
+fn field<'a>(harness: &'a Harness<'static, ShellApp>, index: usize) -> egui_kittest::Node<'a> {
+    let mut fields: Vec<_> = harness
+        .query_all_by_role(eframe::egui::accesskit::Role::TextInput)
+        .collect();
+    fields.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    assert_eq!(fields.len(), 2, "servers and queries search fields");
+    fields.swap_remove(index)
+}
+
 fn search(harness: &mut Harness<'static, ShellApp>, text: &str) {
-    harness
-        .get_by_role(eframe::egui::accesskit::Role::TextInput)
-        .focus();
+    field(harness, QUERIES_FIELD).focus();
     harness.run();
-    harness
-        .get_by_role(eframe::egui::accesskit::Role::TextInput)
-        .type_text(text);
+    field(harness, QUERIES_FIELD).type_text(text);
     // A leitura dos arquivos termina em outra thread.
     let start = Instant::now();
     loop {
@@ -93,8 +103,9 @@ fn search_filters_by_name_and_by_content() {
     assert!(
         shown(&harness, HINT)
             || harness
-                .query_by_role(eframe::egui::accesskit::Role::TextInput)
-                .is_some()
+                .query_all_by_role(eframe::egui::accesskit::Role::TextInput)
+                .count()
+                > 0
     );
     assert!(shown(&harness, "Query_3.sql"));
     assert!(shown(&harness, "vazia"));
@@ -142,4 +153,71 @@ fn search_with_no_match_and_clearing_it() {
     assert!(shown(&harness, "1 query found."));
     assert!(shown(&harness, "Query_2.sql"));
     assert!(!shown(&harness, "Query_1.sql"));
+}
+
+/// O campo de cima filtra os servidores do workspace sem mexer nas
+/// consultas, e o de baixo não mexe nos servidores.
+#[test]
+fn servers_search_filters_the_workspace_servers() {
+    use pgstudio_core::connection::ConnectionSettings;
+    use pgstudio_ui_shell::registered::{RegisteredServer, ServerGroup};
+    let root = workspace("servers");
+    let mut harness = harness(&root);
+    {
+        let panel = harness.state_mut().workspace_panel_mut();
+        let servers = panel.servers_mut().unwrap().servers_mut();
+        let saas = servers
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "SaaS".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        for (name, host, database) in [
+            ("Tiib@Production", "db-prod.exemplo.com", "tiib"),
+            ("WebGed@SaaS", "db-saas.exemplo.com", "webged"),
+        ] {
+            let server = RegisteredServer {
+                name: name.into(),
+                settings: ConnectionSettings {
+                    host: host.into(),
+                    database: database.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            servers.add_server(&saas, server).unwrap();
+        }
+    }
+    harness.run();
+    assert!(shown(&harness, "Tiib@Production"));
+    assert!(shown(&harness, "WebGed@SaaS"));
+
+    // Pelo host, que a árvore não mostra: a linha de baixo diz onde achou.
+    field(&harness, SERVERS_FIELD).focus();
+    harness.run();
+    field(&harness, SERVERS_FIELD).type_text("DB-SAAS");
+    harness.run();
+    assert!(shown(&harness, "1 server found."));
+    assert!(shown(&harness, "WebGed@SaaS"));
+    assert!(shown(&harness, "server: db-saas.exemplo.com"));
+    assert!(!shown(&harness, "Tiib@Production"));
+    // As consultas continuam todas lá.
+    assert!(shown(&harness, "Query_3.sql"));
+    assert!(!shown(&harness, "queries found."));
+
+    // E a pesquisa das consultas não esconde servidor nenhum.
+    harness
+        .state_mut()
+        .workspace_panel_mut()
+        .servers_mut()
+        .unwrap()
+        .filter
+        .clear();
+    search(&mut harness, "pedidos");
+    assert!(shown(&harness, "1 query found."));
+    assert!(shown(&harness, "Tiib@Production"));
+    assert!(shown(&harness, "WebGed@SaaS"));
 }

@@ -161,6 +161,54 @@ fn ctrl_alt_g_opens_registered_servers_with_groups() {
     harness.get_by_label_contains("hr-db");
 }
 
+/// A pesquisa da janela Registered Servers: filtra a árvore, mantém a
+/// pasta do que achou e Enter conecta o primeiro.
+#[test]
+fn search_filters_the_tree_and_enter_connects_the_first() {
+    let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::default());
+    store.set("alice@hr-db:5432", "secret").unwrap();
+    let mut harness = harness(store, Vec::new());
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::CTRL | Modifiers::ALT, Key::G);
+    harness.run();
+    let shown = |h: &Harness<'static, ShellApp>, label: &str| {
+        h.query_all_by_label_contains(label).count() > 0
+    };
+    let field = eframe::egui::accesskit::Role::TextInput;
+    harness.get_by_role(field).focus();
+    harness.run();
+    harness.get_by_role(field).type_text("nada disso");
+    harness.run();
+    assert!(shown(&harness, "No servers found."));
+    assert!(!shown(&harness, "sales-db"));
+    assert!(!shown(&harness, "Production"));
+
+    // Pelo usuário (a árvore só mostra o nome): os dois servidores.
+    harness.state_mut().registered_mut().filter = "ALICE".into();
+    harness.run();
+    assert!(shown(&harness, "2 servers found."));
+    assert!(shown(&harness, "user: alice"));
+
+    // Pasta + nome, em qualquer ordem.
+    harness.state_mut().registered_mut().filter.clear();
+    harness.run();
+    harness.get_by_role(field).focus();
+    harness.run();
+    harness.get_by_role(field).type_text("hr prod");
+    harness.run();
+    assert!(shown(&harness, "1 server found."));
+    assert!(shown(&harness, "hr-db"));
+    assert!(shown(&harness, "Production"));
+    assert!(!shown(&harness, "sales-db"));
+
+    harness.key_press(Key::Enter);
+    harness.step();
+    settle(&mut harness);
+    assert!(harness.state().connect_dialog().is_none());
+    assert_eq!(harness.state().connection().unwrap().settings.host, "hr-db");
+}
+
 #[test]
 fn remembered_password_reconnects_after_a_restart_without_asking() {
     // A "máquina": o cofre sobrevive ao reinício do app.

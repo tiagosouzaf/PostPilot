@@ -4527,3 +4527,29 @@ msgstr "Descartar Tudo..."
 
 msgid "Saved connections:"
 msgstr "Conexões salvas:"
+
+# Pesquisa na árvore de servidores
+
+msgid "Search servers by name, host or database"
+msgstr "Pesquisar servidores por nome, host ou banco"
+
+msgid "Searches the name, folder, environment, host, port, database, user and description. Enter connects to the first one found."
+msgstr "Procura no nome, pasta, ambiente, host, porta, banco, usuário e descrição. Enter conecta no primeiro encontrado."
+
+msgid "No servers found."
+msgstr "Nenhum servidor encontrado."
+
+msgid "1 server found."
+msgstr "1 servidor encontrado."
+
+msgid "{n} servers found."
+msgstr "{n} servidores encontrados."
+
+msgid "server"
+msgstr "servidor"
+
+msgid "user"
+msgstr "usuário"
+
+msgid "description"
+msgstr "descrição"

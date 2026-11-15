@@ -203,6 +203,24 @@ fn bring_connections_into_the_workspace() {
     let _ = std::fs::remove_dir_all(root.parent().unwrap());
 }
 
+/// Os campos de pesquisa do painel do workspace, de cima para baixo: o
+/// dos servidores e o das consultas.
+fn search_fields<'a>(h: &'a Harness<'_, ShellApp>) -> Vec<egui_kittest::Node<'a>> {
+    let mut fields: Vec<_> = h
+        .query_all_by_role(eframe::egui::accesskit::Role::TextInput)
+        .collect();
+    fields.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    fields
+}
+
+fn servers_field<'a>(h: &'a Harness<'_, ShellApp>) -> egui_kittest::Node<'a> {
+    search_fields(h).swap_remove(0)
+}
+
+fn queries_field<'a>(h: &'a Harness<'_, ShellApp>) -> egui_kittest::Node<'a> {
+    search_fields(h).pop().unwrap()
+}
+
 /// A pesquisa nas consultas do workspace: acha pelo nome e pelo conteúdo.
 #[test]
 fn screenshot_of_the_search() {
@@ -263,13 +281,11 @@ fn screenshot_of_the_search() {
         harness.event(button(to, false));
         harness.run();
     }
-    harness
-        .get_by_role(eframe::egui::accesskit::Role::TextInput)
-        .focus();
+    // O campo das consultas é o de baixo; o de cima é o dos servidores.
+    let field = queries_field;
+    field(&harness).focus();
     harness.run();
-    harness
-        .get_by_role(eframe::egui::accesskit::Role::TextInput)
-        .type_text("status_migracao");
+    field(&harness).type_text("status_migracao");
     let start = Instant::now();
     while harness.state().workspace_panel().is_searching() {
         assert!(start.elapsed() < Duration::from_secs(10));
@@ -438,4 +454,109 @@ fn connect_dialog_lists_saved_connections() {
     h.state_mut().open_connect_dialog();
     h.run();
     save(&mut h, "9-conectar-lista-conexoes.png");
+}
+
+/// A pesquisa nos servidores do workspace: acha pelo nome, pela pasta e
+/// pelo que a árvore não mostra (host, banco, usuário).
+#[test]
+fn screenshot_of_the_servers_search() {
+    use pgstudio_core::connection::ConnectionSettings;
+    use pgstudio_ui_shell::registered::{PRODUCTION, RegisteredServer, STAGING, ServerGroup};
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let root = std::env::temp_dir()
+        .join(format!("postpilot-ws-servers-shot-{}", std::process::id()))
+        .join("sql");
+    let _ = std::fs::remove_dir_all(&root);
+    let ws = pgstudio_ui_shell::repo::Workspace::create(&root, "sql").unwrap();
+    std::fs::write(ws.queries_dir().join("Query_1.sql"), "select now();\n").unwrap();
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_registered_servers(RegisteredServers::default())
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()));
+    let mut harness = Harness::builder()
+        .with_size([1100.0, 720.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&harness.ctx);
+    pgstudio_ui_shell::theme::apply(&harness.ctx, pgstudio_core::Theme::Dark);
+    harness.run();
+    assert!(harness.state_mut().open_workspace(&root));
+    harness.run();
+    {
+        let panel = harness.state_mut().workspace_panel_mut();
+        let servers = panel.servers_mut().unwrap().servers_mut();
+        let mut folder = |name: &str, environment: Option<&str>, items: &[(&str, &str, &str)]| {
+            let group = ServerGroup {
+                name: name.into(),
+                environment: environment.map(Into::into),
+                ..Default::default()
+            };
+            let path = servers.add_group(&[], group).unwrap();
+            for (name, host, database) in items {
+                let server = RegisteredServer {
+                    name: (*name).into(),
+                    settings: ConnectionSettings {
+                        host: (*host).into(),
+                        database: (*database).into(),
+                        user: "app".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                servers.add_server(&path, server).unwrap();
+            }
+        };
+        folder(
+            "Jucesp",
+            Some(STAGING),
+            &[
+                ("Tiib@Jucesp", "pg.jucesp.exemplo.com", "tiib"),
+                ("WebGed@Jucesp", "pg.jucesp.exemplo.com", "webged"),
+                (
+                    "controle_migracao_e2doc_webged@Jucesp",
+                    "pg.jucesp.exemplo.com",
+                    "controle_migracao",
+                ),
+            ],
+        );
+        folder(
+            "SaaS",
+            Some(PRODUCTION),
+            &[
+                ("Tiib@Production", "pg-prod.exemplo.com", "tiib"),
+                ("AdmCliente@Production", "pg-prod.exemplo.com", "admcliente"),
+                ("Webged@Production", "pg-prod.exemplo.com", "webged"),
+                ("AdmCliente@SaaS", "pg-saas.exemplo.com", "admcliente"),
+                ("Tiib@SaaS", "pg-saas.exemplo.com", "tiib"),
+                ("TiibSigner@SaaS", "pg-saas.exemplo.com", "signer"),
+                ("WebGed@SaaS", "pg-saas.exemplo.com", "webged"),
+            ],
+        );
+    }
+    harness.run();
+    // Alarga o painel arrastando a divisória.
+    {
+        use eframe::egui::{Event, Modifiers, PointerButton, pos2};
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let (from, to) = (pos2(225.0, 300.0), pos2(470.0, 300.0));
+        harness.event(Event::PointerMoved(from));
+        harness.step();
+        harness.event(button(from, true));
+        harness.step();
+        harness.event(Event::PointerMoved(to));
+        harness.step();
+        harness.event(button(to, false));
+        harness.run();
+    }
+    let field = servers_field;
+    field(&harness).focus();
+    harness.run();
+    field(&harness).type_text("webged pg-prod");
+    harness.run();
+    save(&mut harness, "pesquisa-nos-servidores.png");
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
 }

@@ -8,7 +8,7 @@
 //! quando não acha (ou quando não há cofre).
 
 use pgstudio_i18n::{tr, trc, trf};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +18,7 @@ use pgstudio_core::connection::{ConnectionSettings, Engine, SslMode};
 use pgstudio_core::connection_string;
 use serde::{Deserialize, Serialize};
 
+use crate::repo::search::{fold, terms};
 use crate::secrets::{self, Lookup, SecretStore};
 
 /// Versão do formato de `registered_servers.json`.
@@ -947,6 +948,181 @@ fn check_name<'a>(
     Ok(())
 }
 
+/// Um servidor que a pesquisa achou.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerHit {
+    /// Onde os termos apareceram fora do que a árvore já mostra (nome,
+    /// pasta e ambiente): "servidor: db01 · banco: vendas". Vazio quando
+    /// tudo foi achado no que já está na tela.
+    pub detail: String,
+}
+
+/// O que a pesquisa achou na árvore.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerHits {
+    /// Os servidores achados.
+    pub servers: HashMap<NodePath, ServerHit>,
+    /// As pastas que aparecem: as dos servidores achados, as de cima
+    /// delas e as que têm o termo no próprio nome.
+    pub groups: HashSet<Vec<usize>>,
+    /// Os servidores achados, na ordem da árvore.
+    pub order: Vec<NodePath>,
+    /// Os termos pesquisados (sem acentos e em minúsculas).
+    pub terms: Vec<String>,
+}
+
+impl RegisteredServers {
+    /// Pesquisa `query` na árvore. Cada palavra precisa aparecer em algum
+    /// lugar do servidor: nome, pasta (em qualquer nível), ambiente,
+    /// descrição, host, porta, banco, usuário ou tipo do servidor. Sem
+    /// diferença de maiúsculas e de acentos. A senha nunca entra: ela nem
+    /// fica nesta árvore.
+    pub fn search(&self, query: &str) -> ServerHits {
+        let mut hits = ServerHits {
+            terms: terms(query),
+            ..Default::default()
+        };
+        if hits.terms.is_empty() {
+            return hits;
+        }
+        let mut path = Vec::new();
+        self.search_group(&self.root, &mut path, &[], &mut hits);
+        hits
+    }
+
+    /// Devolve se a pasta aparece (ela ou algo dentro dela foi achado).
+    fn search_group(
+        &self,
+        group: &ServerGroup,
+        path: &mut Vec<usize>,
+        folders: &[String],
+        hits: &mut ServerHits,
+    ) -> bool {
+        // A pasta com todos os termos no caminho aparece mesmo vazia.
+        let folded: Vec<String> = folders.iter().map(|f| fold(f)).collect();
+        let mut shown = !path.is_empty()
+            && hits
+                .terms
+                .iter()
+                .all(|t| folded.iter().any(|f| f.contains(t.as_str())));
+        for (i, sub) in group.groups.iter().enumerate() {
+            path.push(i);
+            let mut names = folders.to_vec();
+            names.push(sub.name.clone());
+            shown |= self.search_group(sub, path, &names, hits);
+            path.pop();
+        }
+        for (i, server) in group.servers.iter().enumerate() {
+            let node = NodePath::server(path, i);
+            let environment = self.node_environment(&node).map(|e| e.name);
+            if let Some(hit) = match_server(server, folders, environment.as_deref(), &hits.terms) {
+                hits.servers.insert(node.clone(), hit);
+                hits.order.push(node);
+                shown = true;
+            }
+        }
+        if shown {
+            hits.groups.insert(path.clone());
+        }
+        shown
+    }
+}
+
+/// Procura `terms` num servidor que está nas pastas `folders` e tem o
+/// ambiente `environment` (o dele ou o da pasta).
+fn match_server(
+    server: &RegisteredServer,
+    folders: &[String],
+    environment: Option<&str>,
+    terms: &[String],
+) -> Option<ServerHit> {
+    let s = &server.settings;
+    // O que a árvore já mostra: achar aqui não precisa de explicação.
+    let mut visible = vec![fold(&server.name)];
+    visible.extend(folders.iter().map(|f| fold(f)));
+    if let Some(e) = environment {
+        visible.push(fold(e));
+        visible.push(fold(environment_name(e)));
+    }
+    // O resto, com o nome do campo para mostrar embaixo do servidor.
+    let port = s.port.to_string();
+    let hidden = [
+        (tr("server"), s.server_name()),
+        (tr("server"), port),
+        (tr("database"), s.database.clone()),
+        (tr("user"), s.user.clone()),
+        (tr("type"), s.engine.label().to_string()),
+        (tr("description"), server.description.clone()),
+    ];
+    let mut parts: Vec<String> = Vec::new();
+    let mut used = HashSet::new();
+    for term in terms {
+        if visible.iter().any(|v| v.contains(term.as_str())) {
+            continue;
+        }
+        let (i, (label, value)) = hidden
+            .iter()
+            .enumerate()
+            .find(|(_, (_, value))| fold(value).contains(term.as_str()))?;
+        // A porta já aparece no nome do servidor quando não é a padrão.
+        let (i, value) = if i == 1 {
+            (0, &hidden[0].1)
+        } else {
+            (i, value)
+        };
+        if used.insert(i) {
+            let value: String = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            parts.push(format!("{label}: {value}")); // i18n-ignore
+        }
+    }
+    Some(ServerHit {
+        detail: parts.join(" · "),
+    })
+}
+
+/// O texto de `detail` com os termos achados em destaque.
+fn detail_job(ui: &egui::Ui, detail: &str, terms: &[String]) -> egui::text::LayoutJob {
+    let mut font = egui::TextStyle::Body.resolve(ui.style());
+    font.size = (font.size * 0.9).round();
+    let weak = egui::TextFormat::simple(font.clone(), ui.visuals().weak_text_color());
+    let strong = egui::TextFormat {
+        background: ui.visuals().selection.bg_fill.gamma_multiply(0.5),
+        ..egui::TextFormat::simple(font, ui.visuals().strong_text_color())
+    };
+    // `fold` não muda a quantidade de caracteres: as posições valem.
+    let chars: Vec<char> = detail.chars().collect();
+    let folded: Vec<char> = fold(detail).chars().collect();
+    let mut marked = vec![false; chars.len()];
+    for term in terms {
+        let term: Vec<char> = term.chars().collect();
+        if term.is_empty() || term.len() > folded.len() {
+            continue;
+        }
+        for at in 0..=folded.len() - term.len() {
+            if folded[at..at + term.len()] == term[..] {
+                marked[at..at + term.len()].fill(true);
+            }
+        }
+    }
+    let mut job = egui::text::LayoutJob::default();
+    let mut from = 0;
+    while from < chars.len() {
+        let mut to = from + 1;
+        while to < chars.len() && marked[to] == marked[from] {
+            to += 1;
+        }
+        let text: String = chars[from..to].iter().collect();
+        let format = if marked[from] {
+            strong.clone()
+        } else {
+            weak.clone()
+        };
+        job.append(&text, 0.0, format);
+        from = to;
+    }
+    job
+}
+
 /// O que o usuário pediu na janela Registered Servers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -975,6 +1151,8 @@ pub struct RegisteredPanel {
     message: Option<String>,
     /// Conexão ativa, para preencher "New Server Registration".
     pub current: Option<ConnectionSettings>,
+    /// O que está escrito no campo de pesquisa.
+    pub filter: String,
 }
 
 impl Default for RegisteredPanel {
@@ -995,6 +1173,7 @@ impl RegisteredPanel {
             confirm_delete: None,
             message: None,
             current: None,
+            filter: String::new(),
         }
     }
 
@@ -1204,13 +1383,17 @@ impl RegisteredPanel {
     pub fn show(&mut self, ui: &mut egui::Ui, store: Option<&Arc<dyn SecretStore>>) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut menu: Option<Menu> = None;
+        let hits = self.search_ui(ui, &mut actions);
         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(icon::DESKTOP_TOWER);
                 ui.strong(tr("Database Engine"));
             });
-            self.group_rows(ui, &[], 0, &mut actions, &mut menu);
-            if self.servers.all_servers().is_empty() && self.servers.root().groups.is_empty() {
+            self.group_rows(ui, &[], 0, hits.as_ref(), &mut actions, &mut menu);
+            if hits.is_none()
+                && self.servers.all_servers().is_empty()
+                && self.servers.root().groups.is_empty()
+            {
                 ui.add_space(6.0);
                 ui.weak(trf!(
                     "No registered servers. Right-click \"{group}\" and choose \"New Server Registration...\".",
@@ -1236,18 +1419,93 @@ impl RegisteredPanel {
         actions
     }
 
+    /// O campo de pesquisa e, embaixo, quantos servidores ele achou.
+    /// Devolve o que foi achado quando há algo digitado. Enter conecta o
+    /// primeiro servidor achado.
+    fn search_ui(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) -> Option<ServerHits> {
+        // A largura visível: o painel pode ser mais largo do que aparece.
+        let width = ui
+            .available_width()
+            .min(ui.clip_rect().right() - ui.cursor().left() - 4.0)
+            .max(120.0);
+        let mut connect_first = false;
+        let row = egui::vec2(width, ui.spacing().interact_size.y);
+        let layout = egui::Layout::right_to_left(egui::Align::Center);
+        ui.allocate_ui_with_layout(row, layout, |ui| {
+            ui.set_max_width(width);
+            let clear = !self.filter.trim().is_empty()
+                && ui
+                    .add(egui::Button::new(icon::X).frame(false))
+                    .on_hover_text(tr("Clear the search"))
+                    .clicked();
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .id_salt("registered_servers_search")
+                    .hint_text(format!(
+                        "{} {}",
+                        icon::MAGNIFYING_GLASS,
+                        tr("Search servers by name, host or database")
+                    ))
+                    .desired_width(f32::INFINITY),
+            );
+            let field = field.on_hover_text(tr(
+                "Searches the name, folder, environment, host, port, database, user and description. Enter connects to the first one found.",
+            ));
+            if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.filter.clear();
+            }
+            // O Enter é consumido: o diálogo de conexão que abre em seguida
+            // não pode tomá-lo como um "Connect" antes de achar a senha.
+            if field.lost_focus()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                connect_first = true;
+            }
+            if clear {
+                self.filter.clear();
+                field.request_focus();
+            }
+        });
+        if self.filter.trim().is_empty() {
+            return None;
+        }
+        let hits = self.servers.search(&self.filter);
+        let text = match hits.order.len() {
+            0 => tr("No servers found.").to_string(),
+            1 => tr("1 server found.").to_string(),
+            n => trf!("{n} servers found.", n = n),
+        };
+        ui.label(egui::RichText::new(text).small().weak());
+        if connect_first
+            && let Some(first) = hits.order.first()
+            && let Some(server) = self.servers.server(first)
+        {
+            actions.push(Action::ConnectExplorer(server.settings.clone()));
+            self.selected = Some(first.clone());
+        }
+        Some(hits)
+    }
+
     fn group_rows(
         &mut self,
         ui: &mut egui::Ui,
         groups: &[usize],
         depth: usize,
+        hits: Option<&ServerHits>,
         actions: &mut Vec<Action>,
         menu: &mut Option<Menu>,
     ) {
         let Some(group) = self.servers.group(groups) else {
             return;
         };
-        let expanded = !self.collapsed.contains(groups);
+        // Na pesquisa só aparecem as pastas com algo achado, todas abertas.
+        if let Some(hits) = hits
+            && !groups.is_empty()
+            && !hits.groups.contains(groups)
+        {
+            return;
+        }
+        let expanded = hits.is_some() || !self.collapsed.contains(groups);
         let here = NodePath::group(groups);
         let is_root = groups.is_empty();
         let name = group.name.clone();
@@ -1343,7 +1601,7 @@ impl RegisteredPanel {
                 }
             });
         });
-        if toggle {
+        if toggle && hits.is_none() {
             if expanded {
                 self.collapsed.insert(groups.to_vec());
             } else {
@@ -1356,10 +1614,19 @@ impl RegisteredPanel {
         for i in 0..subgroups {
             let mut sub = groups.to_vec();
             sub.push(i);
-            self.group_rows(ui, &sub, depth + 1, actions, menu);
+            self.group_rows(ui, &sub, depth + 1, hits, actions, menu);
         }
         for (i, server) in servers.iter().enumerate() {
             let path = NodePath::server(groups, i);
+            let hit = hits.and_then(|h| h.servers.get(&path));
+            if hits.is_some() && hit.is_none() {
+                continue;
+            }
+            // Onde a pesquisa achou, quando não foi no que a linha mostra.
+            let detail = hit.filter(|h| !h.detail.is_empty()).map(|h| {
+                let terms = hits.map(|h| h.terms.as_slice()).unwrap_or_default();
+                (h.detail.clone(), terms)
+            });
             ui.horizontal(|ui| {
                 ui.add_space((depth + 1) as f32 * 16.0 + 8.0 + 14.0);
                 let text = icon_text(ui, icon::DESKTOP_TOWER, color, &server.name);
@@ -1424,6 +1691,13 @@ impl RegisteredPanel {
                     }
                 });
             });
+            if let Some((detail, terms)) = detail {
+                ui.horizontal(|ui| {
+                    ui.add_space((depth + 1) as f32 * 16.0 + 8.0 + 14.0 + 22.0);
+                    let job = detail_job(ui, &detail, terms);
+                    ui.add(egui::Label::new(job).selectable(false));
+                });
+            }
         }
     }
 
@@ -2403,6 +2677,106 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    /// SaaS (produção) > Jucesp, com servidores nos dois níveis.
+    fn search_tree() -> RegisteredServers {
+        let mut r = RegisteredServers::default();
+        let saas = r
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "SaaS".into(),
+                    environment: Some(PRODUCTION.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let jucesp = r
+            .add_group(
+                &saas,
+                ServerGroup {
+                    name: "Jucesp".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        r.add_group(
+            &[],
+            ServerGroup {
+                name: "Vazia".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut tiib = server("Tiib@Production", "db-prod.exemplo.com");
+        tiib.settings.database = "tiib".into();
+        tiib.settings.user = "app_tiib".into();
+        tiib.description = "Aplicação\nprincipal".into();
+        r.add_server(&saas, tiib).unwrap();
+        let mut webged = server("WebGed@Jucesp", "10.0.0.7");
+        webged.settings.port = 5433;
+        webged.settings.database = "webged".into();
+        webged.environment = Some(STAGING.into());
+        r.add_server(&jucesp, webged).unwrap();
+        let mut local = server("local", "localhost");
+        local.settings.engine = Engine::SqlServer;
+        r.add_server(&[], local).unwrap();
+        r
+    }
+
+    fn found(r: &RegisteredServers, query: &str) -> Vec<String> {
+        let hits = r.search(query);
+        hits.order
+            .iter()
+            .map(|p| r.server(p).unwrap().name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn search_matches_name_folder_environment_and_connection_fields() {
+        let r = search_tree();
+        assert!(r.search("   ").servers.is_empty());
+        // Nome, sem diferença de maiúsculas.
+        assert_eq!(found(&r, "TIIB@prod"), ["Tiib@Production"]);
+        // Pasta: tudo o que está nela e nas de dentro.
+        assert_eq!(found(&r, "saas"), ["WebGed@Jucesp", "Tiib@Production"]);
+        assert_eq!(found(&r, "jucesp"), ["WebGed@Jucesp"]);
+        // Ambiente: o do servidor ganha do da pasta.
+        assert_eq!(found(&r, "production saas"), ["Tiib@Production"]);
+        assert_eq!(found(&r, "staging"), ["WebGed@Jucesp"]);
+        // Host, porta, banco, usuário, tipo e descrição.
+        assert_eq!(found(&r, "db-prod"), ["Tiib@Production"]);
+        assert_eq!(found(&r, "5433"), ["WebGed@Jucesp"]);
+        assert_eq!(found(&r, "app_tiib"), ["Tiib@Production"]);
+        assert_eq!(found(&r, "sql server"), ["local"]);
+        assert_eq!(found(&r, "aplicacao"), ["Tiib@Production"]);
+        // Todos os termos, cada um onde estiver.
+        assert_eq!(found(&r, "saas webged 10.0"), ["WebGed@Jucesp"]);
+        assert!(found(&r, "saas localhost").is_empty());
+    }
+
+    #[test]
+    fn search_tells_where_it_matched_and_which_folders_to_show() {
+        let r = search_tree();
+        // Achou no que a árvore mostra: sem explicação.
+        let hits = r.search("tiib@");
+        assert_eq!(hits.servers[&hits.order[0]].detail, "");
+        // Só as pastas do caminho aparecem.
+        assert!(hits.groups.contains(&vec![]) && hits.groups.contains(&vec![0]));
+        assert!(!hits.groups.contains(&vec![0, 0]) && !hits.groups.contains(&vec![1]));
+        // Achou no host e no banco: diz onde, uma vez cada.
+        let hits = r.search("10.0 5433 webged jucesp");
+        assert_eq!(hits.servers[&hits.order[0]].detail, "server: 10.0.0.7,5433");
+        let hits = r.search("exemplo app_ principal");
+        assert_eq!(
+            hits.servers[&hits.order[0]].detail,
+            "server: db-prod.exemplo.com · user: app_tiib · description: Aplicação principal"
+        );
+        // Pasta vazia com o termo no nome aparece, sem servidores.
+        let hits = r.search("vazia");
+        assert!(hits.servers.is_empty());
+        assert!(hits.groups.contains(&vec![1]) && !hits.groups.contains(&vec![0]));
     }
 
     #[test]
