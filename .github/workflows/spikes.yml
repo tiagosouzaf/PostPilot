@@ -1,9 +1,9 @@
 name: Spikes (Fase 0)
 
-# Compila e mede os protótipos de GUI em Linux e Windows. Os runners não têm
-# GPU: Linux roda sob Xvfb com Mesa (llvmpipe/lavapipe) e Windows com o
-# renderizador por software do DirectX (WARP). Os números servem para
-# comparar os toolkits entre si, não como medida absoluta.
+# Compila e mede os protótipos de GUI em Linux. O runner não tem GPU: roda sob
+# Xvfb com Mesa (llvmpipe/lavapipe). Os números servem para comparar os
+# toolkits entre si, não como medida absoluta. Não roda em Windows para não
+# gastar minutos do GitHub Actions (runners de Windows cobram em dobro).
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         toolkit: [egui, slint, gpui]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.toolkit == 'gpui' }}
@@ -33,8 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: spikes/${{ matrix.toolkit }}
-      - name: Dependências do sistema (Linux)
-        if: runner.os == 'Linux'
+      - name: Dependências do sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libxkbcommon-x11-0 libxkbcommon-dev libxkbcommon-x11-dev \
@@ -44,8 +43,7 @@ jobs:
         run: cargo build --release
       - name: Tamanho do binário
         run: ls -l target/release/spike-${{ matrix.toolkit }}* | tee -a bench.txt
-      - name: Benchmark (Linux)
-        if: runner.os == 'Linux'
+      - name: Benchmark
         run: |
           for i in 1 2 3; do
             SPIKE_BENCH=1 SPIKE_IDLE_SECS=15 timeout 180 \
@@ -53,31 +51,6 @@ jobs:
               2>/dev/null | grep '=' | tr '\n' ' ' | tee -a bench.txt || echo "falhou ou excedeu o tempo" | tee -a bench.txt
             echo | tee -a bench.txt
           done
-      - name: Benchmark (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        timeout-minutes: 20
-        run: |
-          $env:SPIKE_BENCH = "1"
-          $env:SPIKE_IDLE_SECS = "15"
-          # Slint: o padrão (femtovg) usa OpenGL, que o runner não tem; testa também o software.
-          # egui: testa com e sem vsync, para separar renderização da espera pela apresentação.
-          $configs = switch ("${{ matrix.toolkit }}") {
-            "slint" { @(@{ SLINT_BACKEND = "" }, @{ SLINT_BACKEND = "winit-software" }) }
-            "egui"  { @(@{ SPIKE_VSYNC = "1" }, @{ SPIKE_VSYNC = "0" }) }
-            default { @(@{}) }
-          }
-          foreach ($cfg in $configs) {
-            foreach ($k in $cfg.Keys) { Set-Item -Path "env:$k" -Value $cfg[$k] }
-            "config=" + (($cfg.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ',') | Tee-Object -Append bench.txt
-            foreach ($i in 1..3) {
-              $p = Start-Process -FilePath ".\target\release\spike-${{ matrix.toolkit }}.exe" `
-                -RedirectStandardOutput "run$i.txt" -RedirectStandardError "err$i.txt" -PassThru -NoNewWindow
-              if (-not $p.WaitForExit(150000)) { $p.Kill(); "run $i excedeu o tempo" | Tee-Object -Append bench.txt }
-              "exit=$($p.ExitCode) " + ((Get-Content "run$i.txt" | Select-String '=') -join ' ') | Tee-Object -Append bench.txt
-              Get-Content "err$i.txt" -TotalCount 5 | Tee-Object -Append bench.txt
-            }
-          }
       - name: Resumo
         if: always()
         run: |
