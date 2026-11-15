@@ -560,3 +560,119 @@ fn screenshot_of_the_servers_search() {
     save(&mut harness, "pesquisa-nos-servidores.png");
     let _ = std::fs::remove_dir_all(root.parent().unwrap());
 }
+
+/// As pastas de conexões no Object Explorer: uma por cliente, com
+/// servidores de vários ambientes; os conectados com a árvore de objetos.
+#[test]
+fn object_explorer_groups_connections_by_client() {
+    use pgstudio_ui_shell::registered::{RegisteredServer, ServerGroup};
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let root = std::env::temp_dir()
+        .join(format!("postpilot-ws-shots-folders-{}", std::process::id()))
+        .join("sql");
+    let _ = std::fs::remove_dir_all(&root);
+
+    let server = |name: &str, host: &str, user: &str, env: Option<&str>| RegisteredServer {
+        name: name.into(),
+        environment: env.map(str::to_string),
+        settings: ConnectionSettings {
+            host: host.into(),
+            user: user.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_registered_servers(RegisteredServers::in_memory(Default::default()))
+        .with_connector(Arc::new(FakeConnector));
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&h.ctx);
+    pgstudio_ui_shell::theme::apply(&h.ctx, pgstudio_core::Theme::Dark);
+    h.run();
+    h.get_by_label("Cancelar").click();
+    h.run();
+    pgstudio_ui_shell::repo::Workspace::create(&root, "sql").unwrap();
+    assert!(h.state_mut().open_workspace(&root));
+    let tiib = server(
+        "Tiib@Production",
+        "saas.example.com",
+        "tiibuser",
+        Some("Production"),
+    );
+    {
+        let servers = h
+            .state_mut()
+            .workspace_panel_mut()
+            .servers_mut()
+            .unwrap()
+            .servers_mut();
+        let group = |name: &str| ServerGroup {
+            name: name.into(),
+            ..Default::default()
+        };
+        let saas = servers.add_group(&[], group("SaaS")).unwrap();
+        servers.add_server(&saas, tiib.clone()).unwrap();
+        for (name, host, user, env) in [
+            (
+                "AdmCliente@Production",
+                "saas.example.com",
+                "admcliente",
+                "Production",
+            ),
+            ("Tiib@SaaS", "hml.example.com", "tiibuser", "Staging"),
+            ("WebGed@SaaS", "hml.example.com", "webged", "Staging"),
+        ] {
+            servers
+                .add_server(&saas, server(name, host, user, Some(env)))
+                .unwrap();
+        }
+        let jucesp = servers.add_group(&[], group("Jucesp")).unwrap();
+        for (name, user, env) in [
+            ("Tiib@Jucesp", "tiibuser", "Production"),
+            ("WebGed@Jucesp", "webged", "Production"),
+        ] {
+            servers
+                .add_server(&jucesp, server(name, "jucesp.example.com", user, Some(env)))
+                .unwrap();
+        }
+        servers.add_group(&[], group("Cliente novo")).unwrap();
+    }
+    h.state_mut()
+        .connect_to(tiib.settings.clone(), "senha".into());
+    let start = Instant::now();
+    while h.state().connection().is_none() {
+        h.step();
+        assert!(start.elapsed() < Duration::from_secs(5), "connected");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    h.run();
+    let ctx = h.ctx.clone();
+    h.state_mut().execute(&ctx, CommandId::ObjectExplorer);
+    h.run();
+    // Abre o servidor conectado e a primeira pasta dele.
+    for row in 0..2 {
+        let id = match h.state().explorer().visible_rows().get(row) {
+            Some(pgstudio_object_explorer::Row::Node { node, .. }) => node.id.clone(),
+            _ => break,
+        };
+        h.state_mut().explorer_mut().expand(&id);
+        h.state_mut()
+            .explorer_mut()
+            .wait_idle(Duration::from_secs(5));
+        h.run();
+    }
+    save(&mut h, "pastas-no-pesquisador.png");
+
+    // O menu "Mover Para" do servidor conectado.
+    h.get_by(|n| n.label().is_some_and(|l| l.ends_with(" Tiib@Production")))
+        .click_secondary();
+    h.run();
+    h.get_by_label_contains("Mover Para").click();
+    h.run();
+    save(&mut h, "mover-para-pasta.png");
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+}
