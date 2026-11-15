@@ -46,10 +46,16 @@ pub trait SecretStore: Send + Sync {
     fn delete(&self, key: &str) -> Result<(), SecretError>;
 }
 
-/// Chave da senha de uma conexão: usuário, servidor e porta. O banco não
-/// entra, porque a senha do PostgreSQL é do usuário no servidor.
+/// Chave da senha de uma conexão: usuário, servidor e porta (com o prefixo
+/// `sqlserver:` no SQL Server). O banco não entra, porque a senha é do
+/// usuário no servidor. É também a chave do servidor conectado.
 pub fn password_key(settings: &ConnectionSettings) -> String {
-    format!("{}@{}:{}", settings.user, settings.host, settings.port)
+    let key = format!("{}@{}:{}", settings.user, settings.host, settings.port);
+    match settings.engine {
+        // O PostgreSQL fica como era, para achar as senhas já guardadas.
+        pgstudio_core::connection::Engine::PostgreSql => key,
+        pgstudio_core::connection::Engine::SqlServer => format!("sqlserver:{key}"),
+    }
 }
 
 /// O cofre do sistema.
@@ -271,6 +277,10 @@ mod tests {
         };
         assert_eq!(password_key(&a), "alice@db:6432");
         assert_eq!(password_key(&a), password_key(&b));
+        // Um SQL Server no mesmo host e porta é outro servidor.
+        let mut mssql = a.clone();
+        mssql.engine = pgstudio_core::connection::Engine::SqlServer;
+        assert_eq!(password_key(&mssql), "sqlserver:alice@db:6432");
     }
 
     #[test]
