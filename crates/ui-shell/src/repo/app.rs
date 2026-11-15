@@ -324,6 +324,11 @@ impl ShellApp {
     /// continua com as dele. Devolve a mensagem para a status bar.
     pub fn import_registered_into_workspace(&mut self) -> Result<String, String> {
         let local = self.registered.servers().root().clone();
+        let environments = self
+            .registered
+            .servers()
+            .custom_environments()
+            .map(<[_]>::to_vec);
         let keys: Vec<String> = self
             .registered
             .servers()
@@ -343,6 +348,9 @@ impl ShellApp {
         let Some(panel) = self.workspace_panel.servers_mut() else {
             return Err(tr("No workspace is open.").into());
         };
+        if let Some(envs) = &environments {
+            panel.servers_mut().merge_environments(envs);
+        }
         let n = panel.servers_mut().import_tree(&[], local)?;
         let imported = if n == 1 {
             tr("Imported 1 server into the workspace.").to_string()

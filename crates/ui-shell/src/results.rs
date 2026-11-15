@@ -5,6 +5,7 @@
 //! Os resultados aparecem na grade do `pgstudio-result-grid` ou, com
 //! "Results to Text" (Ctrl+T), como texto de largura fixa.
 
+use crate::registered::ServerTag;
 use eframe::egui::{self, Color32, RichText};
 use egui_phosphor::regular as icons;
 use pgstudio_i18n::{tr, trf};
@@ -28,12 +29,18 @@ pub struct Action {
 }
 
 /// Desenha o painel de resultados. `server` é o texto da conexão.
-pub fn show(ui: &mut egui::Ui, doc: u32, exec: &mut Execution, server: &str) -> Action {
+pub fn show(
+    ui: &mut egui::Ui,
+    doc: u32,
+    exec: &mut Execution,
+    server: &str,
+    tag: Option<&ServerTag>,
+) -> Action {
     let mut action = Action::default();
     egui::Panel::bottom(egui::Id::new(("query_status", doc)))
         .resizable(false)
-        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2)))
-        .show(ui, |ui| status_strip(ui, exec, server));
+        .frame(strip_frame(ui, tag))
+        .show(ui, |ui| status_strip(ui, exec, server, tag));
     // Sem resultados (ainda), só há o que mostrar em Messages; a escolha
     // do usuário fica guardada para quando eles chegarem.
     let tab = match exec.tab {
@@ -121,7 +128,7 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
 
 /// Faixa de status de uma janela de consulta que ainda não executou:
 /// o servidor e o banco dela.
-pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str) {
+pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str, tag: Option<&ServerTag>) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10)));
         ui.label(tr("Connected."));
@@ -129,11 +136,36 @@ pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str) {
             ui.label(database);
             ui.separator();
             ui.label(server);
+            environment(ui, tag);
         });
     });
 }
 
-fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str) {
+/// Fundo da faixa de status: tingido com a cor do ambiente (ou da pasta)
+/// do servidor da janela.
+pub fn strip_frame(ui: &egui::Ui, tag: Option<&ServerTag>) -> egui::Frame {
+    let frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2));
+    match tag {
+        Some(t) => {
+            let alpha = if ui.visuals().dark_mode { 0.30 } else { 0.22 };
+            frame.fill(t.color.color32().gamma_multiply(alpha))
+        }
+        None => frame,
+    }
+}
+
+/// A etiqueta do ambiente, se o servidor tem um.
+fn environment(ui: &mut egui::Ui, tag: Option<&ServerTag>) {
+    if let Some(ServerTag {
+        environment: Some(name),
+        color,
+    }) = tag
+    {
+        crate::registered::environment_badge(ui, name, *color);
+    }
+}
+
+fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str, tag: Option<&ServerTag>) {
     let outcome = exec.outcome();
     let (icon, color) = match outcome {
         Outcome::Running => (icons::HOURGLASS, ui.visuals().text_color()),
@@ -157,6 +189,7 @@ fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str) {
             ui.label(&exec.database);
             ui.separator();
             ui.label(server);
+            environment(ui, tag);
         });
     });
 }

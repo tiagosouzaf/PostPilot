@@ -2693,6 +2693,7 @@ impl ShellApp {
         let server = self.connection_label();
         let default_db = self.default_database();
         let doc_servers = self.document_servers();
+        let doc_tags = self.document_tags();
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut workspace_actions = Vec::new();
@@ -2723,6 +2724,7 @@ impl ShellApp {
                     },
                     server,
                     doc_servers,
+                    doc_tags,
                     catalogs: &self.catalogs,
                     default_database: default_db,
                     servers: &mut self.servers,
@@ -3619,6 +3621,13 @@ impl ShellApp {
                 ui.separator();
                 self.updater.status_badge(ui, color);
                 ui.label(RichText::new(connection).color(color));
+                if let Some(registered::ServerTag {
+                    environment: Some(name),
+                    color: env,
+                }) = self.active_tag()
+                {
+                    registered::environment_badge(ui, &name, env);
+                }
                 self.claude_status(ui, color);
                 if let Some((line, col)) = cursor {
                     ui.separator();

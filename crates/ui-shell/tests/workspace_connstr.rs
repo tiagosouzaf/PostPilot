@@ -189,6 +189,7 @@ fn local_servers() -> RegisteredServers {
         RegisteredServer {
             name: "Produção".into(),
             description: String::new(),
+            environment: None,
             settings: ConnectionSettings {
                 host: "sales-db".into(),
                 user: "alice".into(),
@@ -212,6 +213,7 @@ fn local_servers() -> RegisteredServers {
         RegisteredServer {
             name: "QA".into(),
             description: String::new(),
+            environment: None,
             settings: ConnectionSettings {
                 host: "qa-db".into(),
                 user: "bob".into(),

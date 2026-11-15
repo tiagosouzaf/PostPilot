@@ -121,6 +121,7 @@ fn add_prod(harness: &mut Harness<'static, ShellApp>) {
             RegisteredServer {
                 name: "Produção".into(),
                 description: String::new(),
+                environment: None,
                 settings: prod(),
             },
         )

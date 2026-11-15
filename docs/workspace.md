@@ -66,6 +66,54 @@ para `servers.json`.
   destrancadas, as senhas lembradas desses servidores são copiadas para o
   cofre. O keyring do sistema continua com a cópia dele.
 
+## Pastas e ambientes
+
+Os grupos funcionam como as pastas do DataGrip, tanto no workspace quanto nos
+Registered Servers:
+
+- **Pastas:** "New Server Group..." cria uma pasta, inclusive dentro de outra.
+  Para mudar uma conexão ou pasta de lugar, arraste ou use **Move To** (Mover
+  Para) no menu dela.
+- **Cor da pasta:** em Properties da pasta, escolha uma cor em **Color**. O
+  ícone da pasta, das subpastas e das conexões dentro dela fica dessa cor.
+- **Ambientes:** todo workspace já vem com Development (Desenvolvimento,
+  verde), Staging (Homologação, laranja) e Production (Produção, vermelho).
+  Escolha o ambiente em Properties de uma pasta, e todas as conexões dentro
+  dela passam a ser daquele ambiente. Uma conexão também pode ter um ambiente
+  próprio, que vale mais que o da pasta. **Environments...** (Ambientes...),
+  no menu da raiz da árvore, muda nomes e cores e cria outros ambientes, como
+  QA.
+- **Na janela de consulta:** uma janela aberta numa conexão com ambiente
+  ganha uma faixa da cor dele no topo, a faixa de status tingida e a etiqueta
+  do ambiente. A status bar também mostra a etiqueta. Sem ambiente, vale a cor
+  da pasta.
+
+Tudo isso fica em `servers.json` e vai para o git junto com os servidores.
+Quem clona o repositório recebe as mesmas pastas, cores e ambientes. Os nomes
+dos três ambientes padrão ficam em inglês no arquivo e aparecem traduzidos
+na tela, então o mesmo repositório serve para quem usa o PostPilot em outro
+idioma.
+
+```json
+{
+  "version": 1,
+  "root": {
+    "name": "vendas",
+    "groups": [
+      {
+        "name": "Clientes",
+        "color": "#e5534b",
+        "environment": "Production",
+        "servers": [ { "name": "vendas-prod", "settings": { "...": "..." } } ]
+      }
+    ]
+  }
+}
+```
+
+A lista `environments` só aparece no arquivo quando alguém muda os
+ambientes. Um `servers.json` antigo, sem cores nem ambientes, abre normalmente.
+
 ## Senhas do workspace
 
 Sem a senha mestra, as senhas ficam só no keyring do sistema, como nos

@@ -122,6 +122,8 @@ pub struct Viewer<'a> {
     /// Servidor de cada janela de consulta, para a faixa de status dela
     /// (o ativo pode ser outro).
     pub doc_servers: std::collections::HashMap<u32, String>,
+    /// Ambiente e cor do servidor de cada janela de consulta.
+    pub doc_tags: std::collections::HashMap<u32, crate::registered::ServerTag>,
     /// Catálogos do IntelliSense.
     pub catalogs: &'a crate::intellisense::Catalogs,
     /// Banco das janelas sem conexão própria.
@@ -301,13 +303,23 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     doc.editor.focus_editor();
                 }
                 let server = self.doc_servers.get(id).unwrap_or(&self.server);
+                let tag = self.doc_tags.get(id);
+                if let Some(tag) = tag {
+                    // Uma faixa da cor do ambiente em cima da janela, como
+                    // no DataGrip: dá para ver de longe que é produção.
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 3.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(rect, 0.0, tag.color.color32());
+                }
                 if let Some(exec) = &mut doc.execution {
                     let height = ui.available_height();
                     let action = egui::Panel::bottom(egui::Id::new(("results_pane", *id)))
                         .resizable(true)
                         .default_size(height * 0.45)
                         .min_size(90.0)
-                        .show(ui, |ui| crate::results::show(ui, *id, exec, server))
+                        .show(ui, |ui| crate::results::show(ui, *id, exec, server, tag))
                         .inner;
                     if let Some(i) = action.save_results {
                         self.save_results.push((*id, i));
@@ -330,9 +342,14 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     // Antes de executar, a faixa já diz onde a janela roda.
                     egui::Panel::bottom(egui::Id::new(("query_status", *id)))
                         .resizable(false)
-                        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2)))
+                        .frame(crate::results::strip_frame(ui, tag))
                         .show(ui, |ui| {
-                            crate::results::connected_strip(ui, db.as_deref().unwrap_or(""), server)
+                            crate::results::connected_strip(
+                                ui,
+                                db.as_deref().unwrap_or(""),
+                                server,
+                                tag,
+                            )
                         });
                 }
                 let catalog = db.and_then(|db| self.catalogs.get(&db));

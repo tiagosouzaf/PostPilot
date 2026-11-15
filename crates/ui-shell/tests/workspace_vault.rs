@@ -69,6 +69,7 @@ fn workspace(base: &Path) -> PathBuf {
             RegisteredServer {
                 name: "Produção".into(),
                 description: String::new(),
+                environment: None,
                 settings: prod(),
             },
         )

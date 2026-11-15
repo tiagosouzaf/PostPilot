@@ -346,6 +346,10 @@ O **Registered Servers** (Ctrl+Alt+G) guarda servidores em grupos, que podem
 ser arrastados de um grupo a outro; dois cliques conectam. "Register..." no
 menu de um servidor do Object Explorer registra aquela conexão, e Tasks >
 Import... / Export... num grupo troca a árvore com outra máquina (sem senhas).
+Os grupos são pastas com cor, e "Move To" muda uma conexão de pasta. Pastas e
+conexões podem ter um ambiente (Desenvolvimento, Homologação, Produção ou
+outros criados em "Environments..."): a janela de consulta mostra a cor e a
+etiqueta dele, para ficar claro quando se está em produção.
 A árvore fica em `registered_servers.json`. Vários servidores aparecem juntos
 no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret

@@ -337,6 +337,34 @@ impl ShellApp {
             .collect()
     }
 
+    /// Ambiente e cor do servidor com esta chave (`usuario@host:porta`),
+    /// vindos do workspace aberto ou, sem ele lá, dos Registered Servers.
+    pub fn server_tag(&self, key: &str) -> Option<crate::registered::ServerTag> {
+        self.workspace_panel
+            .servers()
+            .and_then(|p| p.servers().tag_for_key(key))
+            .or_else(|| self.registered.servers().tag_for_key(key))
+    }
+
+    /// Ambiente e cor de cada janela de consulta, para a faixa de status
+    /// e a barra colorida dela.
+    pub fn document_tags(&self) -> std::collections::HashMap<u32, crate::registered::ServerTag> {
+        self.doc_servers
+            .iter()
+            .filter_map(|(doc, key)| Some((*doc, self.server_tag(key)?)))
+            .collect()
+    }
+
+    /// Ambiente e cor de onde o usuário está: o servidor da janela de
+    /// consulta ativa ou, sem ela, o servidor ativo do Object Explorer.
+    pub fn active_tag(&self) -> Option<crate::registered::ServerTag> {
+        let key = self
+            .active_doc
+            .and_then(|id| self.doc_servers.get(&id).cloned())
+            .or_else(|| self.connection.as_ref().map(|c| server_key(&c.settings)))?;
+        self.server_tag(&key)
+    }
+
     /// Conecta este servidor quando as conexões em andamento terminarem,
     /// como um duplo clique no Registered Servers (linha de comando e
     /// screenshots).
