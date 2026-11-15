@@ -200,6 +200,60 @@ pub fn mcp_config(exe: &Path, endpoint: &Path) -> String {
     .to_string()
 }
 
+/// Uma pergunta só ao Claude Code, sem ferramentas e sem os servidores MCP
+/// do usuário (para a mensagem de commit): `claude -p`, com a pergunta em
+/// stdin e a resposta em texto.
+pub fn ask(program: &Path, system: &str, user: &str, cwd: &Path) -> Result<String, String> {
+    std::fs::create_dir_all(cwd).map_err(|e| format!("{}: {e}", cwd.display()))?;
+    let mut command = Command::new(program);
+    command
+        .args([
+            "-p",
+            "--output-format",
+            "text",
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            r#"{"mcpServers":{}}"#,
+            "--append-system-prompt",
+            system,
+        ])
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("could not start Claude Code ({}): {e}", program.display()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // Um `claude` que não lê a entrada fecha o cano; a resposta (ou o
+        // erro) dele é o que importa.
+        let _ = stdin.write_all(user.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Claude Code did not finish: {e}"))?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && !text.is_empty() {
+        return Ok(text);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = [stderr.trim(), text.as_str()]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .unwrap_or("no answer")
+        .chars()
+        .take(400)
+        .collect::<String>();
+    Err(format!("Claude Code: {detail}"))
+}
+
 /// Onde está o `claude`: `PGSTUDIO_CLAUDE`, o PATH ou os lugares em que o
 /// instalador costuma pôr.
 pub fn find_program() -> Option<PathBuf> {

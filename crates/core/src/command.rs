@@ -114,6 +114,7 @@ commands! {
     // Tools
     SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
     ClaudeCodeAccess => "Tools.ClaudeCodeAccess", "Allow Claude Code (MCP)";
+    AiProviders => "Tools.AiProviders", "AI Providers…";
     Options => "Tools.Options", "Options…";
     // Window
     NewHorizontalTabGroup => "Window.NewHorizontalTabGroup", "New Horizontal Tab Group";

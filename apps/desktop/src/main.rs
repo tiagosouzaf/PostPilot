@@ -353,6 +353,15 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 }
                 app = app.with_secret_store(Arc::new(KeyringStore::default()));
             }
+            // Provedores de IA (Tools > AI Providers): as chaves vão direto
+            // para o cofre do sistema, nunca para o do workspace.
+            app = app.with_ai(match config_dir() {
+                Some(dir) if screenshot.is_none() && !bench => pgstudio_ui_shell::ai::Ai::open(
+                    &dir.join(pgstudio_core::CONFIG_DIR_NAME),
+                    Some(Arc::new(KeyringStore::default())),
+                ),
+                _ => pgstudio_ui_shell::ai::Ai::system(),
+            });
             if screenshot.is_none()
                 && !bench
                 && let Some(dir) = config_dir()

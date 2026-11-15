@@ -15,6 +15,11 @@ sqlparser.workspace = true
 # Segredo do canal local com o `postpilot mcp` (marco 7.2); já vem no
 # Cargo.lock por outras dependências.
 getrandom = "0.3"
+# Provedores de IA por chave de API (OpenAI, OpenRouter, GLM...): o mesmo
+# cliente HTTP bloqueante e as mesmas raízes do sistema que o updater.
+rustls.workspace = true
+rustls-native-certs.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "gzip"] }
 
 [lints]
 workspace = true

@@ -3033,9 +3033,12 @@ version = "0.2.2"
 dependencies = [
  "getrandom 0.3.4",
  "pgstudio-core",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sqlparser",
+ "ureq",
 ]
 
 [[package]]

@@ -14,10 +14,14 @@
 
 pub mod agent;
 pub mod catalog;
+pub mod chat_agent;
 pub mod collect;
+pub mod commit;
 pub mod endpoint;
 pub mod hub;
+pub mod llm;
 pub mod mcp;
+pub mod naming;
 pub mod safety;
 pub mod tools;
 

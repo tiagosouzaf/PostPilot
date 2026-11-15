@@ -251,6 +251,56 @@ impl Git {
         Ok(status)
     }
 
+    /// O que o Commit vai gravar, em texto, para a IA escrever a mensagem:
+    /// a lista de arquivos e o diff. Não mexe no índice. Arquivos novos
+    /// entram com o começo do conteúdo; o cofre de senhas, só com o nome.
+    pub fn commit_context(&self) -> Result<(String, String), GitError> {
+        /// Quanto de um arquivo novo entra.
+        const NEW_FILE: usize = 4000;
+        let status = self.status()?;
+        let mut changes = String::new();
+        let mut diff = String::new();
+        // Sem commit ainda (repositório novo), o diff contra HEAD falha:
+        // tudo entra como arquivo novo, abaixo.
+        if let Ok(tracked) = self.git(&[
+            "diff",
+            "HEAD",
+            "--no-ext-diff",
+            "--",
+            ".",
+            &format!(":(exclude){}", super::vault::FILE),
+        ]) {
+            diff.push_str(&tracked);
+        }
+        for c in &status.changes {
+            changes.push_str(&format!("{} {}\n", c.kind(), c.path));
+            if c.kind() != "Added" || c.path == super::vault::FILE {
+                continue;
+            }
+            // Novo e ainda fora do índice: o diff acima não mostra.
+            if diff.contains(&format!("b/{}\n", c.path)) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(self.root.join(&c.path)) else {
+                continue;
+            };
+            if bytes.contains(&0) {
+                diff.push_str(&format!("\nnew file {} (binary)\n", c.path));
+                continue;
+            }
+            let text = String::from_utf8_lossy(&bytes);
+            let mut cut: String = text.chars().take(NEW_FILE).collect();
+            if cut.len() < text.len() {
+                cut.push_str("\n[...]");
+            }
+            diff.push_str(&format!("\nnew file {}:\n{cut}\n", c.path));
+        }
+        for c in &status.conflicts {
+            changes.push_str(&format!("Resolved {c}\n"));
+        }
+        Ok((changes, diff))
+    }
+
     /// Commita tudo o que mudou na pasta (`git add -A` e `git commit`).
     pub fn commit_all(&self, message: &str) -> Result<String, GitError> {
         let message = message.trim();
