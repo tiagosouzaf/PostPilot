@@ -2699,8 +2699,7 @@ impl ShellApp {
     /// Lê os catálogos que as janelas de consulta precisam e recebe os que
     /// chegaram.
     fn intellisense_step(&mut self, ctx: &egui::Context) {
-        // Sem IntelliSense para o motor (SQL Server até o S3.2), nem tenta
-        // ler o catálogo.
+        // Sem IntelliSense para o motor, nem tenta ler o catálogo.
         let supported = self
             .connection
             .as_ref()
@@ -2784,7 +2783,10 @@ impl ShellApp {
                 doc.editor.focus_editor();
             }
             CommandId::FormatDocument => {
-                let options = pgstudio_sql_editor::format::FormatOptions::default();
+                let options = pgstudio_sql_editor::format::FormatOptions {
+                    dialect: doc.editor.dialect(),
+                    ..Default::default()
+                };
                 match pgstudio_sql_editor::format_selection(ctx, editor, &mut doc.text, &options) {
                     Ok(()) => self.status = tr("Formatted.").to_string(),
                     Err(e) => {
