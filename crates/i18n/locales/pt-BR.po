@@ -4015,3 +4015,9 @@ msgstr "Gravações"
 
 msgid "I/O (MB)"
 msgstr "E/S (MB)"
+
+msgid "Search databases"
+msgstr "Pesquisar bancos"
+
+msgid "No databases found."
+msgstr "Nenhum banco encontrado."
