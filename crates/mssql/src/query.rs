@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use pgstudio_core::connection::{ConnectionSettings, Engine};
-use pgstudio_core::query::{QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage};
+use pgstudio_core::query::{
+    ColumnSource, DescribeDone, QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage,
+};
 use pgstudio_pg_client::DbRuntime;
 use tiberius::{BatchItem, BatchMessage, CancelHandle};
 
@@ -120,6 +122,67 @@ impl QuerySession for MssqlQuerySession {
     fn engine(&self) -> Engine {
         Engine::SqlServer
     }
+
+    fn describe(&self, sql: String, done: DescribeDone) {
+        let shared = self.shared.clone();
+        let settings = self.settings.clone();
+        let password = self.password.clone();
+        self.runtime.handle().spawn(async move {
+            let mut guard = shared.session.lock().await;
+            if guard.is_none() {
+                match Session::connect(&settings, &password).await {
+                    Ok(session) => {
+                        if let Ok(mut c) = shared.cancel.lock() {
+                            *c = Some(session.cancel_handle());
+                        }
+                        *guard = Some(session);
+                    }
+                    Err(e) => return done(Err(e.message().to_string())),
+                }
+            }
+            let Some(session) = guard.as_mut() else {
+                return;
+            };
+            done(
+                session
+                    .rows(&describe_sql(&sql))
+                    .await
+                    .map(|rows| sources(&rows)),
+            );
+        });
+    }
+}
+
+/// De onde vem cada coluna do resultado de `sql`, sem rodar:
+/// `sys.dm_exec_describe_first_result_set` com as informações de origem
+/// (modo 1) dá a tabela (`object_id`) e o `column_id`. Colunas de outro
+/// banco ou servidor ficam sem origem; as escondidas (a chave que o modo 1
+/// acrescenta) ficam de fora.
+pub fn describe_sql(sql: &str) -> String {
+    format!(
+        "SELECT o.id, COLUMNPROPERTY(o.id, d.source_column, 'ColumnId') \
+           FROM sys.dm_exec_describe_first_result_set(N'{}', NULL, 1) d \
+          CROSS APPLY (SELECT CASE WHEN d.source_server IS NULL \
+                                    AND d.source_database = DB_NAME() \
+                               THEN OBJECT_ID(QUOTENAME(d.source_schema) + '.' \
+                                              + QUOTENAME(d.source_table)) END AS id) o \
+          WHERE d.is_hidden = 0 \
+          ORDER BY d.column_ordinal",
+        sql.replace('\'', "''")
+    )
+}
+
+/// As linhas de [`describe_sql`] como origem das colunas.
+fn sources(rows: &[Vec<Option<String>>]) -> Vec<Option<ColumnSource>> {
+    rows.iter()
+        .map(|r| {
+            let number = |i: usize| r.get(i).cloned().flatten()?.parse::<i64>().ok();
+            Some(ColumnSource {
+                table: u32::try_from(number(0)?).ok()?,
+                column: i16::try_from(number(1)?).ok()?,
+            })
+        })
+        .collect()
 }
 
 /// Roda o script. Devolve se foi cancelado e se a conexão não serve mais.

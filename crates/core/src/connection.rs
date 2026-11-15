@@ -34,6 +34,28 @@ pub enum Engine {
 }
 
 impl Engine {
+    /// Nome de tabela ou coluna no SQL do motor: `"Nome"` no PostgreSQL,
+    /// `[Nome]` no SQL Server (só quando precisa, no PostgreSQL).
+    pub fn quote_ident(self, name: &str) -> String {
+        match self {
+            Engine::PostgreSql => crate::schema::quote_ident(name),
+            Engine::SqlServer => format!("[{}]", name.replace(']', "]]")),
+        }
+    }
+
+    /// Texto como literal SQL do motor (`None` é `NULL`). O servidor
+    /// converte para o tipo da coluna.
+    pub fn literal(self, value: Option<&str>) -> String {
+        match (self, value) {
+            (_, None) => "NULL".to_string(),
+            (Engine::PostgreSql, Some(v)) if v.contains('\\') => {
+                format!("E'{}'", v.replace('\\', "\\\\").replace('\'', "''"))
+            }
+            (Engine::PostgreSql, Some(v)) => format!("'{}'", v.replace('\'', "''")),
+            (Engine::SqlServer, Some(v)) => format!("N'{}'", v.replace('\'', "''")),
+        }
+    }
+
     /// Os motores, na ordem do Connect to Server.
     pub const ALL: [Engine; 2] = [Engine::PostgreSql, Engine::SqlServer];
 
@@ -412,6 +434,16 @@ pub trait Connector: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identifiers_and_literals_per_engine() {
+        assert_eq!(Engine::SqlServer.quote_ident("a]b c"), "[a]]b c]");
+        assert_eq!(Engine::PostgreSql.quote_ident("Nome"), "\"Nome\"");
+        assert_eq!(Engine::SqlServer.literal(Some("d'água")), "N'd''água'");
+        assert_eq!(Engine::SqlServer.literal(Some("a\\b")), "N'a\\b'");
+        assert_eq!(Engine::PostgreSql.literal(Some("a\\b")), "E'a\\\\b'");
+        assert_eq!(Engine::SqlServer.literal(None), "NULL");
+    }
 
     #[test]
     fn ssl_labels_have_translations() {
