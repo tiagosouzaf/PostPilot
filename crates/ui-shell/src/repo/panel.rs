@@ -467,6 +467,17 @@ impl WorkspacePanel {
         })
     }
 
+    /// A árvore de servidores do workspace e o cofre dela, para o Object
+    /// Explorer mostrar e mexer nas mesmas pastas.
+    pub fn saved_servers(
+        &mut self,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) -> Option<(&mut RegisteredPanel, Option<Arc<dyn SecretStore>>)> {
+        let store = self.workspace_store(store);
+        let o = self.opened.as_mut()?;
+        Some((&mut o.servers, store))
+    }
+
     /// Abre o "New Server Registration" na raiz da árvore do workspace,
     /// como o menu de contexto dela.
     pub fn new_server(&mut self, store: Option<&Arc<dyn SecretStore>>) {

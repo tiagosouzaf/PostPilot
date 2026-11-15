@@ -2658,6 +2658,10 @@ impl ShellApp {
                 self.register_active_server();
                 return;
             }
+            Event::MoveToFolder(index) => {
+                self.move_active_server_to_folder(index);
+                return;
+            }
             Event::BackUp(node) => {
                 match provider.database_of(&node) {
                     Some(db) => self.open_backup(ctx, db),
@@ -3195,6 +3199,10 @@ impl ShellApp {
         let default_db = self.default_database();
         let doc_servers = self.document_servers();
         let doc_tags = self.document_tags();
+        let active_key = self
+            .connection
+            .as_ref()
+            .map(|c| crate::servers::server_key(&c.settings));
         let mut explorer_events = std::mem::take(&mut self.pending_events);
         let mut registered_actions = Vec::new();
         let mut workspace_actions = Vec::new();
@@ -3226,6 +3234,7 @@ impl ShellApp {
                     doc_tags,
                     catalogs: &self.catalogs,
                     default_database: default_db,
+                    active_key,
                     servers: &mut self.servers,
                     registered: &mut self.registered,
                     secrets: self.secrets.as_ref(),

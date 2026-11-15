@@ -128,6 +128,8 @@ pub struct Viewer<'a> {
     pub catalogs: &'a crate::intellisense::Catalogs,
     /// Banco das janelas sem conexão própria.
     pub default_database: Option<String>,
+    /// Chave (`usuario@host:porta`) do servidor ativo, se conectado.
+    pub active_key: Option<String>,
     /// Os outros servidores conectados no Object Explorer.
     pub servers: &'a mut crate::servers::Servers,
     /// Janela Registered Servers.
@@ -209,6 +211,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, pane: &mut Panel) {
         match pane {
             Panel::ObjectExplorer => {
+                let mut new_folder = false;
                 ui.horizontal(|ui| {
                     let connected = self.explorer.is_connected();
                     let connect = egui::Button::new(format!(
@@ -232,9 +235,50 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     {
                         self.commands.push(CommandId::DisconnectObjectExplorer);
                     }
+                    // Pastas para agrupar as conexões (por cliente, por
+                    // exemplo): as do workspace aberto ou as deste computador.
+                    let folder = egui::Button::new(format!(
+                        "{} {}",
+                        egui_phosphor::regular::FOLDER_PLUS,
+                        tr("New Folder")
+                    ));
+                    if ui
+                        .add(folder)
+                        .on_hover_text(tr(
+                            "Create a folder to group connections, for example one per client.",
+                        ))
+                        .clicked()
+                    {
+                        new_folder = true;
+                    }
                 });
                 ui.separator();
-                let shown = crate::servers::show(ui, self.explorer, self.servers);
+                let in_workspace = self.workspace_panel.workspace().is_some();
+                let (saved, store) = match self.workspace_panel.saved_servers(self.secrets) {
+                    Some(found) => found,
+                    None => (&mut *self.registered, self.secrets.cloned()),
+                };
+                if new_folder {
+                    saved.new_group(&[]);
+                }
+                let shown = crate::servers::show(
+                    ui,
+                    self.explorer,
+                    self.active_key.as_deref(),
+                    self.servers,
+                    saved,
+                    store.as_ref(),
+                );
+                if in_workspace {
+                    self.workspace_actions.extend(
+                        shown
+                            .actions
+                            .into_iter()
+                            .map(crate::repo::panel::Action::Servers),
+                    );
+                } else {
+                    self.registered_actions.extend(shown.actions);
+                }
                 self.explorer_events.extend(shown.events);
                 self.activate_server = self.activate_server.or(shown.activate);
             }

@@ -68,6 +68,9 @@ pub enum Event {
     /// "Register..." no servidor: registra a conexão dele no Registered
     /// Servers.
     Register(NodeId),
+    /// "Move To" no servidor: a pasta escolhida, pelo índice em
+    /// [`ObjectExplorer::set_move_targets`].
+    MoveToFolder(usize),
     /// "Activity Monitor" no servidor.
     ActivityMonitor(NodeId),
     /// "Properties" de um objeto (roles e objetos com permissões abrem a
@@ -109,6 +112,8 @@ pub struct ServerLabel {
 pub struct ObjectExplorer {
     /// O registro do servidor desta árvore, se ele está registrado.
     server_label: Option<ServerLabel>,
+    /// Pastas do "Move To" do nó do servidor.
+    move_targets: Vec<String>,
     provider: Option<Arc<dyn MetadataProvider>>,
     roots: Load,
     entries: HashMap<NodeId, Entry>,
@@ -130,6 +135,7 @@ impl Default for ObjectExplorer {
         let (props_tx, props_rx) = channel();
         ObjectExplorer {
             server_label: None,
+            move_targets: Vec::new(),
             provider: None,
             roots: Load::NotLoaded,
             entries: HashMap::new(),
@@ -491,13 +497,45 @@ impl ObjectExplorer {
 
     /// Desenha a árvore e devolve os pedidos para a casca.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Vec<Event> {
-        self.ctx = Some(ui.ctx().clone());
-        self.poll();
+        self.begin(ui.ctx());
         let mut events = Vec::new();
         if !self.is_connected() {
             ui.weak(tr("Not connected. Use File > Connect Object Explorer."));
             return events;
         }
+        let rows = self.visible_rows().len();
+        egui::ScrollArea::both()
+            .auto_shrink(false)
+            .show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
+                events = self.show_range(ui, range, 0)
+            });
+        events
+    }
+
+    /// Antes de desenhar: guarda o contexto e recebe as cargas prontas.
+    /// Quem desenha a árvore com [`ObjectExplorer::show_range`] chama isto
+    /// uma vez por frame, mesmo com a árvore fora da área visível.
+    pub fn begin(&mut self, ctx: &egui::Context) {
+        self.ctx = Some(ctx.clone());
+        self.poll();
+    }
+
+    /// As pastas para onde o servidor pode ir ("Move To" no menu do nó do
+    /// servidor); o pedido volta como [`Event::MoveToFolder`] com o índice.
+    pub fn set_move_targets(&mut self, targets: Vec<String>) {
+        self.move_targets = targets;
+    }
+
+    /// Desenha só as linhas `range` de [`ObjectExplorer::visible_rows`],
+    /// sem área de rolagem e com `indent` níveis a mais de recuo: para a
+    /// árvore entrar no meio de outra lista (as pastas de conexões).
+    pub fn show_range(
+        &mut self,
+        ui: &mut egui::Ui,
+        range: std::ops::Range<usize>,
+        indent: usize,
+    ) -> Vec<Event> {
+        let mut events = Vec::new();
         // Ações coletadas durante o desenho e aplicadas depois, porque as
         // linhas emprestam a árvore.
         let mut toggle: Option<NodeId> = None;
@@ -506,273 +544,265 @@ impl ObjectExplorer {
         let rows = self.visible_rows();
         let selected = self.selected.clone();
         let server_label = self.server_label.clone();
-        egui::ScrollArea::both().auto_shrink(false).show_rows(
-            ui,
-            ROW_HEIGHT,
-            rows.len(),
-            |ui, range| {
-                for row in &rows[range] {
-                    ui.horizontal(|ui| {
-                        ui.set_height(ROW_HEIGHT);
-                        ui.add_space(row.depth() as f32 * INDENT);
-                        match *row {
-                            Row::Node { node, expanded, .. } => {
-                                let caret = if !node.has_children {
-                                    " "
-                                } else if expanded {
-                                    icon::CARET_DOWN
-                                } else {
-                                    icon::CARET_RIGHT
-                                };
-                                let arrow = ui.add(
-                                    egui::Button::new(caret)
-                                        .frame(false)
-                                        .min_size(egui::vec2(14.0, 0.0)),
-                                );
-                                if arrow.clicked() && node.has_children {
-                                    toggle = Some(node.id.clone());
+        let move_targets = self.move_targets.clone();
+        let range = range.start.min(rows.len())..range.end.min(rows.len());
+        for row in &rows[range] {
+            ui.horizontal(|ui| {
+                ui.set_height(ROW_HEIGHT);
+                ui.add_space((row.depth() + indent) as f32 * INDENT);
+                match *row {
+                    Row::Node { node, expanded, .. } => {
+                        let caret = if !node.has_children {
+                            " "
+                        } else if expanded {
+                            icon::CARET_DOWN
+                        } else {
+                            icon::CARET_RIGHT
+                        };
+                        let arrow = ui.add(
+                            egui::Button::new(caret)
+                                .frame(false)
+                                .min_size(egui::vec2(14.0, 0.0)),
+                        );
+                        if arrow.clicked() && node.has_children {
+                            toggle = Some(node.id.clone());
+                        }
+                        let is_selected = selected.as_ref() == Some(&node.id);
+                        // Pastas ("Tables", "Views"...) saem traduzidas; o
+                        // nome em inglês continua no caminho do nó.
+                        let name = match node.kind {
+                            NodeKind::Folder(_) => tr(&node.name),
+                            _ => node.name.as_str(),
+                        };
+                        // Servidor registrado: a etiqueta do ambiente, o
+                        // nome do registro e o servidor na dica.
+                        let registered = server_label
+                            .as_ref()
+                            .filter(|_| node.kind == NodeKind::Server);
+                        if let Some((env, [r, g, b])) =
+                            registered.and_then(|l| l.environment.as_ref())
+                        {
+                            let light =
+                                0.299 * *r as f32 + 0.587 * *g as f32 + 0.114 * *b as f32 > 150.0;
+                            let ink = if light {
+                                egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)
+                            } else {
+                                egui::Color32::WHITE
+                            };
+                            egui::Frame::new()
+                                .fill(egui::Color32::from_rgb(*r, *g, *b))
+                                .corner_radius(3.0)
+                                .inner_margin(egui::Margin::symmetric(5, 0))
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(env).strong().color(ink))
+                                });
+                        }
+                        let name = registered.map_or(name, |l| l.name.as_str());
+                        let text = format!("{} {name}", kind_icon(node.kind, expanded));
+                        let label = ui.add(
+                            egui::Button::selectable(is_selected, text).frame_when_inactive(false),
+                        );
+                        let label = match registered {
+                            Some(_) => label.on_hover_text(node.name.as_str()),
+                            None => label,
+                        };
+                        if label.clicked() {
+                            select = Some(node.id.clone());
+                        }
+                        if label.double_clicked() && node.has_children {
+                            toggle = Some(node.id.clone());
+                        }
+                        label.context_menu(|ui| {
+                            select = Some(node.id.clone());
+                            if node.kind == NodeKind::Folder(Folder::Tables) {
+                                if ui.button(tr("New Table...")).clicked() {
+                                    events.push(Event::NewTable(node.id.clone()));
+                                    ui.close();
                                 }
-                                let is_selected = selected.as_ref() == Some(&node.id);
-                                // Pastas ("Tables", "Views"...) saem traduzidas; o
-                                // nome em inglês continua no caminho do nó.
-                                let name = match node.kind {
-                                    NodeKind::Folder(_) => tr(&node.name),
-                                    _ => node.name.as_str(),
-                                };
-                                // Servidor registrado: a etiqueta do ambiente, o
-                                // nome do registro e o servidor na dica.
-                                let registered = server_label
-                                    .as_ref()
-                                    .filter(|_| node.kind == NodeKind::Server);
-                                if let Some((env, [r, g, b])) =
-                                    registered.and_then(|l| l.environment.as_ref())
-                                {
-                                    let light =
-                                        0.299 * *r as f32 + 0.587 * *g as f32 + 0.114 * *b as f32
-                                            > 150.0;
-                                    let ink = if light {
-                                        egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)
-                                    } else {
-                                        egui::Color32::WHITE
-                                    };
-                                    egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(*r, *g, *b))
-                                        .corner_radius(3.0)
-                                        .inner_margin(egui::Margin::symmetric(5, 0))
-                                        .show(ui, |ui| {
-                                            ui.label(egui::RichText::new(env).strong().color(ink))
-                                        });
+                                ui.separator();
+                            }
+                            if node.kind == NodeKind::Folder(Folder::Diagrams) {
+                                if ui.button(tr("New Database Diagram")).clicked() {
+                                    events.push(Event::NewDiagram(node.id.clone()));
+                                    ui.close();
                                 }
-                                let name = registered.map_or(name, |l| l.name.as_str());
-                                let text = format!("{} {name}", kind_icon(node.kind, expanded));
-                                let label = ui.add(
-                                    egui::Button::selectable(is_selected, text)
-                                        .frame_when_inactive(false),
-                                );
-                                let label = match registered {
-                                    Some(_) => label.on_hover_text(node.name.as_str()),
-                                    None => label,
-                                };
-                                if label.clicked() {
-                                    select = Some(node.id.clone());
+                                ui.separator();
+                            }
+                            let new_principal = match node.kind {
+                                NodeKind::Folder(Folder::Roles) => Some(tr("New Role...")),
+                                NodeKind::Folder(Folder::Logins) => Some(tr("New Login...")),
+                                NodeKind::Folder(Folder::ServerRoles) => {
+                                    Some(tr("New Server Role..."))
                                 }
-                                if label.double_clicked() && node.has_children {
-                                    toggle = Some(node.id.clone());
+                                NodeKind::Folder(Folder::Users) => Some(tr("New User...")),
+                                NodeKind::Folder(Folder::DatabaseRoles) => {
+                                    Some(tr("New Database Role..."))
                                 }
-                                label.context_menu(|ui| {
-                                    select = Some(node.id.clone());
-                                    if node.kind == NodeKind::Folder(Folder::Tables) {
-                                        if ui.button(tr("New Table...")).clicked() {
-                                            events.push(Event::NewTable(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    if node.kind == NodeKind::Folder(Folder::Diagrams) {
-                                        if ui.button(tr("New Database Diagram")).clicked() {
-                                            events.push(Event::NewDiagram(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    let new_principal = match node.kind {
-                                        NodeKind::Folder(Folder::Roles) => Some(tr("New Role...")),
-                                        NodeKind::Folder(Folder::Logins) => {
-                                            Some(tr("New Login..."))
-                                        }
-                                        NodeKind::Folder(Folder::ServerRoles) => {
-                                            Some(tr("New Server Role..."))
-                                        }
-                                        NodeKind::Folder(Folder::Users) => Some(tr("New User...")),
-                                        NodeKind::Folder(Folder::DatabaseRoles) => {
-                                            Some(tr("New Database Role..."))
-                                        }
-                                        _ => None,
-                                    };
-                                    if let Some(text) = new_principal {
-                                        if ui.button(text).clicked() {
-                                            events.push(Event::Properties(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    if node.kind == NodeKind::Database {
-                                        ui.menu_button(tr("Tasks"), |ui| {
-                                            if ui.button(tr("Back Up...")).clicked() {
-                                                events.push(Event::BackUp(node.id.clone()));
-                                                ui.close();
-                                            }
-                                            if ui.button(tr("Restore...")).clicked() {
-                                                events.push(Event::Restore(node.id.clone()));
-                                                ui.close();
-                                            }
-                                            ui.separator();
-                                            if ui.button(tr("Compare Schema...")).clicked() {
-                                                events.push(Event::CompareSchema(node.id.clone()));
-                                                ui.close();
-                                            }
-                                        });
-                                        ui.separator();
-                                    }
-                                    if node.kind == NodeKind::Folder(Folder::Databases) {
-                                        if ui.button(tr("Restore Database...")).clicked() {
-                                            events.push(Event::Restore(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    if node.kind == NodeKind::Server {
-                                        // Já registrado: o mesmo pedido abre o
-                                        // registro para editar.
-                                        let register = if registered.is_some() {
-                                            tr("Edit Registration...")
-                                        } else {
-                                            tr("Register...")
-                                        };
-                                        if ui.button(register).clicked() {
-                                            events.push(Event::Register(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                        if ui.button(tr("Activity Monitor")).clicked() {
-                                            events.push(Event::ActivityMonitor(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    if node.kind == NodeKind::Table {
-                                        if ui.button(tr("Design")).clicked() {
-                                            events.push(Event::Design(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        ui.separator();
-                                    }
-                                    let queryable = matches!(
-                                        node.kind,
-                                        NodeKind::Server
-                                            | NodeKind::Database
-                                            | NodeKind::Table
-                                            | NodeKind::View
-                                    );
-                                    if ui
-                                        .add_enabled(queryable, egui::Button::new(tr("New Query")))
-                                        .clicked()
-                                    {
-                                        events.push(Event::NewQuery(node.id.clone()));
+                                _ => None,
+                            };
+                            if let Some(text) = new_principal {
+                                if ui.button(text).clicked() {
+                                    events.push(Event::Properties(node.id.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
+                            if node.kind == NodeKind::Database {
+                                ui.menu_button(tr("Tasks"), |ui| {
+                                    if ui.button(tr("Back Up...")).clicked() {
+                                        events.push(Event::BackUp(node.id.clone()));
                                         ui.close();
                                     }
-                                    if node.kind.has_rows() {
-                                        ui.separator();
-                                        let top = trf!("Select Top {n} Rows", n = SELECT_TOP_ROWS);
-                                        if ui.button(top).clicked() {
-                                            events.push(Event::SelectTop(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        let edit = trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS);
-                                        if ui.button(edit).clicked() {
-                                            events.push(Event::EditTop(node.id.clone()));
-                                            ui.close();
-                                        }
-                                        let ask = format!(
-                                            "{} {}",
-                                            egui_phosphor::regular::SPARKLE,
-                                            tr("Ask Claude")
-                                        );
-                                        if ui.button(ask).clicked() {
-                                            events.push(Event::AskClaude(node.id.clone()));
-                                            ui.close();
-                                        }
-                                    }
-                                    if node.kind.scriptable() {
-                                        let label =
-                                            trf!("Script {kind} as", kind = node.kind.label());
-                                        ui.menu_button(label, |ui| {
-                                            for (text, action) in [
-                                                (
-                                                    tr_noop("CREATE To New Query Window"),
-                                                    ScriptAction::Create,
-                                                ),
-                                                (
-                                                    tr_noop("DROP To New Query Window"),
-                                                    ScriptAction::Drop,
-                                                ),
-                                            ] {
-                                                if ui.button(tr(text)).clicked() {
-                                                    events.push(Event::Script(
-                                                        node.id.clone(),
-                                                        action,
-                                                    ));
-                                                    ui.close();
-                                                }
-                                            }
-                                        });
-                                    } else {
-                                        ui.add_enabled_ui(false, |ui| {
-                                            let _ = ui.button(tr("Script as"));
-                                        });
-                                    }
-                                    ui.separator();
-                                    if ui
-                                        .add_enabled(
-                                            node.has_children,
-                                            egui::Button::new(tr("Refresh")),
-                                        )
-                                        .clicked()
-                                    {
-                                        refresh = Some(node.id.clone());
+                                    if ui.button(tr("Restore...")).clicked() {
+                                        events.push(Event::Restore(node.id.clone()));
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui
-                                        .add_enabled(
-                                            // No servidor: o registro dele
-                                            // (nome, pasta e ambiente).
-                                            node.kind.has_properties()
-                                                || node.kind == NodeKind::Server,
-                                            egui::Button::new(tr("Properties")),
-                                        )
-                                        .clicked()
-                                    {
-                                        events.push(Event::Properties(node.id.clone()));
+                                    if ui.button(tr("Compare Schema...")).clicked() {
+                                        events.push(Event::CompareSchema(node.id.clone()));
                                         ui.close();
                                     }
                                 });
+                                ui.separator();
                             }
-                            Row::Loading { .. } => {
-                                ui.weak(format!("{} {}", icon::SPINNER, tr("Loading...")));
+                            if node.kind == NodeKind::Folder(Folder::Databases) {
+                                if ui.button(tr("Restore Database...")).clicked() {
+                                    events.push(Event::Restore(node.id.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
                             }
-                            Row::Failed { error, .. } => {
-                                ui.colored_label(
-                                    ui.visuals().error_fg_color,
-                                    // i18n-ignore
-                                    format!("{} {error}", icon::WARNING),
+                            if node.kind == NodeKind::Server {
+                                // Já registrado: o mesmo pedido abre o
+                                // registro para editar.
+                                let register = if registered.is_some() {
+                                    tr("Edit Registration...")
+                                } else {
+                                    tr("Register...")
+                                };
+                                if ui.button(register).clicked() {
+                                    events.push(Event::Register(node.id.clone()));
+                                    ui.close();
+                                }
+                                if !move_targets.is_empty() {
+                                    ui.menu_button(tr("Move To"), |ui| {
+                                        for (i, folder) in move_targets.iter().enumerate() {
+                                            let text = format!("{} {}", icon::FOLDER, folder);
+                                            if ui.button(text).clicked() {
+                                                events.push(Event::MoveToFolder(i));
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.separator();
+                                if ui.button(tr("Activity Monitor")).clicked() {
+                                    events.push(Event::ActivityMonitor(node.id.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
+                            if node.kind == NodeKind::Table {
+                                if ui.button(tr("Design")).clicked() {
+                                    events.push(Event::Design(node.id.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
+                            let queryable = matches!(
+                                node.kind,
+                                NodeKind::Server
+                                    | NodeKind::Database
+                                    | NodeKind::Table
+                                    | NodeKind::View
+                            );
+                            if ui
+                                .add_enabled(queryable, egui::Button::new(tr("New Query")))
+                                .clicked()
+                            {
+                                events.push(Event::NewQuery(node.id.clone()));
+                                ui.close();
+                            }
+                            if node.kind.has_rows() {
+                                ui.separator();
+                                let top = trf!("Select Top {n} Rows", n = SELECT_TOP_ROWS);
+                                if ui.button(top).clicked() {
+                                    events.push(Event::SelectTop(node.id.clone()));
+                                    ui.close();
+                                }
+                                let edit = trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS);
+                                if ui.button(edit).clicked() {
+                                    events.push(Event::EditTop(node.id.clone()));
+                                    ui.close();
+                                }
+                                let ask = format!(
+                                    "{} {}",
+                                    egui_phosphor::regular::SPARKLE,
+                                    tr("Ask Claude")
                                 );
+                                if ui.button(ask).clicked() {
+                                    events.push(Event::AskClaude(node.id.clone()));
+                                    ui.close();
+                                }
                             }
-                        }
-                    });
+                            if node.kind.scriptable() {
+                                let label = trf!("Script {kind} as", kind = node.kind.label());
+                                ui.menu_button(label, |ui| {
+                                    for (text, action) in [
+                                        (
+                                            tr_noop("CREATE To New Query Window"),
+                                            ScriptAction::Create,
+                                        ),
+                                        (tr_noop("DROP To New Query Window"), ScriptAction::Drop),
+                                    ] {
+                                        if ui.button(tr(text)).clicked() {
+                                            events.push(Event::Script(node.id.clone(), action));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            } else {
+                                ui.add_enabled_ui(false, |ui| {
+                                    let _ = ui.button(tr("Script as"));
+                                });
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(node.has_children, egui::Button::new(tr("Refresh")))
+                                .clicked()
+                            {
+                                refresh = Some(node.id.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(
+                                    // No servidor: o registro dele
+                                    // (nome, pasta e ambiente).
+                                    node.kind.has_properties() || node.kind == NodeKind::Server,
+                                    egui::Button::new(tr("Properties")),
+                                )
+                                .clicked()
+                            {
+                                events.push(Event::Properties(node.id.clone()));
+                                ui.close();
+                            }
+                        });
+                    }
+                    Row::Loading { .. } => {
+                        ui.weak(format!("{} {}", icon::SPINNER, tr("Loading...")));
+                    }
+                    Row::Failed { error, .. } => {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            // i18n-ignore
+                            format!("{} {error}", icon::WARNING),
+                        );
+                    }
                 }
-            },
-        );
+            });
+        }
+        drop(rows);
         if let Some(id) = select {
             // Já pede as propriedades, para a janela Properties não esperar
             // um frame a mais.

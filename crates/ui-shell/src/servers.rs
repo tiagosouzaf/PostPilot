@@ -88,85 +88,181 @@ pub struct Shown {
     /// Índice em [`Servers::parked`] do servidor que o usuário usou e que
     /// deve virar o ativo.
     pub activate: Option<usize>,
+    /// Pedidos das linhas dos servidores guardados (conectar, nova consulta).
+    pub actions: Vec<Action>,
 }
 
-/// Desenha a árvore do servidor ativo e as dos guardados, uma embaixo da
-/// outra na ordem em que foram conectados, dividindo a altura do painel.
-pub fn show(ui: &mut egui::Ui, active: &mut ObjectExplorer, servers: &mut Servers) -> Shown {
-    if servers.parked.is_empty() {
-        return Shown {
-            events: active.show(ui),
-            activate: None,
-        };
+/// Uma linha do Object Explorer: uma pasta de conexões, um servidor
+/// guardado ainda não conectado ou uma linha da árvore de objetos de um
+/// servidor conectado.
+enum Line {
+    Group(Vec<usize>, usize),
+    Saved(crate::registered::NodePath, usize),
+    Object {
+        /// `None`: o servidor ativo; `Some(i)`: o guardado `i`.
+        slot: Option<usize>,
+        row: usize,
+        depth: usize,
+    },
+}
+
+/// Desenha o Object Explorer: as pastas de conexões de `saved` (as do
+/// workspace aberto ou as dos Registered Servers), com os servidores
+/// conectados dentro da pasta deles, cada um com a árvore de objetos, e os
+/// desconectados numa linha que conecta com duplo clique. Os servidores
+/// conectados que não estão em pasta nenhuma ficam no fim, na ordem em que
+/// foram conectados. Tudo numa lista só, com uma rolagem só.
+pub fn show(
+    ui: &mut egui::Ui,
+    active: &mut ObjectExplorer,
+    active_key: Option<&str>,
+    servers: &mut Servers,
+    saved: &mut RegisteredPanel,
+    store: Option<&Arc<dyn SecretStore>>,
+) -> Shown {
+    let mut shown = Shown::default();
+    // "Move To" no nó de cada servidor conectado: as pastas, com a raiz.
+    let targets: Vec<String> = saved
+        .servers()
+        .all_groups()
+        .into_iter()
+        .map(|(path, depth, name)| {
+            if path.is_empty() {
+                // A raiz: fora de qualquer pasta.
+                return tr("(no folder)").to_string();
+            }
+            format!(
+                "{}{}",
+                "    ".repeat(depth - 1),
+                crate::registered::display_name(&name)
+            )
+        })
+        .collect();
+    let targets = if targets.len() < 2 {
+        Vec::new()
+    } else {
+        targets
+    };
+    active.begin(ui.ctx());
+    active.set_move_targets(targets.clone());
+    for p in &mut servers.parked {
+        p.explorer.begin(ui.ctx());
+        p.explorer.set_move_targets(targets.clone());
     }
-    let mut order: Vec<(u32, Option<usize>)> = servers
+
+    // Os servidores conectados, na ordem de conexão.
+    let mut slots: Vec<(u32, Option<usize>, Option<String>)> = servers
         .parked
         .iter()
         .enumerate()
-        .map(|(i, p)| (p.order, Some(i)))
+        .map(|(i, p)| (p.order, Some(i), p.key()))
         .collect();
-    order.push((servers.active_order, None));
-    order.sort_by_key(|(o, _)| *o);
+    if active.is_connected() {
+        slots.push((servers.active_order, None, active_key.map(str::to_string)));
+    }
+    slots.sort_by_key(|(o, ..)| *o);
 
-    // Cada árvore ocupa a altura das linhas dela, como uma árvore só; se
-    // não couber, a altura é dividida na proporção das linhas.
-    const ROW: f32 = 20.0;
-    let available = ui.available_height();
-    let gap = ui.spacing().item_spacing.y;
-    let wanted: Vec<f32> = order
-        .iter()
-        .map(|(_, slot)| {
-            let rows = match slot {
-                None => active.visible_rows().len(),
-                Some(i) => servers.parked[*i].explorer.visible_rows().len(),
-            };
-            rows.max(1) as f32 * ROW + 4.0
-        })
-        .collect();
-    let total: f32 = wanted.iter().sum::<f32>() + gap * (wanted.len() - 1) as f32;
-    let heights: Vec<f32> = if total <= available {
-        // Sobra espaço: a última árvore fica com ele.
-        let mut h = wanted.clone();
-        if let Some(last) = h.last_mut() {
-            *last += available - total;
-        }
-        h
-    } else {
-        let room = available - gap * (wanted.len() - 1) as f32;
-        let sum: f32 = wanted.iter().sum();
-        wanted
-            .iter()
-            .map(|w| (w / sum * room).max(3.0 * ROW))
-            .collect()
+    let tree = saved.tree_rows();
+    if slots.is_empty() && tree.is_empty() {
+        ui.weak(tr("Not connected. Use File > Connect Object Explorer."));
+        return shown;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut placed = vec![false; slots.len()];
+    let objects = |slot: Option<usize>,
+                   depth: usize,
+                   lines: &mut Vec<Line>,
+                   active: &ObjectExplorer,
+                   servers: &Servers| {
+        let rows = match slot {
+            None => active.visible_rows().len(),
+            Some(i) => servers.parked[i].explorer.visible_rows().len(),
+        };
+        lines.extend((0..rows).map(|row| Line::Object { slot, row, depth }));
     };
-    let width = ui.available_width();
-    let mut shown = Shown::default();
-    for ((o, slot), height) in order.into_iter().zip(heights) {
-        // Cada árvore desenha num retângulo próprio, recortado: a área de
-        // rolagem do Object Explorer tem altura mínima e não pode empurrar a
-        // árvore seguinte.
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("explorer_server", o))
-                .max_rect(rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        child.set_clip_rect(rect.intersect(ui.clip_rect()));
-        match slot {
-            None => shown.events.extend(active.show(&mut child)),
-            Some(i) => {
-                let explorer = &mut servers.parked[i].explorer;
-                let before = explorer.selected().map(|n| n.id.clone());
-                let events = explorer.show(&mut child);
-                let after = explorer.selected().map(|n| n.id.clone());
-                if !events.is_empty() || (after.is_some() && before != after) {
-                    shown.activate = Some(i);
-                    shown.events = events;
+    for row in tree {
+        match row {
+            TreeRow::Group { groups, depth } => lines.push(Line::Group(groups, depth)),
+            TreeRow::Server { path, depth } => {
+                let key = saved
+                    .servers()
+                    .server(&path)
+                    .map(|s| server_key(&s.settings));
+                let connected = slots
+                    .iter()
+                    .enumerate()
+                    .position(|(i, s)| !placed[i] && s.2.is_some() && s.2 == key);
+                match connected {
+                    Some(i) => {
+                        placed[i] = true;
+                        objects(slots[i].1, depth, &mut lines, active, servers);
+                    }
+                    None => lines.push(Line::Saved(path, depth)),
                 }
             }
         }
     }
+    // Os conectados que não estão em pasta nenhuma. Os que estão numa
+    // pasta fechada ficam escondidos com ela.
+    let filed: Vec<String> = saved
+        .servers()
+        .all_servers()
+        .into_iter()
+        .map(|s| server_key(&s.settings))
+        .collect();
+    for (i, slot) in slots.iter().enumerate() {
+        let hidden = slot.2.as_ref().is_some_and(|k| filed.contains(k));
+        if !placed[i] && !hidden {
+            objects(slot.1, 0, &mut lines, active, servers);
+        }
+    }
+
+    const ROW: f32 = 20.0;
+    let mut menu = TreeMenu::default();
+    egui::ScrollArea::both()
+        .auto_shrink(false)
+        .show_rows(ui, ROW, lines.len(), |ui, range| {
+            let mut i = range.start;
+            while i < range.end {
+                match &lines[i] {
+                    Line::Group(groups, depth) => {
+                        saved.show_group_row(ui, groups, *depth, &mut menu);
+                        i += 1;
+                    }
+                    Line::Saved(path, depth) => {
+                        saved.show_server_row(ui, path, *depth, &mut shown.actions, &mut menu);
+                        i += 1;
+                    }
+                    Line::Object { slot, row, depth } => {
+                        // As linhas seguidas do mesmo servidor saem juntas.
+                        let (slot, depth) = (*slot, *depth);
+                        let mut end = i + 1;
+                        while end < range.end
+                            && matches!(&lines[end], Line::Object { slot: s, .. } if *s == slot)
+                        {
+                            end += 1;
+                        }
+                        let rows = *row..*row + (end - i);
+                        match slot {
+                            None => shown.events.extend(active.show_range(ui, rows, depth)),
+                            Some(p) => {
+                                let explorer = &mut servers.parked[p].explorer;
+                                let before = explorer.selected().map(|n| n.id.clone());
+                                let events = explorer.show_range(ui, rows, depth);
+                                let after = explorer.selected().map(|n| n.id.clone());
+                                if !events.is_empty() || (after.is_some() && before != after) {
+                                    shown.activate = Some(p);
+                                    shown.events = events;
+                                }
+                            }
+                        }
+                        i = end;
+                    }
+                }
+            }
+        });
+    saved.apply_tree_menu(menu, store);
     shown
 }
 
@@ -175,7 +271,7 @@ use std::sync::Arc;
 use crate::ShellApp;
 use crate::connect::ConnectDialog;
 use crate::panels::Panel;
-use crate::registered::{Action, RegisteredPanel, RegisteredServers};
+use crate::registered::{Action, RegisteredPanel, RegisteredServers, TreeMenu, TreeRow};
 use crate::secrets::SecretStore;
 
 impl ShellApp {
@@ -318,6 +414,44 @@ impl ShellApp {
             (false, false) => tr("Register the server on this computer: choose its name, folder and environment."),
         }
         .to_string();
+    }
+
+    /// "Move To" no servidor do Object Explorer: põe o registro da conexão
+    /// ativa na pasta de índice `index` (a ordem de `all_groups`). Um
+    /// servidor ainda não registrado abre o registro com a pasta escolhida.
+    pub fn move_active_server_to_folder(&mut self, index: usize) {
+        let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
+            self.status = tr("Only a real connection can be registered.").to_string();
+            return;
+        };
+        let key = server_key(&settings);
+        let password = self.password.clone();
+        let secrets = self.secrets.clone();
+        let (panel, store) = match self.workspace_panel.saved_servers(secrets.as_ref()) {
+            Some(found) => found,
+            None => (&mut self.registered, secrets),
+        };
+        let Some((groups, ..)) = panel.servers().all_groups().into_iter().nth(index) else {
+            return;
+        };
+        match panel.servers().path_for_key(&key) {
+            Some(path) => {
+                let message = panel.move_node(&path, &groups);
+                if !message.is_empty() {
+                    self.status = message;
+                }
+            }
+            None => {
+                panel.register_in(&settings, &groups, store.as_ref());
+                if !password.is_empty()
+                    && let Some(d) = panel.server_dialog_mut()
+                {
+                    d.password = password;
+                    d.remember = true;
+                }
+            }
+        }
+        self.sync_server_labels();
     }
 
     /// Tasks > Import... num grupo do Registered Servers.

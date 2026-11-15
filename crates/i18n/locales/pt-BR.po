@@ -4554,5 +4554,14 @@ msgstr "usuário"
 msgid "description"
 msgstr "descrição"
 
+msgid "Create a folder to group connections, for example one per client."
+msgstr "Crie uma pasta para agrupar conexões, por exemplo uma por cliente."
+
+msgid "{server} ({user}): not connected, double-click to connect."
+msgstr "{server} ({user}): não conectado, dê um duplo clique para conectar."
+
+msgid "(no folder)"
+msgstr "(sem pasta)"
+
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
