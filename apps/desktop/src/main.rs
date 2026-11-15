@@ -220,12 +220,14 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         _ => (None, Preferences::default()),
     };
     prefs.apply();
-    // PGSTUDIO_THEME vale mais que o tema salvo.
+    // PGSTUDIO_THEME vale mais que o tema salvo (e que o do sistema).
     let theme = match std::env::var("PGSTUDIO_THEME").as_deref() {
-        Ok("light") => Theme::Light,
-        Ok("dark") => Theme::Dark,
-        _ => prefs.theme(),
+        Ok("light") => Some(Theme::Light),
+        Ok("dark") => Some(Theme::Dark),
+        _ => None,
     };
+    // Sem olhar o sistema (screenshot e medição): o tema salvo ou o padrão.
+    let offline_theme = prefs.theme(None);
     if let Some(language) = std::env::var("PGSTUDIO_LANG")
         .ok()
         .and_then(|l| pgstudio_i18n::Language::from_locale(&l))
@@ -260,7 +262,18 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             if let Some(status) = keymap_status {
                 app = app.with_status(status);
             }
-            app.set_theme(&cc.egui_ctx, theme);
+            app = match theme {
+                Some(theme) => {
+                    app.set_theme(&cc.egui_ctx, theme);
+                    app
+                }
+                // Os modos de screenshot e medição não olham o sistema.
+                None if screenshot.is_some() || bench => {
+                    app.set_theme(&cc.egui_ctx, offline_theme);
+                    app
+                }
+                None => app.with_system_theme(&cc.egui_ctx),
+            };
             if let Ok(paths) = std::env::var("PGSTUDIO_EXPAND") {
                 app = app.with_expanded(paths.split(';').map(str::to_string));
             }

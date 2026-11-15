@@ -50,28 +50,46 @@ impl From<LanguageSetting> for String {
     }
 }
 
-/// Tema salvo: `"light"` ou `"dark"`; sem valor (ou outro valor), o padrão
-/// do app.
+/// Tema salvo: `"system"` (o padrão), `"light"` ou `"dark"`. Valor
+/// desconhecido (o `"default"` de versões antigas, por exemplo) vira
+/// `"system"`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "String", into = "String")]
-pub struct ThemeSetting(pub Option<Theme>);
+pub enum ThemeSetting {
+    /// Segue o tema claro/escuro do sistema ("Same as system"); sem
+    /// preferência do sistema, o escuro.
+    #[default]
+    System,
+    /// Um tema fixo.
+    Fixed(Theme),
+}
+
+impl ThemeSetting {
+    /// Tema efetivo, dado o tema do sistema (`None`: desconhecido).
+    pub fn resolve(self, system: Option<Theme>) -> Theme {
+        match self {
+            ThemeSetting::System => system.unwrap_or_default(),
+            ThemeSetting::Fixed(t) => t,
+        }
+    }
+}
 
 impl From<String> for ThemeSetting {
     fn from(s: String) -> Self {
-        ThemeSetting(match s.as_str() {
-            "light" => Some(Theme::Light),
-            "dark" => Some(Theme::Dark),
-            _ => None,
-        })
+        match s.as_str() {
+            "light" => ThemeSetting::Fixed(Theme::Light),
+            "dark" => ThemeSetting::Fixed(Theme::Dark),
+            _ => ThemeSetting::System,
+        }
     }
 }
 
 impl From<ThemeSetting> for String {
     fn from(t: ThemeSetting) -> Self {
-        match t.0 {
-            Some(Theme::Light) => "light",
-            Some(Theme::Dark) => "dark",
-            None => "default",
+        match t {
+            ThemeSetting::Fixed(Theme::Light) => "light",
+            ThemeSetting::Fixed(Theme::Dark) => "dark",
+            ThemeSetting::System => "system",
         }
         .to_string()
     }
@@ -88,9 +106,9 @@ pub struct Preferences {
 }
 
 impl Preferences {
-    /// Tema efetivo.
-    pub fn theme(&self) -> Theme {
-        self.theme.0.unwrap_or_default()
+    /// Tema efetivo, dado o tema do sistema (`None`: desconhecido).
+    pub fn theme(&self, system: Option<Theme>) -> Theme {
+        self.theme.resolve(system)
     }
 
     /// Aplica o que vale para o processo todo (hoje, o idioma).
@@ -160,14 +178,22 @@ mod tests {
         }
         let json = serde_json::to_string(&Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
-            theme: ThemeSetting(Some(Theme::Light)),
+            theme: ThemeSetting::Fixed(Theme::Light),
         })
         .unwrap();
         assert_eq!(json, r#"{"language":"pt-BR","theme":"light"}"#);
         let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
-        assert_eq!(p.theme(), Theme::Dark);
+        assert_eq!(p.theme(Some(Theme::Light)), Theme::Dark);
         let p: Preferences = serde_json::from_str(r#"{"theme":"pink"}"#).unwrap();
-        assert_eq!(p.theme(), Theme::default());
+        assert_eq!(p.theme, ThemeSetting::System);
+        assert_eq!(p.theme(None), Theme::default());
+        // "default" era o valor das versões que não seguiam o sistema.
+        let p: Preferences = serde_json::from_str(r#"{"theme":"default"}"#).unwrap();
+        assert_eq!(p.theme(Some(Theme::Light)), Theme::Light);
+        assert_eq!(
+            serde_json::to_string(&Preferences::default()).unwrap(),
+            r#"{"language":"system","theme":"system"}"#
+        );
     }
 
     #[test]
@@ -187,7 +213,7 @@ mod tests {
         assert!(store.error.is_none());
         let prefs = Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
-            theme: ThemeSetting(Some(Theme::Light)),
+            theme: ThemeSetting::Fixed(Theme::Light),
         };
         store.save(&prefs).unwrap();
         assert_eq!(PreferencesStore::open(&file).1, prefs);
