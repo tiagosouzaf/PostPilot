@@ -12,6 +12,7 @@ use egui_phosphor::regular as icon;
 
 use super::git::{Done, Git, GitError, Job};
 use super::passwords::{Passwords, SharedVault, WorkspaceSecrets};
+use super::search::{self, Hits, Search};
 use super::source_control::SourceControl;
 use super::{Folder, Workspace};
 use crate::registered::{self, RegisteredPanel};
@@ -26,6 +27,15 @@ pub enum Action {
     Open,
     /// Abrir uma consulta (duplo clique ou "Open").
     OpenQuery(PathBuf),
+    /// Abrir uma consulta achada pela pesquisa, na linha onde o termo
+    /// está.
+    OpenQueryAt {
+        path: PathBuf,
+        /// Linha, a partir de 1.
+        line: usize,
+        /// O termo a selecionar nela.
+        term: String,
+    },
     /// "New Query" numa pasta: criar o arquivo nela e abrir.
     NewQuery(PathBuf),
     /// Pedido da árvore de servidores do workspace.
@@ -64,6 +74,8 @@ struct Opened {
     workspace: Workspace,
     servers: RegisteredPanel,
     queries: Folder,
+    /// Pesquisa nas consultas, pelo nome e pelo conteúdo.
+    search: Search,
     /// Pastas recolhidas (as demais aparecem abertas).
     collapsed: HashSet<PathBuf>,
     selected: Option<PathBuf>,
@@ -124,6 +136,7 @@ impl WorkspacePanel {
             workspace,
             servers,
             queries,
+            search: Search::default(),
             collapsed: HashSet::new(),
             selected: None,
             git,
@@ -209,6 +222,13 @@ impl WorkspacePanel {
         self.opened.as_mut().map(|o| &mut o.servers)
     }
 
+    /// Se a pesquisa nas consultas ainda está lendo os arquivos.
+    pub fn is_searching(&self) -> bool {
+        self.opened
+            .as_ref()
+            .is_some_and(|o| o.search.is_searching())
+    }
+
     /// As consultas, como lidas da última vez.
     pub fn queries(&self) -> Option<&Folder> {
         self.opened.as_ref().map(|o| &o.queries)
@@ -220,6 +240,7 @@ impl WorkspacePanel {
         if let Some(o) = &mut self.opened {
             o.git.refresh();
             o.queries = o.workspace.queries();
+            o.search.invalidate();
             if !o.servers.has_dialog() {
                 let current = o.servers.current.take();
                 o.servers = RegisteredPanel::new(o.workspace.servers());
@@ -617,13 +638,22 @@ impl WorkspacePanel {
         ui.separator();
 
         ui.label(egui::RichText::new(tr("Queries")).small().weak());
+        let first = search_ui(ui, o, panel_width);
+        if let Some(open) = first {
+            actions.push(open);
+        }
+        let hits = o.search.is_active().then(|| o.search.hits());
         let mut folder_menu: Option<PathBuf> = None;
         egui::ScrollArea::both()
             .id_salt("workspace_queries")
             .auto_shrink(false)
             .show(ui, |ui| {
                 let root = o.queries.clone();
-                folder_rows(ui, o, &root, 0, &mut actions, &mut folder_menu);
+                let hits = hits.as_deref();
+                folder_rows(ui, o, &root, 0, hits, &mut actions, &mut folder_menu);
+                if hits.is_some() {
+                    return;
+                }
                 if root.count() == 0 && root.folders.is_empty() {
                     ui.add_space(4.0);
                     ui.weak(tr("No queries yet. Right-click \"Queries\" and choose \"New Query\", or save a query inside the queries folder."));
@@ -671,6 +701,7 @@ impl WorkspacePanel {
             self.vault.lock().expect("vault lock").keys = keys;
             if o.git.take_files_changed() {
                 o.queries = o.workspace.queries();
+                o.search.invalidate();
                 if !o.servers.has_dialog() {
                     let current = o.servers.current.take();
                     o.servers = RegisteredPanel::new(o.workspace.servers());
@@ -796,10 +827,18 @@ fn folder_rows(
     o: &mut Opened,
     folder: &Folder,
     depth: usize,
+    hits: Option<&Hits>,
     actions: &mut Vec<Action>,
     folder_menu: &mut Option<PathBuf>,
 ) {
-    let expanded = !o.collapsed.contains(&folder.path);
+    // Pesquisando: só as pastas com consulta achada, todas abertas.
+    if let Some(hits) = hits
+        && depth > 0
+        && !search::folder_has_hit(folder, hits)
+    {
+        return;
+    }
+    let expanded = hits.is_some() || !o.collapsed.contains(&folder.path);
     let mut toggle = false;
     let name = if depth == 0 {
         tr("Queries").to_string()
@@ -846,7 +885,7 @@ fn folder_rows(
             }
         });
     });
-    if toggle {
+    if toggle && hits.is_none() {
         if expanded {
             o.collapsed.insert(folder.path.clone());
         } else {
@@ -857,9 +896,21 @@ fn folder_rows(
         return;
     }
     for sub in &folder.folders {
-        folder_rows(ui, o, sub, depth + 1, actions, folder_menu);
+        folder_rows(ui, o, sub, depth + 1, hits, actions, folder_menu);
     }
     for file in &folder.files {
+        let hit = hits.and_then(|h| h.get(file));
+        if hits.is_some() && hit.is_none() {
+            continue;
+        }
+        let open = || match hit.and_then(|h| h.line.as_ref()) {
+            Some(line) => Action::OpenQueryAt {
+                path: file.clone(),
+                line: line.number,
+                term: line.term.clone(),
+            },
+            None => Action::OpenQuery(file.clone()),
+        };
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -877,15 +928,135 @@ fn folder_rows(
                 o.selected = Some(file.clone());
             }
             if label.double_clicked() {
-                actions.push(Action::OpenQuery(file.clone()));
+                actions.push(open());
             }
             label.context_menu(|ui| {
                 o.selected = Some(file.clone());
                 if ui.button(tr("Open")).clicked() {
-                    actions.push(Action::OpenQuery(file.clone()));
+                    actions.push(open());
                     ui.close();
                 }
             });
         });
+        if let Some(line) = hit.and_then(|h| h.line.as_ref()) {
+            // O trecho fica colado no arquivo a que pertence.
+            ui.add_space(-ui.spacing().item_spacing.y);
+            let more = hit.map_or(0, |h| h.lines.saturating_sub(1));
+            ui.horizontal(|ui| {
+                ui.add_space((depth + 1) as f32 * 16.0 + 4.0 + 14.0 + 20.0);
+                let row = ui
+                    .add(
+                        egui::Label::new(snippet_job(ui, line, more))
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(tr("Found inside the file. Click to open it at this line."));
+                if row.clicked() {
+                    o.selected = Some(file.clone());
+                    actions.push(open());
+                }
+            });
+        }
     }
+}
+
+/// O campo de pesquisa das consultas e, embaixo, quantas ele achou.
+/// Devolve a primeira consulta achada quando o usuário aperta Enter.
+fn search_ui(ui: &mut egui::Ui, o: &mut Opened, width: f32) -> Option<Action> {
+    let mut open_first = false;
+    // Da direita para a esquerda: o botão de limpar fica no canto e o
+    // campo ocupa o resto da largura visível do painel (`width`).
+    let row = egui::vec2(width, ui.spacing().interact_size.y);
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.allocate_ui_with_layout(row, layout, |ui| {
+        ui.set_max_width(width);
+        let clear = o.search.is_active()
+            && ui
+                .add(egui::Button::new(icon::X).frame(false))
+                .on_hover_text(tr("Clear the search"))
+                .clicked();
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut o.search.text)
+                .id_salt("workspace_queries_search")
+                .hint_text(format!(
+                    "{} {}",
+                    icon::MAGNIFYING_GLASS,
+                    tr("Search queries by name or content")
+                ))
+                .desired_width(f32::INFINITY),
+        );
+        if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            o.search.clear();
+        }
+        if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            open_first = true;
+        }
+        if clear {
+            o.search.clear();
+            field.request_focus();
+        }
+    });
+    o.search.update(ui.ctx(), &o.queries);
+    if !o.search.is_active() {
+        return None;
+    }
+    let hits = o.search.hits();
+    let text = if o.search.is_searching() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
+        tr("Searching inside the files...").to_string()
+    } else {
+        match hits.len() {
+            0 => tr("No queries found.").to_string(),
+            1 => tr("1 query found.").to_string(),
+            n => trf!("{n} queries found.", n = n),
+        }
+    };
+    ui.label(egui::RichText::new(text).small().weak());
+    if !open_first {
+        return None;
+    }
+    let first = search::all_files(&o.queries)
+        .into_iter()
+        .find(|f| hits.contains_key(f))?;
+    o.selected = Some(first.clone());
+    Some(match hits[&first].line.as_ref() {
+        Some(line) => Action::OpenQueryAt {
+            path: first,
+            line: line.number,
+            term: line.term.clone(),
+        },
+        None => Action::OpenQuery(first),
+    })
+}
+
+/// "12: select ... termo ...", com o termo em destaque, e quantas outras
+/// linhas do arquivo também o têm.
+fn snippet_job(ui: &egui::Ui, line: &search::Line, more: usize) -> egui::text::LayoutJob {
+    let mut font = egui::TextStyle::Body.resolve(ui.style());
+    font.size = (font.size * 0.9).round();
+    let weak = egui::TextFormat::simple(font.clone(), ui.visuals().weak_text_color());
+    let strong = egui::TextFormat {
+        background: ui.visuals().selection.bg_fill.gamma_multiply(0.5),
+        ..egui::TextFormat::simple(font, ui.visuals().strong_text_color())
+    };
+    let part = |from: usize, to: usize| -> String {
+        line.snippet.chars().skip(from).take(to - from).collect()
+    };
+    let total = line.snippet.chars().count();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&format!("{}: ", line.number), 0.0, weak.clone()); // i18n-ignore
+    job.append(&part(0, line.found.start), 0.0, weak.clone());
+    job.append(&part(line.found.start, line.found.end), 0.0, strong);
+    job.append(&part(line.found.end, total), 0.0, weak.clone());
+    if more > 0 {
+        let rest = if more == 1 {
+            tr("(+1 line)").to_string()
+        } else {
+            trf!("(+{n} lines)", n = more)
+        };
+        job.append(&format!("  {rest}"), 0.0, weak); // i18n-ignore
+    }
+    job
 }

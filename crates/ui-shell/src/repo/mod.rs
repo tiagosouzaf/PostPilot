@@ -20,6 +20,7 @@ mod app;
 pub mod git;
 pub mod panel;
 pub mod passwords;
+pub mod search;
 pub mod source_control;
 pub mod vault;
 
