@@ -3,7 +3,7 @@
 O que não deu para testar sem uma máquina de verdade: medir com GPU, usar no
 Hyprland e instalar num Windows. Cada parte tem os comandos prontos e uma
 lista curta do que conferir. O resultado vai num arquivo só,
-`~/pgstudio-relatorio.md`; mande esse arquivo (ou cole o conteúdo) no projeto,
+`~/postpilot-relatorio.md`; mande esse arquivo (ou cole o conteúdo) no projeto,
 e os números entram em [`benchmarks.md`](benchmarks.md) e as falhas viram
 correções.
 
@@ -23,15 +23,15 @@ cd postpilot
 ```
 
 O `xdg-desktop-portal-gtk` é o que faz File > Open abrir: o portal do Hyprland
-não tem seletor de arquivos. Para instalar o PGStudio como pacote (opcional),
-`cd packaging/arch && makepkg -si && cd ../..`.
+não tem seletor de arquivos. Para instalar o PostPilot (opcional), use o comando de instalação do
+[README](../README.md).
 
 ### Medir
 
 ```sh
-R=~/pgstudio-relatorio.md
+R=~/postpilot-relatorio.md
 {
-  echo "# Relatório do PGStudio"
+  echo "# Relatório do PostPilot"
   echo
   echo "- Data: $(date -I)"
   echo "- Sistema: $(uname -sr), $(. /etc/os-release; echo "$PRETTY_NAME")"
@@ -68,8 +68,8 @@ marco 6.8 em [`benchmarks.md`](benchmarks.md)).
 
 ### Conferir no Hyprland
 
-Abra o app (`cargo run --release -p pgstudio-desktop`, ou `pgstudio` se
-instalou o pacote), conecte num PostgreSQL e anote no fim do relatório o que
+Abra o app (`cargo run --release -p pgstudio-desktop`, ou `postpilot` se
+instalou), conecte num PostgreSQL e anote no fim do relatório o que
 falhar:
 
 1. Help > About mostra o renderizador e a placa (não `llvmpipe`).
@@ -81,9 +81,11 @@ falhar:
 4. Copiar do editor e colar em outro app, e o contrário (`wl-copy`/`wl-paste`
    funcionam como teste).
 5. File > Open e File > Save As abrem o seletor de arquivos.
-6. Uma regra de janela do Hyprland pela class `pgstudio` (por exemplo, deixar
-   a janela flutuante) pega a janela do PGStudio; `hyprctl clients` mostra
-   `class: pgstudio`.
+6. Uma regra de janela do Hyprland pela class `postpilot` (por exemplo,
+   deixar a janela flutuante) pega a janela do PostPilot; `hyprctl clients`
+   mostra `class: postpilot`. Desde o Hyprland 0.56 a configuração é em Lua e
+   `hyprctl keyword windowrule` não funciona mais: a regra vai no arquivo de
+   configuração ou em `hyprctl eval`.
 7. `cargo xtask pgmatrix --versions 17` (opcional): roda a suíte no
    PostgreSQL do Arch.
 8. Claude (com o Claude Code instalado e logado; passos em
@@ -98,8 +100,8 @@ Não precisa de Rust para conferir o instalador; só para medir.
 
 ### Instalar e conferir
 
-Baixe `PGStudio-0.1.0-x86_64.msi` (em `pgstudio/pacotes` nos arquivos do
-projeto, ou gere com `cargo xtask dist --only msi` no Linux) e:
+Baixe `PostPilot-<versão>-x86_64.msi` (na página de Releases do GitHub,
+ou gere com `cargo xtask dist --only msi` no Linux) e:
 
 1. Dois cliques no `.msi`. O SmartScreen avisa porque não é assinado: "Mais
    informações" > "Executar assim mesmo". Ele pede elevação e instala sem
@@ -110,10 +112,10 @@ projeto, ou gere com `cargo xtask dist --only msi` no Linux) e:
    Direct3D 12 (ou Vulkan) e a placa.
 4. Conecte num PostgreSQL, rode uma consulta, abra um diagrama e o Activity
    Monitor.
-5. Botão direito num `.sql` > Abrir com: o PGStudio aparece e abre o arquivo
+5. Botão direito num `.sql` > Abrir com: o PostPilot aparece e abre o arquivo
    numa aba.
-6. Configurações > Aplicativos > PGStudio > Desinstalar remove o atalho e a
-   pasta `C:\Program Files\PGStudio`.
+6. Configurações > Aplicativos > PostPilot > Desinstalar remove o atalho e a
+   pasta `C:\Program Files\PostPilot`.
 
 ### Medir
 
@@ -123,7 +125,7 @@ Tools), no PowerShell:
 ```powershell
 git clone https://github.com/tiagosouzaf/postpilot.git
 cd postpilot
-cargo xtask bench --markdown | Tee-Object -FilePath $HOME\pgstudio-relatorio-windows.md
+cargo xtask bench --markdown | Tee-Object -FilePath $HOME\postpilot-relatorio-windows.md
 ```
 
 Anote no fim do arquivo o que falhou nos passos acima e mande junto com o do

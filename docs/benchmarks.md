@@ -413,6 +413,46 @@ comparar os dois renderizadores no mesmo container, não para fechar metas.
   RAM, vale trocar o padrão no Linux.
 - **RAM em repouso** continua acima de 100 MB nos dois sem GPU.
 
+### Linux com GPU (Omarchy, 2026-11-15)
+
+Medido na máquina do Tiago com o roteiro de
+[`na-sua-maquina.md`](na-sua-maquina.md): Omarchy (Linux 7.2, Hyprland 0.56,
+Wayland), Ryzen 7 7735HS, GeForce RTX 4050 Mobile (driver NVIDIA 580) e Radeon
+680M, monitor de 165 Hz com escala 1,25. Binário `target/release/postpilot`
+do commit a61a620, sem outra compilação rodando durante as medições. O wgpu
+rodou os 10 cenários com 5 execuções e 30 s em repouso. O glow foi
+interrompido a pedido no quinto cenário: startup, grade, IntelliSense e
+diagrama de 500 com 5 execuções, diagrama de 2.000 com 1. Os valores do glow
+são a faixa das execuções.
+
+| Cenário | Meta | wgpu (mediana) | glow |
+| --- | --- | --- | --- |
+| Até o primeiro frame | < 1 s | 270 ms ✅ | 58 a 66 ms ✅ |
+| RAM em repouso | < 100 MB | 172.2 MB ❌ | 124.1 a 125.2 MB ❌ |
+| Grade: 1 mi linhas chegam | — | 327.5 ms | 289 a 296 ms |
+| Grade: frame rolando (p95) | < 20 ms | 6.5 ms ✅ | 6.38 a 6.41 ms ✅ |
+| Grade: RAM total | — | ~242 MB | 200.4 a 200.8 MB |
+| IntelliSense: pior tecla | < 50 ms | 3.7 ms ✅ | 3.6 a 5.6 ms ✅ |
+| Diagrama 500: frame (p95) | < 20 ms | 6.5 ms ✅ | 6.43 a 6.45 ms ✅ |
+| Diagrama 2.000: layout | — | 18.7 ms | 21.3 ms |
+| Diagrama 2.000: frame (p95) | < 20 ms | 6.6 ms ✅ | 6.46 ms ✅ |
+| Table Designer: frame (p95) | < 20 ms | 6.4 ms ✅ | não medido |
+| Plano 2.000 nós: frame (p95) | < 20 ms | 6.5 ms ✅ | não medido |
+| Activity Monitor: frame (p95) | < 20 ms | 6.6 ms ✅ | não medido |
+| Edição na grade: frame (p95) | < 20 ms | 6.5 ms ✅ | não medido |
+| Exportação: frame (p95) | < 20 ms | 6.3 ms ✅ | não medido |
+
+- **Com GPU, todas as metas de frame passam nos dois renderizadores.** Os
+  frames ficam presos ao vsync de 165 Hz (6,06 ms), então o frame não
+  diferencia os dois.
+- **A diferença está na abertura e na memória.** O glow abre em ~60 ms,
+  contra 270 ms do wgpu, e gasta ~48 MB a menos em repouso e ~40 MB a menos
+  nos cenários medidos. Os 172 MB do wgpu ficam acima dos 137 MB medidos sem
+  GPU, provavelmente pelo driver da NVIDIA.
+- **RAM em repouso** continua acima da meta de 100 MB nos dois.
+- O wgpu provavelmente usou a RTX 4050: não há driver Vulkan da AMD
+  (`vulkan-radeon`) instalado, só o da NVIDIA. O Hyprland roda na Radeon.
+
 ## Como ler
 
 - O pior caso conta para a meta, não a mediana.
