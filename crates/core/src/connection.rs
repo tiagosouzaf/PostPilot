@@ -96,7 +96,10 @@ impl Engine {
     pub fn supports(self, feature: Feature) -> bool {
         match self {
             Engine::PostgreSql => true,
-            Engine::SqlServer => matches!(feature, Feature::Query | Feature::EditRows),
+            Engine::SqlServer => matches!(
+                feature,
+                Feature::Query | Feature::EditRows | Feature::IntelliSense
+            ),
         }
     }
 

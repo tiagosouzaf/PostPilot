@@ -273,6 +273,7 @@ impl CatalogExplorer {
             }
         }
         Ok(Catalog {
+            engine: Default::default(),
             database: db.to_string(),
             search_path,
             schemas,

@@ -15,7 +15,7 @@ use std::ops::Range;
 
 use pgstudio_core::catalog::{Catalog, Relation, RelationKind, normalize_ident, quote_ident};
 
-use crate::lexer::{KEYWORDS, Token, TokenKind};
+use crate::lexer::{KEYWORDS, TSQL_KEYWORDS, Token, TokenKind};
 
 /// Tipo de uma sugestão (define o ícone e a ordem).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -213,7 +213,7 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
         }
     }
     let prefix_raw = &text[start..at];
-    let prefix = prefix_raw.trim_start_matches('"');
+    let prefix = prefix_raw.trim_start_matches(['"', '[']);
     let before: Vec<&Token> = tokens[..tokens.partition_point(|t| t.range.end <= start)]
         .iter()
         .filter(|t| significant(t))
@@ -232,13 +232,17 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
     let refs = table_refs(text, &tokens[stmt]);
     let mut items = Vec::new();
     let cat = catalog;
+    // Aspas (ou colchetes) e comparação de nomes pelas regras do motor.
+    let quote = |name: &str| cat.map_or_else(|| quote_ident(name), |c| c.quote(name));
+    let normalize = |name: &str| cat.map_or_else(|| normalize_ident(name), |c| c.normalize(name));
+    let tsql = cat.is_some_and(|c| c.engine == pgstudio_core::connection::Engine::SqlServer);
 
     let push_columns = |items: &mut Vec<Suggestion>, rel: &Relation, from: &str| {
         for c in &rel.columns {
             if matches(&c.name, prefix) {
                 items.push(Suggestion {
                     label: c.name.clone(),
-                    insert: quote_ident(&c.name),
+                    insert: quote(&c.name),
                     kind: Kind::Column,
                     detail: format!("{} ({from})", c.ty),
                 });
@@ -250,7 +254,7 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
             if matches(&r.name, prefix) {
                 items.push(Suggestion {
                     label: r.name.clone(),
-                    insert: quote_ident(&r.name),
+                    insert: quote(&r.name),
                     kind: match r.kind {
                         RelationKind::Table => Kind::Table,
                         RelationKind::View => Kind::View,
@@ -265,7 +269,12 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
             if matches(f, prefix) {
                 items.push(Suggestion {
                     label: f.clone(),
-                    insert: quote_ident(f),
+                    // As internas do T-SQL (LEFT, RIGHT...) entram como são.
+                    insert: if tsql && schema.name == "sys" {
+                        f.clone()
+                    } else {
+                        quote(f)
+                    },
                     kind: Kind::Function,
                     detail: schema.name.clone(),
                 });
@@ -274,10 +283,10 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
     };
     let push_schemas = |items: &mut Vec<Suggestion>, cat: &Catalog| {
         for s in &cat.schemas {
-            if s.name != "pg_catalog" && matches(&s.name, prefix) {
+            if s.name != "pg_catalog" && !(tsql && s.name == "sys") && matches(&s.name, prefix) {
                 items.push(Suggestion {
                     label: s.name.clone(),
-                    insert: quote_ident(&s.name),
+                    insert: quote(&s.name),
                     kind: Kind::Schema,
                     detail: String::new(),
                 });
@@ -291,13 +300,13 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
         let Some(cat) = cat else {
             return none;
         };
-        let last = normalize_ident(qualifier[qualifier.len() - 1]);
+        let last = normalize(qualifier[qualifier.len() - 1]);
         // alias. ou tabela.
         let by_ref = (qualifier.len() == 1)
             .then(|| {
                 refs.iter().find(|r| {
-                    r.alias.as_deref().map(normalize_ident) == Some(last.clone())
-                        || (r.alias.is_none() && normalize_ident(&r.name) == last)
+                    r.alias.as_deref().map(normalize) == Some(last.clone())
+                        || (r.alias.is_none() && normalize(&r.name) == last)
                 })
             })
             .flatten();
@@ -352,7 +361,8 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
                 push_schemas(&mut items, cat);
             }
             let upper = !prefix.chars().any(|c| c.is_lowercase());
-            for kw in KEYWORDS {
+            let extra: &[&str] = if tsql { TSQL_KEYWORDS } else { &[] };
+            for kw in KEYWORDS.iter().chain(extra) {
                 if matches(kw, prefix) {
                     items.push(Suggestion {
                         label: kw.to_uppercase(),
@@ -387,7 +397,7 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
 /// Melhor sugestão para o que foi digitado: a primeira que começa igual,
 /// preferindo os tipos mais específicos (colunas, tabelas).
 pub fn best(c: &Completion) -> usize {
-    let prefix = c.prefix.trim_start_matches('"');
+    let prefix = c.prefix.trim_start_matches(['"', '[']);
     if prefix.is_empty() {
         return 0;
     }
@@ -424,6 +434,7 @@ mod tests {
 
     fn catalog() -> Catalog {
         Catalog {
+            engine: Default::default(),
             database: "loja".into(),
             search_path: vec!["public".into(), "pg_catalog".into()],
             schemas: vec![
@@ -528,6 +539,75 @@ mod tests {
         // Só as tabelas do comando atual.
         let c = at("select * from cliente; select em| from pedido");
         assert!(labels(&c).is_empty(), "{:?}", labels(&c));
+    }
+
+    fn tsql_catalog() -> Catalog {
+        Catalog {
+            engine: pgstudio_core::connection::Engine::SqlServer,
+            database: "vendas".into(),
+            search_path: vec!["dbo".into(), "sys".into()],
+            schemas: vec![
+                Schema {
+                    name: "dbo".into(),
+                    relations: vec![
+                        rel("Clientes", RelationKind::Table, &["Id", "Nome"]),
+                        rel("Itens do Pedido", RelationKind::Table, &["Id", "Order"]),
+                    ],
+                    functions: vec!["Listar".into()],
+                },
+                Schema {
+                    name: "sys".into(),
+                    relations: vec![],
+                    functions: vec!["GETDATE".into(), "LEFT".into()],
+                },
+            ],
+        }
+    }
+
+    fn tsql(sql: &str) -> Completion {
+        let pos = sql.find('|').unwrap();
+        let text = sql.replace('|', "");
+        let tokens = crate::lexer::tokenize_in(&text, crate::lexer::Dialect::TSql);
+        complete(&text, &tokens, pos, Some(&tsql_catalog()))
+    }
+
+    #[test]
+    fn sql_server_names_ignore_case_and_use_brackets_only_when_needed() {
+        let c = tsql("SELECT * FROM cli|");
+        assert_eq!(labels(&c), ["Clientes"]);
+        assert_eq!(c.items[0].insert, "Clientes");
+        let c = tsql("SELECT * FROM [it|");
+        assert_eq!(c.items[0].insert, "[Itens do Pedido]");
+        assert_eq!(c.replace.start, 14);
+        // `sys` guarda só as funções internas: não aparece como schema.
+        assert_eq!(
+            labels(&tsql("SELECT * FROM |")),
+            ["Clientes", "dbo", "Itens do Pedido"]
+        );
+    }
+
+    #[test]
+    fn sql_server_columns_come_through_brackets_and_aliases() {
+        let c = tsql("SELECT c.| FROM [DBO].[clientes] AS c");
+        assert_eq!(labels(&c), ["Id", "Nome"]);
+        let c = tsql("SELECT i.o| FROM [Itens do Pedido] i");
+        assert_eq!(c.items[0].insert, "[Order]");
+        let c = tsql("SELECT * FROM dbo.|");
+        assert_eq!(labels(&c), ["Clientes", "Itens do Pedido", "Listar"]);
+    }
+
+    #[test]
+    fn sql_server_builtin_functions_and_keywords() {
+        let c = tsql("SELECT GET| FROM Clientes");
+        assert_eq!(c.items[best(&c)].insert, "GETDATE");
+        let c = tsql("SELECT LEF| FROM Clientes");
+        assert!(
+            c.items
+                .iter()
+                .any(|s| s.kind == Kind::Function && s.insert == "LEFT")
+        );
+        assert!(labels(&tsql("NVARC|")).contains(&"NVARCHAR".to_string()));
+        assert!(!labels(&at("NVARC|")).contains(&"NVARCHAR".to_string()));
     }
 
     #[test]

@@ -421,6 +421,38 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
     let pedido = child(meta, &tables.id, "dbo.pedido");
     assert_eq!(meta.database_of(&pedido.id).as_deref(), Some("pp_explorer"));
 
+    // O catálogo do IntelliSense.
+    let cat = meta.catalog("pp_explorer").expect("catalog");
+    assert_eq!(cat.engine, pgstudio_core::connection::Engine::SqlServer);
+    let rel = cat.relation(Some("[DBO]"), "Pedido").expect("pedido");
+    let cols: Vec<_> = rel
+        .columns
+        .iter()
+        .map(|c| format!("{} {}", c.name, c.ty))
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            "id int",
+            "cliente_id int",
+            "total decimal(10,2)",
+            "dobro decimal(12,2)"
+        ]
+    );
+    assert_eq!(
+        cat.relation(None, "cliente").unwrap().columns[1].ty,
+        "nvarchar(60)"
+    );
+    assert!(cat.relation(None, "v_pedido").is_some());
+    let dbo = cat.schema("dbo").unwrap();
+    assert_eq!(dbo.functions, ["dobro", "listar"]);
+    assert!(
+        cat.schema("sys")
+            .unwrap()
+            .functions
+            .contains(&"GETDATE".to_string())
+    );
+
     let cols = child(meta, &pedido.id, "Columns");
     let labels: Vec<_> = meta
         .children(&cols.id)
