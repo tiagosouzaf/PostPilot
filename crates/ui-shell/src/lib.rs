@@ -3044,6 +3044,18 @@ impl ShellApp {
         let mut picked = Picked::default();
         self.phase("toolbar");
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands, &mut picked));
+        if self.updater.banner_visible() {
+            let palette = theme::palette(self.theme);
+            egui::Panel::top("update_banner")
+                .frame(
+                    egui::Frame::new()
+                        .fill(palette.accent)
+                        .inner_margin(egui::Margin::symmetric(10, 5)),
+                )
+                .show(ui, |ui| {
+                    commands.extend(self.updater.banner(ui, &ctx, palette.on_accent));
+                });
+        }
         self.open_database_list = false;
         if picked.opened {
             databases::reset_list(&ctx);
