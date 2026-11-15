@@ -4553,3 +4553,6 @@ msgstr "usuário"
 
 msgid "description"
 msgstr "descrição"
+
+msgid "The last session could not be read; starting with an empty one."
+msgstr "Não foi possível ler a última sessão; começando com uma vazia."

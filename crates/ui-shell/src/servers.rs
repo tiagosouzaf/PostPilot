@@ -73,6 +73,11 @@ impl Servers {
     pub fn is_empty(&self) -> bool {
         self.parked.is_empty()
     }
+
+    /// Se ainda há servidores na fila para conectar.
+    pub fn has_queue(&self) -> bool {
+        !self.queue.is_empty()
+    }
 }
 
 /// O que aconteceu ao desenhar as árvores.
@@ -604,7 +609,14 @@ impl ShellApp {
             }
         }
 
+        // A fila espera o cofre do workspace destrancar: é lá que podem
+        // estar as senhas dos servidores que a sessão vai reconectar.
+        let unlocking = self
+            .workspace_panel
+            .passwords()
+            .is_some_and(|p| p.is_busy());
         if self.connect_dialog.is_none()
+            && !unlocking
             && let Some(next) = self.servers.queue.pop_front()
         {
             self.connect_registered(&next, false);

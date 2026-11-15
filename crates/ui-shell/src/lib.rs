@@ -45,6 +45,7 @@ pub mod secrets;
 pub mod security;
 pub mod security_mssql;
 pub mod servers;
+pub mod session;
 pub mod system_theme;
 pub mod theme;
 pub mod update;
@@ -221,6 +222,8 @@ pub struct ShellApp {
     ai: ai::Ai,
     /// Nome de arquivo sugerido pela IA ao salvar uma consulta nova.
     name_suggestions: ai_names::NameSuggestions,
+    /// A sessão salva enquanto o usuário trabalha (veja [`session`]).
+    session: session::Session,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -401,6 +404,7 @@ impl Default for ShellApp {
             claude_panel: Default::default(),
             ai: Default::default(),
             name_suggestions: Default::default(),
+            session: Default::default(),
         }
     }
 }
@@ -515,8 +519,10 @@ impl ShellApp {
                     user = connected.settings.user
                 ));
                 self.status = trf!("Connected to {name}.", name = name);
+                let settings = connected.settings.clone();
                 self.connection = Some(connected);
                 self.catalogs.clear();
+                self.session_connected(&settings);
             }
             None if was_connecting => {
                 if let Some(error) = dialog.error() {
@@ -1655,7 +1661,9 @@ impl ShellApp {
                 let dirty = self.documents.dirty();
                 if self.ask_dirty_designer() {
                     self.status = tr("Save or discard the table changes first.").to_string();
-                } else if dirty.is_empty() {
+                } else if dirty.is_empty() || self.session.is_on() {
+                    // Com a sessão, o texto não salvo volta na próxima
+                    // abertura: sair não pergunta nada.
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
@@ -3124,7 +3132,8 @@ impl ShellApp {
             let dirty = self.documents.dirty();
             if !self.allow_close && self.ask_dirty_designer() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            } else if self.allow_close || dirty.is_empty() {
+            } else if self.allow_close || dirty.is_empty() || self.session.is_on() {
+                self.save_session();
                 self.save_layout();
                 self.updater.on_close();
             } else {
@@ -3253,6 +3262,7 @@ impl ShellApp {
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
+        self.session_step(&ctx);
         self.phase("workspace");
         self.workspace_step(&ctx, workspace_actions);
         self.claude_panel_step(&ctx, claude_actions);
