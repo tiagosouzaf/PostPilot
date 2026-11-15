@@ -105,6 +105,7 @@ impl Engine {
                     | Feature::ActivityMonitor
                     | Feature::Security
                     | Feature::Backup
+                    | Feature::ObjectInfo
             ),
         }
     }
