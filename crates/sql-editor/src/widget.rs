@@ -89,12 +89,12 @@ impl Buffer {
         if self.synced && self.shadow == text {
             return;
         }
-        if self.synced {
-            if let Some(change) = Change::between(&self.shadow, text) {
-                let sel = (view.anchor, view.cursor);
-                self.history.record(change, EditKind::Other, sel, sel);
-                self.history.seal();
-            }
+        if self.synced
+            && let Some(change) = Change::between(&self.shadow, text)
+        {
+            let sel = (view.anchor, view.cursor);
+            self.history.record(change, EditKind::Other, sel, sel);
+            self.history.seal();
         }
         self.rebuild(text);
     }

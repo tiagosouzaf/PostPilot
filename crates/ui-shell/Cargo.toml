@@ -37,6 +37,7 @@ zbus.workspace = true
 egui_kittest.workspace = true
 pgstudio-pg-client.workspace = true
 pgstudio-pg-metadata.workspace = true
+pgstudio-mssql.workspace = true
 
 [lints]
 workspace = true

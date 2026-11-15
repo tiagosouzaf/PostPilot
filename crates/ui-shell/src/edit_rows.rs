@@ -153,13 +153,7 @@ impl EditTable {
 /// converte para o tipo da coluna. Com barra invertida, usa `E'...'`, que
 /// vale com qualquer `standard_conforming_strings`.
 pub fn literal(value: Option<&str>) -> String {
-    match value {
-        None => "NULL".to_string(),
-        Some(v) if v.contains('\\') => {
-            format!("E'{}'", v.replace('\\', "\\\\").replace('\'', "''"))
-        }
-        Some(v) => format!("'{}'", v.replace('\'', "''")),
-    }
+    pgstudio_core::connection::Engine::PostgreSql.literal(value)
 }
 
 /// Colunas, chave primária e nome de uma tabela, pelo oid.
@@ -705,11 +699,12 @@ impl EditRows {
         let Some((row, col, viewer)) = &mut self.json_editor else {
             return;
         };
-        let colors = if ctx.global_style().visuals.dark_mode {
-            pgstudio_sql_editor::Colors::DARK
+        let dark = ctx.global_style().visuals.dark_mode;
+        let colors = crate::theme::editor_colors(if dark {
+            pgstudio_core::Theme::Dark
         } else {
-            pgstudio_sql_editor::Colors::LIGHT
-        };
+            pgstudio_core::Theme::Light
+        });
         let (row, col) = (*row, *col);
         match viewer.show(ctx, &colors) {
             Some(crate::json_viewer::ViewerAction::Save(text)) => self.save_json(row, col, text),

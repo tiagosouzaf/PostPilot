@@ -251,10 +251,10 @@ impl Updater {
 
     /// Ao fechar o app: reabre a versão nova, se o usuário pediu.
     pub fn on_close(&mut self) {
-        if let Some(program) = self.take_restart() {
-            if let Err(e) = std::process::Command::new(&program).spawn() {
-                eprintln!("could not restart {}: {e}", program.display());
-            }
+        if let Some(program) = self.take_restart()
+            && let Err(e) = std::process::Command::new(&program).spawn()
+        {
+            eprintln!("could not restart {}: {e}", program.display());
         }
     }
 

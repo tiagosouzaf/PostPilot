@@ -573,16 +573,17 @@ pub fn show(
                 }
                 state.selection = Some(new);
             }
-        } else if response.dragged() {
-            if let (Some(sel), Some(t)) = (&mut state.selection, target) {
-                match (sel.mode, t) {
-                    (Mode::Cells, Hit::Cell(cell)) => sel.cursor = cell,
-                    (Mode::Rows, Hit::RowHeader(r))
-                    | (Mode::Rows, Hit::Cell(Cell { row: r, .. })) => sel.cursor.row = r,
-                    (Mode::Columns, Hit::Column(c))
-                    | (Mode::Columns, Hit::Cell(Cell { col: c, .. })) => sel.cursor.col = c,
-                    _ => {}
+        } else if response.dragged()
+            && let (Some(sel), Some(t)) = (&mut state.selection, target)
+        {
+            match (sel.mode, t) {
+                (Mode::Cells, Hit::Cell(cell)) => sel.cursor = cell,
+                (Mode::Rows, Hit::RowHeader(r)) | (Mode::Rows, Hit::Cell(Cell { row: r, .. })) => {
+                    sel.cursor.row = r
                 }
+                (Mode::Columns, Hit::Column(c))
+                | (Mode::Columns, Hit::Cell(Cell { col: c, .. })) => sel.cursor.col = c,
+                _ => {}
             }
         }
     }

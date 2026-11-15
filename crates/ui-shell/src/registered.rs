@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE, SslMode};
+use pgstudio_core::connection::{ConnectionSettings, Engine, SslMode};
 use pgstudio_core::connection_string;
 use serde::{Deserialize, Serialize};
 
@@ -1681,6 +1681,8 @@ enum Reply {
 pub struct ServerDialog {
     parent: Vec<usize>,
     editing: Option<NodePath>,
+    /// "Server type": PostgreSQL ou SQL Server.
+    pub engine: Engine,
     pub server: String,
     pub user: String,
     pub password: String,
@@ -1716,12 +1718,19 @@ impl ServerDialog {
         ServerDialog {
             parent,
             editing,
+            engine: s.engine,
             server: s.server_name(),
             user: s.user.clone(),
             password: String::new(),
             remember: false,
             database: s.database.clone(),
-            ssl: s.ssl,
+            // Conexões gravadas antes do S1.3 podem ter um modo que o motor não
+            // oferece (Prefer no SQL Server): vale o equivalente.
+            ssl: if SslMode::options(s.engine).contains(&s.ssl) {
+                s.ssl
+            } else {
+                SslMode::Require
+            },
             name: server.name.clone(),
             description: server.description.clone(),
             environment: server.environment.clone(),
@@ -1758,6 +1767,7 @@ impl ServerDialog {
             }
         };
         let s = parsed.settings;
+        self.engine = s.engine;
         self.server = s.server_name();
         self.user = s.user;
         self.database = s.database;
@@ -1775,14 +1785,13 @@ impl ServerDialog {
 
     /// Espera a leitura da senha guardada (testes).
     pub fn wait_lookup(&mut self) {
-        if let Some(l) = self.lookup.take() {
-            if let Some(p) = l.wait()
-                && self.password.is_empty()
-            {
-                self.password = p;
-                self.remember = true;
-                self.saved = true;
-            }
+        if let Some(l) = self.lookup.take()
+            && let Some(p) = l.wait()
+            && self.password.is_empty()
+        {
+            self.password = p;
+            self.remember = true;
+            self.saved = true;
         }
     }
 
@@ -1805,16 +1814,45 @@ impl ServerDialog {
             user: self.user.trim().to_string(),
             database: self.database.trim().to_string(),
             ssl: self.ssl,
-            ..Default::default()
+            ..ConnectionSettings::for_engine(self.engine)
         };
         s.set_server_name(&self.server)?;
         if s.user.is_empty() {
             return Err(tr("Enter a login.").into());
         }
         if s.database.is_empty() {
-            s.database = DEFAULT_DATABASE.into();
+            s.database = self.engine.default_database().into();
         }
         Ok(s)
+    }
+
+    /// Troca o "Server type", como no Connect to Server: o que estava no
+    /// padrão do motor antigo vai para o padrão do novo, e a senha guardada
+    /// é procurada de novo.
+    pub fn set_engine(&mut self, engine: Engine) {
+        let old = self.engine;
+        if old == engine {
+            return;
+        }
+        if self.user.trim().is_empty() || self.user.trim() == old.default_user() {
+            self.user = engine.default_user().into();
+        }
+        if self.database.trim() == old.default_database() {
+            self.database = engine.default_database().into();
+        }
+        if !SslMode::options(engine).contains(&self.ssl) {
+            self.ssl = SslMode::Require;
+        }
+        self.engine = engine;
+        if self.saved {
+            self.password.clear();
+            self.saved = false;
+            self.remember = false;
+        }
+        self.lookup = match (&self.store, self.settings()) {
+            (Some(st), Ok(s)) => Some(secrets::lookup(st, secrets::password_key(&s))),
+            _ => None,
+        };
     }
 
     /// Grava na árvore e no cofre. Em caso de erro devolve o diálogo para
@@ -1896,11 +1934,31 @@ impl ServerDialog {
                         ui.end_row();
                     }
 
+                    let label = ui.label(tr("Server type:"));
+                    let mut engine = self.engine;
+                    egui::ComboBox::from_id_salt("registered_engine")
+                        .selected_text(engine.label())
+                        .width(300.0)
+                        .show_ui(ui, |ui| {
+                            for e in Engine::ALL {
+                                ui.selectable_value(&mut engine, e, e.label());
+                            }
+                        })
+                        .response
+                        .labelled_by(label.id);
+                    if engine != self.engine {
+                        self.set_engine(engine);
+                    }
+                    ui.end_row();
+
                     let label = ui.label(tr("Server name:"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.server)
                             .desired_width(300.0)
-                            .hint_text(tr("host or host,port")),
+                            .hint_text(match self.engine {
+                                Engine::PostgreSql => tr("host or host,port"),
+                                Engine::SqlServer => tr("host, host,port or host\\instance"),
+                            }),
                     )
                     .labelled_by(label.id);
                     ui.end_row();
@@ -1927,18 +1985,22 @@ impl ServerDialog {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.database)
                             .desired_width(300.0)
-                            .hint_text(DEFAULT_DATABASE),
+                            .hint_text(self.engine.default_database()),
                     )
                     .labelled_by(label.id);
                     ui.end_row();
 
                     let label = ui.label(tr("Encryption:"));
                     egui::ComboBox::from_id_salt("registered_ssl")
-                        .selected_text(self.ssl.label())
+                        .selected_text(self.ssl.label_for(self.engine))
                         .width(300.0)
                         .show_ui(ui, |ui| {
-                            for mode in SslMode::ALL {
-                                ui.selectable_value(&mut self.ssl, mode, mode.label());
+                            for &mode in SslMode::options(self.engine) {
+                                ui.selectable_value(
+                                    &mut self.ssl,
+                                    mode,
+                                    mode.label_for(self.engine),
+                                );
                             }
                         })
                         .response
