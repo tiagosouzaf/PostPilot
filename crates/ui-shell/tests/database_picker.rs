@@ -182,6 +182,42 @@ fn ctrl_u_lists_the_databases_and_moves_the_window() {
 }
 
 #[test]
+fn typing_in_the_list_filters_it_and_enter_picks() {
+    let fake = Fake::default();
+    let mut harness = harness(&fake, &[]);
+    harness.key_press_modifiers(Modifiers::CTRL, Key::N);
+    harness.run();
+    let id = harness.state().active_document().unwrap();
+
+    harness.key_press_modifiers(Modifiers::CTRL, Key::U);
+    harness.run();
+    let start = Instant::now();
+    while harness.query_by_label("vendas").is_none() {
+        harness.step();
+        assert!(start.elapsed() < Duration::from_secs(5), "no list");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(harness.query_by_label("postgres").is_some());
+
+    // O cursor já está na pesquisa: digitar filtra sem clicar em nada.
+    harness.event(Event::Text("VEN".to_string()));
+    harness.run();
+    assert!(harness.query_by_label("vendas").is_some());
+    assert!(harness.query_by_label("postgres").is_none());
+
+    harness.key_press(Key::Enter);
+    harness.run();
+    until(&mut harness, "database never changed", |app| {
+        app.documents().get(id).unwrap().database.as_deref() == Some("vendas")
+    });
+    // A lista fechou, e a próxima abre sem o filtro.
+    assert!(harness.query_by_label("postgres").is_none());
+    harness.key_press_modifiers(Modifiers::CTRL, Key::U);
+    harness.run();
+    assert!(harness.query_by_label("postgres").is_some());
+}
+
+#[test]
 fn an_open_transaction_asks_before_changing() {
     let fake = Fake::default();
     let mut harness = harness(&fake, &[]);
