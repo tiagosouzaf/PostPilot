@@ -19,8 +19,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui::{self, Align, Color32, Key, Layout, RichText, Sense, vec2};
 use egui_phosphor::regular as icon;
+use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{QueryEvent, QuerySession};
-use pgstudio_core::schema::quote_ident;
 
 /// Altura de uma linha da grade.
 const ROW_HEIGHT: f32 = 22.0;
@@ -42,6 +42,8 @@ pub struct EditColumn {
 /// A tabela aberta.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditTable {
+    /// Motor do servidor, para o SQL.
+    pub engine: Engine,
     /// Nome qualificado e com aspas, para o SQL.
     pub name: String,
     /// `schema.tabela`, para o título.
@@ -56,10 +58,14 @@ impl EditTable {
     }
 
     /// Lista das colunas para SELECT e RETURNING.
+    fn quote(&self, name: &str) -> String {
+        self.engine.quote_ident(name)
+    }
+
     fn column_list(&self) -> String {
         self.columns
             .iter()
-            .map(|c| quote_ident(&c.name))
+            .map(|c| self.quote(&c.name))
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -71,8 +77,8 @@ impl EditTable {
             .zip(original)
             .filter(|(c, _)| c.key)
             .map(|(c, v)| match v {
-                Some(v) => format!("{} = {}", quote_ident(&c.name), literal(Some(v))),
-                None => format!("{} IS NULL", quote_ident(&c.name)),
+                Some(v) => format!("{} = {}", self.quote(&c.name), self.engine.literal(Some(v))),
+                None => format!("{} IS NULL", self.quote(&c.name)),
             })
             .collect::<Vec<_>>()
             .join(" AND ")
@@ -80,8 +86,45 @@ impl EditTable {
 
     /// SQL que lê as primeiras `limit` linhas.
     pub fn select_sql(&self, limit: u32) -> String {
+        match self.engine {
+            Engine::PostgreSql => format!(
+                "SELECT {} FROM {} LIMIT {limit}",
+                self.column_list(),
+                self.name
+            ),
+            Engine::SqlServer => format!(
+                "SELECT TOP ({limit}) {} FROM {}",
+                self.column_list(),
+                self.name
+            ),
+        }
+    }
+
+    /// SQL Server: a chave da linha gravada vai para `@k` (`OUTPUT ...
+    /// INTO`, que funciona com trigger) e a linha é lida de novo por ela.
+    fn keyed(&self, statement: impl FnOnce(&str) -> String) -> String {
+        let keys: Vec<&EditColumn> = self.columns.iter().filter(|c| c.key).collect();
+        let declare = keys
+            .iter()
+            .map(|c| format!("{} {}", self.quote(&c.name), c.type_name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let output = format!(
+            "OUTPUT {} INTO @k",
+            keys.iter()
+                .map(|c| format!("inserted.{}", self.quote(&c.name)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let join = keys
+            .iter()
+            .map(|c| format!("k.{0} = t.{0}", self.quote(&c.name)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
         format!(
-            "SELECT {} FROM {} LIMIT {limit}",
+            "DECLARE @k TABLE ({declare});\n{};\n\
+             SELECT {} FROM {} AS t WHERE EXISTS (SELECT 1 FROM @k AS k WHERE {join});",
+            statement(&output),
             self.column_list(),
             self.name
         )
@@ -99,18 +142,33 @@ impl EditTable {
             .iter()
             .zip(original.iter().zip(values))
             .filter(|(c, (o, v))| !c.read_only && o != v)
-            .map(|(c, (_, v))| format!("{} = {}", quote_ident(&c.name), literal(v.as_deref())))
+            .map(|(c, (_, v))| {
+                format!(
+                    "{} = {}",
+                    self.quote(&c.name),
+                    self.engine.literal(v.as_deref())
+                )
+            })
             .collect();
         if sets.is_empty() {
             return None;
         }
-        Some(format!(
-            "UPDATE {} SET {} WHERE {} RETURNING {}",
-            self.name,
-            sets.join(", "),
-            self.key_filter(original),
-            self.column_list()
-        ))
+        let filter = self.key_filter(original);
+        Some(match self.engine {
+            Engine::PostgreSql => format!(
+                "UPDATE {} SET {} WHERE {filter} RETURNING {}",
+                self.name,
+                sets.join(", "),
+                self.column_list()
+            ),
+            Engine::SqlServer => self.keyed(|output| {
+                format!(
+                    "UPDATE {} SET {} {output} WHERE {filter}",
+                    self.name,
+                    sets.join(", ")
+                )
+            }),
+        })
     }
 
     /// INSERT das colunas preenchidas; as outras ficam com o padrão.
@@ -120,8 +178,22 @@ impl EditTable {
             .iter()
             .zip(values.iter().zip(touched))
             .filter(|(c, (_, t))| !c.read_only && **t)
-            .map(|(c, (v, _))| (quote_ident(&c.name), literal(v.as_deref())))
+            .map(|(c, (v, _))| (self.quote(&c.name), self.engine.literal(v.as_deref())))
             .unzip();
+        if self.engine == Engine::SqlServer {
+            return self.keyed(|output| {
+                if names.is_empty() {
+                    format!("INSERT INTO {} {output} DEFAULT VALUES", self.name)
+                } else {
+                    format!(
+                        "INSERT INTO {} ({}) {output} VALUES ({})",
+                        self.name,
+                        names.join(", "),
+                        literals.join(", ")
+                    )
+                }
+            });
+        }
         if names.is_empty() {
             format!(
                 "INSERT INTO {} DEFAULT VALUES RETURNING {}",
@@ -157,7 +229,10 @@ pub fn literal(value: Option<&str>) -> String {
 }
 
 /// Colunas, chave primária e nome de uma tabela, pelo oid.
-fn columns_sql(oid: u32) -> String {
+fn columns_sql(engine: Engine, oid: u32) -> String {
+    if engine == Engine::SqlServer {
+        return mssql_columns_sql(oid);
+    }
     format!(
         "SELECT a.attname, format_type(a.atttypid, a.atttypmod), \
                 coalesce(a.attnum = ANY (i.indkey), false), \
@@ -173,12 +248,50 @@ fn columns_sql(oid: u32) -> String {
     )
 }
 
-fn parse_table(rows: &[Vec<Option<String>>]) -> Result<EditTable, String> {
+/// [`columns_sql`] no SQL Server. O tipo vem completo (`nvarchar(60)`),
+/// para declarar a tabela das chaves; calculadas, identidade, rowversion e
+/// binárias ficam só leitura.
+fn mssql_columns_sql(oid: u32) -> String {
+    format!(
+        "SELECT c.name, \
+                CASE WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary') \
+                       THEN t.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                            ELSE CAST(c.max_length AS varchar(10)) END + ')' \
+                     WHEN t.name IN ('nvarchar', 'nchar') \
+                       THEN t.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                            ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')' \
+                     WHEN t.name IN ('decimal', 'numeric') \
+                       THEN t.name + '(' + CAST(c.precision AS varchar(10)) + ',' \
+                            + CAST(c.scale AS varchar(10)) + ')' \
+                     WHEN t.name IN ('datetime2', 'time', 'datetimeoffset') \
+                       THEN t.name + '(' + CAST(c.scale AS varchar(10)) + ')' \
+                     ELSE t.name END, \
+                CASE WHEN ic.column_id IS NULL THEN 'f' ELSE 't' END, \
+                CASE WHEN c.is_computed = 1 OR c.is_identity = 1 \
+                       OR t.name IN ('timestamp', 'binary', 'varbinary', 'image', 'sql_variant') \
+                     THEN 't' ELSE 'f' END, \
+                QUOTENAME(s.name) + '.' + QUOTENAME(o.name), \
+                s.name + '.' + o.name \
+           FROM sys.objects o \
+           JOIN sys.schemas s ON s.schema_id = o.schema_id \
+           JOIN sys.columns c ON c.object_id = o.object_id \
+           JOIN sys.types t ON t.user_type_id = c.system_type_id \
+           LEFT JOIN sys.indexes pk ON pk.object_id = o.object_id AND pk.is_primary_key = 1 \
+           LEFT JOIN sys.index_columns ic ON ic.object_id = pk.object_id \
+                                         AND ic.index_id = pk.index_id \
+                                         AND ic.column_id = c.column_id \
+          WHERE o.object_id = {oid} \
+          ORDER BY c.column_id"
+    )
+}
+
+fn parse_table(engine: Engine, rows: &[Vec<Option<String>>]) -> Result<EditTable, String> {
     let first = rows
         .first()
         .ok_or_else(|| tr("The table no longer exists.").to_string())?;
     let text = |r: &Vec<Option<String>>, i: usize| r.get(i).cloned().flatten().unwrap_or_default();
     Ok(EditTable {
+        engine,
         name: text(first, 4),
         display: text(first, 5),
         columns: rows
@@ -450,9 +563,15 @@ impl EditRows {
     fn load_columns(&mut self, ctx: &egui::Context) {
         self.phase = Phase::LoadingColumns;
         let tx = self.tx.clone();
-        run(&self.session, columns_sql(self.oid), ctx, move |rows, _| {
-            let _ = tx.send(Reply::Table(rows.and_then(|r| parse_table(&r))));
-        });
+        let engine = self.session.engine();
+        run(
+            &self.session,
+            columns_sql(engine, self.oid),
+            ctx,
+            move |rows, _| {
+                let _ = tx.send(Reply::Table(rows.and_then(|r| parse_table(engine, &r))));
+            },
+        );
     }
 
     fn load_rows(&mut self, ctx: &egui::Context) {
@@ -1329,6 +1448,7 @@ mod tests {
 
     fn table() -> EditTable {
         EditTable {
+            engine: Engine::PostgreSql,
             name: "public.\"Pedido\"".into(),
             display: "public.Pedido".into(),
             columns: vec![
@@ -1422,10 +1542,64 @@ mod tests {
                 Some("public.t"),
             ])
         };
-        let t = parse_table(&[row("id", "t", "f"), row("g", "f", "t")]).unwrap();
+        let t = parse_table(
+            Engine::PostgreSql,
+            &[row("id", "t", "f"), row("g", "f", "t")],
+        )
+        .unwrap();
         assert!(t.has_key());
         assert!(t.columns[1].read_only);
         assert_eq!(t.select_sql(200), "SELECT id, g FROM public.t LIMIT 200");
-        assert!(parse_table(&[]).is_err());
+        assert!(parse_table(Engine::PostgreSql, &[]).is_err());
+    }
+
+    #[test]
+    fn sql_server_reads_the_saved_row_back_by_its_key() {
+        let t = EditTable {
+            engine: Engine::SqlServer,
+            name: "[dbo].[t]".into(),
+            display: "dbo.t".into(),
+            columns: vec![
+                EditColumn {
+                    name: "id".into(),
+                    type_name: "int".into(),
+                    key: true,
+                    read_only: true,
+                },
+                EditColumn {
+                    name: "nome".into(),
+                    type_name: "nvarchar(40)".into(),
+                    key: false,
+                    read_only: false,
+                },
+            ],
+        };
+        assert_eq!(
+            t.select_sql(200),
+            "SELECT TOP (200) [id], [nome] FROM [dbo].[t]"
+        );
+        let tail = "SELECT [id], [nome] FROM [dbo].[t] AS t \
+                    WHERE EXISTS (SELECT 1 FROM @k AS k WHERE k.[id] = t.[id]);";
+        let o = |v: &[Option<&str>]| v.iter().map(|x| x.map(str::to_string)).collect::<Vec<_>>();
+        assert_eq!(
+            t.update_sql(&o(&[Some("7"), Some("a")]), &o(&[Some("7"), Some("b")]))
+                .unwrap(),
+            format!(
+                "DECLARE @k TABLE ([id] int);\n\
+                 UPDATE [dbo].[t] SET [nome] = N'b' OUTPUT inserted.[id] INTO @k \
+                 WHERE [id] = N'7';\n{tail}"
+            )
+        );
+        assert_eq!(
+            t.insert_sql(&o(&[None, Some("x")]), &[false, true]),
+            format!(
+                "DECLARE @k TABLE ([id] int);\n\
+                 INSERT INTO [dbo].[t] ([nome]) OUTPUT inserted.[id] INTO @k VALUES (N'x');\n{tail}"
+            )
+        );
+        assert!(
+            t.insert_sql(&o(&[None, None]), &[false, false])
+                .contains("OUTPUT inserted.[id] INTO @k DEFAULT VALUES")
+        );
     }
 }
