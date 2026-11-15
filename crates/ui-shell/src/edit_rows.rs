@@ -153,13 +153,7 @@ impl EditTable {
 /// converte para o tipo da coluna. Com barra invertida, usa `E'...'`, que
 /// vale com qualquer `standard_conforming_strings`.
 pub fn literal(value: Option<&str>) -> String {
-    match value {
-        None => "NULL".to_string(),
-        Some(v) if v.contains('\\') => {
-            format!("E'{}'", v.replace('\\', "\\\\").replace('\'', "''"))
-        }
-        Some(v) => format!("'{}'", v.replace('\'', "''")),
-    }
+    pgstudio_core::connection::Engine::PostgreSql.literal(value)
 }
 
 /// Colunas, chave primária e nome de uma tabela, pelo oid.

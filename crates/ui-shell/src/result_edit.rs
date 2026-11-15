@@ -16,12 +16,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui::{self, Align, Layout, RichText};
+use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{ColumnSource, QuerySession};
-use pgstudio_core::schema::quote_ident;
 use pgstudio_result_grid::ResultStore;
 use pgstudio_result_grid::grid::{Cell, GridOutput, GridState};
 
-use crate::edit_rows::{literal, run};
+use crate::edit_rows::run;
 
 /// Mais linhas que isso num Delete só: pede para excluir por SQL.
 pub const MAX_DELETE_ROWS: u64 = 10_000;
@@ -41,6 +41,8 @@ pub struct TargetColumn {
 /// A tabela que o resultado edita.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
+    /// Motor do servidor, para o SQL do UPDATE e do DELETE.
+    pub engine: Engine,
     /// Nome qualificado e com aspas, para o SQL.
     pub table: String,
     /// `schema.tabela`, para mostrar.
@@ -67,9 +69,10 @@ impl Target {
             .iter()
             .map(|&i| {
                 let name = self.columns[i].as_ref().map_or("", |c| &c.name);
+                let name = self.engine.quote_ident(name);
                 match row.get(i).cloned().flatten() {
-                    Some(v) => format!("{} = {}", quote_ident(name), literal(Some(&v))),
-                    None => format!("{} IS NULL", quote_ident(name)),
+                    Some(v) => format!("{name} = {}", self.engine.literal(Some(&v))),
+                    None => format!("{name} IS NULL"),
                 }
             })
             .collect::<Vec<_>>()
@@ -86,13 +89,32 @@ impl Target {
         value: Option<&str>,
     ) -> Option<String> {
         let c = self.columns.get(col)?.as_ref().filter(|c| !c.read_only)?;
-        let name = quote_ident(&c.name);
-        Some(format!(
-            "UPDATE {} SET {name} = {} WHERE {} RETURNING {name}",
-            self.table,
-            literal(value),
-            self.key_filter(row)
-        ))
+        let name = self.engine.quote_ident(&c.name);
+        let literal = self.engine.literal(value);
+        let filter = self.key_filter(row);
+        Some(match self.engine {
+            Engine::PostgreSql => format!(
+                "UPDATE {} SET {name} = {literal} WHERE {filter} RETURNING {name}",
+                self.table
+            ),
+            // Sem OUTPUT: ele falha em tabela com trigger. O valor gravado
+            // é lido de novo pela chave (com o valor novo, se a coluna é
+            // da chave).
+            Engine::SqlServer => {
+                let mut after = row.to_vec();
+                for i in self.same_column(col) {
+                    if let Some(cell) = after.get_mut(i) {
+                        *cell = value.map(str::to_string);
+                    }
+                }
+                format!(
+                    "UPDATE {table} SET {name} = {literal} WHERE {filter};\n\
+                     IF @@ROWCOUNT > 0 SELECT {name} FROM {table} WHERE {};",
+                    self.key_filter(&after),
+                    table = self.table
+                )
+            }
+        })
     }
 
     /// DELETE das linhas (pela chave), devolvendo a chave das excluídas.
@@ -105,18 +127,28 @@ impl Target {
                 .collect::<Vec<_>>()
                 .join("\n   OR ")
         };
-        format!(
-            "DELETE FROM {} WHERE {filter} RETURNING {}",
-            self.table,
-            self.key_columns()
-        )
+        match self.engine {
+            Engine::PostgreSql => format!(
+                "DELETE FROM {} WHERE {filter} RETURNING {}",
+                self.table,
+                self.key_columns()
+            ),
+            // Sem OUTPUT (falha com trigger): lê as chaves que existem e
+            // exclui.
+            Engine::SqlServer => format!(
+                "SELECT {keys} FROM {table} WHERE {filter};\n\
+                 DELETE FROM {table} WHERE {filter};",
+                keys = self.key_columns(),
+                table = self.table
+            ),
+        }
     }
 
     fn key_columns(&self) -> String {
         self.key
             .iter()
             .filter_map(|&i| self.columns[i].as_ref())
-            .map(|c| quote_ident(&c.name))
+            .map(|c| self.engine.quote_ident(&c.name))
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -165,6 +197,39 @@ pub fn source_table(sources: &[Option<ColumnSource>]) -> Result<u32, String> {
     }
 }
 
+/// Colunas, chave e nome da tabela `oid` no motor `engine`, com o tipo de
+/// relação (as mesmas colunas de [`table_sql`]).
+pub fn table_sql_for(engine: Engine, oid: u32) -> String {
+    match engine {
+        Engine::PostgreSql => table_sql(oid),
+        // Colunas binárias e rowversion ficam só leitura: o valor aparece
+        // como 0x... e não volta por texto.
+        Engine::SqlServer => format!(
+            "SELECT c.column_id, c.name, \
+                    CASE WHEN ic.column_id IS NULL THEN 'f' ELSE 't' END, \
+                    CASE WHEN c.is_computed = 1 OR c.is_identity = 1 \
+                           OR ty.name IN ('timestamp', 'binary', 'varbinary', 'image', \
+                                          'sql_variant') \
+                         THEN 't' ELSE 'f' END, \
+                    QUOTENAME(s.name) + '.' + QUOTENAME(o.name), \
+                    s.name + '.' + o.name, \
+                    CASE o.type WHEN 'U' THEN 'r' ELSE LOWER(RTRIM(o.type)) END, \
+                    CASE WHEN pk.index_id IS NULL THEN 'f' ELSE 't' END \
+               FROM sys.objects o \
+               JOIN sys.schemas s ON s.schema_id = o.schema_id \
+               JOIN sys.columns c ON c.object_id = o.object_id \
+               JOIN sys.types ty ON ty.user_type_id = c.system_type_id \
+                                AND ty.user_type_id = ty.system_type_id \
+               LEFT JOIN sys.indexes pk ON pk.object_id = o.object_id AND pk.is_primary_key = 1 \
+               LEFT JOIN sys.index_columns ic ON ic.object_id = pk.object_id \
+                                             AND ic.index_id = pk.index_id \
+                                             AND ic.column_id = c.column_id \
+              WHERE o.object_id = {oid} \
+              ORDER BY c.column_id"
+        ),
+    }
+}
+
 /// Colunas, chave e nome da tabela `oid`, com o tipo de relação.
 pub fn table_sql(oid: u32) -> String {
     format!(
@@ -185,8 +250,19 @@ pub fn table_sql(oid: u32) -> String {
 }
 
 /// Monta o alvo da edição com as linhas de [`table_sql`] e a origem de
-/// cada coluna do resultado.
+/// cada coluna do resultado (PostgreSQL).
 pub fn build_target(
+    catalog: &[Vec<Option<String>>],
+    sources: &[Option<ColumnSource>],
+    table: u32,
+) -> Result<Target, String> {
+    build_target_for(Engine::PostgreSql, catalog, sources, table)
+}
+
+/// [`build_target`] para o motor `engine`, com as linhas de
+/// [`table_sql_for`].
+pub fn build_target_for(
+    engine: Engine,
     catalog: &[Vec<Option<String>>],
     sources: &[Option<ColumnSource>],
     table: u32,
@@ -262,6 +338,7 @@ pub fn build_target(
         ));
     }
     Ok(Target {
+        engine,
         table: text(first, 4),
         display,
         columns,
@@ -415,7 +492,8 @@ impl ResultEditor {
                         self.sources = sources;
                         self.table = table;
                         let tx = self.tx.clone();
-                        run(&self.session, table_sql(table), &self.ctx, move |r, _| {
+                        let sql = table_sql_for(self.session.engine(), table);
+                        run(&self.session, sql, &self.ctx, move |r, _| {
                             let _ = tx.send(Reply::Catalog(r));
                         });
                     }
@@ -427,13 +505,16 @@ impl ResultEditor {
                         error = e
                     ));
                 }
-                Reply::Catalog(Ok(rows)) => match build_target(&rows, &self.sources, self.table) {
-                    Ok(target) => {
-                        self.target = Some(target);
-                        self.status = Status::Editable;
+                Reply::Catalog(Ok(rows)) => {
+                    match build_target_for(self.session.engine(), &rows, &self.sources, self.table)
+                    {
+                        Ok(target) => {
+                            self.target = Some(target);
+                            self.status = Status::Editable;
+                        }
+                        Err(reason) => self.status = Status::ReadOnly(reason),
                     }
-                    Err(reason) => self.status = Status::ReadOnly(reason),
-                },
+                }
                 Reply::Catalog(Err(e)) => {
                     self.status =
                         Status::ReadOnly(trf!("The results are read-only: {error}", error = e));
@@ -793,6 +874,31 @@ mod tests {
         assert_eq!(
             t.delete_sql(&[row, other]),
             "DELETE FROM public.\"Pedido\" WHERE (id = '7')\n   OR (id = '8') RETURNING id"
+        );
+    }
+
+    #[test]
+    fn sql_server_statements_skip_output() {
+        // Com trigger, OUTPUT sem INTO falha; o valor é lido de novo.
+        let sources = [src(9, 2), src(9, 1)];
+        let mut t = build_target_for(Engine::SqlServer, &pedido(), &sources, 9).unwrap();
+        t.table = "[dbo].[Pedido]".into();
+        let row = vec![Some("d'água".into()), Some("7".into())];
+        assert_eq!(
+            t.update_sql(&row, 0, Some("x")).unwrap(),
+            "UPDATE [dbo].[Pedido] SET [Nome] = N'x' WHERE [id] = N'7';\n\
+             IF @@ROWCOUNT > 0 SELECT [Nome] FROM [dbo].[Pedido] WHERE [id] = N'7';"
+        );
+        // Mudando a chave, a releitura usa o valor novo.
+        assert!(
+            t.update_sql(&row, 1, Some("8"))
+                .unwrap()
+                .ends_with("SELECT [id] FROM [dbo].[Pedido] WHERE [id] = N'8';")
+        );
+        assert_eq!(
+            t.delete_sql(std::slice::from_ref(&row)),
+            "SELECT [id] FROM [dbo].[Pedido] WHERE [id] = N'7';\n\
+             DELETE FROM [dbo].[Pedido] WHERE [id] = N'7';"
         );
     }
 

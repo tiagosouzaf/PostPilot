@@ -15,6 +15,13 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
 | Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
 | Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
+| Editar e excluir linhas na grade do resultado (SELECT de uma tabela com chave primária, ou de uma view sobre ela) | S1.4 (Edit Top 200 Rows no S2.1, com as tabelas no Object Explorer) |
+
+Na grade, o PostPilot descobre de onde vem cada coluna com
+`sys.dm_exec_describe_first_result_set`. O UPDATE e o DELETE não usam
+`OUTPUT` (que falha em tabela com trigger): o valor gravado é lido de novo
+pela chave. Colunas calculadas, de identidade, `rowversion` e binárias ficam
+só leitura.
 
 Autenticação do Windows (Kerberos/NTLM) ainda não funciona: a biblioteca de
 autenticação que o driver usa não compila junto com as outras dependências

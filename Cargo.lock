@@ -3197,6 +3197,7 @@ dependencies = [
  "pgstudio-docking",
  "pgstudio-execution-plan",
  "pgstudio-i18n",
+ "pgstudio-mssql",
  "pgstudio-object-explorer",
  "pgstudio-pg-client",
  "pgstudio-pg-metadata",
