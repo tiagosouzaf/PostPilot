@@ -398,6 +398,17 @@ impl Vault {
     /// Guarda (ou troca) a senha com este nome.
     pub fn set(&mut self, name: &str, secret: &str) -> Result<(), VaultError> {
         let (key, mut file) = self.unlocked()?;
+        // A mesma senha de novo (conectar com "Remember password" grava a
+        // cada conexão): cifrar outra vez mudaria o arquivo, por causa do
+        // nonce novo, e o git mostraria uma alteração que não existe.
+        let same = file
+            .secrets
+            .get(name)
+            .and_then(|sealed| open(&key.bytes, name, sealed))
+            .is_some_and(|old| old.as_slice() == secret.as_bytes());
+        if same {
+            return Ok(());
+        }
         file.secrets
             .insert(name.into(), seal(&key.bytes, name, secret.as_bytes()));
         self.write(&file)
@@ -488,6 +499,21 @@ mod tests {
         other.lock();
         assert!(!other.is_unlocked());
         assert!(v.create("x".repeat(12).as_str(), FAST).is_err());
+    }
+
+    #[test]
+    fn saving_the_same_password_again_leaves_the_file_alone() {
+        let dir = temp_dir("same");
+        let mut v = Vault::at(&dir);
+        v.create("uma senha mestra", FAST).unwrap();
+        v.set("alice@db:5432", "segredo").unwrap();
+        let before = std::fs::read_to_string(v.path()).unwrap();
+        v.set("alice@db:5432", "segredo").unwrap();
+        assert_eq!(std::fs::read_to_string(v.path()).unwrap(), before);
+        v.set("alice@db:5432", "outro").unwrap();
+        assert_ne!(std::fs::read_to_string(v.path()).unwrap(), before);
+        assert_eq!(v.get("alice@db:5432").unwrap().as_deref(), Some("outro"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

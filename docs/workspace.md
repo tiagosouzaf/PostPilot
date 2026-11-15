@@ -77,6 +77,16 @@ para `servers.json`.
 - **"Add to workspace" (Adicionar ao workspace):** aparece quando você está
   conectado a um servidor que não está no workspace, e o registra nele com a
   senha em uso.
+- **Register... e Properties no servidor do Object Explorer:** com um
+  workspace aberto, abrem o registro desse servidor no workspace (e não nos
+  Registered Servers desta máquina), com a senha em uso, o campo **Folder**
+  (Pasta) e o **Environment** (Ambiente). Se o servidor já está no workspace,
+  abrem o registro dele para editar.
+- **Servidor registrado no Object Explorer:** quando a conexão corresponde
+  a um servidor registrado (no workspace ou nesta máquina), o nó do servidor
+  mostra a etiqueta do ambiente na frente e o nome do registro, por exemplo
+  `[Produção] tiib`, com o endereço na dica. A status bar faz o mesmo, e o
+  menu troca "Register..." por **Edit Registration...** (Editar Registro...).
 - Depois de importar, faça **Commit** e **Push**. Na outra máquina, o clone
   (ou o Pull) mostra os servidores, e as senhas vêm depois da senha mestra.
 
