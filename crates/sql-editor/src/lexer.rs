@@ -373,6 +373,7 @@ pub const KEYWORDS: &[&str] = &[
 /// Palavras-chave a mais do T-SQL, em minúsculas e em ordem alfabética.
 pub const TSQL_KEYWORDS: &[&str] = &[
     "ansi_nulls",
+    "apply",
     "backup",
     "bigint",
     "binary",
@@ -549,6 +550,11 @@ fn is_ident_char(c: char) -> bool {
 }
 
 const OPERATOR_CHARS: &str = "+-*/<>=~!@#%^&|`?:";
+
+/// Operadores de dois caracteres do T-SQL.
+const TSQL_OPERATORS: &[&str] = &[
+    "<>", "!=", "<=", ">=", "!<", "!>", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "::",
+];
 
 /// Separa `text` (PostgreSQL) em tokens. Os tokens cobrem o texto inteiro,
 /// em ordem.
@@ -760,6 +766,18 @@ impl Lexer<'_> {
             '(' | ')' | ',' | ';' | '[' | ']' | '.' => {
                 self.bump();
                 TokenKind::Punctuation
+            }
+            // T-SQL: operadores têm no máximo dois caracteres (`a=-1` é
+            // `=` e `-`; `x=@v` é `=` e a variável).
+            c if self.dialect == Dialect::TSql && OPERATOR_CHARS.contains(c) => {
+                self.bump();
+                if let Some(d) = self.peek() {
+                    let pair = [c, d];
+                    if TSQL_OPERATORS.iter().any(|o| o.chars().eq(pair)) {
+                        self.bump();
+                    }
+                }
+                TokenKind::Operator
             }
             c if OPERATOR_CHARS.contains(c) => {
                 // Para antes de um comentário colado: `a+--x`. O primeiro
@@ -1064,6 +1082,25 @@ mod tests {
                 (Identifier, "a$b"),
             ]
         );
+    }
+
+    #[test]
+    fn tsql_operators_have_at_most_two_characters() {
+        let kinds = |s: &str| -> Vec<(TokenKind, std::string::String)> {
+            tokenize_in(s, Dialect::TSql)
+                .into_iter()
+                .filter(|t| t.kind != Whitespace)
+                .map(|t| (t.kind, s[t.range].to_string()))
+                .collect()
+        };
+        let texts = |s: &str| -> Vec<std::string::String> {
+            kinds(s).into_iter().map(|(_, t)| t).collect()
+        };
+        assert_eq!(texts("id=@id"), ["id", "=", "@id"]);
+        assert_eq!(texts("a=-1"), ["a", "=", "-", "1"]);
+        assert_eq!(texts("@i+=1"), ["@i", "+=", "1"]);
+        assert_eq!(texts("a<>b"), ["a", "<>", "b"]);
+        assert_eq!(kinds("x=#t")[2], (Identifier, "#t".to_string()));
     }
 
     #[test]

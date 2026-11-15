@@ -15,7 +15,7 @@
 
 use crate::diagnostics;
 use crate::edit::{self, Edited};
-use crate::lexer::{TokenKind, tokenize};
+use crate::lexer::{Dialect, TokenKind, tokenize_in};
 use pgstudio_i18n::tr;
 
 /// Caixa das palavras-chave no resultado.
@@ -36,6 +36,10 @@ pub struct FormatOptions {
     /// Espaços por nível de indentação.
     pub indent: usize,
     pub keyword_case: KeywordCase,
+    /// Dialeto do texto. No T-SQL os comandos não precisam de `;`: o
+    /// formatador separa pelo começo de cada um, indenta `BEGIN ... END` e
+    /// deixa o `GO` sozinho na linha.
+    pub dialect: Dialect,
 }
 
 impl Default for FormatOptions {
@@ -43,6 +47,7 @@ impl Default for FormatOptions {
         FormatOptions {
             indent: 4,
             keyword_case: KeywordCase::Upper,
+            dialect: Dialect::Postgres,
         }
     }
 }
@@ -69,15 +74,20 @@ pub fn format(text: &str, opts: &FormatOptions) -> Result<String, FormatError> {
     if text.trim().is_empty() {
         return Ok(text.to_string());
     }
-    let tokens = tokenize(text);
-    if let Some(d) = diagnostics::check(text, &tokens).into_iter().next() {
+    let tokens = tokenize_in(text, opts.dialect);
+    if let Some(d) = diagnostics::check_in(text, &tokens, opts.dialect)
+        .into_iter()
+        .next()
+    {
         return Err(FormatError {
             message: d.message,
             at: Some(d.range.start),
         });
     }
-    let items = items(text);
-    check_supported(&items)?;
+    let items = items(text, opts.dialect);
+    if opts.dialect == Dialect::Postgres {
+        check_supported(&items)?;
+    }
     let mut p = Printer::new(&items, opts);
     p.run();
     let mut out = p.out;
@@ -86,7 +96,7 @@ pub fn format(text: &str, opts: &FormatOptions) -> Result<String, FormatError> {
     if text.trim_end() != text && text[text.trim_end().len()..].contains('\n') {
         out.push('\n');
     }
-    verify(text, &out)?;
+    verify(text, &out, opts.dialect)?;
     Ok(out)
 }
 
@@ -186,11 +196,11 @@ struct Item<'a> {
     glued: bool,
 }
 
-fn items(text: &str) -> Vec<Item<'_>> {
+fn items(text: &str, dialect: Dialect) -> Vec<Item<'_>> {
     let mut out = Vec::new();
     let mut newlines = 0;
     let mut glued = false;
-    for t in tokenize(text) {
+    for t in tokenize_in(text, dialect) {
         let piece = &text[t.range.clone()];
         if t.kind == TokenKind::Whitespace {
             newlines += piece.matches('\n').count();
@@ -234,9 +244,9 @@ fn check_supported(items: &[Item<'_>]) -> Result<(), FormatError> {
 }
 
 /// Confere que `new` tem os mesmos tokens de `old`.
-fn verify(old: &str, new: &str) -> Result<(), FormatError> {
-    let a = items(old);
-    let b = items(new);
+fn verify(old: &str, new: &str, dialect: Dialect) -> Result<(), FormatError> {
+    let a = items(old, dialect);
+    let b = items(new, dialect);
     let fail = |at: Option<usize>| {
         Err(FormatError {
             message: tr("The SQL couldn't be formatted without changing it.").to_string(),
@@ -343,7 +353,85 @@ struct Decision {
 const SPACED_OPERATORS: &[&str] = &[
     "=", "<>", "!=", "<", ">", "<=", ">=", "||", "+", "-", "*", "/", "%", "^", "->", "->>", "#>",
     "#>>", "@>", "<@", "&&", "~", "~*", "!~", "!~*", "~~", "!~~", "~~*", "!~~*", "?", "?|", "?&",
-    "@@",
+    "@@", "+=", "-=", "*=", "/=", "%=",
+];
+
+/// Palavras que começam um comando do T-SQL (quando abrem a linha).
+const TSQL_STARTERS: &[&str] = &[
+    "alter",
+    "backup",
+    "begin",
+    "break",
+    "checkpoint",
+    "close",
+    "commit",
+    "continue",
+    "create",
+    "dbcc",
+    "deallocate",
+    "declare",
+    "delete",
+    "deny",
+    "drop",
+    "else",
+    "exec",
+    "execute",
+    "fetch",
+    "goto",
+    "grant",
+    "if",
+    "insert",
+    "kill",
+    "merge",
+    "open",
+    "print",
+    "raiserror",
+    "restore",
+    "return",
+    "revoke",
+    "rollback",
+    "save",
+    "select",
+    "set",
+    "throw",
+    "truncate",
+    "update",
+    "use",
+    "waitfor",
+    "while",
+    "with",
+];
+
+/// Depois destas palavras o comando continua, mesmo em outra linha.
+const TSQL_CONTINUES_AFTER: &[&str] = &[
+    "all",
+    "and",
+    "apply",
+    "as",
+    "between",
+    "by",
+    "distinct",
+    "except",
+    "exists",
+    "for",
+    "from",
+    "having",
+    "in",
+    "intersect",
+    "into",
+    "is",
+    "join",
+    "like",
+    "not",
+    "or",
+    "select",
+    "set",
+    "then",
+    "top",
+    "union",
+    "values",
+    "when",
+    "where",
 ];
 
 /// Palavras-chave que terminam um valor (o operador depois delas é
@@ -383,6 +471,21 @@ struct Printer<'a, 'o> {
     seen_table: bool,
     seen_as: bool,
     columns_done: bool,
+    /// T-SQL: blocos `BEGIN ... END` abertos.
+    depth: usize,
+    /// T-SQL: o próximo token começa um comando (depois de `BEGIN`).
+    pending_new: bool,
+    /// T-SQL: o comando cria procedure, função, trigger ou view (o corpo
+    /// vem depois do `AS`).
+    seen_module: bool,
+}
+
+/// Começo de um comando do T-SQL sem `;` antes.
+struct Start {
+    /// Indentação do comando.
+    base: usize,
+    /// Blocos abertos depois dele começar.
+    depth: usize,
 }
 
 impl<'a, 'o> Printer<'a, 'o> {
@@ -401,7 +504,136 @@ impl<'a, 'o> Printer<'a, 'o> {
             seen_table: false,
             seen_as: false,
             columns_done: false,
+            depth: 0,
+            pending_new: false,
+            seen_module: false,
         }
+    }
+
+    /// Palavra (palavra-chave ou nome sem aspas) em minúsculas.
+    fn word(&self, i: Option<usize>) -> Option<String> {
+        let it = self.items.get(i?)?;
+        matches!(it.kind, TokenKind::Keyword | TokenKind::Identifier)
+            .then(|| it.text.to_ascii_lowercase())
+    }
+
+    /// Se o token `i` começa um comando do T-SQL, e com que indentação.
+    fn tsql_start(&self, i: usize) -> Option<Start> {
+        if self.opts.dialect != Dialect::TSql {
+            return None;
+        }
+        let top_level = self.frames.len() == 1 && self.frames[0].kind == FrameKind::Statement;
+        if !top_level && !self.after_semicolon {
+            return None;
+        }
+        let it = &self.items[i];
+        let w = self.word(Some(i))?;
+        let indent = self.opts.indent;
+        let at = |depth: usize| {
+            Some(Start {
+                base: depth * indent,
+                depth,
+            })
+        };
+        let new_line = it.newlines > 0 || self.out.is_empty();
+        if w == "go" && new_line {
+            return at(0);
+        }
+        if w == "end" {
+            return at(self.depth.saturating_sub(1));
+        }
+        if self.pending_new || self.after_semicolon {
+            return at(self.depth);
+        }
+        // `END TRY BEGIN CATCH`.
+        if w == "begin" && matches!(self.word(self.prev).as_deref(), Some("try" | "catch")) {
+            return at(self.depth);
+        }
+        let first = self.first_keyword.as_deref();
+        let prev = self.word(self.prev);
+        let prev = prev.as_deref();
+        // Depois do `GO` (e do número de repetições) vem outro lote.
+        if first == Some("go") && it.newlines > 0 {
+            return at(0);
+        }
+        // O corpo de procedure, função, trigger e view.
+        if prev == Some("as")
+            && self.seen_module
+            && matches!(first, Some("create" | "alter"))
+            && !matches!(w.as_str(), "owner" | "caller" | "self")
+        {
+            return at(self.depth);
+        }
+        if !TSQL_STARTERS.contains(&w.as_str()) || it.newlines == 0 {
+            return None;
+        }
+        let p = &self.items[self.prev?];
+        match p.kind {
+            TokenKind::Punctuation if matches!(p.text, "," | "(" | ".") => return None,
+            TokenKind::Operator if p.text != "*" => return None,
+            _ => {}
+        }
+        if prev.is_some_and(|p| TSQL_CONTINUES_AFTER.contains(&p)) {
+            return None;
+        }
+        let clause = self.top().clause;
+        let next_paren = self.is_punct(self.next_token(i), "(");
+        let next = self.word(self.next_token(i));
+        let next = next.as_deref();
+        let continues = match w.as_str() {
+            "select" | "exec" | "execute" => {
+                matches!(first, Some("insert" | "with")) && clause == Clause::None
+            }
+            "set" => {
+                prev == Some("update")
+                    || (matches!(first, Some("update")) && clause == Clause::None)
+                    || first == Some("alter")
+            }
+            // `MERGE ... THEN UPDATE` e `ON DELETE CASCADE`.
+            "update" | "delete" | "insert" => first == Some("merge") || prev == Some("on"),
+            "with" => {
+                next_paren
+                    || first == Some("create")
+                    || (first == Some("alter") && matches!(next, Some("check" | "nocheck")))
+            }
+            "drop" | "alter" => {
+                first == Some("alter") && matches!(next, Some("column" | "constraint"))
+            }
+            "if" => matches!(first, Some("drop" | "create" | "alter")),
+            _ => false,
+        };
+        if continues {
+            return None;
+        }
+        // O comando de um `IF`, `WHILE` ou `ELSE` sem `BEGIN` fica um
+        // nível para dentro.
+        let nested = matches!(first, Some("if" | "while" | "else"))
+            && !matches!(w.as_str(), "begin" | "else");
+        Some(Start {
+            base: (self.depth + usize::from(nested)) * indent,
+            depth: self.depth,
+        })
+    }
+
+    /// Dentro de um `MERGE` do T-SQL.
+    fn merging(&self) -> bool {
+        self.opts.dialect == Dialect::TSql
+            && self.frames.len() == 1
+            && self.first_keyword.as_deref() == Some("merge")
+    }
+
+    /// Começa um comando com a indentação `base`.
+    fn reset_statement(&mut self, base: usize) {
+        self.frames.truncate(1);
+        self.frames[0] = Frame::new(FrameKind::Statement, base, base, true);
+        self.first_keyword = None;
+        self.seen_table = false;
+        self.seen_as = false;
+        self.columns_done = false;
+        self.seen_module = false;
+        self.pending_new = false;
+        self.prev = None;
+        self.prev_binary = false;
     }
 
     fn top(&self) -> &Frame {
@@ -450,6 +682,13 @@ impl<'a, 'o> Printer<'a, 'o> {
             Sep::Space
         } else if self.after_semicolon {
             self.statement_sep(it)
+        } else if let Some(start) = self.next_token(i).and_then(|j| self.tsql_start(j)) {
+            // Comentário antes de um comando: fica com ele.
+            if it.newlines >= 2 {
+                Sep::Blank(start.base)
+            } else {
+                Sep::Line(start.base)
+            }
         } else {
             let indent = match self.next_token(i).map(|j| self.decide(j).sep) {
                 Some(Sep::Line(n) | Sep::Blank(n)) => n,
@@ -472,6 +711,11 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     fn token(&mut self, i: usize) {
         let it = &self.items[i];
+        if let Some(start) = self.tsql_start(i) {
+            self.depth = start.depth;
+            self.reset_statement(start.base);
+            self.after_semicolon = !self.out.is_empty();
+        }
         let decision = self.decide(i);
         let sep = if self.out.is_empty() {
             Sep::None
@@ -489,10 +733,11 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// Espaço antes do primeiro item de um comando.
     fn statement_sep(&self, it: &Item<'_>) -> Sep {
+        let base = self.frames[0].base;
         if it.newlines >= 2 {
-            Sep::Blank(0)
+            Sep::Blank(base)
         } else {
-            Sep::Line(0)
+            Sep::Line(base)
         }
     }
 
@@ -638,6 +883,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             "where" => Some(Clause::Where),
             "having" => Some(Clause::Having),
             "values" if prev != Some("default") => Some(Clause::Values),
+            "set" if self.merging() => None,
+            "when" | "using" if self.merging() => Some(Clause::Other),
             "set"
                 if prev == Some("update")
                     || (self.first_keyword.as_deref() == Some("update")
@@ -653,6 +900,15 @@ impl<'a, 'o> Printer<'a, 'o> {
                 Some(Clause::Other)
             }
             "on" if next == Some("conflict") => Some(Clause::Other),
+            "output"
+                if self.opts.dialect == Dialect::TSql
+                    && matches!(
+                        self.first_keyword.as_deref(),
+                        Some("insert" | "update" | "delete" | "merge")
+                    ) =>
+            {
+                Some(Clause::Other)
+            }
             _ => None,
         };
         if let Some(c) = clause {
@@ -671,7 +927,9 @@ impl<'a, 'o> Printer<'a, 'o> {
                 Some("left" | "right" | "full" | "inner" | "cross" | "natural" | "outer")
             ),
             "left" | "right" | "full" => matches!(next, Some("join" | "outer")),
-            "inner" | "cross" => next == Some("join"),
+            "inner" => next == Some("join"),
+            "cross" => matches!(next, Some("join" | "apply")),
+            "outer" => next == Some("apply"),
             "natural" => true,
             _ => false,
         };
@@ -768,6 +1026,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 self.first_keyword = Some(w.to_string());
             }
             match w {
+                "procedure" | "proc" | "function" | "trigger" | "view" => self.seen_module = true,
                 "table" => self.seen_table = true,
                 "as" => self.seen_as = true,
                 "between" => self.top_mut().between = true,
@@ -784,6 +1043,27 @@ impl<'a, 'o> Printer<'a, 'o> {
                 }
                 "end" if self.top().kind == FrameKind::Case => {
                     self.frames.pop();
+                }
+                _ => {}
+            }
+        }
+        if self.opts.dialect == Dialect::TSql && self.frames.len() == 1 {
+            let word = self.word(Some(i));
+            let next = self.word(self.next_token(i));
+            let block = |w: Option<&str>| matches!(w, Some("try" | "catch"));
+            match word.as_deref() {
+                // `BEGIN TRAN` não abre bloco.
+                Some("begin")
+                    if !matches!(
+                        next.as_deref(),
+                        Some("tran" | "transaction" | "distributed" | "dialog" | "conversation")
+                    ) =>
+                {
+                    self.depth += 1;
+                    self.pending_new = !block(next.as_deref());
+                }
+                Some("try" | "catch") if self.word(prev).as_deref() == Some("begin") => {
+                    self.pending_new = true;
                 }
                 _ => {}
             }
@@ -826,15 +1106,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                     }
                 }
                 ";" => {
-                    self.frames.truncate(1);
-                    self.frames[0] = Frame::new(FrameKind::Statement, 0, 0, true);
+                    self.reset_statement(self.depth * self.opts.indent);
                     self.after_semicolon = true;
-                    self.first_keyword = None;
-                    self.seen_table = false;
-                    self.seen_as = false;
-                    self.columns_done = false;
-                    self.prev = None;
-                    self.prev_binary = false;
                     return;
                 }
                 _ => {}
@@ -1028,10 +1301,77 @@ mod tests {
         assert_eq!(at, "x =");
     }
 
+    fn tsql(sql: &str) -> String {
+        let opts = FormatOptions {
+            dialect: Dialect::TSql,
+            ..Default::default()
+        };
+        let out = format(sql, &opts).unwrap();
+        assert_eq!(format(&out, &opts).unwrap(), out, "idempotent");
+        out
+    }
+
+    #[test]
+    fn tsql_statements_without_semicolons_and_go() {
+        assert_eq!(
+            tsql(
+                "declare @n int = 10\nselect top (@n) c.[Nome], p.total from dbo.clientes c join dbo.pedidos p on p.cliente_id=c.id where p.total>100 and c.nome like N'A%' order by p.total desc\ngo\nprint 'fim'\ngo 3\n"
+            ),
+            "DECLARE @n INT = 10\nSELECT TOP (@n) c.[Nome],\n    p.total\nFROM dbo.clientes c\nJOIN dbo.pedidos p ON p.cliente_id = c.id\nWHERE p.total > 100\n    AND c.nome LIKE N'A%'\nORDER BY p.total DESC\nGO\nPRINT 'fim'\nGO 3\n"
+        );
+        assert_eq!(
+            tsql(
+                "-- a\nselect 1\n\n-- b\nselect a from t cross apply f(t.id) x\ninsert into t (a, b)\nselect 1, 2\ncreate view v as select 1 as a"
+            ),
+            "-- a\nSELECT 1\n\n-- b\nSELECT a\nFROM t\nCROSS APPLY f(t.id) x\nINSERT INTO t (a, b)\nSELECT 1,\n    2\nCREATE VIEW v AS\nSELECT 1 AS a"
+        );
+    }
+
+    #[test]
+    fn tsql_blocks_are_indented() {
+        assert_eq!(
+            tsql(
+                "create procedure dbo.p @id int, @out int output as begin set nocount on; if @id is null begin raiserror('x',16,1); return end\nselect * from t where id=@id\nset @out=@@ROWCOUNT end\ngo"
+            ),
+            "CREATE PROCEDURE dbo.p @id INT, @out INT OUTPUT AS\nBEGIN\n    SET NOCOUNT ON;\n    IF @id IS NULL BEGIN\n        RAISERROR('x', 16, 1);\n        RETURN\n    END\n    SELECT *\n    FROM t\n    WHERE id = @id\n    SET @out = @@ROWCOUNT\nEND\nGO"
+        );
+        assert_eq!(
+            tsql(
+                "if exists (select 1 from t)\nselect 1\nelse\nselect 2\nwhile @i<10 begin set @i+=1 end"
+            ),
+            "IF EXISTS (\n    SELECT 1\n    FROM t\n)\n    SELECT 1\nELSE\n    SELECT 2\nWHILE @i < 10 BEGIN\n    SET @i += 1\nEND"
+        );
+        assert_eq!(
+            tsql(
+                "begin try begin tran\nupdate t set a=1, b=2 output inserted.id where id=1\ncommit end try begin catch rollback; throw; end catch"
+            ),
+            "BEGIN TRY\n    BEGIN TRAN\n    UPDATE t\n    SET a = 1,\n        b = 2\n    OUTPUT inserted.id\n    WHERE id = 1\n    COMMIT\nEND TRY\nBEGIN CATCH\n    ROLLBACK;\n    THROW;\nEND CATCH"
+        );
+    }
+
+    #[test]
+    fn tsql_alter_with_hints_and_merge() {
+        assert_eq!(
+            tsql(
+                "alter table t\nadd c int\nalter table t\ndrop column c\nwith x as (select 1 a)\nselect * from x with (nolock)\nmerge t using s on t.id=s.id when matched then\nupdate set a=1;"
+            ),
+            "ALTER TABLE t ADD c INT\nALTER TABLE t DROP COLUMN c\nWITH x AS (\n    SELECT 1 a\n)\nSELECT *\nFROM x WITH (NOLOCK)\nMERGE t\nUSING s ON t.id = s.id\nWHEN MATCHED THEN UPDATE SET a = 1;"
+        );
+        assert_eq!(
+            tsql("set nocount on\nif @a = 1\nprint 'x'\nset ansi_nulls off\nselect 1"),
+            "SET NOCOUNT ON\nIF @a = 1\n    PRINT 'x'\nSET ANSI_NULLS OFF\nSELECT 1"
+        );
+        // Sem o dialeto, o `[nome]` e a `@variável` não são entendidos.
+        assert_eq!(
+            tsql("select [a b],@x from [t]"),
+            "SELECT [a b],\n    @x\nFROM [t]"
+        );
+    }
+
     #[test]
     fn verify_catches_changes() {
-        assert!(verify("select a", "select b").is_err());
-        assert!(verify("select 'a'\n'b'", "select 'a' 'b'").is_err());
-        assert!(verify("SELECT a", "select   a").is_ok());
+        assert!(verify("select a", "select b", Dialect::Postgres).is_err());
+        assert!(verify("select 'a'\n'b'", "select 'a' 'b'", Dialect::Postgres).is_err());
+        assert!(verify("SELECT a", "select   a", Dialect::Postgres).is_ok());
     }
 }
