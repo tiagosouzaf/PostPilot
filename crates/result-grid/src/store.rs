@@ -128,14 +128,18 @@ impl PageData {
         at += text_len;
         let ends = bytes
             .get(at..at + ends_len * 4)?
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap_or_default()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
             .collect();
         at += ends_len * 4;
         let nulls = bytes
             .get(at..at + nulls_len * 8)?
-            .chunks_exact(8)
-            .map(|c| u64::from_le_bytes(c.try_into().unwrap_or_default()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| u64::from_le_bytes(*c))
             .collect();
         Some(PageData {
             text,
