@@ -42,17 +42,17 @@ fn status_bar_announces_the_new_version_and_opens_the_window() {
 
 #[test]
 fn pacman_installs_get_the_command_instead_of_a_download() {
-    let mut h = harness(InstallKind::Pacman("postpilot-bin".into()));
+    let mut h = harness(InstallKind::Pacman("tf-postpilot-bin".into()));
     h.get_by_label("Update available: 99.0.0").click();
     h.run();
     assert!(h.query_by_label("Download and install").is_none());
-    h.get(by().label_contains("-Syu postpilot-bin"));
+    h.get(by().label_contains("-Syu tf-postpilot-bin"));
     h.get_by_label("Copy");
 }
 
 #[test]
 fn skipping_a_version_hides_it() {
-    let mut h = harness(InstallKind::Pacman("postpilot-bin".into()));
+    let mut h = harness(InstallKind::Pacman("tf-postpilot-bin".into()));
     h.get_by_label("Update available: 99.0.0").click();
     h.run();
     h.get_by_label("Skip this version").click();
