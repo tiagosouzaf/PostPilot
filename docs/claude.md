@@ -49,7 +49,7 @@ não tenha esse caminho no `PATH`. Num lugar diferente, aponte com
 ### 2. Instalar o PostPilot
 
 ```sh
-sudo pacman -U postpilot-<versão>-1-x86_64.pkg.tar.zst
+curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash
 # ou, do código: cd packaging/arch && makepkg -si
 ```
 

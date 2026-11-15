@@ -28,6 +28,12 @@ pub enum InstallKind {
 /// (`postpilot` e `postpilot-bin` lá são de outro app).
 pub const AUR_PACKAGE: &str = "tf-postpilot-bin";
 
+/// Instalador de um comando (`install.sh` na raiz do repositório): baixa o
+/// pacote do Release mais recente, confere o SHA-256 e instala com o pacman ou
+/// o apt. Rodar de novo atualiza.
+pub const INSTALL_COMMAND: &str =
+    "curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash";
+
 impl InstallKind {
     /// Descobre como o app em execução foi instalado.
     pub fn detect() -> InstallKind {
@@ -82,15 +88,18 @@ impl InstallKind {
 
     /// Comando para o usuário atualizar pelo gerenciador de pacotes.
     /// `helper` é o ajudante do AUR instalado (`yay`, `paru`), se houver.
-    pub fn update_command(&self, release: &Release, helper: Option<&str>) -> Option<String> {
+    ///
+    /// Só o pacote do AUR se atualiza pelo `yay`/`paru`. O pacote `postpilot`
+    /// do Release (o que o [`INSTALL_COMMAND`] instala) e o `.deb` se
+    /// atualizam rodando o instalador de novo: `yay -Syu postpilot` instalaria
+    /// outro app do AUR com esse nome.
+    pub fn update_command(&self, _release: &Release, helper: Option<&str>) -> Option<String> {
         match self {
-            InstallKind::Pacman(pkg) => Some(match helper {
+            InstallKind::Pacman(pkg) if pkg == AUR_PACKAGE => Some(match helper {
                 Some(h) => format!("{h} -Syu {pkg}"),
                 None => format!("sudo pacman -Syu {pkg}"),
             }),
-            InstallKind::Dpkg => release
-                .asset_ending_with("_amd64.deb")
-                .map(|deb| format!("sudo apt install ./{}", deb.name)),
+            InstallKind::Pacman(_) | InstallKind::Dpkg => Some(INSTALL_COMMAND.to_string()),
             _ => None,
         }
     }
@@ -338,9 +347,16 @@ mod tests {
             pacman.update_command(&r, None).as_deref(),
             Some("sudo pacman -Syu tf-postpilot-bin")
         );
+        // O pacote `postpilot` do Release e o .deb: o instalador de novo,
+        // nunca `yay -Syu postpilot` (é outro app no AUR).
+        let release_pkg = InstallKind::Pacman("postpilot".into());
+        assert_eq!(
+            release_pkg.update_command(&r, Some("yay")).as_deref(),
+            Some(INSTALL_COMMAND)
+        );
         assert_eq!(
             InstallKind::Dpkg.update_command(&r, None).as_deref(),
-            Some("sudo apt install ./postpilot_0.2.0_amd64.deb")
+            Some(INSTALL_COMMAND)
         );
         assert_eq!(InstallKind::Other.update_command(&r, None), None);
     }

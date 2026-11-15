@@ -364,9 +364,6 @@ impl Updater {
                             ctx.copy_text(cmd.clone());
                         }
                     });
-                    if matches!(self.kind, InstallKind::Dpkg) {
-                        ui.small(tr("Download the .deb from the release page first."));
-                    }
                     if ui.button(tr("Skip this version")).clicked() {
                         skip = Some(r.version.to_string());
                     }

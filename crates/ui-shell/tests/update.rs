@@ -51,6 +51,17 @@ fn pacman_installs_get_the_command_instead_of_a_download() {
 }
 
 #[test]
+fn release_packages_point_to_the_installer() {
+    for kind in [InstallKind::Pacman("postpilot".into()), InstallKind::Dpkg] {
+        let mut h = harness(kind);
+        h.get_by_label("Update available: 99.0.0").click();
+        h.run();
+        h.get(by().label_contains("install.sh | bash"));
+        assert!(h.query_by_label_contains("-Syu postpilot").is_none());
+    }
+}
+
+#[test]
 fn skipping_a_version_hides_it() {
     let mut h = harness(InstallKind::Pacman("tf-postpilot-bin".into()));
     h.get_by_label("Update available: 99.0.0").click();
