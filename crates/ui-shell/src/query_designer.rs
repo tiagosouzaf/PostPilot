@@ -24,8 +24,9 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
+use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::{MetadataError, MetadataProvider, Model};
-use pgstudio_core::schema::{Id, quote_ident};
+use pgstudio_core::schema::Id;
 use pgstudio_diagram_engine::{Diagram, DiagramEvent, Edge, Node, NodeColumn};
 
 use crate::diagrams::{Picker, table_picker};
@@ -261,8 +262,10 @@ pub struct Query {
     pub group_by: bool,
     /// `SELECT DISTINCT` ("Distinct Values" no SSMS).
     pub distinct: bool,
-    /// `LIMIT n` (o "Top" do SSMS).
+    /// `LIMIT n` (o "Top" do SSMS; `TOP (n)` no SQL Server).
     pub limit: Option<u64>,
+    /// O motor para quem o SQL é escrito.
+    pub engine: Engine,
     /// Quantas colunas Or... a grade mostra.
     pub or_columns: usize,
 }
@@ -430,9 +433,14 @@ impl Query {
         }
         format!(
             "{}.{}",
-            quote_ident(&self.tables[r.table].alias),
-            quote_ident(&r.column)
+            self.ident(&self.tables[r.table].alias),
+            self.ident(&r.column)
         )
+    }
+
+    /// Um nome com as aspas ou os colchetes do motor, quando precisa.
+    fn ident(&self, name: &str) -> String {
+        self.engine.ident(name)
     }
 
     /// A coluna como vai no SELECT e no ORDER BY (com a agregação).
@@ -497,6 +505,10 @@ impl Query {
         if self.distinct {
             out.push_str("DISTINCT ");
         }
+        let tsql = self.engine == Engine::SqlServer;
+        if let Some(n) = self.limit.filter(|_| tsql) {
+            out.push_str(&format!("TOP ({n}) "));
+        }
         let select: Vec<String> = self
             .live_rows()
             .filter(|(_, r)| r.output && !(self.group_by && r.aggregate == Aggregate::Where))
@@ -504,7 +516,7 @@ impl Query {
                 let e = self.expr(r);
                 match r.alias.trim() {
                     "" => e,
-                    a => format!("{e} AS {}", quote_ident(a)),
+                    a => format!("{e} AS {}", self.ident(a)),
                 }
             })
             .collect();
@@ -517,9 +529,9 @@ impl Query {
             let Some(table) = model.table(t.table) else {
                 continue;
             };
-            let mut item = table.qualified();
+            let mut item = format!("{}.{}", self.ident(&table.schema), self.ident(&table.name));
             if t.alias != table.name {
-                item.push_str(&format!(" AS {}", quote_ident(&t.alias)));
+                item.push_str(&format!(" AS {}", self.ident(&t.alias)));
             }
             if i == 0 {
                 out.push_str(&format!("\nFROM {item}"));
@@ -537,10 +549,10 @@ impl Query {
                     j.on.iter().map(|(l, r)| {
                         format!(
                             "{}.{} = {}.{}",
-                            quote_ident(&self.tables[j.left].alias),
-                            quote_ident(l),
-                            quote_ident(&self.tables[j.right].alias),
-                            quote_ident(r)
+                            self.ident(&self.tables[j.left].alias),
+                            self.ident(l),
+                            self.ident(&self.tables[j.right].alias),
+                            self.ident(r)
                         )
                     })
                 })
@@ -600,7 +612,7 @@ impl Query {
                 .collect();
             out.push_str(&format!("\nORDER BY {}", items.join(", ")));
         }
-        if let Some(n) = self.limit {
+        if let Some(n) = self.limit.filter(|_| !tsql) {
             out.push_str(&format!("\nLIMIT {n}"));
         }
         out.push(';');
@@ -683,6 +695,12 @@ impl QueryDesigner {
         }
     }
 
+    /// Escreve e lê o SQL no dialeto de `engine`.
+    pub fn with_engine(mut self, engine: Engine) -> Self {
+        self.query.engine = engine;
+        self
+    }
+
     /// Abre com o SQL selecionado no editor montado (se o designer souber
     /// mostrá-lo; senão, com um aviso).
     pub fn with_sql(mut self, sql: String) -> Self {
@@ -748,7 +766,7 @@ impl QueryDesigner {
                 self.model = model;
                 self.state = State::Ready;
                 if let Some(sql) = self.source.take() {
-                    match read::read(&sql, &self.model) {
+                    match read::read_for(&sql, &self.model, self.query.engine) {
                         Ok(query) => self.query = query,
                         Err(e) => {
                             self.replaces = false;

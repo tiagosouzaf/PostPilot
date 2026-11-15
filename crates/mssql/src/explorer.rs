@@ -80,7 +80,7 @@ impl MssqlExplorer {
         &self.label
     }
 
-    fn rows(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, MetadataError> {
+    pub(crate) fn rows(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, MetadataError> {
         self.runtime
             .block_on(async { self.session.lock().await.rows(sql).await })
             .map_err(MetadataError)
@@ -834,7 +834,7 @@ const BUILTIN_FUNCTIONS: &[&str] = &[
 ];
 
 /// Tipo de uma coluna como o IntelliSense mostra: `nvarchar(60)`.
-fn plain_type(name: &str, length: i64, precision: i64, scale: i64) -> String {
+pub(crate) fn plain_type(name: &str, length: i64, precision: i64, scale: i64) -> String {
     match name {
         "varchar" | "char" | "varbinary" | "binary" if length == -1 => format!("{name}(max)"),
         "varchar" | "char" | "varbinary" | "binary" => format!("{name}({length})"),
@@ -976,6 +976,10 @@ impl MetadataProvider for MssqlExplorer {
 
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
         self.read_catalog(database)
+    }
+
+    fn load_model(&self, database: &str) -> Result<pgstudio_core::schema::Model, MetadataError> {
+        self.read_model(database)
     }
 
     fn securable(&self, node: &NodeId) -> Option<Securable> {
