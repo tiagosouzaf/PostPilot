@@ -3916,3 +3916,21 @@ msgstr "Digite o nome do ambiente."
 
 msgid "There are two environments named \"{name}\"."
 msgstr "Há dois ambientes com o nome \"{name}\"."
+
+msgid "Confirm Changes"
+msgstr "Confirmar Alterações"
+
+msgid "This query window is connected to a server in {environment}, and this SQL can change the database ({reason})."
+msgstr "Esta janela de consulta está conectada a um servidor de {environment}, e este SQL pode alterar o banco ({reason})."
+
+msgid "Do you want to execute it?"
+msgstr "Deseja executá-lo?"
+
+msgid "not only reading"
+msgstr "não é só leitura"
+
+msgid "Confirm changes"
+msgstr "Confirmar alterações"
+
+msgid "Ask before running SQL that can change the database (INSERT, UPDATE, DELETE, DDL) in a query window."
+msgstr "Perguntar antes de rodar, numa janela de consulta, SQL que pode alterar o banco (INSERT, UPDATE, DELETE, DDL)."

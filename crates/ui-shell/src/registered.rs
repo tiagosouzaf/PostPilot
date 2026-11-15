@@ -102,6 +102,10 @@ pub const PRODUCTION: &str = "Production";
 pub struct Environment {
     pub name: String,
     pub color: Rgb,
+    /// Pedir confirmação antes de rodar, numa janela de consulta, SQL que
+    /// pode alterar o banco (INSERT, UPDATE, DELETE, DDL...).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm_changes: bool,
 }
 
 /// Desenvolvimento (verde), homologação (laranja) e produção (vermelho).
@@ -110,14 +114,17 @@ pub fn default_environments() -> Vec<Environment> {
         Environment {
             name: DEVELOPMENT.into(),
             color: FOLDER_COLORS[3],
+            confirm_changes: false,
         },
         Environment {
             name: STAGING.into(),
             color: FOLDER_COLORS[1],
+            confirm_changes: false,
         },
         Environment {
             name: PRODUCTION.into(),
             color: FOLDER_COLORS[0],
+            confirm_changes: true,
         },
     ]
 }
@@ -139,6 +146,8 @@ pub struct ServerTag {
     /// Nome do ambiente, já traduzido.
     pub environment: Option<String>,
     pub color: Rgb,
+    /// O ambiente pede confirmação antes de alterar o banco.
+    pub confirm_changes: bool,
 }
 
 /// Um servidor registrado.
@@ -413,10 +422,12 @@ impl RegisteredServers {
             Some(e) => Some(ServerTag {
                 environment: Some(environment_name(&e.name).to_string()),
                 color: e.color,
+                confirm_changes: e.confirm_changes,
             }),
             None => self.color(&path.groups).map(|color| ServerTag {
                 environment: None,
                 color,
+                confirm_changes: false,
             }),
         }
     }
@@ -1056,6 +1067,7 @@ impl RegisteredPanel {
                     name: environment_name(&e.name).to_string(),
                     stored: e.name,
                     color: e.color,
+                    confirm_changes: e.confirm_changes,
                 })
                 .collect(),
             error: None,
@@ -1992,6 +2004,8 @@ pub struct EnvironmentRow {
     stored: String,
     pub name: String,
     pub color: Rgb,
+    /// "Confirm changes": pedir confirmação antes de alterar o banco.
+    pub confirm_changes: bool,
 }
 
 /// "Environments": nome e cor de cada ambiente, adicionar e remover.
@@ -2013,6 +2027,7 @@ impl EnvironmentsDialog {
             stored: String::new(),
             name: name.into(),
             color,
+            confirm_changes: false,
         });
     }
 
@@ -2031,6 +2046,7 @@ impl EnvironmentsDialog {
                     Environment {
                         name,
                         color: r.color,
+                        confirm_changes: r.confirm_changes,
                     },
                     r.original.clone(),
                 )
@@ -2050,7 +2066,7 @@ impl EnvironmentsDialog {
             ui.add_space(6.0);
             let mut remove = None;
             egui::Grid::new("registered_environments_rows")
-                .num_columns(3)
+                .num_columns(4)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     for (i, row) in self.rows.iter_mut().enumerate() {
@@ -2061,8 +2077,12 @@ impl EnvironmentsDialog {
                         ui.add(
                             egui::TextEdit::singleline(&mut row.name)
                                 .id_salt(("environment_name", i))
-                                .desired_width(260.0),
+                                .desired_width(200.0),
                         );
+                        ui.checkbox(&mut row.confirm_changes, tr("Confirm changes"))
+                            .on_hover_text(tr(
+                                "Ask before running SQL that can change the database (INSERT, UPDATE, DELETE, DDL) in a query window.",
+                            ));
                         if ui.button(icon::TRASH).on_hover_text(tr("Remove")).clicked() {
                             remove = Some(i);
                         }
@@ -2268,6 +2288,14 @@ mod tests {
         let file = dir.join("servers.json");
         let mut r = RegisteredServers::open(&file);
         assert_eq!(r.environments(), default_environments());
+        // Só Production pede confirmação, de início.
+        let confirm: Vec<_> = r
+            .environments()
+            .into_iter()
+            .filter(|e| e.confirm_changes)
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(confirm, [PRODUCTION]);
         let prod = r
             .add_group(
                 &[],
@@ -2319,7 +2347,8 @@ mod tests {
             r.node_tag(&a),
             Some(ServerTag {
                 environment: None,
-                color: FOLDER_COLORS[5]
+                color: FOLDER_COLORS[5],
+                confirm_changes: false,
             })
         );
         r.update_group(&prod, "Clientes", "", None, Some(PRODUCTION.into()))
@@ -2351,11 +2380,13 @@ mod tests {
                 vec![
                     Environment {
                         name: "QA".into(),
-                        color: FOLDER_COLORS[0]
+                        color: FOLDER_COLORS[0],
+                        confirm_changes: false,
                     },
                     Environment {
                         name: "qa".into(),
-                        color: FOLDER_COLORS[1]
+                        color: FOLDER_COLORS[1],
+                        confirm_changes: false,
                     }
                 ],
                 &[None, None]
