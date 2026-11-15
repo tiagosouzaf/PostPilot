@@ -88,6 +88,7 @@ commands! {
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";
     ActivityMonitor => "View.ActivityMonitor", "Activity Monitor";
+    ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";
     ThemeDark => "View.ThemeDark", "Dark";
     FullScreen => "View.FullScreen", "Full Screen";
