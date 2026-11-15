@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::objects::{self, Kind, Object, Phase};
 use crate::snapshot::Schema;
-use crate::{Id, Model, Table, diff::diff};
+use crate::{Dialect, Id, Model, Table, diff::diff};
 
 /// Schema e nome de uma tabela.
 pub type Name = (String, String);
@@ -113,7 +113,10 @@ impl Comparison {
     pub fn script(&self, chosen: &BTreeSet<Name>) -> Vec<String> {
         let mixed = self.mix(chosen);
         let statements = diff(&self.target, &mixed);
-        with_sequences(statements)
+        match self.target.dialect {
+            Dialect::Postgres => with_sequences(statements),
+            Dialect::Tsql => statements,
+        }
     }
 
     /// O destino com as tabelas `chosen` como na origem (as que só existem
@@ -180,6 +183,8 @@ pub struct Item {
 /// A comparação de dois schemas inteiros: tabelas e os outros objetos.
 #[derive(Clone, Debug)]
 pub struct Outcome {
+    /// O SQL do script (o do banco destino).
+    pub dialect: Dialect,
     tables: Comparison,
     /// O DDL de cada objeto que difere, por fase.
     objects: BTreeMap<objects::Key, Vec<(Phase, String)>>,
@@ -229,6 +234,7 @@ impl Outcome {
         }
         items.sort_by(|a, b| a.key.cmp(&b.key));
         Outcome {
+            dialect: target.model.dialect,
             tables,
             objects,
             items,
@@ -290,12 +296,70 @@ fn align(source: &Model, target: &Model) -> Model {
                     .and_then(|o| o.column(&c.name))
                     .map_or_else(&mut fresh, |oc| oc.id);
             }
+            if let (Dialect::Tsql, Some(twin)) = (source.dialect, twin) {
+                adopt_system_names(&mut t, twin);
+            }
             t
         })
         .collect();
     let mut m = Model::new(tables);
     m.next_id = m.next_id.max(next + 1);
+    m.dialect = source.dialect;
     m
+}
+
+/// Nome que o SQL Server dá a uma constraint criada sem nome
+/// (`PK__cliente__3213E83F13A6773B`, `FK__pedido__cliente___5165187F`):
+/// o prefixo do tipo e, no fim, `__` e oito ou mais dígitos hexadecimais.
+pub fn is_system_name(name: &str) -> bool {
+    let prefixed = ["PK__", "UQ__", "FK__", "CK__"]
+        .iter()
+        .any(|p| name.starts_with(p));
+    let tail = name.rsplit("__").next().unwrap_or_default();
+    prefixed && tail.len() >= 8 && tail.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Uma constraint sem nome ganha um nome diferente em cada banco. Quando a
+/// origem e o destino têm a mesma constraint (mesmas colunas, mesma
+/// expressão) com nomes dados pelo servidor, a origem passa a usar o nome
+/// do destino, para a diferença de nome não virar um apagar e criar.
+fn adopt_system_names(source: &mut Table, target: &Table) {
+    let both = |a: &str, b: &str| is_system_name(a) && is_system_name(b);
+    if let (Some(s), Some(t)) = (&mut source.primary_key, &target.primary_key)
+        && both(&s.name, &t.name)
+        && s.columns == t.columns
+    {
+        s.name.clone_from(&t.name);
+    }
+    for s in &mut source.uniques {
+        if let Some(t) = target
+            .uniques
+            .iter()
+            .find(|t| both(&s.name, &t.name) && t.columns == s.columns)
+        {
+            s.name.clone_from(&t.name);
+        }
+    }
+    for s in &mut source.checks {
+        if let Some(t) = target
+            .checks
+            .iter()
+            .find(|t| both(&s.name, &t.name) && t.expr == s.expr)
+        {
+            s.name.clone_from(&t.name);
+        }
+    }
+    for s in &mut source.foreign_keys {
+        if let Some(t) = target.foreign_keys.iter().find(|t| {
+            both(&s.name, &t.name)
+                && t.columns == s.columns
+                && t.ref_schema == s.ref_schema
+                && t.ref_table == s.ref_table
+                && t.ref_columns == s.ref_columns
+        }) {
+            s.name.clone_from(&t.name);
+        }
+    }
 }
 
 /// Põe um `CREATE SEQUENCE IF NOT EXISTS` antes do script para cada
@@ -330,6 +394,31 @@ fn with_sequences(statements: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::{Column, ForeignKey, Key};
+
+    #[test]
+    fn server_given_constraint_names_do_not_count_as_a_difference() {
+        assert!(is_system_name("PK__clientes__3213E83F13A6773B"));
+        assert!(is_system_name("FK__pedidos__cliente__5165187F"));
+        assert!(!is_system_name("pk_cliente"));
+        assert!(!is_system_name("PK__cliente__novo"));
+        let table = |base: Id, pk: &str| {
+            let mut t = cliente(base, false);
+            t.schema = "dbo".into();
+            t.primary_key.as_mut().unwrap().name = pk.into();
+            t
+        };
+        let model = |t: Table| {
+            let mut m = Model::new(vec![t]);
+            m.dialect = Dialect::Tsql;
+            m
+        };
+        let source = model(table(10, "PK__cliente__AAAAAAAA11111111"));
+        let target = model(table(20, "PK__cliente__BBBBBBBB22222222"));
+        assert_eq!(Comparison::new(&source, &target).tables, []);
+        // Um nome escolhido por alguém é diferença.
+        let named = model(table(10, "pk_cliente"));
+        assert_eq!(Comparison::new(&named, &target).tables.len(), 1);
+    }
 
     fn col(id: Id, name: &str, ty: &str) -> Column {
         Column {

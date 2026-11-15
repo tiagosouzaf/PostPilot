@@ -6,9 +6,10 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::MetadataProvider;
 use pgstudio_core::query::{QueryEvent, QueryService, QuerySession};
-use pgstudio_core::schema::objects::{Object, Sequence};
+use pgstudio_core::schema::objects::{Kind, Object, Sequence};
 use pgstudio_core::schema::snapshot::Schema;
 
 /// Uma linha de resultado, em texto.
@@ -210,6 +211,101 @@ pub fn types(rows: &[Row]) -> Vec<Object> {
         .collect()
 }
 
+/// SQL Server: views, funções, procedures e triggers de tabela, com o
+/// texto do `CREATE` (os cifrados, sem texto, ficam de fora).
+const TSQL_MODULES_SQL: &str = "\
+SELECT SCHEMA_NAME(o.schema_id), o.name, RTRIM(o.type), m.definition, \
+       OBJECT_NAME(o.parent_object_id) \
+  FROM sys.sql_modules m JOIN sys.objects o ON o.object_id = m.object_id \
+ WHERE o.is_ms_shipped = 0 AND o.type IN ('V', 'P', 'FN', 'IF', 'TF', 'TR') \
+   AND m.definition IS NOT NULL \
+ ORDER BY 1, 2";
+
+const TSQL_SEQUENCES_SQL: &str = "\
+SELECT SCHEMA_NAME(s.schema_id), s.name, TYPE_NAME(s.user_type_id), \
+       CAST(s.start_value AS nvarchar(40)), CAST(s.increment AS nvarchar(40)), \
+       CAST(s.minimum_value AS nvarchar(40)), CAST(s.maximum_value AS nvarchar(40)), \
+       CASE WHEN s.is_cached = 0 THEN '0' ELSE ISNULL(CAST(s.cache_size AS varchar(20)), '') END, \
+       s.is_cycling \
+  FROM sys.sequences s WHERE s.is_ms_shipped = 0 ORDER BY 1, 2";
+
+/// Tipos de alias, com o tipo base como o `CREATE TYPE` escreve.
+const TSQL_TYPES_SQL: &str = "\
+SELECT SCHEMA_NAME(t.schema_id), t.name, \
+       b.name + CASE \
+         WHEN b.name IN ('varchar', 'char', 'varbinary', 'binary') \
+           THEN '(' + IIF(t.max_length = -1, 'max', CAST(t.max_length AS varchar(10))) + ')' \
+         WHEN b.name IN ('nvarchar', 'nchar') \
+           THEN '(' + IIF(t.max_length = -1, 'max', CAST(t.max_length / 2 AS varchar(10))) + ')' \
+         WHEN b.name IN ('decimal', 'numeric') \
+           THEN '(' + CAST(t.precision AS varchar(10)) + ',' + CAST(t.scale AS varchar(10)) + ')' \
+         WHEN b.name IN ('datetime2', 'time', 'datetimeoffset') \
+           THEN '(' + CAST(t.scale AS varchar(10)) + ')' \
+         ELSE '' END, \
+       t.is_nullable \
+  FROM sys.types t \
+  JOIN sys.types b ON b.user_type_id = t.system_type_id AND b.is_user_defined = 0 \
+ WHERE t.is_user_defined = 1 AND t.is_table_type = 0 AND t.is_assembly_type = 0 \
+ ORDER BY 1, 2";
+
+/// `1`, `true` ou `True`, como os drivers escrevem um `bit`.
+fn flag(r: &Row, i: usize) -> bool {
+    text(r, i).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
+pub fn tsql_modules(rows: &[Row]) -> Vec<Object> {
+    rows.iter()
+        .filter_map(|r| {
+            let (schema, name, def) = (text(r, 0)?, text(r, 1)?, text(r, 3)?);
+            let kind = match text(r, 2)?.as_str() {
+                "V" => Kind::View,
+                "P" => Kind::Procedure,
+                "TR" => Kind::Trigger,
+                _ => Kind::Function,
+            };
+            let table = text(r, 4).filter(|_| kind == Kind::Trigger);
+            Some(Object::tsql_module(
+                kind,
+                &schema,
+                &name,
+                table.as_deref(),
+                &def,
+            ))
+        })
+        .collect()
+}
+
+pub fn tsql_sequences(rows: &[Row]) -> Vec<Object> {
+    rows.iter()
+        .filter_map(|r| {
+            let seq = Sequence {
+                ty: text(r, 2)?,
+                start: text(r, 3)?,
+                increment: text(r, 4)?,
+                min: text(r, 5)?,
+                max: text(r, 6)?,
+                cache: text(r, 7).unwrap_or_default(),
+                cycle: flag(r, 8),
+                owned_by: None,
+            };
+            Some(Object::tsql_sequence(&text(r, 0)?, &text(r, 1)?, seq))
+        })
+        .collect()
+}
+
+pub fn tsql_types(rows: &[Row]) -> Vec<Object> {
+    rows.iter()
+        .filter_map(|r| {
+            Some(Object::tsql_alias_type(
+                &text(r, 0)?,
+                &text(r, 1)?,
+                &text(r, 2)?,
+                flag(r, 3),
+            ))
+        })
+        .collect()
+}
+
 /// As linhas de uma consulta, esperando nesta thread.
 pub fn rows(session: &Arc<dyn QuerySession>, sql: &str) -> Result<Vec<Row>, String> {
     let (tx, rx) = mpsc::channel();
@@ -237,14 +333,21 @@ pub fn load(
     let model = provider.load_model(database).map_err(|e| e.0)?;
     let session = queries.open(database);
     let mut objects = Vec::new();
-    let parts: [(&str, Parse); 5] = [
-        (VIEWS_SQL, views),
-        (ROUTINES_SQL, routines),
-        (TRIGGERS_SQL, triggers),
-        (SEQUENCES_SQL, sequences),
-        (TYPES_SQL, types),
-    ];
-    for (sql, parse) in parts {
+    let parts: &[(&str, Parse)] = match session.engine() {
+        Engine::PostgreSql => &[
+            (VIEWS_SQL, views),
+            (ROUTINES_SQL, routines),
+            (TRIGGERS_SQL, triggers),
+            (SEQUENCES_SQL, sequences),
+            (TYPES_SQL, types),
+        ],
+        Engine::SqlServer => &[
+            (TSQL_MODULES_SQL, tsql_modules),
+            (TSQL_SEQUENCES_SQL, tsql_sequences),
+            (TSQL_TYPES_SQL, tsql_types),
+        ],
+    };
+    for &(sql, parse) in parts {
         objects.extend(parse(&rows(&session, sql)?));
     }
     Ok(Schema { model, objects })
@@ -253,7 +356,7 @@ pub fn load(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pgstudio_core::schema::objects::{Detail, Kind};
+    use pgstudio_core::schema::objects::Detail;
 
     fn row(v: &[Option<&str>]) -> Row {
         v.iter().map(|s| s.map(str::to_string)).collect()

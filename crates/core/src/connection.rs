@@ -132,6 +132,7 @@ impl Engine {
                     | Feature::ObjectInfo
                     | Feature::QueryDesigner
                     | Feature::Designers
+                    | Feature::SchemaCompare
             ),
         }
     }
@@ -576,7 +577,8 @@ mod tests {
         assert!(Engine::SqlServer.supports(Feature::ActivityMonitor));
         assert!(Engine::SqlServer.supports(Feature::Security));
         assert!(Engine::SqlServer.supports(Feature::Backup));
-        assert!(!Engine::SqlServer.supports(Feature::SchemaCompare));
+        assert!(Engine::SqlServer.supports(Feature::SchemaCompare));
+        assert!(!Engine::SqlServer.supports(Feature::Claude));
     }
 
     #[test]
