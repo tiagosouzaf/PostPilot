@@ -69,8 +69,9 @@ por software) e o servidor de demonstração, sem PostgreSQL. Ao terminar, o
 app escreve uma linha `pgstudio-bench: result chave=valor ...`, e o xtask lê
 a memória do processo nesse momento.
 
-O CI roda a medição em Linux e Windows em todo PR (job "Medição"); o resultado
-aparece no resumo do job e como artefato `bench-<sistema>`. Por enquanto as
+O CI roda a medição em Linux em todo PR (job "Medição"); o resultado
+aparece no resumo do job e como artefato `bench`. Windows saiu do CI para não
+gastar minutos do GitHub Actions. Por enquanto as
 metas não reprovam o CI: os runners não têm GPU e variam de uma execução para
 outra. `cargo xtask bench --check` sai com erro se alguma meta não for
 atingida.

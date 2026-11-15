@@ -426,8 +426,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
-O CI roda formatação, clippy e testes em Linux e Windows, e o `cargo-deny` para
-licenças e vulnerabilidades.
+O CI roda formatação, clippy e testes só em Linux, e o `cargo-deny` para
+licenças e vulnerabilidades. Windows saiu do CI para não gastar minutos do
+GitHub Actions; o app e os pacotes de Windows (`cargo xtask dist`) continuam.
 
 O repositório é público. `cargo test --workspace` inclui uma checagem de segredos
 (`xtask/tests/sem_segredos.rs`) que falha se algum arquivo versionado tiver chave
@@ -490,7 +491,8 @@ uma máquina de verdade tem os passos em
 
 - **Windows nunca rodou num Windows de verdade.** O `.exe` e o `.msi` foram
   testados só no Wine, sem assinatura (o SmartScreen avisa). Os números de
-  medição no Windows existem só para a partida e a RAM (marco 1.8, no CI).
+  medição no Windows existem só para a partida e a RAM (marco 1.8, quando o CI
+  ainda rodava no Windows).
 - **Sem medição com GPU.** Todos os números de `docs/benchmarks.md` depois do
   marco 1.8 vêm de renderização por software. A RAM em repouso (cerca de
   129 MB) e o frame do diagrama de 2.000 tabelas, do plano de 2.000 nós e da

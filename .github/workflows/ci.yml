@@ -25,12 +25,8 @@ jobs:
       - run: cargo fmt --all --check
 
   check:
-    name: Clippy e testes (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: Clippy e testes
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -78,25 +74,19 @@ jobs:
       - run: cargo test --locked -p pgstudio-pg-client -p pgstudio-pg-metadata
 
   screenshot:
-    name: Janela (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: Janela
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Dependências do sistema (Linux)
-        if: runner.os == 'Linux'
+      - name: Dependências do sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libxkbcommon-x11-0 mesa-vulkan-drivers libgl1-mesa-dri
       - run: cargo build --release --locked -p pgstudio-desktop
       # Abre a janela, salva um PNG e fecha; falha se a janela não abrir.
-      - name: Screenshot (Linux)
-        if: runner.os == 'Linux'
+      - name: Screenshot
         run: |
           for theme in light dark; do
             PGSTUDIO_THEME=$theme PGSTUDIO_SCREENSHOT=postpilot-$theme.png timeout 120 \
@@ -106,41 +96,19 @@ jobs:
           PGSTUDIO_CONNECT=dialog PGSTUDIO_SCREENSHOT=pgstudio-connect.png timeout 120 \
             xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/postpilot
           test -s pgstudio-connect.png
-      - name: Screenshot (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          foreach ($theme in "light", "dark") {
-            $env:PGSTUDIO_THEME = $theme
-            $env:PGSTUDIO_SCREENSHOT = "postpilot-$theme.png"
-            $p = Start-Process -FilePath ".\target\release\postpilot.exe" -PassThru -NoNewWindow
-            if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
-            if (-not (Test-Path "postpilot-$theme.png")) { throw "screenshot não gerado" }
-          }
-          $env:PGSTUDIO_THEME = "light"
-          $env:PGSTUDIO_CONNECT = "dialog"
-          $env:PGSTUDIO_SCREENSHOT = "pgstudio-connect.png"
-          $p = Start-Process -FilePath ".\target\release\postpilot.exe" -PassThru -NoNewWindow
-          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "a janela não fechou a tempo" }
-          if (-not (Test-Path "pgstudio-connect.png")) { throw "screenshot não gerado" }
       - uses: actions/upload-artifact@v4
         with:
-          name: janela-${{ matrix.os }}
+          name: janela
           path: postpilot-*.png
 
   bench:
-    name: Medição (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: Medição
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Dependências do sistema (Linux)
-        if: runner.os == 'Linux'
+      - name: Dependências do sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libxkbcommon-x11-0 mesa-vulkan-drivers libgl1-mesa-dri
@@ -149,13 +117,12 @@ jobs:
       - name: cargo xtask bench
         shell: bash
         run: |
-          run="cargo xtask bench --no-build --runs 5 --idle 30 --markdown"
-          if [ "$RUNNER_OS" = Linux ]; then run="xvfb-run -a -s '-screen 0 1400x900x24' $run"; fi
-          eval "$run" | tee bench.md
-          { echo "### Medição em ${{ matrix.os }}"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a -s '-screen 0 1400x900x24' \
+            cargo xtask bench --no-build --runs 5 --idle 30 --markdown | tee bench.md
+          { echo "### Medição em Linux"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ matrix.os }}
+          name: bench
           path: bench.md
 
   deny:
