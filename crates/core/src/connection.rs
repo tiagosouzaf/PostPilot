@@ -104,6 +104,7 @@ impl Engine {
                     | Feature::ExecutionPlan
                     | Feature::ActivityMonitor
                     | Feature::Security
+                    | Feature::Backup
             ),
         }
     }
@@ -547,7 +548,8 @@ mod tests {
         assert!(Engine::SqlServer.supports(Feature::Query));
         assert!(Engine::SqlServer.supports(Feature::ActivityMonitor));
         assert!(Engine::SqlServer.supports(Feature::Security));
-        assert!(!Engine::SqlServer.supports(Feature::Backup));
+        assert!(Engine::SqlServer.supports(Feature::Backup));
+        assert!(!Engine::SqlServer.supports(Feature::SchemaCompare));
     }
 
     #[test]

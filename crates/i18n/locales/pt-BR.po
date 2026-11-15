@@ -4287,3 +4287,84 @@ msgstr "Negar {privilege}"
 
 msgid "This object has no permissions of its own."
 msgstr "Este objeto não tem permissões próprias."
+
+msgid "Back Up: {database} to {file} (on the server)..."
+msgstr "Backup: {database} para {file} (no servidor)..."
+
+msgid "Backup:"
+msgstr "Backup:"
+
+msgid "Close existing connections to the destination database"
+msgstr "Fechar as conexões existentes com o banco de destino"
+
+msgid "Compress the backup"
+msgstr "Compactar o backup"
+
+msgid "Copy-only backup (does not affect the backup sequence)"
+msgstr "Backup somente cópia (não afeta a sequência de backups)"
+
+msgid "Destination database:"
+msgstr "Banco de destino:"
+
+msgid "Differential"
+msgstr "Diferencial"
+
+msgid "Enter the backup file path (on the server)."
+msgstr "Informe o caminho do arquivo de backup (no servidor)."
+
+msgid "Enter the destination database."
+msgstr "Informe o banco de destino."
+
+msgid "File on the server:"
+msgstr "Arquivo no servidor:"
+
+msgid "Full"
+msgstr "Completo"
+
+msgid "Leave the database ready to use (RECOVERY)"
+msgstr "Deixar o banco pronto para uso (RECOVERY)"
+
+msgid "Overwrite the backups already in the file"
+msgstr "Substituir os backups que já estão no arquivo"
+
+msgid "Overwrite the existing database (WITH REPLACE)"
+msgstr "Sobrescrever o banco existente (WITH REPLACE)"
+
+msgid "Read"
+msgstr "Ler"
+
+msgid "Read the backup file first."
+msgstr "Leia o arquivo de backup primeiro."
+
+msgid "Restore the database files as"
+msgstr "Restaurar os arquivos do banco como"
+
+msgid "Restore: completed ({database})."
+msgstr "Restauração: concluída ({database})."
+
+msgid "Restore: {file} into {database}..."
+msgstr "Restauração: {file} em {database}..."
+
+msgid "SQL Server reads the backup from the server's own disk, not from this computer."
+msgstr "O SQL Server lê o backup do disco do próprio servidor, não deste computador."
+
+msgid "SQL Server writes the backup on the server's own disk, not on this computer."
+msgstr "O SQL Server grava o backup no disco do próprio servidor, não neste computador."
+
+msgid "The backup failed:"
+msgstr "O backup falhou:"
+
+msgid "The file has no backups."
+msgstr "O arquivo não tem backups."
+
+msgid "The restore failed:"
+msgstr "A restauração falhou:"
+
+msgid "The restore of {database} completed."
+msgstr "A restauração de {database} foi concluída."
+
+msgid "Transaction log"
+msgstr "Log de transações"
+
+msgid "Verify page checksums"
+msgstr "Verificar os checksums das páginas"
