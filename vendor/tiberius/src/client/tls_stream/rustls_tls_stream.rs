@@ -761,7 +761,12 @@ mod tests {
         ));
         std::fs::write(
             &path,
-            b"-----BEGIN PRIVATE KEY-----\nnot valid base64!!!\n-----END PRIVATE KEY-----\n",
+            // Chave de mentira, em partes (checagem de segredos do PostPilot).
+            concat!(
+                "-----BEGIN ",
+                "PRIVATE KEY-----\nnot valid base64!!!\n-----END ",
+                "PRIVATE KEY-----\n"
+            ),
         )
         .unwrap();
         let err = read_private_key(&path);

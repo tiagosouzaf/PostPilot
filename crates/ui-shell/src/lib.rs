@@ -1954,7 +1954,13 @@ impl ShellApp {
             && ask == Ask::Run
             && let Some(tag) = self.document_tag(id).filter(|t| t.confirm_changes)
         {
-            let reason = match pgstudio_automation::safety::classify(&sql) {
+            let engine = self
+                .doc_servers
+                .get(&id)
+                .and_then(|k| self.engine_of_key(k))
+                .or_else(|| self.connection.as_ref().map(|c| c.settings.engine))
+                .unwrap_or_default();
+            let reason = match pgstudio_automation::safety::classify_for(engine, &sql) {
                 pgstudio_automation::safety::Safety::ReadOnly => None,
                 pgstudio_automation::safety::Safety::Writes { reason } => Some(reason),
                 pgstudio_automation::safety::Safety::Unknown { .. } => {
@@ -2619,7 +2625,13 @@ impl ShellApp {
     /// Lê os catálogos que as janelas de consulta precisam e recebe os que
     /// chegaram.
     fn intellisense_step(&mut self, ctx: &egui::Context) {
-        if let Some(provider) = self.explorer.provider() {
+        // Sem IntelliSense para o motor (SQL Server até o S3.2), nem tenta
+        // ler o catálogo.
+        let supported = self
+            .connection
+            .as_ref()
+            .is_none_or(|c| c.settings.engine.supports(Feature::IntelliSense));
+        if supported && let Some(provider) = self.explorer.provider() {
             for id in self.documents.ids() {
                 if let Some(db) = self.document_database(id) {
                     self.catalogs.ensure(&db, &provider, ctx);

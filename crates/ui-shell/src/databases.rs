@@ -12,12 +12,13 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use pgstudio_core::query::{QueryEvent, QueryService, QuerySession};
 
-/// Bancos que aparecem no seletor: os que aceitam conexão, sem os modelos.
+/// Bancos que aparecem no seletor (PostgreSQL): os que aceitam conexão,
+/// sem os modelos. O SQL de cada motor está em [`pgstudio_core::connection::Engine::list_databases_sql`].
 pub const LIST_SQL: &str = "SELECT datname FROM pg_catalog.pg_database \
      WHERE datallowconn AND NOT datistemplate ORDER BY datname";
 
-/// Verdadeiro dentro de um bloco de transação: lá o `now()` é o começo da
-/// transação, e esta consulta já é um comando posterior.
+/// Verdadeiro dentro de um bloco de transação (PostgreSQL): lá o `now()` é
+/// o começo da transação, e esta consulta já é um comando posterior.
 pub const IN_TRANSACTION_SQL: &str = "SELECT now() <> statement_timestamp()";
 
 /// Resultado que chega da thread do banco.
@@ -50,7 +51,8 @@ impl DatabaseLists {
         }
         let slot: Slot<Result<Vec<String>, String>> = Arc::default();
         let session = service.open(database);
-        run_rows(&session, LIST_SQL, slot.clone(), ctx, |rows| {
+        let sql = service.engine().list_databases_sql();
+        run_rows(&session, sql, slot.clone(), ctx, |rows| {
             rows.into_iter()
                 .filter_map(|r| r.into_iter().next().flatten())
                 .collect()
@@ -138,7 +140,7 @@ impl TransactionProbe {
         let mut rows: Vec<Vec<Option<String>>> = Vec::new();
         let mut aborted = false;
         session.execute(
-            IN_TRANSACTION_SQL.to_string(),
+            session.engine().in_transaction_sql().to_string(),
             Box::new(move |event| match event {
                 QueryEvent::Row(r) => rows.push(r),
                 QueryEvent::Error(e) => aborted |= e.code == "25P02",
@@ -161,14 +163,18 @@ impl TransactionProbe {
     }
 }
 
-/// Lê a resposta de [`IN_TRANSACTION_SQL`].
+/// Lê a resposta de [`pgstudio_core::connection::Engine::in_transaction_sql`]: `t` no PostgreSQL, um
+/// `@@TRANCOUNT` maior que zero no SQL Server.
 pub fn in_transaction(rows: &[Vec<Option<String>>]) -> bool {
-    matches!(
-        rows.first()
-            .and_then(|r| r.first())
-            .and_then(|v| v.as_deref()),
-        Some("t" | "true")
-    )
+    match rows
+        .first()
+        .and_then(|r| r.first())
+        .and_then(|v| v.as_deref())
+    {
+        Some("t" | "true") => true,
+        Some(n) => n.parse::<u32>().is_ok_and(|n| n > 0),
+        None => false,
+    }
 }
 
 /// Roda `sql` e põe em `slot` as linhas convertidas por `convert`, ou o
@@ -472,5 +478,12 @@ mod tests {
                 ..ServerMessage::error("current transaction is aborted")
             })]));
         assert_eq!(TransactionProbe::start(&aborted, &ctx).poll(), Some(true));
+    }
+
+    #[test]
+    fn sql_server_transaction_count() {
+        assert!(in_transaction(&[vec![Some("2".into())]]));
+        assert!(!in_transaction(&[vec![Some("0".into())]]));
+        assert!(!in_transaction(&[]));
     }
 }

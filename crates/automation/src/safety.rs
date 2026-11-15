@@ -85,7 +85,51 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
 
 /// Classifica um lote (um ou mais comandos separados por `;`).
 pub fn classify(sql: &str) -> Safety {
-    let statements = match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+    classify_with(&PostgreSqlDialect {}, sql)
+}
+
+/// Como [`classify`], no dialeto do motor: no SQL Server, T-SQL, com os
+/// separadores `GO` tirados antes.
+pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Safety {
+    match engine {
+        pgstudio_core::connection::Engine::PostgreSql => classify(sql),
+        pgstudio_core::connection::Engine::SqlServer => {
+            let without_go: String = sql
+                .split_inclusive('\n')
+                .map(|line| if is_go_line(line) { "\n" } else { line })
+                .collect();
+            // T-SQL não exige `;` entre comandos.
+            let options = sqlparser::parser::ParserOptions {
+                require_semicolon_stmt_delimiter: false,
+                ..Default::default()
+            };
+            classify_parsed(
+                Parser::new(&sqlparser::dialect::MsSqlDialect {})
+                    .with_options(options)
+                    .try_with_sql(&without_go)
+                    .and_then(|mut p| p.parse_statements()),
+            )
+        }
+    }
+}
+
+/// Linha só com `GO` (e um número de repetições, e um comentário).
+fn is_go_line(line: &str) -> bool {
+    let line = line.trim();
+    let line = line.split("--").next().unwrap_or("").trim_end();
+    if !line.get(..2).is_some_and(|g| g.eq_ignore_ascii_case("go")) {
+        return false;
+    }
+    let tail = line[2..].trim();
+    tail.is_empty() || tail.chars().all(|c| c.is_ascii_digit())
+}
+
+fn classify_with(dialect: &dyn sqlparser::dialect::Dialect, sql: &str) -> Safety {
+    classify_parsed(Parser::parse_sql(dialect, sql))
+}
+
+fn classify_parsed(parsed: Result<Vec<Statement>, sqlparser::parser::ParserError>) -> Safety {
+    let statements = match parsed {
         Ok(s) => s,
         Err(e) => {
             return Safety::Unknown {
@@ -303,5 +347,27 @@ mod tests {
         let b = read_only_batch("select 1");
         assert!(b.starts_with("BEGIN TRANSACTION READ ONLY;"));
         assert!(b.ends_with("ROLLBACK;"));
+    }
+
+    #[test]
+    fn t_sql_is_classified_in_its_dialect() {
+        use pgstudio_core::connection::Engine::SqlServer;
+        assert_eq!(
+            classify_for(
+                SqlServer,
+                "SELECT TOP 10 [name] FROM [dbo].[t]\nGO\nSELECT 1"
+            ),
+            Safety::ReadOnly
+        );
+        assert!(matches!(
+            classify_for(SqlServer, "UPDATE [dbo].[t] SET a = 1\ngo 2"),
+            Safety::Writes { .. }
+        ));
+        assert!(matches!(
+            classify_for(SqlServer, "SELECT 1 AS x INTO #tmp"),
+            Safety::Writes { .. }
+        ));
+        assert!(is_go_line("  GO  -- fim\n"));
+        assert!(!is_go_line("GOTO x"));
     }
 }

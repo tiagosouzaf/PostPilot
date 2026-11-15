@@ -60,7 +60,8 @@
 //!   assim que der (para screenshots; veja `ShellApp::with_json_demo`).
 //! - `PGSTUDIO_CONNECT`: sem ela, o app abre o "Connect to Server" (e, nos
 //!   modos de screenshot e medição, usa o servidor de demonstração). Com
-//!   `dialog`, abre o diálogo também nesses modos. Com um nome de servidor
+//!   `dialog`, abre o diálogo também nesses modos (`dialog:sqlserver`: já
+//!   com o SQL Server escolhido). Com um nome de servidor
 //!   (`host` ou `host,porta`), conecta direto usando `PGUSER`, `PGDATABASE` e
 //!   `PGPASSWORD`. Vários servidores separados por `;` aparecem juntos no
 //!   Object Explorer.
@@ -239,7 +240,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
     let files = launch.files.clone();
     let connect = std::env::var("PGSTUDIO_CONNECT").ok();
     let demo = (screenshot.is_some() || bench) && connect.is_none();
-    let recent = if screenshot.is_some() || bench {
+    let recent = if connect.as_deref() == Some("dialog:sqlserver") {
+        // O "Connect to Server" já no SQL Server (screenshots).
+        RecentConnections::in_memory(vec![ConnectionSettings::for_engine(Engine::SqlServer)])
+    } else if screenshot.is_some() || bench {
         RecentConnections::in_memory(Vec::new())
     } else {
         config_dir()
@@ -337,7 +341,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                         app = app.with_status(tr("Could not start the database runtime."));
                     }
                 }
-                if let Some(servers) = connect.as_deref().filter(|c| *c != "dialog") {
+                if let Some(servers) = connect.as_deref().filter(|c| !c.starts_with("dialog")) {
                     app = connect_from_env(app, servers);
                 }
             }

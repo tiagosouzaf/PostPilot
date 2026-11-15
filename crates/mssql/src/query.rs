@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
-use pgstudio_core::connection::ConnectionSettings;
+use pgstudio_core::connection::{ConnectionSettings, Engine};
 use pgstudio_core::query::{QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage};
 use pgstudio_pg_client::DbRuntime;
 use tiberius::{BatchItem, BatchMessage, CancelHandle};
@@ -40,6 +40,10 @@ impl MssqlQueryService {
 }
 
 impl QueryService for MssqlQueryService {
+    fn engine(&self) -> Engine {
+        Engine::SqlServer
+    }
+
     fn open(&self, database: &str) -> Arc<dyn QuerySession> {
         let mut settings = self.settings.clone();
         settings.database = database.to_string();
@@ -111,6 +115,10 @@ impl QuerySession for MssqlQuerySession {
 
     fn database(&self) -> String {
         self.settings.database.clone()
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::SqlServer
     }
 }
 

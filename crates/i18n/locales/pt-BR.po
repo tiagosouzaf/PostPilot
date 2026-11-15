@@ -3955,3 +3955,15 @@ msgstr "{server} redirecionou a conexão vezes demais."
 
 msgid "Procedure {procedure}, Line {line}"
 msgstr "Procedure {procedure}, linha {line}"
+
+msgid "host, host,port or host\\instance"
+msgstr "host, host,porta ou host\\instância"
+
+msgid "Optional (login only)"
+msgstr "Opcional (só o login)"
+
+msgid "Mandatory, trust server certificate"
+msgstr "Obrigatória, confiar no certificado do servidor"
+
+msgid "Mandatory, verify certificate"
+msgstr "Obrigatória, conferir o certificado"
