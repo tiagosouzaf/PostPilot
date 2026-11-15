@@ -764,3 +764,70 @@ fn query_windows_show_the_environment_of_their_registered_server() {
     harness.run();
     assert_eq!(harness.state().active_tag(), None);
 }
+
+#[test]
+fn production_asks_before_running_sql_that_changes_the_database() {
+    use pgstudio_ui_shell::registered::{NodePath, PRODUCTION};
+    // sales-db é Production (pede confirmação); hr-db fica sem ambiente.
+    let mut r = tree();
+    let sales = NodePath::server(&[0], 0);
+    let mut s = r.server(&sales).unwrap().clone();
+    s.environment = Some(PRODUCTION.into());
+    r.update_server(&sales, s).unwrap();
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_registered_servers(r)
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_connector(Arc::new(FakeConnector));
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    let ctx = harness.ctx.clone();
+    connect_with_dialog(&mut harness, "sales-db", false);
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    let doc = harness.state().active_document().unwrap();
+    let set_text = |h: &mut Harness<'static, ShellApp>, sql: &str| {
+        h.state_mut().documents_mut().get_mut(doc).unwrap().text = sql.into();
+    };
+
+    // Leitura roda sem perguntar.
+    set_text(&mut harness, "select 1");
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert!(!harness.state().is_confirming_environment());
+
+    // UPDATE pergunta; Cancel não roda.
+    set_text(&mut harness, "update pedidos set status = 'pago'");
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert!(harness.state().is_confirming_environment());
+    harness.get_by_label("Confirm Changes");
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(!harness.state().is_confirming_environment());
+    assert_eq!(harness.state().status(), "The query was not executed.");
+
+    // Execute roda.
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    harness.get_by_label("Execute").click();
+    harness.run();
+    assert!(!harness.state().is_confirming_environment());
+    assert_ne!(harness.state().status(), "The query was not executed.");
+
+    // Fora de Production, DDL roda sem perguntar.
+    connect_with_dialog(&mut harness, "hr-db", false);
+    harness.state_mut().execute(&ctx, CommandId::NewQuery);
+    harness.run();
+    let hr_doc = harness.state().active_document().unwrap();
+    harness
+        .state_mut()
+        .documents_mut()
+        .get_mut(hr_doc)
+        .unwrap()
+        .text = "drop table pedidos".into();
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert!(!harness.state().is_confirming_environment());
+}

@@ -88,6 +88,13 @@ Registered Servers:
   do ambiente. A status bar também mostra a etiqueta. Sem ambiente, vale a cor
   da pasta.
 
+- **Confirmação em produção:** num ambiente com **Confirm changes**
+  (Confirmar alterações) marcado em Environments..., o F5 pergunta antes de
+  rodar SQL que pode alterar o banco (INSERT, UPDATE, DELETE, MERGE, DDL,
+  GRANT, controle de transação ou SQL que o PostPilot não consegue
+  classificar). SELECT roda sem perguntar. Production já vem marcado; os
+  outros ambientes, não.
+
 Tudo isso fica em `servers.json` e vai para o git junto com os servidores.
 Quem clona o repositório recebe as mesmas pastas, cores e ambientes. Os nomes
 dos três ambientes padrão ficam em inglês no arquivo e aparecem traduzidos
