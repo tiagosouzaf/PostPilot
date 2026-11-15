@@ -3275,9 +3275,6 @@ msgstr "Não Executar"
 msgid "Download and install"
 msgstr "Baixar e instalar"
 
-msgid "Download the .deb from the release page first."
-msgstr "Baixe o .deb na página da versão primeiro."
-
 msgid "Download the new version from the release page."
 msgstr "Baixe a nova versão na página da versão."
 

@@ -13,7 +13,9 @@
 //!   atualiza ([`install`]).
 //! - **Pacote do sistema** (pacman/AUR, `.deb`): os arquivos são do
 //!   gerenciador de pacotes, então o app não se sobrescreve; ele só avisa e
-//!   mostra o comando ([`InstallKind::update_command`]).
+//!   mostra o comando ([`InstallKind::update_command`]): o
+//!   `yay` para o pacote do AUR, o instalador ([`INSTALL_COMMAND`]) para o
+//!   pacote do Release e o `.deb`.
 //! - **Outros** (`cargo build`, `cargo install`): só avisa, com o link.
 //!
 //! O `SHA256SUMS` protege contra download corrompido ou trocado no caminho,
@@ -25,7 +27,9 @@ mod net;
 mod release;
 mod settings;
 
-pub use install::{AUR_PACKAGE, InstallKind, Installed, aur_helper, cleanup_old_binary, install};
+pub use install::{
+    AUR_PACKAGE, INSTALL_COMMAND, InstallKind, Installed, aur_helper, cleanup_old_binary, install,
+};
 pub use net::{Progress, download_verified, fetch_latest};
 pub use release::{Asset, Release, ReleaseError, parse_release, parse_sha256sums};
 pub use settings::UpdateSettings;
