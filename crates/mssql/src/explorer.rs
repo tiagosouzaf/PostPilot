@@ -996,6 +996,17 @@ impl MetadataProvider for MssqlExplorer {
             ["srvrole", name] => principal(PrincipalKind::ServerRole, None, Some(name)),
             ["db", db, "f", "users"] => principal(PrincipalKind::User, Some(db), None),
             ["db", db, "f", "dbroles"] => principal(PrincipalKind::DatabaseRole, Some(db), None),
+            ["db", db] => Some(Securable::Database(dec(db))),
+            ["db", db, "t" | "v", obj] => Some(Securable::Relation {
+                database: dec(db),
+                oid: obj.parse().ok()?,
+            }),
+            // Procedures e funções; os outros objetos deste id (constraints,
+            // triggers, sequences) a janela recusa ao ler.
+            ["db", db, "o", obj] => Some(Securable::Function {
+                database: dec(db),
+                oid: obj.parse().ok()?,
+            }),
             ["db", db, "user", name] => principal(PrincipalKind::User, Some(db), Some(name)),
             ["db", db, "dbrole", name] => {
                 principal(PrincipalKind::DatabaseRole, Some(db), Some(name))

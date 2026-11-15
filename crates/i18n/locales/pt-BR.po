@@ -4278,3 +4278,12 @@ msgstr "A atualização foi cancelada na janela de senha."
 
 msgid "The system did not authorize the installation (wrong password, or no polkit agent is running)."
 msgstr "O sistema não autorizou a instalação (senha errada ou nenhum agente do polkit em execução)."
+
+msgid "Deny"
+msgstr "Negar"
+
+msgid "Deny {privilege}"
+msgstr "Negar {privilege}"
+
+msgid "This object has no permissions of its own."
+msgstr "Este objeto não tem permissões próprias."

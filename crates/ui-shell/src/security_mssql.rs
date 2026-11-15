@@ -7,9 +7,9 @@
 //! estava com o editado.
 
 use pgstudio_i18n::tr;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use pgstudio_core::metadata::PrincipalKind;
+use pgstudio_core::metadata::{PrincipalKind, Securable};
 
 use crate::security::Rows;
 
@@ -367,6 +367,186 @@ pub fn in_transaction(statements: &[String]) -> String {
 /// Desfaz a transação que um erro deixou aberta.
 pub const ROLLBACK: &str = "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nSET XACT_ABORT OFF";
 
+/// Como uma permissão está para alguém, como as três caixas do SSMS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PermState {
+    Grant,
+    WithGrant,
+    Deny,
+}
+
+/// Quem tem o quê: (quem, permissão) e o estado.
+pub type Permissions = BTreeMap<(String, String), PermState>;
+
+/// O objeto das permissões, como lido.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PermTarget {
+    /// Nome para mostrar (`[dbo].[pedidos]`, ou o do banco).
+    pub name: String,
+    pub owner: String,
+    /// Nome do tipo no título, já traduzido.
+    pub kind: &'static str,
+    /// O ` ON OBJECT::[dbo].[pedidos]` dos comandos (vazio para o banco).
+    pub on: String,
+    /// As permissões que a janela lista.
+    pub privileges: Vec<String>,
+}
+
+const DATABASE_PERMISSIONS: &[&str] = &[
+    "CONNECT",
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "EXECUTE",
+    "REFERENCES",
+    "CREATE TABLE",
+    "CREATE VIEW",
+    "CREATE PROCEDURE",
+    "CREATE FUNCTION",
+    "CREATE SCHEMA",
+    "ALTER",
+    "CONTROL",
+    "VIEW DEFINITION",
+    "BACKUP DATABASE",
+    "SHOWPLAN",
+];
+const TABLE_PERMISSIONS: &[&str] = &[
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "REFERENCES",
+    "ALTER",
+    "CONTROL",
+    "VIEW DEFINITION",
+];
+const ROUTINE_PERMISSIONS: &[&str] = &["EXECUTE", "ALTER", "CONTROL", "VIEW DEFINITION"];
+const TABLE_FUNCTION_PERMISSIONS: &[&str] = &[
+    "SELECT",
+    "REFERENCES",
+    "ALTER",
+    "CONTROL",
+    "VIEW DEFINITION",
+];
+
+/// Leitura das permissões explícitas de um banco, tabela, view, procedure
+/// ou função, na sessão do banco: o objeto (nome, dono, tipo); os trios
+/// (quem, permissão, estado `G`, `W` ou `D`); e os usuários e roles do
+/// banco.
+pub fn permissions_read_sql(target: &Securable) -> Option<String> {
+    let (head, cond) = match target {
+        Securable::Database(_) => (
+            "SELECT DB_NAME(), ISNULL(SUSER_SNAME(d.owner_sid), ''), 'DB', '' \
+             FROM sys.databases d WHERE d.database_id = DB_ID()"
+                .to_string(),
+            "p.class = 0".to_string(),
+        ),
+        Securable::Relation { oid, .. } | Securable::Function { oid, .. } => (
+            format!(
+                "SELECT QUOTENAME(s.name) + '.' + QUOTENAME(o.name), \
+                 ISNULL(USER_NAME(ISNULL(o.principal_id, s.principal_id)), ''), \
+                 RTRIM(o.type), 'OBJECT' \
+                 FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id \
+                 WHERE o.object_id = {oid}"
+            ),
+            format!("p.class = 1 AND p.major_id = {oid} AND p.minor_id = 0"),
+        ),
+        _ => return None,
+    };
+    Some(format!(
+        "{head};\n\
+         SELECT USER_NAME(p.grantee_principal_id), p.permission_name, p.state \
+         FROM sys.database_permissions p WHERE {cond} ORDER BY 1, 2;\n\
+         SELECT name FROM sys.database_principals \
+         WHERE (type IN ({LOGIN_TYPES}) AND name NOT IN ('dbo', 'sys', 'INFORMATION_SCHEMA')) \
+            OR (type = 'R' AND is_fixed_role = 0) ORDER BY name"
+    ))
+}
+
+/// Lê o que [`permissions_read_sql`] devolveu.
+pub fn parse_permissions(
+    results: &[Rows],
+) -> Result<(PermTarget, Permissions, Vec<String>), String> {
+    let [head, acl, principals] = results else {
+        return Err(tr("The permissions could not be read.").into());
+    };
+    let h = head.first().ok_or(tr("The object no longer exists."))?;
+    let name = text(h, 0);
+    let (kind, defaults) = match text(h, 2).as_str() {
+        "DB" => (tr("Database"), DATABASE_PERMISSIONS),
+        "U" => (tr("Table"), TABLE_PERMISSIONS),
+        "V" => (tr("View"), TABLE_PERMISSIONS),
+        "P" | "PC" | "X" => (tr("Procedure"), ROUTINE_PERMISSIONS),
+        "FN" | "FS" => (tr("Function"), ROUTINE_PERMISSIONS),
+        "IF" | "TF" | "FT" => (tr("Function"), TABLE_FUNCTION_PERMISSIONS),
+        _ => return Err(tr("This object has no permissions of its own.").into()),
+    };
+    let on = match text(h, 3).as_str() {
+        "" => String::new(),
+        class => format!(" ON {class}::{name}"),
+    };
+    let mut privileges: Vec<String> = defaults.iter().map(|p| p.to_string()).collect();
+    let mut map = Permissions::new();
+    for r in acl {
+        let state = match text(r, 2).trim() {
+            "G" => PermState::Grant,
+            "W" => PermState::WithGrant,
+            "D" => PermState::Deny,
+            _ => continue,
+        };
+        let permission = text(r, 1);
+        if !privileges.contains(&permission) {
+            privileges.push(permission.clone());
+        }
+        map.insert((text(r, 0), permission), state);
+    }
+    let target = PermTarget {
+        name,
+        owner: text(h, 1),
+        kind,
+        on,
+        privileges,
+    };
+    let names = principals.iter().map(|r| text(r, 0)).collect();
+    Ok((target, map, names))
+}
+
+/// O GRANT, DENY e REVOKE que levam as permissões de `before` a `after`.
+pub fn permission_sql(
+    target: &PermTarget,
+    before: &Permissions,
+    after: &Permissions,
+) -> Vec<String> {
+    let keys: BTreeSet<&(String, String)> = before.keys().chain(after.keys()).collect();
+    let on = &target.on;
+    let mut out = Vec::new();
+    for key in keys {
+        let (who, p) = key;
+        let who = bracket(who);
+        let (old, new) = (before.get(key).copied(), after.get(key).copied());
+        if old == new {
+            continue;
+        }
+        // Tirar de quem podia repassar também tira de quem recebeu dele.
+        let cascade = if old == Some(PermState::WithGrant) {
+            " CASCADE"
+        } else {
+            ""
+        };
+        out.push(match new {
+            None => format!("REVOKE {p}{on} FROM {who}{cascade}"),
+            Some(PermState::Grant) if old == Some(PermState::WithGrant) => {
+                format!("REVOKE GRANT OPTION FOR {p}{on} FROM {who} CASCADE")
+            }
+            Some(PermState::Grant) => format!("GRANT {p}{on} TO {who}"),
+            Some(PermState::WithGrant) => format!("GRANT {p}{on} TO {who} WITH GRANT OPTION"),
+            Some(PermState::Deny) => format!("DENY {p}{on} TO {who}{cascade}"),
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +637,56 @@ mod tests {
         assert_eq!(
             principal_sql(PrincipalKind::ServerRole, None, &server, true),
             ["CREATE SERVER ROLE [auditores]"]
+        );
+    }
+
+    #[test]
+    fn permissions_become_grant_deny_and_revoke() {
+        let target = PermTarget {
+            name: "[dbo].[pedidos]".into(),
+            owner: "dbo".into(),
+            kind: "Table",
+            on: " ON OBJECT::[dbo].[pedidos]".into(),
+            privileges: vec![],
+        };
+        let key = |who: &str, p: &str| (who.to_string(), p.to_string());
+        let before: Permissions = [
+            (key("ana", "SELECT"), PermState::Grant),
+            (key("ana", "INSERT"), PermState::WithGrant),
+            (key("ana", "UPDATE"), PermState::WithGrant),
+            (key("ana", "DELETE"), PermState::Deny),
+            (key("bia", "SELECT"), PermState::WithGrant),
+            (key("bia", "INSERT"), PermState::Grant),
+        ]
+        .into();
+        let after: Permissions = [
+            (key("ana", "SELECT"), PermState::WithGrant),
+            (key("ana", "INSERT"), PermState::Grant),
+            (key("ana", "UPDATE"), PermState::Deny),
+            (key("ana", "DELETE"), PermState::Grant),
+            (key("bia", "INSERT"), PermState::Grant),
+            (key("public", "SELECT"), PermState::Deny),
+        ]
+        .into();
+        assert_eq!(
+            permission_sql(&target, &before, &after),
+            [
+                "GRANT DELETE ON OBJECT::[dbo].[pedidos] TO [ana]",
+                "REVOKE GRANT OPTION FOR INSERT ON OBJECT::[dbo].[pedidos] FROM [ana] CASCADE",
+                "GRANT SELECT ON OBJECT::[dbo].[pedidos] TO [ana] WITH GRANT OPTION",
+                "DENY UPDATE ON OBJECT::[dbo].[pedidos] TO [ana] CASCADE",
+                "REVOKE SELECT ON OBJECT::[dbo].[pedidos] FROM [bia] CASCADE",
+                "DENY SELECT ON OBJECT::[dbo].[pedidos] TO [public]",
+            ]
+        );
+        let database = PermTarget {
+            on: String::new(),
+            ..target
+        };
+        let after: Permissions = [(key("ana", "CREATE TABLE"), PermState::Grant)].into();
+        assert_eq!(
+            permission_sql(&database, &Permissions::new(), &after),
+            ["GRANT CREATE TABLE TO [ana]"]
         );
     }
 }
