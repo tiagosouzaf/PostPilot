@@ -3941,6 +3941,9 @@ msgstr "\"{command}\" ainda não está disponível para {engine}."
 msgid "not available for this server"
 msgstr "não disponível neste servidor"
 
+msgid "A file dialog is already open."
+msgstr "Já há um diálogo de arquivo aberto."
+
 msgid "Timed out connecting to {server}."
 msgstr "Tempo esgotado ao conectar a {server}."
 

@@ -214,6 +214,12 @@ pub trait FileDialogs {
     fn folder_path(&mut self, _title: &str) -> Option<PathBuf> {
         None
     }
+    /// Se a pergunta espera uma pessoa (diálogos nativos). Com `true`, a
+    /// casca pergunta noutra thread para a janela não travar (veja
+    /// [`crate::file_dialogs`]); com `false` (respostas prontas), na hora.
+    fn blocks(&self) -> bool {
+        false
+    }
 }
 
 /// Sem diálogos: toda pergunta é cancelada.

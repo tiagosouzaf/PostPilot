@@ -742,8 +742,16 @@ fn query_windows_show_the_environment_of_their_registered_server() {
     harness.run();
     let tag = harness.state().active_tag().expect("sales-db has a tag");
     assert_eq!(tag.environment.as_deref(), Some("Production"));
-    // Na faixa da janela e na status bar.
-    assert!(harness.query_all_by_label("Production").count() >= 2);
+    // Na faixa da janela e na status bar (a faixa pode levar uns frames).
+    let start = std::time::Instant::now();
+    while harness.query_all_by_label("Production").count() < 2 {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "Production on the strip and the status bar"
+        );
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 
     connect_with_dialog(&mut harness, "hr-db", false);
     harness.state_mut().execute(&ctx, CommandId::NewQuery);

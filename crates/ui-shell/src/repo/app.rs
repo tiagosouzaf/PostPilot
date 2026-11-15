@@ -9,6 +9,7 @@ use pgstudio_core::connection::ConnectionSettings;
 use super::panel::Action;
 use super::{QueryLink, Workspace, find_server_by_key, link_settings};
 use crate::ShellApp;
+use crate::file_dialogs::Question;
 use crate::panels::Panel;
 use crate::registered;
 use crate::servers::server_key;
@@ -149,15 +150,25 @@ impl ShellApp {
     }
 
     pub(crate) fn ask_new_workspace(&mut self) {
-        if let Some(root) = self.dialogs.folder_path(tr("New Workspace")) {
-            self.create_workspace(&root);
-        }
+        let question = Question::Folder {
+            title: tr("New Workspace").into(),
+        };
+        self.ask_path(question, |app, _, root| {
+            if let Some(root) = root {
+                app.create_workspace(&root);
+            }
+        });
     }
 
     pub(crate) fn ask_open_workspace(&mut self) {
-        if let Some(root) = self.dialogs.folder_path(tr("Open Workspace")) {
-            self.open_workspace(&root);
-        }
+        let question = Question::Folder {
+            title: tr("Open Workspace").into(),
+        };
+        self.ask_path(question, |app, _, root| {
+            if let Some(root) = root {
+                app.open_workspace(&root);
+            }
+        });
     }
 
     fn remember_workspace(&self) {
@@ -398,32 +409,37 @@ impl ShellApp {
                     self.connect_registered(&s, true)
                 }
                 Action::Servers(registered::Action::Import(group)) => {
-                    let Some(path) = self.dialogs.open_path() else {
-                        continue;
-                    };
-                    let Some(panel) = self.workspace_panel.servers_mut() else {
-                        continue;
-                    };
-                    self.status = match panel.servers_mut().import(&group, &path) {
-                        Ok(1) => tr("Imported 1 server into the workspace.").to_string(),
-                        Ok(n) => trf!("Imported {n} servers into the workspace.", n = n),
-                        Err(e) => e,
-                    };
+                    self.ask_path(Question::Open, move |app, _, path| {
+                        let Some(path) = path else {
+                            return;
+                        };
+                        let Some(panel) = app.workspace_panel.servers_mut() else {
+                            return;
+                        };
+                        app.status = match panel.servers_mut().import(&group, &path) {
+                            Ok(1) => tr("Imported 1 server into the workspace.").to_string(),
+                            Ok(n) => trf!("Imported {n} servers into the workspace.", n = n),
+                            Err(e) => e,
+                        };
+                    });
                 }
                 Action::Servers(registered::Action::Export(group)) => {
-                    let Some(path) = self.dialogs.save_path("RegisteredServers.json", None) else {
-                        continue;
-                    };
-                    let Some(panel) = self.workspace_panel.servers() else {
-                        continue;
-                    };
-                    self.status = match panel.servers().export(&group, &path) {
-                        Ok(()) => trf!(
-                            "Exported servers to {path} (passwords are not exported).",
-                            path = path.display()
-                        ),
-                        Err(e) => e,
-                    };
+                    let question = Question::save("RegisteredServers.json");
+                    self.ask_path(question, move |app, _, path| {
+                        let Some(path) = path else {
+                            return;
+                        };
+                        let Some(panel) = app.workspace_panel.servers() else {
+                            return;
+                        };
+                        app.status = match panel.servers().export(&group, &path) {
+                            Ok(()) => trf!(
+                                "Exported servers to {path} (passwords are not exported).",
+                                path = path.display()
+                            ),
+                            Err(e) => e,
+                        };
+                    });
                 }
             }
         }
@@ -433,10 +449,15 @@ impl ShellApp {
         {
             self.status = status;
         }
-        if let Some(url) = self.workspace_panel.take_clone_request()
-            && let Some(parent) = self.dialogs.folder_path(tr("Clone Workspace into"))
-        {
-            self.clone_workspace(&url, &parent);
+        if let Some(url) = self.workspace_panel.take_clone_request() {
+            let question = Question::Folder {
+                title: tr("Clone Workspace into").into(),
+            };
+            self.ask_path(question, move |app, _, parent| {
+                if let Some(parent) = parent {
+                    app.clone_workspace(&url, &parent);
+                }
+            });
         }
         if let Some(result) = self.workspace_panel.take_cloned() {
             self.finish_clone(result);

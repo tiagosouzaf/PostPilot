@@ -6,6 +6,7 @@
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
 pub mod activity;
+pub mod applog;
 pub mod backup;
 pub mod bench;
 pub mod claude;
@@ -17,6 +18,7 @@ pub mod diagrams;
 pub mod documents;
 pub mod edit_rows;
 pub mod execution;
+pub mod file_dialogs;
 pub mod intellisense;
 pub mod json_guide;
 pub mod json_viewer;
@@ -46,7 +48,7 @@ pub mod update;
 /// Ações do menu de contexto do Object Explorer.
 pub use pgstudio_object_explorer::Event as ExplorerEvent;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText};
 use pgstudio_core::keymap::{ChordMatcher, Keymap, Match};
@@ -135,7 +137,13 @@ pub struct ShellApp {
     /// Janela de consulta ativa (a última que teve foco).
     active_doc: Option<u32>,
     focus_editor: Option<u32>,
-    dialogs: Box<dyn FileDialogs>,
+    dialogs: file_dialogs::SharedDialogs,
+    /// Diálogo de arquivo aberto noutra thread, esperando a resposta.
+    pending_dialog: Option<file_dialogs::Pending>,
+    /// O contexto do frame atual (para as respostas dos diálogos).
+    frame_ctx: Option<egui::Context>,
+    /// Vigia da thread da interface (veja [`applog`]).
+    watchdog: Option<applog::Watchdog>,
     confirm: Option<Confirm>,
     /// Pergunta do plano real de comandos que alteram dados.
     actual_confirm: Option<PendingActual>,
@@ -342,7 +350,10 @@ impl Default for ShellApp {
             query_on_open: None,
             active_doc: None,
             focus_editor: None,
-            dialogs: Box::new(NoDialogs),
+            dialogs: file_dialogs::shared(NoDialogs),
+            pending_dialog: None,
+            frame_ctx: None,
+            watchdog: None,
             confirm: None,
             actual_confirm: None,
             environment_confirm: None,
@@ -543,8 +554,23 @@ impl ShellApp {
     }
 
     /// Usa estes diálogos de arquivo (o aplicativo passa os nativos).
-    pub fn with_file_dialogs(mut self, dialogs: impl FileDialogs + 'static) -> Self {
-        self.dialogs = Box::new(dialogs);
+    pub fn with_file_dialogs(mut self, dialogs: impl FileDialogs + Send + 'static) -> Self {
+        self.dialogs = file_dialogs::shared(dialogs);
+        self
+    }
+
+    /// Marca a etapa do frame para o vigia (veja [`applog`]).
+    fn phase(&self, phase: &'static str) {
+        if let Some(w) = &self.watchdog {
+            w.phase(phase);
+        }
+    }
+
+    /// Liga o vigia da thread da interface: o log em arquivo ganha uma
+    /// linha quando a janela para de desenhar (veja [`applog`]).
+    pub fn with_watchdog(mut self, ctx: &egui::Context) -> Self {
+        let ctx = ctx.clone();
+        self.watchdog = Some(applog::Watchdog::start(move || ctx.request_repaint()));
         self
     }
 
@@ -1654,9 +1680,11 @@ impl ShellApp {
                 }
             }
             CommandId::OpenFile => {
-                if let Some(path) = self.dialogs.open_path() {
-                    self.open_file(&path);
-                }
+                self.ask_path(file_dialogs::Question::Open, |app, _, path| {
+                    if let Some(path) = path {
+                        app.open_file(&path);
+                    }
+                });
             }
             CommandId::Save | CommandId::SaveAs | CommandId::Undo | CommandId::Redo
                 if self.focused_diagram().is_some() =>
@@ -1667,16 +1695,23 @@ impl ShellApp {
                     return;
                 };
                 match cmd {
-                    CommandId::Save | CommandId::SaveAs => {
-                        let path = match d.path() {
-                            Some(p) if cmd == CommandId::Save => Some(p.to_path_buf()),
-                            current => {
-                                let current = current.map(|p| p.to_path_buf());
-                                self.dialogs.save_path(&d.file_name(), current.as_deref())
-                            }
-                        };
-                        d.save(path);
-                    }
+                    CommandId::Save | CommandId::SaveAs => match d.path() {
+                        Some(p) if cmd == CommandId::Save => {
+                            let p = p.to_path_buf();
+                            d.save(Some(p));
+                        }
+                        current => {
+                            let question = file_dialogs::Question::Save {
+                                name: d.file_name(),
+                                current: current.map(|p| p.to_path_buf()),
+                            };
+                            self.ask_path(question, move |app, _, path| {
+                                if let Some(d) = app.diagrams.get_mut(id) {
+                                    d.save(path);
+                                }
+                            });
+                        }
+                    },
                     CommandId::Undo => d.undo(),
                     _ => d.redo(),
                 }
@@ -1695,18 +1730,10 @@ impl ShellApp {
                 }
             }
             CommandId::Save | CommandId::SaveAs => match self.active_doc {
-                Some(id) => {
-                    self.save(id, cmd == CommandId::SaveAs);
-                }
+                Some(id) => self.save_each(vec![id], cmd == CommandId::SaveAs, |_, _| {}),
                 None => self.status = tr("No query window is open.").to_string(),
             },
-            CommandId::SaveAll => {
-                for id in self.documents.dirty() {
-                    if !self.save(id, false) {
-                        break;
-                    }
-                }
-            }
+            CommandId::SaveAll => self.save_each(self.documents.dirty(), false, |_, _| {}),
             CommandId::CloseDocument => match self.active_doc {
                 Some(id) => self.request_close(vec![id], false),
                 None => self.status = tr("No query window is open.").to_string(),
@@ -2013,20 +2040,30 @@ impl ShellApp {
                 .documents
                 .get(id)
                 .is_some_and(|d| d.results_mode == execution::ResultsMode::File);
-        let file = if to_file {
-            match self
-                .dialogs
-                .save_results_path(&format!("{}.csv", tr("Results")))
-            {
-                Some(path) => Some(path),
+        if to_file {
+            let question = file_dialogs::Question::SaveResults {
+                name: format!("{}.csv", tr("Results")),
+            };
+            self.ask_path(question, move |app, ctx, path| match path {
+                Some(path) => app.launch_with(ctx, id, sql, offset, kind, Some(path)),
                 None => {
-                    self.status = tr("Query canceled: no file chosen for the results.").to_string();
-                    return;
+                    app.status = tr("Query canceled: no file chosen for the results.").to_string();
                 }
-            }
-        } else {
-            None
-        };
+            });
+            return;
+        }
+        self.launch_with(ctx, id, sql, offset, kind, None);
+    }
+
+    fn launch_with(
+        &mut self,
+        ctx: &egui::Context,
+        id: u32,
+        sql: String,
+        offset: usize,
+        kind: Run,
+        file: Option<PathBuf>,
+    ) {
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
@@ -2070,7 +2107,7 @@ impl ShellApp {
 
     /// "Save Results As...": pergunta o arquivo e exporta o resultado `i`
     /// da janela `doc` numa thread, no formato da extensão.
-    fn save_results_as(&mut self, ctx: &egui::Context, doc: u32, i: usize) {
+    fn save_results_as(&mut self, doc: u32, i: usize) {
         let Some(set) = self
             .documents
             .get(doc)
@@ -2081,12 +2118,23 @@ impl ShellApp {
         };
         let store = set.shared_store();
         let rows = set.len();
-        let Some(path) = self
-            .dialogs
-            .save_results_path(&format!("{}.csv", tr("Results")))
-        else {
-            return;
+        let question = file_dialogs::Question::SaveResults {
+            name: format!("{}.csv", tr("Results")),
         };
+        self.ask_path(question, move |app, ctx, path| {
+            if let Some(path) = path {
+                app.export_results(ctx, store, rows, path);
+            }
+        });
+    }
+
+    fn export_results(
+        &mut self,
+        ctx: &egui::Context,
+        store: std::sync::Arc<std::sync::Mutex<pgstudio_result_grid::ResultStore>>,
+        rows: u64,
+        path: PathBuf,
+    ) {
         let format = pgstudio_result_grid::export::Format::from_path(&path);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
@@ -2737,27 +2785,58 @@ impl ShellApp {
         self.workspace.open(Panel::Query(id));
     }
 
-    /// Salva o documento; `ask` pede o arquivo mesmo se já tiver um.
-    /// Devolve `false` se o usuário cancelou ou a gravação falhou.
-    fn save(&mut self, id: u32, ask: bool) -> bool {
+    /// Salva os documentos em ordem e, se todos foram salvos, chama
+    /// `done`. `ask` pede o arquivo mesmo para quem já tem um. Um documento
+    /// sem arquivo abre o diálogo (sem travar a janela) e a fila continua
+    /// quando a pessoa escolhe; cancelar ou falhar para a fila.
+    fn save_each(
+        &mut self,
+        mut ids: Vec<u32>,
+        ask: bool,
+        done: impl FnOnce(&mut ShellApp, &egui::Context) + 'static,
+    ) {
+        if ids.is_empty() {
+            let ctx = self.frame_ctx.clone().unwrap_or_default();
+            done(self, &ctx);
+            return;
+        }
+        let id = ids.remove(0);
         let Some(doc) = self.documents.get(id) else {
-            return false;
+            return;
         };
-        let path = match doc.path() {
-            Some(p) if !ask => p.to_path_buf(),
-            current => match self.dialogs.save_path(doc.name(), current) {
-                Some(p) => p,
-                None => return false,
-            },
-        };
-        let link = self.link_before_save(id, &path);
+        match doc.path() {
+            Some(p) if !ask => {
+                let path = p.to_path_buf();
+                if self.save_to(id, &path) {
+                    self.save_each(ids, ask, done);
+                }
+            }
+            current => {
+                let question = file_dialogs::Question::Save {
+                    name: doc.name().to_string(),
+                    current: current.map(Path::to_path_buf),
+                };
+                self.ask_path(question, move |app, _, path| {
+                    if let Some(path) = path
+                        && app.save_to(id, &path)
+                    {
+                        app.save_each(ids, ask, done);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Grava o documento em `path`. `false` se a gravação falhou.
+    fn save_to(&mut self, id: u32, path: &Path) -> bool {
+        let link = self.link_before_save(id, path);
         let Some(doc) = self.documents.get_mut(id) else {
             return false;
         };
-        match doc.save_to(&path) {
+        match doc.save_to(path) {
             Ok(()) => {
                 self.status = tr("Item(s) Saved").to_string();
-                self.after_save(&path, link);
+                self.after_save(path, link);
                 true
             }
             Err(e) => {
@@ -2798,16 +2877,18 @@ impl ShellApp {
             return;
         };
         match answer {
-            Answer::Cancel => return,
+            Answer::Cancel => {}
             Answer::Yes => {
-                for id in &confirm.save {
-                    if !self.save(*id, false) {
-                        return;
-                    }
-                }
+                let save = confirm.save.clone();
+                self.save_each(save, false, move |app, ctx| app.finish_close(ctx, &confirm));
             }
-            Answer::No => {}
+            Answer::No => self.finish_close(ctx, &confirm),
         }
+    }
+
+    /// Fecha os documentos (e o app, se era para sair) depois do "Save
+    /// changes?".
+    fn finish_close(&mut self, ctx: &egui::Context, confirm: &Confirm) {
         self.close_documents(&confirm.close);
         if confirm.exit {
             self.allow_close = true;
@@ -2863,6 +2944,14 @@ impl ShellApp {
     /// Desenha a casca inteira num `Ui` que ocupa a janela.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        self.frame_ctx = Some(ctx.clone());
+        self.phase("steps");
+        self.file_dialog_step(&ctx);
+        if self.pending_dialog.is_some() {
+            // A resposta chega por outra thread; ela pede um frame, e este
+            // é só a garantia.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         self.connect_step();
         self.expand_step();
         self.execution_step(&ctx);
@@ -2870,6 +2959,7 @@ impl ShellApp {
         self.intellisense_step(&ctx);
         self.databases_step();
         self.script_step(&ctx);
+        self.phase("keyboard");
         let mut commands = if self.confirm.is_some()
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
@@ -2906,6 +2996,7 @@ impl ShellApp {
             }
         }
 
+        self.phase("menu_bar");
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 for menu in MENUS {
@@ -2919,6 +3010,7 @@ impl ShellApp {
             });
         });
         let mut picked = Picked::default();
+        self.phase("toolbar");
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands, &mut picked));
         self.open_database_list = false;
         if picked.opened {
@@ -2944,6 +3036,7 @@ impl ShellApp {
         let mut claude_actions = Vec::new();
         let mut activate = None;
         let mut open_json = Vec::new();
+        self.phase("panels");
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::palette(self.theme).document_well))
             .show(ui, |ui| {
@@ -2993,7 +3086,7 @@ impl ShellApp {
                     self.request_close(vec![id], false);
                 }
                 for (doc, i) in save_results {
-                    self.save_results_as(ui.ctx(), doc, i);
+                    self.save_results_as(doc, i);
                 }
             });
         for (doc, i, cell) in open_json {
@@ -3004,6 +3097,7 @@ impl ShellApp {
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);
+        self.phase("workspace");
         self.workspace_step(&ctx, workspace_actions);
         self.claude_panel_step(&ctx, claude_actions);
         self.export_step();
@@ -3018,6 +3112,7 @@ impl ShellApp {
             // quando o modelo chegar.
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
+        self.phase("windows");
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
         self.environment_confirm_window(&ctx);
@@ -3053,6 +3148,7 @@ impl ShellApp {
         }
         commands.extend(self.updater.window(&ctx));
 
+        self.phase("commands");
         for cmd in commands {
             self.execute(&ctx, cmd);
         }
@@ -3440,7 +3536,21 @@ impl ShellApp {
         let Some(dialog) = &mut self.compare else {
             return;
         };
-        match dialog.show(ctx, &mut *self.dialogs) {
+        let request = dialog.show(ctx);
+        if let Some((ask, question)) = dialog.take_question() {
+            self.ask_path(question, move |app, ctx, path| {
+                let request = app
+                    .compare
+                    .as_mut()
+                    .and_then(|c| c.answered(ask, path, ctx));
+                app.compare_request(request);
+            });
+        }
+        self.compare_request(request);
+    }
+
+    fn compare_request(&mut self, request: Option<schema_compare::Request>) {
+        match request {
             None => {}
             Some(schema_compare::Request::Log(lines)) => self.output.extend(lines),
             Some(schema_compare::Request::Script(sql, db)) => {
@@ -3962,9 +4072,16 @@ impl eframe::App for ShellApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(w) = &self.watchdog {
+            w.frame_start();
+        }
         self.bench_step();
         let started = std::time::Instant::now();
         self.show(ui);
+        if let Some(w) = &self.watchdog {
+            let focused = ui.ctx().input(|i| i.viewport().focused.unwrap_or(true));
+            w.frame_end(focused);
+        }
         let ui_ms = started.elapsed().as_secs_f64() * 1000.0;
         let ctx = ui.ctx().clone();
         self.bench_scenario_step(&ctx, ui_ms);

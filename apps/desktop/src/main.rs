@@ -73,6 +73,10 @@
 //!   `pgstudio_ui_shell::repo`). Sem ela, o app reabre o último workspace,
 //!   lembrado em `<config>/PostPilot/workspace.txt`.
 //!
+//! O app escreve um log em `<config>/PostPilot/postpilot.log` (início, erros,
+//! panics e, com o vigia da interface, quando a janela para de desenhar e
+//! em que etapa; veja `pgstudio_ui_shell::applog`).
+//!
 //! As conexões recentes ficam em `<config>/PostPilot/connections.json` e os
 //! servidores registrados em `<config>/PostPilot/registered_servers.json`,
 //! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
@@ -127,8 +131,25 @@ fn main() -> std::process::ExitCode {
         std::env::args_os().skip(1),
         std::env::var(renderer::ENV).ok().as_deref(),
     );
+    if let Some(config) = config_dir() {
+        pgstudio_ui_shell::applog::init(
+            &config
+                .join(pgstudio_core::CONFIG_DIR_NAME)
+                .join("postpilot.log"),
+        );
+    }
+    log_line(&format!(
+        "start: PostPilot {} on {} ({}), renderer {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        session_kind(),
+        match launch.renderer {
+            Some(r) => format!("{r:?}"),
+            None => "wgpu (glow as fallback)".into(),
+        }
+    ));
     for warning in &launch.warnings {
-        eprintln!("postpilot: {warning}");
+        log_line(warning);
     }
     // Até a 0.1 o app se chamava PGStudio: traz a configuração antiga.
     if let Some(config) = config_dir() {
@@ -139,15 +160,45 @@ fn main() -> std::process::ExitCode {
         }
     }
     match run(&launch) {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => {
+            log_line("exit");
+            std::process::ExitCode::SUCCESS
+        }
         Err(e) if launch.should_fall_back(&e) => {
-            eprintln!("postpilot: the wgpu renderer failed ({e}); trying again with glow (OpenGL)");
+            log_line(&format!(
+                "the wgpu renderer failed ({e}); trying again with glow (OpenGL)"
+            ));
             relaunch_with_glow()
         }
         Err(e) => {
-            eprintln!("postpilot: {e}");
+            log_line(&format!("error: {e}"));
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+fn log_line(message: &str) {
+    pgstudio_ui_shell::applog::line(message);
+}
+
+/// Wayland ou X11 (o que o ambiente indica), para o log.
+fn session_kind() -> String {
+    if cfg!(windows) {
+        return "windows".into();
+    }
+    let var = |n| std::env::var(n).unwrap_or_default();
+    let desktop = var("XDG_CURRENT_DESKTOP");
+    let kind = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        "wayland"
+    } else if std::env::var_os("DISPLAY").is_some() {
+        "x11"
+    } else {
+        "no display"
+    };
+    if desktop.is_empty() {
+        kind.into()
+    } else {
+        format!("{kind}, {desktop}")
     }
 }
 
@@ -264,6 +315,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 .with_keymap(keymap)
                 .with_file_dialogs(NativeDialogs::default())
                 .with_renderer(renderer::describe(cc));
+            log_line(&format!("window: {}", renderer::describe(cc)));
+            if screenshot.is_none() && !bench {
+                app = app.with_watchdog(&cc.egui_ctx);
+            }
             if let Some(status) = keymap_status {
                 app = app.with_status(status);
             }
@@ -575,6 +630,12 @@ impl NativeDialogs {
 }
 
 impl FileDialogs for NativeDialogs {
+    /// Os diálogos do sistema esperam a pessoa: a casca pergunta noutra
+    /// thread para a janela não travar.
+    fn blocks(&self) -> bool {
+        true
+    }
+
     fn save_path(&mut self, name: &str, current: Option<&Path>) -> Option<PathBuf> {
         let mut dialog = self
             .dialog()
