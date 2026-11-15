@@ -159,6 +159,7 @@ fn environment(ui: &mut egui::Ui, tag: Option<&ServerTag>) {
     if let Some(ServerTag {
         environment: Some(name),
         color,
+        ..
     }) = tag
     {
         crate::registered::environment_badge(ui, name, *color);

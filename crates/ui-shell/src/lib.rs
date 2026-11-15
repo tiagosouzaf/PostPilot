@@ -139,6 +139,7 @@ pub struct ShellApp {
     confirm: Option<Confirm>,
     /// Pergunta do plano real de comandos que alteram dados.
     actual_confirm: Option<PendingActual>,
+    environment_confirm: Option<PendingEnvironment>,
     /// Bancos de cada servidor, para o seletor da toolbar.
     databases: databases::DatabaseLists,
     /// Troca de banco de uma janela esperando a checagem de transação ou
@@ -255,6 +256,17 @@ struct PendingActual {
     offset: usize,
 }
 
+/// Lote que pode alterar o banco num ambiente que pede confirmação,
+/// esperando a resposta.
+struct PendingEnvironment {
+    run: PendingActual,
+    /// Nome do ambiente, já traduzido.
+    environment: String,
+    color: registered::Rgb,
+    /// O que o lote faz, como "UPDATE" ou "DROP".
+    reason: String,
+}
+
 /// O que o usuário fez no seletor de banco da toolbar.
 #[derive(Default)]
 struct Picked {
@@ -333,6 +345,7 @@ impl Default for ShellApp {
             dialogs: Box::new(NoDialogs),
             confirm: None,
             actual_confirm: None,
+            environment_confirm: None,
             databases: Default::default(),
             db_switch: None,
             open_database_list: false,
@@ -1835,6 +1848,61 @@ impl ShellApp {
             let db = doc.database.clone().unwrap_or(queries.1);
             documents::Session(queries.0.open(&db))
         });
+        self.dispatch_query(ctx, id, sql, offset, ask, false);
+    }
+
+    /// Ambiente e cor do servidor da janela de consulta `id` (o dela ou,
+    /// sem um, o servidor ativo).
+    fn document_tag(&self, id: u32) -> Option<registered::ServerTag> {
+        let key = self.doc_servers.get(&id).cloned().or_else(|| {
+            self.connection
+                .as_ref()
+                .map(|c| servers::server_key(&c.settings))
+        })?;
+        self.server_tag(&key)
+    }
+
+    /// Escolhe como rodar o lote já lido da janela `id`. Num ambiente que
+    /// pede confirmação (Produção, por padrão), um lote que pode alterar o
+    /// banco espera o "Execute" do usuário; `confirmed` diz que ele já
+    /// respondeu.
+    fn dispatch_query(
+        &mut self,
+        ctx: &egui::Context,
+        id: u32,
+        sql: String,
+        offset: usize,
+        ask: Ask,
+        confirmed: bool,
+    ) {
+        if !confirmed
+            && ask == Ask::Run
+            && let Some(tag) = self.document_tag(id).filter(|t| t.confirm_changes)
+        {
+            let reason = match pgstudio_automation::safety::classify(&sql) {
+                pgstudio_automation::safety::Safety::ReadOnly => None,
+                pgstudio_automation::safety::Safety::Writes { reason } => Some(reason),
+                pgstudio_automation::safety::Safety::Unknown { .. } => {
+                    Some(tr("not only reading").to_string())
+                }
+            };
+            if let Some(reason) = reason {
+                self.environment_confirm = Some(PendingEnvironment {
+                    run: PendingActual {
+                        doc: id,
+                        sql,
+                        offset,
+                    },
+                    environment: tag.environment.unwrap_or_default(),
+                    color: tag.color,
+                    reason,
+                });
+                return;
+            }
+        }
+        let Some(doc) = self.documents.get(id) else {
+            return;
+        };
         let kind = if ask == Ask::Info {
             Run::ObjectInfo
         } else if ask == Ask::Plan {
@@ -1988,6 +2056,56 @@ impl ShellApp {
     /// Exportações em andamento (testes).
     pub fn is_exporting(&self) -> bool {
         !self.exports.is_empty()
+    }
+
+    /// Pergunta antes de rodar, num ambiente que pede confirmação (como
+    /// Produção), um lote que pode alterar o banco.
+    fn environment_confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.environment_confirm else {
+            return;
+        };
+        let mut answer: Option<bool> = None;
+        let modal = crate::theme::modal(egui::Id::new("environment_confirm")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.horizontal(|ui| {
+                ui.heading(tr("Confirm Changes"));
+                registered::environment_badge(ui, &pending.environment, pending.color);
+            });
+            ui.add_space(4.0);
+            ui.label(trf!(
+                "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
+                environment = pending.environment,
+                reason = pending.reason
+            ));
+            ui.label(tr("Do you want to execute it?"));
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    answer = Some(false);
+                }
+                if ui.button(tr("Execute")).clicked() {
+                    answer = Some(true);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        let Some(yes) = answer else { return };
+        let Some(pending) = self.environment_confirm.take() else {
+            return;
+        };
+        if yes {
+            let run = pending.run;
+            self.dispatch_query(ctx, run.doc, run.sql, run.offset, Ask::Run, true);
+        } else {
+            self.status = tr("The query was not executed.").to_string();
+        }
+    }
+
+    /// Lote esperando a confirmação do ambiente (testes).
+    pub fn is_confirming_environment(&self) -> bool {
+        self.environment_confirm.is_some()
     }
 
     /// Pergunta antes do plano real de comandos que alteram dados, com a
@@ -2659,6 +2777,7 @@ impl ShellApp {
         let mut commands = if self.confirm.is_some()
             || self.connect_dialog.is_some()
             || self.actual_confirm.is_some()
+            || self.environment_confirm.is_some()
             || self.db_switch.as_ref().is_some_and(|p| p.probe.is_none())
             || self.claude.is_confirming()
             || self.activity.as_ref().is_some_and(|a| a.is_confirming())
@@ -2808,6 +2927,7 @@ impl ShellApp {
         }
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
+        self.environment_confirm_window(&ctx);
         self.database_switch_window(&ctx);
         self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
@@ -3654,6 +3774,7 @@ impl ShellApp {
                 if let Some(registered::ServerTag {
                     environment: Some(name),
                     color: env,
+                    ..
                 }) = self.active_tag()
                 {
                     registered::environment_badge(ui, &name, env);

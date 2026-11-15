@@ -349,7 +349,8 @@ Import... / Export... num grupo troca a árvore com outra máquina (sem senhas).
 Os grupos são pastas com cor, e "Move To" muda uma conexão de pasta. Pastas e
 conexões podem ter um ambiente (Desenvolvimento, Homologação, Produção ou
 outros criados em "Environments..."): a janela de consulta mostra a cor e a
-etiqueta dele, para ficar claro quando se está em produção.
+etiqueta dele, para ficar claro quando se está em produção. Em Produção, o F5
+pergunta antes de rodar SQL que altera o banco.
 A árvore fica em `registered_servers.json`. Vários servidores aparecem juntos
 no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret

@@ -486,3 +486,40 @@ fn click_edit(h: &mut Harness<'static, EditApp>, pos: eframe::egui::Pos2, modifi
     }
     h.run();
 }
+
+/// Com a grade rolada até o meio de uma linha, a linha cortada no topo fica
+/// atrás do cabeçalho fixo: nenhum texto de dado pode ser desenhado na faixa
+/// do cabeçalho (antes, "2365426 / 342" aparecia sobre "id / cliente_id").
+#[test]
+fn a_half_scrolled_row_does_not_paint_over_the_header() {
+    let mut store = ResultStore::new(vec!["id".into(), "cliente_id".into()]);
+    for i in 0..60u64 {
+        store.push(&[Some(format!("v{i}")), Some(format!("w{i}"))]);
+    }
+    let mut h = harness(store);
+    h.run();
+    for top in [3.1, 3.5, 3.9, 0.25] {
+        h.state_mut().state.top = top;
+        h.run();
+        let layout = h.state().state.layout.expect("layout");
+        let output = h.output().clone();
+        let mut seen = 0;
+        for clipped in &output.shapes {
+            let eframe::egui::Shape::Text(t) = &clipped.shape else {
+                continue;
+            };
+            let text = t.galley.text();
+            if !(text.starts_with('v') || text.starts_with('w')) {
+                continue;
+            }
+            seen += 1;
+            let painted = clipped.clip_rect.intersect(t.visual_bounding_rect());
+            assert!(
+                painted.height() <= 0.0 || painted.top() >= layout.header.bottom() - 0.01,
+                "top={top}: \"{text}\" desenhado em {painted:?}, sobre o cabeçalho {:?}",
+                layout.header
+            );
+        }
+        assert!(seen > 0, "top={top}: nenhum valor desenhado");
+    }
+}
