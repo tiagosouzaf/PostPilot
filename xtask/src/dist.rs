@@ -32,7 +32,7 @@ Gera os pacotes de instalação em target/packages/:
             sudo pacman -U; ou compile com o makepkg em packaging/arch/
   tar       postpilot-<versão>-linux-x86_64.tar.gz, a árvore usr/ dos
             pacotes (binário, .desktop, ícones, licenças), que o pacote
-            postpilot-bin do AUR baixa do Release (precisa do bsdtar)
+            tf-postpilot-bin do AUR baixa do Release (precisa do bsdtar)
   zip       PostPilot-<versão>-windows-x86_64.zip (no Linux, compila para
             x86_64-pc-windows-gnu: rustup target add x86_64-pc-windows-gnu
             e o pacote mingw-w64)
@@ -654,11 +654,11 @@ pub fn arch_pkginfo(version: &str, size: u64, builddate: u64) -> String {
     s
 }
 
-/// Página do projeto, de onde o pacote `postpilot-bin` do AUR baixa o
+/// Página do projeto, de onde o pacote `tf-postpilot-bin` do AUR baixa o
 /// tarball (do Release `v<versão>`).
 const PROJECT_URL: &str = "https://github.com/tiagosouzaf/postpilot";
 
-/// PKGBUILD e .SRCINFO do pacote `postpilot-bin` do AUR, que instala o
+/// PKGBUILD e .SRCINFO do pacote `tf-postpilot-bin` do AUR, que instala o
 /// tarball de `cargo xtask dist --only tar` publicado no Release
 /// `v<versão>`.
 pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
@@ -673,7 +673,7 @@ pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
         "# Pacote do AUR gerado por `cargo xtask dist` (xtask/src/dist.rs).\n\
          # Instala o binário publicado no Release v$pkgver do GitHub.\n\
          \n\
-         pkgname=postpilot-bin\n\
+         pkgname=tf-postpilot-bin\n\
          pkgver={version}\n\
          pkgrel={ARCH_PKGREL}\n\
          pkgdesc='PostgreSQL management studio inspired by SSMS (binary release)'\n\
@@ -682,8 +682,7 @@ pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
          license=('MIT OR Apache-2.0')\n\
          depends=(\n{deps})\n\
          optdepends=(\n{opt})\n\
-         provides=('postpilot')\n\
-         conflicts=('postpilot' 'pgstudio')\n\
+         conflicts=('postpilot' 'postpilot-bin' 'pgstudio')\n\
          options=('!strip' '!debug')\n\
          source=(\"{file}::$url/releases/download/v$pkgver/{file}\")\n\
          sha256sums=('{sha256}')\n\
@@ -695,7 +694,7 @@ pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
         opt = quote(ARCH_OPTDEPENDS),
     );
     let mut srcinfo = format!(
-        "pkgbase = postpilot-bin\n\
+        "pkgbase = tf-postpilot-bin\n\
          \tpkgdesc = PostgreSQL management studio inspired by SSMS (binary release)\n\
          \tpkgver = {version}\n\
          \tpkgrel = {ARCH_PKGREL}\n\
@@ -711,20 +710,20 @@ pub fn aur_bin(version: &str, sha256: &str) -> (String, String) {
     }
     let _ = write!(
         srcinfo,
-        "\tprovides = postpilot\n\
-         \tconflicts = postpilot\n\
+        "\tconflicts = postpilot\n\
+         \tconflicts = postpilot-bin\n\
          \tconflicts = pgstudio\n\
          \toptions = !strip\n\
          \toptions = !debug\n\
          \tsource = {file}::{PROJECT_URL}/releases/download/v{version}/{file}\n\
          \tsha256sums = {sha256}\n\
          \n\
-         pkgname = postpilot-bin\n"
+         pkgname = tf-postpilot-bin\n"
     );
     (pkgbuild, srcinfo)
 }
 
-/// Escreve `target/packages/aur/postpilot-bin/` com o SHA-256 do tarball.
+/// Escreve `target/packages/aur/tf-postpilot-bin/` com o SHA-256 do tarball.
 fn write_aur_bin(out: &Path, tar: &Path) -> Result<(), String> {
     let output = Command::new("sha256sum")
         .arg(tar)
@@ -737,7 +736,7 @@ fn write_aur_bin(out: &Path, tar: &Path) -> Result<(), String> {
         .filter(|h| h.len() == 64)
         .ok_or("sha256sum não devolveu um hash")?;
     let (pkgbuild, srcinfo) = aur_bin(version(), sha);
-    let dir = out.join("aur").join("postpilot-bin");
+    let dir = out.join("aur").join("tf-postpilot-bin");
     write(&dir.join("PKGBUILD"), pkgbuild)?;
     write(&dir.join(".SRCINFO"), srcinfo)?;
     eprintln!("pacote do AUR em {}", dir.display());
@@ -1161,19 +1160,23 @@ mod tests {
     #[test]
     fn aur_bin_points_at_the_release_and_lists_the_dependencies() {
         let (pkgbuild, srcinfo) = aur_bin("1.2.3", &"a".repeat(64));
-        assert!(pkgbuild.contains("\npkgname=postpilot-bin\n"));
+        assert!(pkgbuild.contains("\npkgname=tf-postpilot-bin\n"));
         assert!(pkgbuild.contains("\npkgver=1.2.3\n"));
         assert!(pkgbuild.contains(
             "source=(\"postpilot-1.2.3-linux-x86_64.tar.gz::$url/releases/download/v$pkgver/postpilot-1.2.3-linux-x86_64.tar.gz\")"
         ));
         assert!(pkgbuild.contains("\n  'libxkbcommon-x11'\n"));
         assert!(pkgbuild.contains("\n  cp -a \"$srcdir/usr\" \"$pkgdir/\"\n}\n"));
-        assert!(srcinfo.starts_with("pkgbase = postpilot-bin\n\tpkgdesc = "));
+        assert!(srcinfo.starts_with("pkgbase = tf-postpilot-bin\n\tpkgdesc = "));
         assert!(srcinfo.contains(&format!("\tsha256sums = {}\n", "a".repeat(64))));
         assert!(srcinfo.contains(
             "\tsource = postpilot-1.2.3-linux-x86_64.tar.gz::https://github.com/tiagosouzaf/postpilot/releases/download/v1.2.3/postpilot-1.2.3-linux-x86_64.tar.gz\n"
         ));
-        assert!(srcinfo.ends_with("\n\npkgname = postpilot-bin\n"));
+        assert!(srcinfo.ends_with("\n\npkgname = tf-postpilot-bin\n"));
+        // `postpilot` e `postpilot-bin` no AUR são de outro app (SMTP) e
+        // instalam o mesmo /usr/bin/postpilot.
+        assert!(pkgbuild.contains("\nconflicts=('postpilot' 'postpilot-bin' 'pgstudio')\n"));
+        assert!(!pkgbuild.contains("provides="));
     }
 
     #[test]

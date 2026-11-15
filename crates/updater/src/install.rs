@@ -24,8 +24,9 @@ pub enum InstallKind {
     Other,
 }
 
-/// Nome do pacote no AUR, quando o pacman não diz de quem é o binário.
-pub const AUR_PACKAGE: &str = "postpilot-bin";
+/// Nome do pacote no AUR, quando o pacman não diz de quem é o binário
+/// (`postpilot` e `postpilot-bin` lá são de outro app).
+pub const AUR_PACKAGE: &str = "tf-postpilot-bin";
 
 impl InstallKind {
     /// Descobre como o app em execução foi instalado.
@@ -326,16 +327,16 @@ mod tests {
             "postpilot_0.2.0_amd64.deb",
             "PostPilot-0.2.0-x86_64.AppImage",
         ]);
-        let pacman = InstallKind::Pacman("postpilot-bin".into());
+        let pacman = InstallKind::Pacman("tf-postpilot-bin".into());
         assert!(!pacman.can_self_update());
         assert_eq!(pacman.asset(&r), None);
         assert_eq!(
             pacman.update_command(&r, Some("yay")).as_deref(),
-            Some("yay -Syu postpilot-bin")
+            Some("yay -Syu tf-postpilot-bin")
         );
         assert_eq!(
             pacman.update_command(&r, None).as_deref(),
-            Some("sudo pacman -Syu postpilot-bin")
+            Some("sudo pacman -Syu tf-postpilot-bin")
         );
         assert_eq!(
             InstallKind::Dpkg.update_command(&r, None).as_deref(),
