@@ -7,7 +7,7 @@
 pub mod fake;
 
 use pgstudio_i18n::{tr, tr_noop, trf};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -118,6 +118,8 @@ pub struct ObjectExplorer {
     roots: Load,
     entries: HashMap<NodeId, Entry>,
     selected: Option<NodeId>,
+    /// Nós a expandir assim que chegarem (a árvore de uma sessão anterior).
+    restore: HashSet<NodeId>,
     tx: Sender<Reply>,
     rx: Receiver<Reply>,
     properties: HashMap<NodeId, Properties>,
@@ -138,6 +140,7 @@ impl Default for ObjectExplorer {
             roots: Load::NotLoaded,
             entries: HashMap::new(),
             selected: None,
+            restore: HashSet::new(),
             tx,
             rx,
             properties: HashMap::new(),
@@ -174,6 +177,68 @@ impl ObjectExplorer {
         self.roots = Load::NotLoaded;
         self.entries.clear();
         self.selected = None;
+        self.restore.clear();
+    }
+
+    /// Os nós expandidos, na ordem da árvore (o pai antes dos filhos), mais
+    /// os que ainda esperam para expandir ([`Self::restore_expanded`]). É o
+    /// que a sessão salva para reabrir a árvore como estava.
+    pub fn expanded(&self) -> Vec<NodeId> {
+        fn walk(explorer: &ObjectExplorer, ids: &[NodeId], out: &mut Vec<NodeId>) {
+            for id in ids {
+                let Some(entry) = explorer.entries.get(id) else {
+                    continue;
+                };
+                if entry.expanded {
+                    out.push(id.clone());
+                    if let Load::Loaded(kids) = &entry.children {
+                        walk(explorer, kids, out);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        if let Load::Loaded(ids) = &self.roots {
+            walk(self, ids, &mut out);
+        }
+        let mut waiting: Vec<NodeId> = self
+            .restore
+            .iter()
+            .filter(|id| !out.contains(id))
+            .cloned()
+            .collect();
+        waiting.sort_by(|a, b| a.0.cmp(&b.0));
+        out.extend(waiting);
+        out
+    }
+
+    /// Expande estes nós à medida que a árvore carrega (os que já estão
+    /// carregados, agora). Um nó que não existe mais é esquecido quando a
+    /// árvore termina de carregar sem ele.
+    pub fn restore_expanded(&mut self, ids: impl IntoIterator<Item = NodeId>) {
+        self.restore.extend(ids);
+        self.apply_restore();
+    }
+
+    /// Expande os nós de [`Self::restore_expanded`] que já chegaram.
+    fn apply_restore(&mut self) {
+        if self.restore.is_empty() {
+            return;
+        }
+        let ready: Vec<NodeId> = self
+            .restore
+            .iter()
+            .filter(|id| self.entries.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in ready {
+            self.restore.remove(&id);
+            self.expand(&id);
+        }
+        // Nada mais a caminho: o que sobrou não existe mais no servidor.
+        if matches!(self.roots, Load::Loaded(_) | Load::Failed(_)) && !self.is_loading() {
+            self.restore.clear();
+        }
     }
 
     /// Se há um provedor conectado.
@@ -362,6 +427,9 @@ impl ObjectExplorer {
                     }
                 }
             }
+        }
+        if applied > 0 {
+            self.apply_restore();
         }
         applied
     }
@@ -879,6 +947,30 @@ mod tests {
         assert!(matches!(oe.visible_rows()[0], Row::Loading { .. }));
         assert!(oe.wait_idle(WAIT));
         assert!(matches!(oe.roots(), Load::Loaded(_)));
+    }
+
+    #[test]
+    fn a_saved_tree_expands_again_as_it_loads() {
+        let mut oe = connected();
+        expand(&mut oe, "srv");
+        expand(&mut oe, "srv/Databases");
+        expand(&mut oe, "srv/Databases/postgres");
+        let saved = oe.expanded();
+        assert_eq!(
+            saved,
+            vec![id("srv"), id("srv/Databases"), id("srv/Databases/postgres")]
+        );
+        let rows = oe.visible_rows().len();
+
+        // Outra execução do app: a mesma árvore, mais um nó que sumiu.
+        let mut again = ObjectExplorer::default();
+        again.connect(Arc::new(FakeProvider::new(Duration::from_millis(2))));
+        again.restore_expanded(saved.iter().cloned().chain([id("srv/Databases/gone")]));
+        // Enquanto carrega, o que falta expandir continua na lista salva.
+        assert!(again.expanded().contains(&id("srv/Databases/postgres")));
+        assert!(again.wait_idle(WAIT));
+        assert_eq!(again.visible_rows().len(), rows);
+        assert_eq!(again.expanded(), saved);
     }
 
     #[test]

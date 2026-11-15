@@ -29,6 +29,9 @@
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
 //!   `<config>/PostPilot/layout.json`. Sem ela, o modo screenshot e o de
 //!   medição usam sempre o layout padrão.
+//! - `PGSTUDIO_SESSION=arquivo.json`: usa outro arquivo de sessão no lugar de
+//!   `<config>/PostPilot/session.json` (também nos modos de screenshot e de
+//!   medição, que sem ela não reabrem nem salvam sessão).
 //! - `PGSTUDIO_KEYMAP=arquivo.txt`: usa outro arquivo de keymap no lugar de
 //!   `<config>/PostPilot/keymap.txt`.
 //! - `PGSTUDIO_RUN=1`: executa a janela de consulta ativa (o primeiro
@@ -82,6 +85,11 @@
 //! sem senha. As senhas com "Remember password" ficam no cofre do sistema;
 //! sem cofre (Linux sem D-Bus), o app pede a senha. Os modos de screenshot e
 //! de medição não usam o cofre.
+//!
+//! O que estava aberto (servidores do Object Explorer, janelas de consulta
+//! com o texto não salvo) fica em `<config>/PostPilot/session.json` e volta
+//! ao abrir, sem senha: veja `pgstudio_ui_shell::session`. Com
+//! `PGSTUDIO_CONNECT`, a sessão não é usada.
 //!
 //! Ao abrir, o app procura versão nova nos Releases do GitHub (no máximo a
 //! cada 6 horas; desligável em Help > Check for Updates, guardado em
@@ -408,6 +416,17 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 if let Some(servers) = connect.as_deref().filter(|c| !c.starts_with("dialog")) {
                     app = connect_from_env(app, servers);
                 }
+            }
+            // A sessão anterior, depois do conector, do cofre e do workspace
+            // (as senhas dos servidores vêm deles).
+            let session_file = match std::env::var_os("PGSTUDIO_SESSION") {
+                Some(file) => Some(PathBuf::from(file)),
+                None if screenshot.is_none() && !bench && connect.is_none() => config_dir()
+                    .map(|d| d.join(pgstudio_core::CONFIG_DIR_NAME).join("session.json")),
+                None => None,
+            };
+            if let Some(file) = session_file {
+                app = app.with_session(pgstudio_ui_shell::session::SessionStore::open(file));
             }
             for file in &files {
                 app.open_file(file);

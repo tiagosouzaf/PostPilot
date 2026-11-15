@@ -4562,3 +4562,6 @@ msgstr "{server} ({user}): não conectado, dê um duplo clique para conectar."
 
 msgid "(no folder)"
 msgstr "(sem pasta)"
+
+msgid "The last session could not be read; starting with an empty one."
+msgstr "Não foi possível ler a última sessão; começando com uma vazia."

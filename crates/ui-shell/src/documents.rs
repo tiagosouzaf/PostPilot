@@ -145,6 +145,42 @@ impl Documents {
         }))
     }
 
+    /// Recria uma janela de uma sessão anterior: `text` é o que estava no
+    /// editor e `saved`, o que está no arquivo (vazio numa consulta que
+    /// nunca foi salva), para o `*` de alterações voltar igual.
+    pub fn restore(
+        &mut self,
+        name: String,
+        path: Option<PathBuf>,
+        text: String,
+        saved: String,
+    ) -> u32 {
+        self.insert(Document {
+            name,
+            path,
+            text,
+            saved,
+            editor: Default::default(),
+            cursor: None,
+            session: None,
+            database: None,
+            execution: None,
+            results_mode: Default::default(),
+            actual_plan: false,
+        })
+    }
+
+    /// Número da última `SQLQueryN.sql` criada.
+    pub fn query_counter(&self) -> u32 {
+        self.next_query
+    }
+
+    /// Continua a numeração das `SQLQueryN.sql` de onde a sessão anterior
+    /// parou (nunca volta atrás).
+    pub fn set_query_counter(&mut self, n: u32) {
+        self.next_query = self.next_query.max(n);
+    }
+
     fn insert(&mut self, doc: Document) -> u32 {
         self.next_id += 1;
         self.docs.insert(self.next_id, doc);

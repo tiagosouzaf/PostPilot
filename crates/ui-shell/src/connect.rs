@@ -147,6 +147,9 @@ pub struct ConnectDialog {
     error: Option<String>,
     pending: Option<Pending>,
     focus: bool,
+    /// O servidor já veio escolhido (Registered Servers, sessão anterior):
+    /// se o cofre não tiver a senha, o foco vai para o campo dela.
+    focus_password: bool,
     /// Cofre das senhas lembradas, se houver.
     store: Option<Arc<dyn SecretStore>>,
     /// Leitura da senha guardada em andamento.
@@ -184,6 +187,7 @@ impl ConnectDialog {
             error: None,
             pending: None,
             focus: true,
+            focus_password: false,
             store: None,
             lookup: None,
             saved: false,
@@ -202,6 +206,8 @@ impl ConnectDialog {
     /// sem cofre), o diálogo fica aberto pedindo a senha.
     pub fn connect_when_found(mut self) -> Self {
         self.auto_connect = self.lookup.is_some();
+        self.focus = false;
+        self.focus_password = true;
         self
     }
 
@@ -573,12 +579,21 @@ impl ConnectDialog {
         ui.end_row();
 
         let label = ui.label(tr("Password:"));
-        ui.add(
-            egui::TextEdit::singleline(&mut self.password)
-                .password(true)
-                .desired_width(300.0),
-        )
-        .labelled_by(label.id);
+        let edit = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.password)
+                    .password(true)
+                    .desired_width(300.0),
+            )
+            .labelled_by(label.id);
+        // O cofre já respondeu e não tinha a senha: é só o que falta digitar.
+        if self.focus_password && self.lookup.is_none() && self.pending.is_none() {
+            if edit.has_focus() || !self.password.is_empty() {
+                self.focus_password = false;
+            } else {
+                edit.request_focus();
+            }
+        }
         ui.end_row();
 
         ui.label("");
