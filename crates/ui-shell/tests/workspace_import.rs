@@ -605,7 +605,8 @@ fn connect_to_server_offers_the_workspace_connections() {
 
     // A do workspace conecta direto, com a senha do cofre.
     h.get_by_label("tiib").click();
-    h.run();
+    // Só um frame: enquanto conecta, a tela continua se redesenhando.
+    h.step();
     run_until(&mut h, "connected from the list", |app| {
         app.connection().is_some()
     });

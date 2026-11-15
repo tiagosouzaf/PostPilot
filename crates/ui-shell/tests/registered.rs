@@ -891,3 +891,100 @@ fn production_asks_before_running_sql_that_changes_the_database() {
     harness.run();
     assert!(!harness.state().is_confirming_environment());
 }
+
+/// As pastas de conexões aparecem no Object Explorer: os servidores
+/// guardados ficam dentro da pasta deles (desconectados conectam pelo menu ou
+/// com duplo clique) e o servidor conectado mostra a árvore dele ali mesmo.
+#[test]
+fn object_explorer_groups_servers_in_their_folders() {
+    let store = Arc::new(MemoryStore::default());
+    store.set("alice@sales-db:5432", "secret").unwrap();
+    let mut harness = harness(store, Vec::new());
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    // Sem nada conectado, a pasta e os servidores dela já estão lá.
+    harness.get_by_label_contains("Production");
+    // O menu da linha conecta, como o duplo clique.
+    harness
+        .get_by(|n| n.label().is_some_and(|l| l.ends_with(" sales-db")))
+        .click_secondary();
+    harness.run();
+    harness.get_by_label("Connect").click();
+    harness.step();
+    settle(&mut harness);
+    wait_for("connected from the saved row", || {
+        harness.step();
+        harness.state().connection().is_some()
+    });
+    harness.run();
+    assert_eq!(
+        harness.state().connection().unwrap().settings.host,
+        "sales-db"
+    );
+    // Conectado, continua uma linha só para o servidor, agora com a árvore.
+    let rows = harness
+        .query_all_by(|n| n.label().is_some_and(|l| l.ends_with(" sales-db")))
+        .count();
+    assert_eq!(rows, 1);
+    harness.get_by(|n| n.label().is_some_and(|l| l.ends_with(" hr-db")));
+
+    // Fechar a pasta esconde os servidores dela, conectados ou não.
+    harness
+        .state_mut()
+        .registered_mut()
+        .set_collapsed(&[0], true);
+    harness.run();
+    assert!(
+        harness
+            .query_by(|n| n.label().is_some_and(|l| l.ends_with(" hr-db")))
+            .is_none()
+    );
+    assert!(
+        harness
+            .query_by(|n| n.label().is_some_and(|l| l.ends_with(" sales-db")))
+            .is_none()
+    );
+}
+
+/// "New Folder" no Object Explorer cria a pasta e "Move To" no servidor
+/// conectado põe o registro dele nela.
+#[test]
+fn object_explorer_creates_a_folder_and_moves_the_connected_server() {
+    let mut harness = harness(Arc::new(MemoryStore::default()), Vec::new());
+    connect_with_dialog(&mut harness, "sales-db", false);
+    harness.get_by_label_contains("New Folder").click();
+    harness.run();
+    let d = harness
+        .state_mut()
+        .registered_mut()
+        .group_dialog_mut()
+        .expect("New Server Group");
+    d.name = "Acme".into();
+    harness.run();
+    harness.get_by_label("OK").click();
+    harness.run();
+    assert_eq!(
+        harness.state().registered().servers().root().groups[1].name,
+        "Acme"
+    );
+    assert!(
+        harness
+            .query_all_by(|n| n.label().is_some_and(|l| l.ends_with(" Acme")))
+            .count()
+            >= 1,
+        "the new folder is in the Object Explorer"
+    );
+
+    // "Move To" no nó do servidor conectado.
+    harness
+        .get_by(|n| n.label().is_some_and(|l| l.ends_with(" sales-db")))
+        .click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Move To");
+    // As pastas do menu, na ordem: a raiz, "Production" e "Acme".
+    harness.state_mut().move_active_server_to_folder(2);
+    harness.run();
+    let root = harness.state().registered().servers().root().clone();
+    assert_eq!(root.groups[0].servers.len(), 1, "hr-db stays in Production");
+    assert_eq!(root.groups[1].servers[0].name, "sales-db");
+}

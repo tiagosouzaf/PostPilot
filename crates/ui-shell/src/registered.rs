@@ -1123,6 +1123,9 @@ fn detail_job(ui: &egui::Ui, detail: &str, terms: &[String]) -> egui::text::Layo
     job
 }
 
+mod explorer_rows;
+pub use explorer_rows::{TreeMenu, TreeRow};
+
 /// O que o usuário pediu na janela Registered Servers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -1265,6 +1268,21 @@ impl RegisteredPanel {
         self.server_dialog = Some(dialog);
     }
 
+    /// Como [`RegisteredPanel::register`], já com a pasta `parent`
+    /// escolhida ("Move To" de um servidor ainda não registrado).
+    pub fn register_in(
+        &mut self,
+        settings: &ConnectionSettings,
+        parent: &[usize],
+        store: Option<&Arc<dyn SecretStore>>,
+    ) {
+        self.register(settings, store);
+        if let Some(d) = &mut self.server_dialog {
+            d.parent = parent.to_vec();
+            d.folder_environment = self.servers.group_environment(parent);
+        }
+    }
+
     /// O registro do servidor desta conexão: edita, se ele já está na
     /// árvore; se não, abre o "New Server Registration" preenchido.
     pub fn register_or_edit(
@@ -1321,6 +1339,7 @@ impl RegisteredPanel {
                 ServerDialog::new(path.groups.clone(), Some(path.clone()), server, store);
             dialog.environments = self.servers.environments();
             dialog.folder_environment = self.servers.group_environment(&path.groups);
+            dialog.folders = self.folders();
             self.server_dialog = Some(dialog);
         }
     }
@@ -2242,7 +2261,14 @@ impl ServerDialog {
             settings: settings.clone(),
         };
         let result = match &self.editing {
-            Some(path) => servers.update_server(path, server).map(|()| path.clone()),
+            // Editando, o campo "Folder" move o servidor de pasta.
+            Some(path) => servers.update_server(path, server).and_then(|()| {
+                if self.parent == path.groups {
+                    Ok(path.clone())
+                } else {
+                    servers.move_node(path, &self.parent)
+                }
+            }),
             None => servers.add_server(&self.parent, server),
         };
         let path = match result {
