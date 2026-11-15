@@ -33,6 +33,31 @@ pub enum Action {
     /// Trazer os Registered Servers desta máquina (e as senhas lembradas)
     /// para o workspace.
     ImportRegistered,
+    /// Pôr no workspace o servidor conectado agora (com a senha em uso).
+    AddCurrent,
+}
+
+/// Senhas a copiar para o cofre do workspace assim que ele for destrancado.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PendingCopy {
+    /// Chaves (`usuario@host:porta`) a procurar no cofre do sistema.
+    pub keys: Vec<String>,
+    /// Senhas já em mãos (a da conexão ativa): chave e senha.
+    pub known: Vec<(String, String)>,
+}
+
+impl PendingCopy {
+    fn merge(&mut self, other: PendingCopy) {
+        for key in other.keys {
+            if !self.keys.contains(&key) {
+                self.keys.push(key);
+            }
+        }
+        for (key, secret) in other.known {
+            self.known.retain(|(k, _)| *k != key);
+            self.known.push((key, secret));
+        }
+    }
 }
 
 struct Opened {
@@ -74,6 +99,18 @@ pub struct WorkspacePanel {
     vault: SharedVault,
     /// Cópia das senhas do cofre do sistema para o do workspace, rodando.
     copying: Option<std::thread::JoinHandle<Result<usize, String>>>,
+    /// Senhas esperando o cofre ser criado ou destrancado.
+    pending_copy: Option<PendingCopy>,
+    /// "Trazer as conexões deste computador?", com quantas são, logo depois
+    /// de criar o workspace.
+    offer_import: Option<usize>,
+    /// Quantas conexões deste computador ainda não estão no workspace (a
+    /// casca atualiza a cada frame).
+    pub importable: usize,
+    /// Nome do servidor conectado agora, quando ele não está no workspace.
+    pub unsaved_current: Option<String>,
+    /// "Import connections" foi escolhido na pergunta acima.
+    accepted_import: bool,
 }
 
 impl WorkspacePanel {
@@ -103,6 +140,58 @@ impl WorkspacePanel {
         slot.keys.clear();
         drop(slot);
         self.new_folder = None;
+        self.pending_copy = None;
+        self.offer_import = None;
+    }
+
+    /// Pergunta se as `count` conexões deste computador devem vir para o
+    /// workspace (logo depois de criá-lo).
+    pub fn offer_import(&mut self, count: usize) {
+        self.offer_import = (count > 0).then_some(count);
+    }
+
+    /// Quantas conexões a pergunta "trazer as conexões?" está oferecendo.
+    pub fn import_offer(&self) -> Option<usize> {
+        self.offer_import
+    }
+
+    /// Responde à pergunta "trazer as conexões?" (o botão e os testes).
+    pub fn answer_import_offer(&mut self, import: bool) {
+        if self.offer_import.take().is_some() {
+            self.accepted_import = import;
+        }
+    }
+
+    /// Se "Import connections" acabou de ser escolhido.
+    pub fn take_accepted_import(&mut self) -> bool {
+        std::mem::take(&mut self.accepted_import)
+    }
+
+    /// Guarda senhas para copiar quando o cofre for destrancado.
+    pub fn copy_when_unlocked(&mut self, pending: PendingCopy) {
+        self.pending_copy
+            .get_or_insert_with(PendingCopy::default)
+            .merge(pending);
+    }
+
+    /// Se há senhas esperando o cofre.
+    pub fn has_pending_copy(&self) -> bool {
+        self.pending_copy.is_some()
+    }
+
+    /// As senhas que esperavam o cofre, se ele já está destrancado e
+    /// nenhuma cópia está rodando.
+    pub fn take_pending_copy(&mut self) -> Option<PendingCopy> {
+        let ready = self.copying.is_none()
+            && self
+                .opened
+                .as_ref()
+                .is_some_and(|o| o.passwords.is_unlocked());
+        if ready {
+            self.pending_copy.take()
+        } else {
+            None
+        }
     }
 
     /// O workspace aberto.
@@ -264,10 +353,25 @@ impl WorkspacePanel {
     /// Copia, numa thread, as senhas lembradas destas chaves (`usuario@host:porta`)
     /// de `from` para o cofre do workspace, que precisa estar destrancado.
     /// Senhas que já estão no cofre não mudam.
-    pub fn copy_passwords(&mut self, keys: Vec<String>, from: Arc<dyn SecretStore>) {
+    pub fn copy_passwords(&mut self, pending: PendingCopy, from: Arc<dyn SecretStore>) {
         let slot = self.vault.clone();
+        let PendingCopy { keys, known } = pending;
         self.copying = Some(std::thread::spawn(move || {
             let mut copied = 0;
+            // As senhas em mãos (a da conexão ativa) valem mais que as
+            // lembradas: são as que acabaram de funcionar.
+            for (key, secret) in known {
+                let mut slot = slot.lock().expect("vault lock");
+                let Some(v) = slot.vault.as_mut().filter(|v| v.is_unlocked()) else {
+                    return Err(tr("The workspace passwords are locked.").into());
+                };
+                if v.get(&key).ok().flatten().as_deref() == Some(secret.as_str()) {
+                    continue;
+                }
+                v.set(&key, &secret)
+                    .map_err(|e| super::passwords::vault_error_text(&e))?;
+                copied += 1;
+            }
             for key in keys {
                 {
                     let mut slot = slot.lock().expect("vault lock");
@@ -309,11 +413,19 @@ impl WorkspacePanel {
         let result = handle
             .join()
             .unwrap_or_else(|_| Err(tr("Copying the passwords failed.").into()));
+        let send = tr("Commit and Push to send them to your other computers.");
         Some(match result {
-            Ok(1) => tr("Copied 1 saved password to the workspace passwords.").into(),
-            Ok(n) => trf!(
-                "Copied {n} saved passwords to the workspace passwords.",
-                n = n
+            Ok(0) => tr("No saved passwords to copy: the workspace passwords already have them, or this computer has none.").into(),
+            Ok(1) => format!(
+                "{} {send}",
+                tr("Copied 1 saved password to the workspace passwords.")
+            ),
+            Ok(n) => format!(
+                "{} {send}",
+                trf!(
+                    "Copied {n} saved passwords to the workspace passwords.",
+                    n = n
+                )
             ),
             Err(e) => e,
         })
@@ -398,10 +510,20 @@ impl WorkspacePanel {
 
         // Servidores em cima, num retângulo próprio: a árvore do Registered
         // Servers tem rolagem que ocupa todo o espaço que recebe.
-        let width = ui.available_width();
-        let height = (ui.available_height() * 0.4).max(80.0);
+        let empty = o.servers.servers().all_servers().is_empty();
+        let offer = empty && self.importable > 0;
+        // A largura visível: uma linha larga acima (a do git ou a das
+        // senhas) pode ter alargado o painel além do que aparece.
+        let panel_width = ui
+            .available_width()
+            .min(ui.clip_rect().right() - ui.cursor().left() - 4.0)
+            .max(120.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(tr("Servers")).small().weak());
+            // Com o botão grande embaixo, o atalho pequeno seria repetido.
+            if offer {
+                return;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
@@ -424,6 +546,46 @@ impl WorkspacePanel {
                 }
             });
         });
+        // O que falta trazer: sem isto, um workspace novo vai para o
+        // repositório com o servers.json vazio e ninguém percebe.
+        if offer {
+            let label = if self.importable == 1 {
+                tr("Import the connection from this computer").to_string()
+            } else {
+                trf!(
+                    "Import the {n} connections from this computer",
+                    n = self.importable
+                )
+            };
+            ui.add_space(2.0);
+            ui.scope(|ui| {
+                // O painel é estreito: o texto quebra em vez de alargá-lo.
+                ui.set_max_width(panel_width);
+                let text = format!("{} {label}", icon::DOWNLOAD_SIMPLE); // i18n-ignore
+                if ui.add(egui::Button::new(text).wrap()).clicked() {
+                    actions.push(Action::ImportRegistered);
+                }
+                ui.add(egui::Label::new(egui::RichText::new(tr("This workspace has no connections yet. Import them so that they go to the repository and appear when you clone it on another computer.")).weak()).wrap());
+            });
+            ui.add_space(2.0);
+        } else if let Some(name) = &self.unsaved_current {
+            ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(panel_width);
+                ui.weak(trf!(
+                    "Connected to {name}, which is not in this workspace.",
+                    name = name
+                ));
+                if ui
+                    .small_button(tr("Add to workspace"))
+                    .on_hover_text(tr("Register this connection in the workspace, with its password, so that it goes to the repository"))
+                    .clicked()
+                {
+                    actions.push(Action::AddCurrent);
+                }
+            });
+        }
+        let width = ui.available_width();
+        let height = (ui.available_height() * 0.4).max(80.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -548,6 +710,35 @@ impl WorkspacePanel {
             } else {
                 self.clone = None;
                 self.pending_clone = Some(url.trim().to_string());
+            }
+        }
+        if let Some(count) = self.offer_import {
+            let mut answer = None;
+            crate::theme::modal(egui::Id::new("workspace_offer_import")).show(ctx, |ui| {
+                ui.set_width(440.0);
+                ui.heading(tr("Bring your connections?"));
+                ui.label(if count == 1 {
+                    tr("This computer has 1 connection that is not in the workspace.").to_string()
+                } else {
+                    trf!(
+                        "This computer has {n} connections that are not in the workspace.",
+                        n = count
+                    )
+                });
+                ui.label(tr("Import them so that they go to the repository and appear when you clone the workspace on another computer. Their passwords go too, encrypted with a master password that you choose next."));
+                ui.add_space(6.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tr("Not now")).clicked() {
+                        answer = Some(false);
+                    }
+                    if ui.button(tr("Import connections")).clicked() {
+                        answer = Some(true);
+                    }
+                });
+            });
+            if let Some(import) = answer {
+                self.offer_import = None;
+                self.accepted_import = import;
             }
         }
         let mut ok = None;

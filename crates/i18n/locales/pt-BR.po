@@ -875,17 +875,17 @@ msgstr "Senhas trancadas"
 msgid "Unlock..."
 msgstr "Destrancar..."
 
-msgid "No passwords saved yet"
-msgstr "Nenhuma senha salva ainda"
+msgid "Master password set, no server passwords saved yet"
+msgstr "Senha mestra definida, nenhuma senha de servidor salva ainda"
 
-msgid "1 password in the workspace"
-msgstr "1 senha no workspace"
+msgid "1 server password in the workspace"
+msgstr "1 senha de servidor no workspace"
 
-msgid "{n} passwords in the workspace"
-msgstr "{n} senhas no workspace"
+msgid "{n} server passwords in the workspace"
+msgstr "{n} senhas de servidor no workspace"
 
-msgid "Remembered passwords of this workspace's servers are saved here, encrypted with the master password."
-msgstr "As senhas lembradas dos servidores deste workspace ficam aqui, criptografadas com a senha mestra."
+msgid "The master password is set and unlocked. The passwords of this workspace's servers are saved here, encrypted with it, when you register or connect to a server with Remember password checked, or import the connections from this computer."
+msgstr "A senha mestra está definida e destrancada. As senhas dos servidores deste workspace são salvas aqui, criptografadas com ela, quando você registra ou conecta um servidor com Lembrar senha marcado, ou importa as conexões deste computador."
 
 msgid "Change Master Password..."
 msgstr "Trocar Senha Mestra..."
@@ -1196,9 +1196,6 @@ msgstr "1 senha lembrada copiada para as senhas do workspace."
 
 msgid "Copied {n} saved passwords to the workspace passwords."
 msgstr "{n} senhas lembradas copiadas para as senhas do workspace."
-
-msgid "There are no Registered Servers on this computer to import."
-msgstr "Não há Servidores Registrados neste computador para importar."
 
 msgid "No workspace is open."
 msgstr "Nenhum workspace está aberto."
@@ -4287,3 +4284,54 @@ msgstr "Negar {privilege}"
 
 msgid "This object has no permissions of its own."
 msgstr "Este objeto não tem permissões próprias."
+
+msgid "There are no connections on this computer to import. Right-click the workspace under Servers and choose New Server Registration."
+msgstr "Não há conexões neste computador para importar. Clique com o botão direito no workspace, em Servidores, e escolha Novo Registro de Servidor."
+
+msgid "This connection is already in the workspace."
+msgstr "Esta conexão já está no workspace."
+
+msgid "Added {name} to the workspace."
+msgstr "{name} adicionado ao workspace."
+
+msgid "Commit and Push to send them to your other computers."
+msgstr "Faça Commit e Push para enviá-las aos seus outros computadores."
+
+msgid "No saved passwords to copy: the workspace passwords already have them, or this computer has none."
+msgstr "Nenhuma senha salva para copiar: as senhas do workspace já as têm, ou este computador não tem nenhuma."
+
+msgid "Import the connection from this computer"
+msgstr "Importar a conexão deste computador"
+
+msgid "Import the {n} connections from this computer"
+msgstr "Importar as {n} conexões deste computador"
+
+msgid "This workspace has no connections yet. Import them so that they go to the repository and appear when you clone it on another computer."
+msgstr "Este workspace ainda não tem conexões. Importe-as para que elas vão para o repositório e apareçam quando você clonar em outro computador."
+
+msgid "Connected to {name}, which is not in this workspace."
+msgstr "Conectado a {name}, que não está neste workspace."
+
+msgid "Add to workspace"
+msgstr "Adicionar ao workspace"
+
+msgid "Register this connection in the workspace, with its password, so that it goes to the repository"
+msgstr "Registra esta conexão no workspace, com a senha, para que ela vá para o repositório"
+
+msgid "Bring your connections?"
+msgstr "Trazer suas conexões?"
+
+msgid "This computer has 1 connection that is not in the workspace."
+msgstr "Este computador tem 1 conexão que não está no workspace."
+
+msgid "This computer has {n} connections that are not in the workspace."
+msgstr "Este computador tem {n} conexões que não estão no workspace."
+
+msgid "Import them so that they go to the repository and appear when you clone the workspace on another computer. Their passwords go too, encrypted with a master password that you choose next."
+msgstr "Importe-as para que elas vão para o repositório e apareçam quando você clonar o workspace em outro computador. As senhas vão junto, criptografadas com uma senha mestra que você escolhe em seguida."
+
+msgid "Not now"
+msgstr "Agora não"
+
+msgid "Import connections"
+msgstr "Importar conexões"

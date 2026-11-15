@@ -84,6 +84,10 @@ impl ShellApp {
                 self.after_workspace_opened();
                 self.workspace.open(Panel::WorkspaceExplorer);
                 self.remember_workspace();
+                // Um workspace novo nasce sem conexões: oferece trazer as
+                // desta máquina, para elas irem no primeiro commit.
+                let local = self.importable_connections();
+                self.workspace_panel.offer_import(local);
                 true
             }
             Err(e) => {
@@ -328,34 +332,109 @@ impl ShellApp {
         self.workspace_panel.new_server(store.as_ref());
     }
 
-    /// Traz os Registered Servers desta máquina para o workspace aberto
-    /// (grupos de mesmo nome se juntam, um servidor de mesmo nome é
-    /// substituído). Com as senhas do workspace destrancadas, as senhas
-    /// lembradas deles são copiadas para lá, numa thread; o cofre do sistema
-    /// continua com as dele. Devolve a mensagem para a status bar.
+    /// As conexões desta máquina que podem ir para o workspace: a árvore
+    /// dos Registered Servers e, soltas na raiz, as conexões recentes e a
+    /// conexão ativa que não estão registradas. Quem já está no workspace
+    /// (mesmo usuário, servidor e porta) não entra de novo como conexão
+    /// solta. Devolve a árvore e as chaves das senhas a procurar.
+    fn local_connections(&self) -> (registered::ServerGroup, Vec<String>) {
+        let mut root = self.registered.servers().root().clone();
+        let mut keys: Vec<String> = Vec::new();
+        for s in self.registered.servers().all_servers() {
+            let key = server_key(&s.settings);
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        let in_workspace = |key: &str| {
+            self.workspace_panel
+                .servers()
+                .is_some_and(|p| find_server_by_key(p.servers().root(), key).is_some())
+        };
+        let loose = self
+            .connection
+            .iter()
+            .map(|c| &c.settings)
+            .chain(self.recent.list());
+        for settings in loose {
+            let key = server_key(settings);
+            if keys.contains(&key) || in_workspace(&key) {
+                continue;
+            }
+            // Um servidor de mesmo nome seria substituído ao juntar.
+            let ours = self
+                .workspace_panel
+                .servers()
+                .map(|p| p.servers().root().servers.as_slice())
+                .unwrap_or_default();
+            let taken = |name: &str| {
+                root.servers
+                    .iter()
+                    .chain(ours)
+                    .any(|s| s.name.eq_ignore_ascii_case(name))
+            };
+            let host = settings.server_name();
+            let name = [
+                host.clone(),
+                format!("{host} ({})", settings.user),
+                format!("{host} ({}, {})", settings.user, settings.database),
+            ]
+            .into_iter()
+            .find(|n| !taken(n))
+            .unwrap_or_else(|| key.clone());
+            root.servers.push(registered::RegisteredServer {
+                name,
+                settings: settings.clone(),
+                ..Default::default()
+            });
+            keys.push(key);
+        }
+        (root, keys)
+    }
+
+    /// Quantas conexões desta máquina ainda não estão no workspace aberto.
+    pub fn importable_connections(&self) -> usize {
+        let Some(panel) = self.workspace_panel.servers() else {
+            return 0;
+        };
+        let ours = panel.servers().root();
+        let (_, keys) = self.local_connections();
+        keys.iter()
+            .filter(|k| find_server_by_key(ours, k).is_none())
+            .count()
+    }
+
+    /// A senha em uso na conexão ativa, com a chave dela.
+    fn current_password(&self) -> Option<(String, String)> {
+        let c = self.connection.as_ref()?;
+        (!self.password.is_empty()).then(|| (server_key(&c.settings), self.password.clone()))
+    }
+
+    /// Traz as conexões desta máquina para o workspace aberto: os Registered
+    /// Servers (grupos de mesmo nome se juntam, um servidor de mesmo nome é
+    /// substituído), as conexões recentes e a conexão ativa. As senhas
+    /// lembradas delas são copiadas para o cofre do workspace, numa thread;
+    /// se ele ainda não existe ou está trancado, a senha mestra é pedida e a
+    /// cópia acontece em seguida. O cofre do sistema continua com as dele.
+    /// Devolve a mensagem para a status bar.
     pub fn import_registered_into_workspace(&mut self) -> Result<String, String> {
-        let local = self.registered.servers().root().clone();
+        if self.workspace_panel.workspace().is_none() {
+            return Err(tr("No workspace is open.").into());
+        }
+        let (local, keys) = self.local_connections();
         let environments = self
             .registered
             .servers()
             .custom_environments()
             .map(<[_]>::to_vec);
-        let keys: Vec<String> = self
-            .registered
-            .servers()
-            .all_servers()
-            .into_iter()
-            .map(|s| crate::secrets::password_key(&s.settings))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
         if keys.is_empty() {
-            return Err(tr("There are no Registered Servers on this computer to import.").into());
+            return Err(tr("There are no connections on this computer to import. Right-click the workspace under Servers and choose New Server Registration.").into());
         }
-        let unlocked = self
-            .workspace_panel
-            .passwords()
-            .is_some_and(|p| p.is_unlocked());
+        let known = self
+            .current_password()
+            .into_iter()
+            .filter(|(k, _)| keys.contains(k))
+            .collect();
         let Some(panel) = self.workspace_panel.servers_mut() else {
             return Err(tr("No workspace is open.").into());
         };
@@ -368,18 +447,87 @@ impl ShellApp {
         } else {
             trf!("Imported {n} servers into the workspace.", n = n)
         };
+        Ok(self.bring_passwords(imported, super::panel::PendingCopy { keys, known }))
+    }
+
+    /// Registra no workspace o servidor conectado agora, com a senha em uso.
+    pub fn add_current_connection_to_workspace(&mut self) -> Result<String, String> {
+        let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
+            return Err(tr("Not connected.").into());
+        };
+        let key = server_key(&settings);
+        let known = self.current_password().into_iter().collect();
+        let Some(panel) = self.workspace_panel.servers_mut() else {
+            return Err(tr("No workspace is open.").into());
+        };
+        if find_server_by_key(panel.servers().root(), &key).is_some() {
+            return Err(tr("This connection is already in the workspace.").into());
+        }
+        let taken: Vec<String> = panel
+            .servers()
+            .root()
+            .servers
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        let host = settings.server_name();
+        let name = [host.clone(), format!("{host} ({})", settings.user)]
+            .into_iter()
+            .find(|n| !taken.iter().any(|t| t.eq_ignore_ascii_case(n)))
+            .unwrap_or_else(|| key.clone());
+        let server = registered::RegisteredServer {
+            name: name.clone(),
+            settings,
+            ..Default::default()
+        };
+        let group = registered::ServerGroup {
+            servers: vec![server],
+            ..Default::default()
+        };
+        panel.servers_mut().import_tree(&[], group)?;
+        let added = trf!("Added {name} to the workspace.", name = name);
+        Ok(self.bring_passwords(
+            added,
+            super::panel::PendingCopy {
+                keys: vec![key],
+                known,
+            },
+        ))
+    }
+
+    /// Leva as senhas para o cofre do workspace: copia já, se ele está
+    /// destrancado; se não, pede a senha mestra e copia depois. Devolve a
+    /// mensagem, começando por `done`.
+    fn bring_passwords(&mut self, done: String, pending: super::panel::PendingCopy) -> String {
+        let (exists, unlocked) = self
+            .workspace_panel
+            .passwords()
+            .map_or((false, false), |p| (p.exists(), p.is_unlocked()));
         match (&self.secrets, unlocked) {
             (Some(store), true) => {
-                self.workspace_panel.copy_passwords(keys, store.clone());
-                Ok(trf!(
+                self.workspace_panel.copy_passwords(pending, store.clone());
+                trf!(
                     "{imported} Copying their saved passwords to the workspace passwords...",
-                    imported = imported
-                ))
+                    imported = done
+                )
             }
-            _ => Ok(trf!(
-                "{imported} Turn on or unlock the workspace passwords to bring their saved passwords too.",
-                imported = imported
-            )),
+            _ => {
+                self.workspace_panel.copy_when_unlocked(pending);
+                if let Some(p) = self.workspace_panel.passwords_mut()
+                    && p.dialog().is_none()
+                    && !p.is_busy()
+                {
+                    p.open_dialog(if exists {
+                        super::passwords::DialogKind::Unlock
+                    } else {
+                        super::passwords::DialogKind::Create
+                    });
+                }
+                trf!(
+                    "{imported} Turn on or unlock the workspace passwords to bring their saved passwords too.",
+                    imported = done
+                )
+            }
         }
     }
 
@@ -388,6 +536,23 @@ impl ShellApp {
     pub(crate) fn workspace_step(&mut self, ctx: &eframe::egui::Context, actions: Vec<Action>) {
         if let Some(panel) = self.workspace_panel.servers_mut() {
             panel.current = self.connection.as_ref().map(|c| c.settings.clone());
+        }
+        self.workspace_panel.importable = self.importable_connections();
+        self.workspace_panel.unsaved_current = self.connection.as_ref().and_then(|c| {
+            let ours = self.workspace_panel.servers()?.servers().root();
+            find_server_by_key(ours, &server_key(&c.settings))
+                .is_none()
+                .then(|| c.settings.server_name())
+        });
+        if self.workspace_panel.take_accepted_import() {
+            self.status = match self.import_registered_into_workspace() {
+                Ok(s) | Err(s) => s,
+            };
+        }
+        if let Some(pending) = self.workspace_panel.take_pending_copy()
+            && let Some(store) = self.secrets.clone()
+        {
+            self.workspace_panel.copy_passwords(pending, store);
         }
         for action in actions {
             match action {
@@ -398,7 +563,19 @@ impl ShellApp {
                 }
                 Action::NewQuery(folder) => self.new_workspace_query(&folder),
                 Action::ImportRegistered => {
+                    let nothing =
+                        self.importable_connections() == 0 && self.local_connections().1.is_empty();
                     self.status = match self.import_registered_into_workspace() {
+                        Ok(s) | Err(s) => s,
+                    };
+                    // Nada a importar: em vez de só uma frase na status
+                    // bar, abre o registro de um servidor no workspace.
+                    if nothing {
+                        self.new_workspace_server();
+                    }
+                }
+                Action::AddCurrent => {
+                    self.status = match self.add_current_connection_to_workspace() {
                         Ok(s) | Err(s) => s,
                     }
                 }
