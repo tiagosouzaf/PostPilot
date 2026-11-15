@@ -403,10 +403,22 @@ pub fn show(
     let max_left = (content_w - view_w).max(0.0);
 
     // Rolagem pela roda do mouse.
+    // A rolagem que a grade usa não passa para a área de resultados em volta
+    // (com várias grades ela também rola, e o cabeçalho sumia junto); no fim
+    // da grade, a roda continua rolando a área de fora.
     if response.hovered() {
         let delta = ui.input(|i| i.smooth_scroll_delta);
-        state.top -= f64::from(delta.y / m.row_h);
-        state.left -= delta.x;
+        let (top, left) = (state.top, state.left);
+        state.top = (state.top - f64::from(delta.y / m.row_h)).clamp(0.0, max_top);
+        state.left = (state.left - delta.x).clamp(0.0, max_left);
+        ui.input_mut(|i| {
+            if state.top != top {
+                i.smooth_scroll_delta.y = 0.0;
+            }
+            if state.left != left {
+                i.smooth_scroll_delta.x = 0.0;
+            }
+        });
     }
 
     // Barras de rolagem.
@@ -911,11 +923,18 @@ fn paint(
     let ncols = store.columns().len();
     let nrows = store.len();
     let cells_x = body.left() + number_w;
-    let cells_clip = Rect::from_min_max(
-        egui::pos2(cells_x, rect.top()),
+    // O cabeçalho e as linhas têm recortes separados: com rolagem
+    // fracionária a primeira linha visível começa acima de `body.top()` e,
+    // se dividissem o mesmo recorte, seria desenhada por cima dos nomes das
+    // colunas.
+    let heads = painter.with_clip_rect(Rect::from_min_max(
+        egui::pos2(cells_x, header.top()),
+        egui::pos2(header.right(), header.bottom()),
+    ));
+    let cells = painter.with_clip_rect(Rect::from_min_max(
+        egui::pos2(cells_x, body.top()),
         egui::pos2(header.right(), body.bottom()),
-    );
-    let cells = painter.with_clip_rect(cells_clip);
+    ));
     let numbers = painter.with_clip_rect(Rect::from_min_max(
         egui::pos2(rect.left(), body.top()),
         egui::pos2(cells_x, body.bottom()),
@@ -933,13 +952,13 @@ fn paint(
     for (c, &w) in state.widths.iter().enumerate() {
         let cell = Rect::from_min_size(egui::pos2(x, header.top()), vec2(w, header.height()));
         if selected_cols.as_ref().is_some_and(|r| r.contains(&c)) {
-            cells.rect_filled(cell, 0.0, sel_bg);
+            heads.rect_filled(cell, 0.0, sel_bg);
         }
         let is_json = state.is_json(c);
         let name_cell = if is_json {
             // Marca `{}` à direita do nome das colunas JSON.
             let badge = Rect::from_min_max(egui::pos2(x + w - 22.0, cell.top()), cell.max);
-            cells.text(
+            heads.text(
                 badge.center(),
                 egui::Align2::CENTER_CENTER,
                 "{}",
@@ -951,13 +970,13 @@ fn paint(
             cell
         };
         cell_text(
-            &cells,
+            &heads,
             name_cell,
             &store.columns()[c].clone(),
             &m.font,
             strong,
         );
-        cells.vline(x + w, header.y_range(), grid);
+        heads.vline(x + w, header.y_range(), grid);
         x += w;
     }
     painter.hline(rect.x_range(), header.bottom(), grid);
