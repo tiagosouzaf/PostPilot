@@ -1938,6 +1938,7 @@ impl ShellApp {
                 return;
             }
         };
+        let tsql = self.document_engine(id) == Some(Engine::SqlServer);
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
@@ -1956,11 +1957,12 @@ impl ShellApp {
         let (sql, offset) = if ask == Ask::Info {
             let name = match pgstudio_sql_editor::selection(ctx, editor) {
                 Some((a, b)) if a != b => Some(sql.trim().to_string()),
-                Some((_, cursor)) => object_info::name_at(&doc.text, cursor),
+                Some((_, cursor)) => object_info::name_at_for(&doc.text, cursor, tsql),
                 // Editor ainda não desenhado: o cursor está no começo.
-                None => object_info::name_at(&doc.text, 0),
+                None => object_info::name_at_for(&doc.text, 0, tsql),
             };
             match name {
+                Some(n) if !n.is_empty() && tsql => (object_info::info_tsql(&n), 0),
                 Some(n) if !n.is_empty() => (object_info::info_sql(&n), 0),
                 _ => {
                     self.status =
