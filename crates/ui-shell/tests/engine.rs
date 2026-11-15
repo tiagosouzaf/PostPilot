@@ -60,22 +60,26 @@ fn run(harness: &mut Harness<'static, ShellApp>, cmd: CommandId) {
     harness.run();
 }
 
+/// O SQL Server chegou a tudo o que o PostgreSQL tem: nenhum comando que
+/// depende de um recurso do servidor é recusado.
 #[test]
-fn sql_server_refuses_what_it_does_not_have_yet() {
+fn sql_server_has_every_gated_command() {
     let mut harness = connected("mssql");
     assert_eq!(
         harness.state().connection().unwrap().settings.engine,
         Engine::SqlServer
     );
-    let cmd = CommandId::ClaudeExplain;
-    run(&mut harness, cmd);
-    let status = harness.state().status().to_string();
+    for cmd in [
+        CommandId::ActivityMonitor,
+        CommandId::SchemaCompare,
+        CommandId::ClaudeExplain,
+    ] {
+        run(&mut harness, cmd);
+        let status = harness.state().status().to_string();
+        assert!(!status.contains("not available"), "{cmd:?}: {status}");
+    }
     assert!(
-        status.contains("is not available for SQL Server yet"),
-        "{cmd:?}: {status}"
-    );
-    assert!(
-        harness
+        !harness
             .state()
             .output()
             .iter()

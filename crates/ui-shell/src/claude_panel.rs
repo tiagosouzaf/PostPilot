@@ -557,7 +557,7 @@ fn show_code(ui: &mut egui::Ui, lang: &str, body: &str, actions: &mut Vec<PanelA
                     .wrap(),
             );
             ui.horizontal(|ui| {
-                if (lang.is_empty() || lang == "sql" || lang == "postgresql" || lang == "pgsql")
+                if matches!(lang, "" | "sql" | "postgresql" | "pgsql" | "tsql" | "mssql")
                     && ui
                         .small_button(format!(
                             "{} {}",
@@ -751,8 +751,8 @@ impl crate::ShellApp {
                 },
                 format!(
                     "Read {target} with get_query_window. Look at the tables, indexes and row \
-                     counts it touches (describe_table, and EXPLAIN without ANALYZE through \
-                     run_query if useful). Write the improved version into the editor with \
+                     counts it touches (describe_table, and on PostgreSQL EXPLAIN without ANALYZE \
+                     through run_query if useful). Write the improved version into the editor with \
                      edit_query_window, mode {mode}, keeping the same results. Then say briefly \
                      what changed and why. If it is already fine, say so and leave the editor \
                      alone. Suggest indexes in your answer, do not create them."

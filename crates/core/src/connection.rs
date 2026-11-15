@@ -133,6 +133,7 @@ impl Engine {
                     | Feature::QueryDesigner
                     | Feature::Designers
                     | Feature::SchemaCompare
+                    | Feature::Claude
             ),
         }
     }
@@ -578,7 +579,6 @@ mod tests {
         assert!(Engine::SqlServer.supports(Feature::Security));
         assert!(Engine::SqlServer.supports(Feature::Backup));
         assert!(Engine::SqlServer.supports(Feature::SchemaCompare));
-        assert!(!Engine::SqlServer.supports(Feature::Claude));
     }
 
     #[test]

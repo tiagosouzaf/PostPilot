@@ -131,6 +131,217 @@ fn unquote(ident: &str) -> String {
     }
 }
 
+pub mod tsql {
+    //! O mesmo para o SQL Server, pelas views `sys.*`. Rodam dentro da
+    //! transação que o [`crate::safety::read_only_batch_for`] desfaz.
+
+    /// Literal Unicode com aspas simples dobradas.
+    pub fn literal(s: &str) -> String {
+        format!("N'{}'", s.replace('\'', "''"))
+    }
+
+    /// Bancos que o login abre.
+    pub fn list_databases() -> String {
+        "select d.name as [database], suser_sname(d.owner_sid) as owner,
+       d.collation_name as collation, d.compatibility_level, d.state_desc as state,
+       (select cast(cast(sum(cast(f.size as bigint)) * 8 / 1024.0 as decimal(18,1)) as varchar(30)) + ' MB'
+          from sys.master_files f where f.database_id = d.database_id) as size
+from sys.databases d
+where has_dbaccess(d.name) = 1
+order by 1"
+            .into()
+    }
+
+    /// Tabelas, views, sequências, funções e procedures do usuário. Com
+    /// `schema`, só os desse schema.
+    pub fn list_objects(schema: Option<&str>) -> String {
+        let filter = match schema {
+            Some(s) => format!("and s.name = {}", literal(s)),
+            None => String::new(),
+        };
+        format!(
+            "select s.name as [schema], o.name as name,
+       case o.type when 'U' then 'table' when 'V' then 'view' when 'P' then 'procedure'
+         when 'SO' then 'sequence' else 'function' end as kind,
+       case when o.type = 'U' then (select sum(p.rows) from sys.partitions p
+                                     where p.object_id = o.object_id and p.index_id in (0, 1)) end as estimated_rows,
+       cast(ep.value as nvarchar(4000)) as comment
+from sys.objects o
+join sys.schemas s on s.schema_id = o.schema_id
+left join sys.extended_properties ep
+  on ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0 and ep.name = 'MS_Description'
+where o.is_ms_shipped = 0 and o.type in ('U', 'V', 'P', 'SO', 'FN', 'IF', 'TF') {filter}
+order by 1, 3, 2"
+        )
+    }
+
+    /// O tipo de uma coluna como o `CREATE TABLE` escreve; `c` é a linha
+    /// de `sys.columns` e `t` a de `sys.types`.
+    const TYPE: &str = "t.name + case
+         when t.name in ('varchar', 'char', 'varbinary', 'binary')
+           then '(' + iif(c.max_length = -1, 'max', cast(c.max_length as varchar(10))) + ')'
+         when t.name in ('nvarchar', 'nchar')
+           then '(' + iif(c.max_length = -1, 'max', cast(c.max_length / 2 as varchar(10))) + ')'
+         when t.name in ('decimal', 'numeric')
+           then '(' + cast(c.precision as varchar(10)) + ',' + cast(c.scale as varchar(10)) + ')'
+         when t.name in ('datetime2', 'time', 'datetimeoffset')
+           then '(' + cast(c.scale as varchar(10)) + ')'
+         else '' end";
+
+    /// As colunas de uma chave ou índice, em ordem; `{0}` é o filtro em
+    /// `sys.index_columns ic`.
+    fn key_columns(filter: &str) -> String {
+        format!(
+            "(select string_agg(cast(col_name(ic.object_id, ic.column_id) as nvarchar(max))
+                      + iif(ic.is_descending_key = 1, ' DESC', ''), ', ')
+               within group (order by ic.key_ordinal)
+          from sys.index_columns ic where {filter} and ic.is_included_column = 0)"
+        )
+    }
+
+    /// A definição de uma FK (`fk` é a linha de `sys.foreign_keys`).
+    const FOREIGN_KEY: &str = "'FOREIGN KEY ('
+       + (select string_agg(cast(col_name(k.parent_object_id, k.parent_column_id) as nvarchar(max)), ', ')
+                 within group (order by k.constraint_column_id)
+            from sys.foreign_key_columns k where k.constraint_object_id = fk.object_id)
+       + ') REFERENCES ' + object_schema_name(fk.referenced_object_id) + '.' + object_name(fk.referenced_object_id) + ' ('
+       + (select string_agg(cast(col_name(k.referenced_object_id, k.referenced_column_id) as nvarchar(max)), ', ')
+                 within group (order by k.constraint_column_id)
+            from sys.foreign_key_columns k where k.constraint_object_id = fk.object_id)
+       + ')'
+       + iif(fk.update_referential_action > 0, ' ON UPDATE ' + replace(fk.update_referential_action_desc, '_', ' '), '')
+       + iif(fk.delete_referential_action > 0, ' ON DELETE ' + replace(fk.delete_referential_action_desc, '_', ' '), '')";
+
+    /// Tabela ou view: colunas, restrições, índices e quem a referencia.
+    /// `table` é como se escreve no SQL (`pedidos`, `vendas.[Itens]`).
+    pub fn describe_table(table: &str) -> String {
+        let t = format!("object_id({})", literal(table));
+        let key =
+            key_columns("ic.object_id = kc.parent_object_id and ic.index_id = kc.unique_index_id");
+        let index = key_columns("ic.object_id = i.object_id and ic.index_id = i.index_id");
+        format!(
+            "select schema_name(o.schema_id) + '.' + o.name as [table],
+       case o.type when 'U' then 'table' else 'view' end as kind,
+       (select sum(p.rows) from sys.partitions p
+         where p.object_id = o.object_id and p.index_id in (0, 1)) as estimated_rows,
+       (select cast(cast(sum(au.total_pages) * 8 / 1024.0 as decimal(18,1)) as varchar(30)) + ' MB'
+          from sys.partitions p join sys.allocation_units au on au.container_id = p.partition_id
+         where p.object_id = o.object_id) as total_size,
+       (select cast(ep.value as nvarchar(4000)) from sys.extended_properties ep
+         where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0
+           and ep.name = 'MS_Description') as comment,
+       case when o.type = 'V' then object_definition(o.object_id) end as view_definition
+from sys.objects o where o.object_id = {t} and o.type in ('U', 'V');
+select c.name as [column], {TYPE} as type, c.is_nullable as nullable,
+       dc.definition as [default], c.is_identity as [identity], cc.definition as computed,
+       (select cast(ep.value as nvarchar(4000)) from sys.extended_properties ep
+         where ep.class = 1 and ep.major_id = c.object_id and ep.minor_id = c.column_id
+           and ep.name = 'MS_Description') as comment
+from sys.columns c
+join sys.types t on t.user_type_id = c.user_type_id
+left join sys.default_constraints dc on dc.object_id = c.default_object_id
+left join sys.computed_columns cc on cc.object_id = c.object_id and cc.column_id = c.column_id
+where c.object_id = {t}
+order by c.column_id;
+select x.[constraint], x.definition from (
+  select kc.name collate database_default as [constraint], 0 + iif(kc.type = 'PK', 0, 1) as position,
+         (iif(kc.type = 'PK', 'PRIMARY KEY', 'UNIQUE') + ' (' + {key} + ')') collate database_default as definition
+    from sys.key_constraints kc where kc.parent_object_id = {t}
+  union all
+  select fk.name collate database_default, 2, ({FOREIGN_KEY}) collate database_default
+    from sys.foreign_keys fk where fk.parent_object_id = {t}
+  union all
+  select ck.name collate database_default, 3, ('CHECK ' + ck.definition) collate database_default
+    from sys.check_constraints ck where ck.parent_object_id = {t}
+) x order by x.position, x.[constraint];
+select i.name as [index],
+       iif(i.is_unique = 1, 'UNIQUE ', '') + i.type_desc collate database_default + ' (' + {index} + ')'
+       + isnull(' INCLUDE (' + (select string_agg(cast(col_name(ic.object_id, ic.column_id) as nvarchar(max)), ', ')
+                                 from sys.index_columns ic
+                                where ic.object_id = i.object_id and ic.index_id = i.index_id
+                                  and ic.is_included_column = 1) + ')', '')
+       + isnull(' WHERE ' + i.filter_definition, '') as definition
+from sys.indexes i where i.object_id = {t} and i.index_id > 0 and i.is_hypothetical = 0
+order by 1;
+select object_schema_name(fk.parent_object_id) + '.' + object_name(fk.parent_object_id) as [table],
+       fk.name as [constraint], {FOREIGN_KEY} as definition
+from sys.foreign_keys fk where fk.referenced_object_id = {t} order by 1, 2;"
+        )
+    }
+
+    /// Código das funções e procedures com esse nome (`calcula_total` ou
+    /// `vendas.calcula_total`).
+    pub fn describe_function(name: &str) -> String {
+        let (schema, func) = match name.rsplit_once('.') {
+            Some((s, f)) => (Some(unquote(s)), unquote(f)),
+            None => (None, unquote(name)),
+        };
+        let schema_filter = match schema {
+            Some(s) => format!("and schema_name(o.schema_id) = {}", literal(&s)),
+            None => String::new(),
+        };
+        format!(
+            "select schema_name(o.schema_id) + '.' + o.name as [function],
+       iif(o.type = 'P', 'procedure', 'function') as kind,
+       m.definition,
+       (select cast(ep.value as nvarchar(4000)) from sys.extended_properties ep
+         where ep.class = 1 and ep.major_id = o.object_id and ep.minor_id = 0
+           and ep.name = 'MS_Description') as comment
+from sys.objects o join sys.sql_modules m on m.object_id = o.object_id
+where o.type in ('P', 'FN', 'IF', 'TF') and o.name = {} {schema_filter}
+order by 1",
+            literal(&func)
+        )
+    }
+
+    /// Tira colchetes ou aspas de um identificador (`[Itens]` vira
+    /// `Itens`); o nome fica como veio, que o SQL Server compara sem
+    /// diferenciar maiúsculas.
+    fn unquote(ident: &str) -> String {
+        let ident = ident.trim();
+        if let Some(inner) = ident.strip_prefix('[').and_then(|i| i.strip_suffix(']')) {
+            return inner.replace("]]", "]");
+        }
+        match ident.strip_prefix('"').and_then(|i| i.strip_suffix('"')) {
+            Some(inner) => inner.replace("\"\"", "\""),
+            None => ident.to_string(),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::safety::classify_for;
+        use pgstudio_core::connection::Engine;
+
+        #[test]
+        fn names_are_escaped_and_unquoted() {
+            assert!(
+                list_objects(Some("x'; drop table t; --")).contains("N'x''; drop table t; --'")
+            );
+            let sql = describe_function("[Vendas].[Total Geral]");
+            assert!(
+                sql.contains("schema_name(o.schema_id) = N'Vendas'"),
+                "{sql}"
+            );
+            assert!(sql.contains("o.name = N'Total Geral'"));
+        }
+
+        #[test]
+        fn introspection_is_read_only() {
+            for sql in [
+                list_databases(),
+                list_objects(Some("dbo")),
+                describe_table("dbo.t"),
+                describe_function("f"),
+            ] {
+                let safety = classify_for(Engine::SqlServer, &sql);
+                assert!(safety.is_read_only(), "{safety:?}\n{sql}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
