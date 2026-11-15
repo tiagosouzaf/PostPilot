@@ -4436,3 +4436,6 @@ msgstr "Registre o servidor neste computador: escolha o nome, a pasta e o ambien
 
 msgid "Edit Registration..."
 msgstr "Editar Registro..."
+
+msgid "A PostgreSQL database cannot be compared with a SQL Server database."
+msgstr "Não dá para comparar um banco PostgreSQL com um banco SQL Server."

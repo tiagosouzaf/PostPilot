@@ -21,6 +21,7 @@ use eframe::egui::{self, Align, Layout};
 use pgstudio_core::connection::{ConnectionSettings, Connector, SslMode, parse_server_name};
 use pgstudio_core::metadata::MetadataProvider;
 use pgstudio_core::query::{QueryEvent, QueryService};
+use pgstudio_core::schema::Dialect;
 pub use pgstudio_core::schema::compare::{Item, Outcome, Status};
 pub use pgstudio_core::schema::objects::{Key, Kind};
 use pgstudio_core::schema::snapshot::{self, Schema, Snapshot};
@@ -210,6 +211,17 @@ impl Env {
     }
 }
 
+/// Compara os dois lados, que têm de ser do mesmo tipo de servidor: o
+/// script de um não roda no outro.
+fn outcome(source: &Schema, target: &Schema) -> Result<Outcome, String> {
+    if source.model.dialect != target.model.dialect {
+        return Err(
+            tr("A PostgreSQL database cannot be compared with a SQL Server database.").into(),
+        );
+    }
+    Ok(Outcome::new(source, target))
+}
+
 /// O que foi comparado.
 struct Compared {
     outcome: Outcome,
@@ -280,9 +292,9 @@ impl SchemaCompare {
         let (tx, databases_rx) = mpsc::channel();
         let ctx2 = ctx.clone();
         let mut names = Vec::new();
-        queries.open(home).execute(
-            "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1"
-                .to_string(),
+        let session = queries.open(home);
+        session.execute(
+            session.engine().list_databases_sql().to_string(),
             Box::new(move |e| match e {
                 QueryEvent::Row(r) => {
                     if let Some(Some(n)) = r.into_iter().next() {
@@ -390,9 +402,7 @@ impl SchemaCompare {
         let (s2, t2) = (s.clone(), t.clone());
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let r = env
-                .load(&s2)
-                .and_then(|a| Ok(Outcome::new(&a, &env.load(&t2)?)));
+            let r = env.load(&s2).and_then(|a| outcome(&a, &env.load(&t2)?));
             let _ = tx.send(r);
             ctx.request_repaint();
         });
@@ -486,14 +496,23 @@ impl SchemaCompare {
         let Some(c) = &self.compared else {
             return String::new();
         };
+        // No T-SQL cada comando é um lote (um `CREATE VIEW` tem de ser o
+        // primeiro do seu).
+        let separator = match c.outcome.dialect {
+            Dialect::Postgres => "\n\n",
+            Dialect::Tsql => "\nGO\n\n",
+        };
+        let mut body = self.script().join(separator);
+        if c.outcome.dialect == Dialect::Tsql && !body.is_empty() {
+            body.push_str("\nGO");
+        }
         format!(
-            "-- {}\n\n{}\n",
+            "-- {}\n\n{body}\n",
             trf!(
                 "Schema Compare: changes that make {target} like {source}.",
                 target = c.target.label(),
                 source = c.source
             ),
-            self.script().join("\n\n")
         )
     }
 
@@ -613,9 +632,7 @@ impl SchemaCompare {
         let t2 = target.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let r = env
-                .load(&source)
-                .and_then(|a| Ok(Outcome::new(&a, &env.load(&t2)?)));
+            let r = env.load(&source).and_then(|a| outcome(&a, &env.load(&t2)?));
             let _ = tx.send(r);
             ctx.request_repaint();
         });

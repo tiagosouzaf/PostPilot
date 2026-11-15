@@ -114,6 +114,61 @@ pub fn rename_in_expr(expr: &str, old: &str, new: &str) -> String {
     out
 }
 
+/// Onde o `CREATE` de um módulo começa (depois de comentários) e o texto
+/// logo depois dele. None se o texto não começa com `CREATE`.
+fn after_create(definition: &str) -> Option<(usize, &str)> {
+    let mut at = 0;
+    loop {
+        let rest = &definition[at..];
+        let trimmed = rest.trim_start();
+        at += rest.len() - trimmed.len();
+        if trimmed.starts_with("--") {
+            at += trimmed.find('\n')?;
+        } else if trimmed.starts_with("/*") {
+            at += trimmed.find("*/")? + 2;
+        } else {
+            break;
+        }
+    }
+    (word(&definition[at..]) == "CREATE").then(|| (at + 6, &definition[at + 6..]))
+}
+
+/// A primeira palavra, em maiúsculas.
+fn word(text: &str) -> String {
+    text.chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// O texto de um módulo (`CREATE VIEW ...`) como `CREATE OR ALTER`, que
+/// troca o que existe. None se o texto não começa com um `CREATE` de view,
+/// função, procedure ou trigger (depois de comentários).
+pub fn create_or_alter(definition: &str) -> Option<String> {
+    let (at, after) = after_create(definition)?;
+    match word(after.trim_start()).as_str() {
+        "OR" => Some(definition.to_string()),
+        "VIEW" | "PROC" | "PROCEDURE" | "FUNCTION" | "TRIGGER" => {
+            Some(format!("{} OR ALTER{after}", &definition[..at]))
+        }
+        _ => None,
+    }
+}
+
+/// O texto de um módulo sem o `OR ALTER` e com um espaço só depois do
+/// `CREATE`, para comparar: `CREATE OR ALTER VIEW` é a mesma view que
+/// `CREATE VIEW`, e o servidor guarda o primeiro como `CREATE    VIEW`.
+pub fn plain_create(definition: &str) -> String {
+    let Some((at, after)) = after_create(definition) else {
+        return definition.to_string();
+    };
+    let mut rest = after.trim_start();
+    if word(rest) == "OR" && word(rest[2..].trim_start()) == "ALTER" {
+        rest = rest[2..].trim_start()[5..].trim_start();
+    }
+    format!("{} {rest}", &definition[..at])
+}
+
 /// Se a expressão usa a coluna `name`.
 fn mentions(expr: &str, name: &str) -> bool {
     rename_in_expr(expr, name, "\u{1}") != expr
@@ -778,6 +833,25 @@ mod tests {
         d.update_column(pedido, total, |c| c.ty = "int".into())
             .unwrap();
         assert_eq!(crate::diff::data_loss_warnings(&saved, &d.model).len(), 2);
+    }
+
+    #[test]
+    fn create_or_alter_and_back() {
+        let def = "/* v */ create view dbo.v as select 1";
+        let altered = create_or_alter(def).unwrap();
+        assert_eq!(altered, "/* v */ create OR ALTER view dbo.v as select 1");
+        assert_eq!(create_or_alter(&altered).unwrap(), altered);
+        assert_eq!(plain_create(&altered), def);
+        assert_eq!(
+            plain_create("CREATE   or  alter PROC p AS SELECT 1"),
+            "CREATE PROC p AS SELECT 1"
+        );
+        assert_eq!(plain_create(def), def);
+        assert_eq!(
+            plain_create("CREATE    VIEW v AS SELECT 1"),
+            "CREATE VIEW v AS SELECT 1"
+        );
+        assert_eq!(create_or_alter("CREATE TABLE t (a int)"), None);
     }
 
     #[test]

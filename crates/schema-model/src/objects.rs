@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{qualified, quote_ident};
+use crate::{qualified, quote_ident, tsql};
 
 /// O tipo de objeto comparado, na ordem da lista do Schema Compare.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -77,6 +77,16 @@ pub enum Detail {
     Enum(Vec<String>),
     /// Domínio (`DROP DOMAIN` em vez de `DROP TYPE`).
     Domain,
+    /// SQL Server: view, função, procedure ou trigger, com o texto inteiro
+    /// do `CREATE` (do `sys.sql_modules`) na definição. `name` é o nome
+    /// para o `DROP` (num trigger, sem a tabela).
+    Module {
+        name: String,
+    },
+    /// SQL Server: sequência (sem `OWNED BY`, sem `IF NOT EXISTS`).
+    TsqlSequence(Sequence),
+    /// SQL Server: tipo de alias (`CREATE TYPE ... FROM ...`).
+    AliasType,
 }
 
 /// As opções de uma sequência.
@@ -106,6 +116,35 @@ impl Sequence {
             self.start,
             self.cache,
             if self.cycle { "CYCLE" } else { "NO CYCLE" }
+        )
+    }
+}
+
+impl Sequence {
+    /// As opções que o `ALTER SEQUENCE` do SQL Server aceita. `cache`
+    /// vazio é o cache padrão e `0`, sem cache.
+    fn tsql_alter_options(&self) -> String {
+        let cache = match self.cache.as_str() {
+            "" => "CACHE".to_string(),
+            "0" => "NO CACHE".to_string(),
+            n => format!("CACHE {n}"),
+        };
+        format!(
+            "INCREMENT BY {} MINVALUE {} MAXVALUE {} {} {cache}",
+            self.increment,
+            self.min,
+            self.max,
+            if self.cycle { "CYCLE" } else { "NO CYCLE" },
+        )
+    }
+
+    /// As opções do `CREATE SEQUENCE` do SQL Server.
+    fn tsql_options(&self) -> String {
+        format!(
+            "AS {} START WITH {} {}",
+            self.ty,
+            self.start,
+            self.tsql_alter_options()
         )
     }
 }
@@ -176,6 +215,52 @@ impl Object {
                 trigger: trigger.into(),
             },
         }
+    }
+
+    /// SQL Server: uma view, função, procedure ou trigger, do texto do
+    /// `sys.sql_modules`. Num trigger, `table` é a tabela dele.
+    pub fn tsql_module(
+        kind: Kind,
+        schema: &str,
+        name: &str,
+        table: Option<&str>,
+        def: &str,
+    ) -> Self {
+        Object {
+            kind,
+            schema: schema.into(),
+            name: match table {
+                Some(table) => format!("{table}.{name}"),
+                None => name.into(),
+            },
+            definition: tsql::plain_create(def.replace("\r\n", "\n").trim()),
+            detail: Detail::Module { name: name.into() },
+        }
+    }
+
+    /// SQL Server: uma sequência.
+    pub fn tsql_sequence(schema: &str, name: &str, seq: Sequence) -> Self {
+        Object {
+            kind: Kind::Sequence,
+            schema: schema.into(),
+            name: name.into(),
+            definition: seq.tsql_options(),
+            detail: Detail::TsqlSequence(seq),
+        }
+    }
+
+    /// SQL Server: um tipo de alias sobre `base` (`varchar(8)`).
+    pub fn tsql_alias_type(schema: &str, name: &str, base: &str, nullable: bool) -> Self {
+        Object::type_with(
+            schema,
+            name,
+            format!(
+                "CREATE TYPE {} FROM {base} {};",
+                tsql::qualified(schema, name),
+                if nullable { "NULL" } else { "NOT NULL" }
+            ),
+            Detail::AliasType,
+        )
     }
 
     pub fn sequence(schema: &str, name: &str, seq: Sequence) -> Self {
@@ -251,6 +336,10 @@ impl Object {
     /// `schema.nome` com as aspas necessárias (sem argumentos).
     fn qualified(&self) -> String {
         match &self.detail {
+            Detail::Module { name } => tsql::qualified(&self.schema, name),
+            Detail::TsqlSequence(_) | Detail::AliasType => {
+                tsql::qualified(&self.schema, &self.name)
+            }
             Detail::Routine { name, .. } => qualified(&self.schema, name),
             _ => qualified(&self.schema, &self.name),
         }
@@ -260,6 +349,19 @@ impl Object {
     fn create(&self) -> Vec<(Phase, String)> {
         let q = self.qualified();
         match (&self.kind, &self.detail) {
+            // O texto do módulo já é o `CREATE` inteiro, um lote só.
+            (kind, Detail::Module { .. }) => vec![(
+                match kind {
+                    Kind::View => Phase::Views,
+                    Kind::Trigger => Phase::Triggers,
+                    _ => Phase::Routines,
+                },
+                self.definition.clone(),
+            )],
+            (_, Detail::TsqlSequence(s)) => vec![(
+                Phase::Sequences,
+                format!("CREATE SEQUENCE {q} {};", s.tsql_options()),
+            )],
             (Kind::View, _) => vec![(
                 Phase::Views,
                 format!("CREATE VIEW {q} AS\n{};", self.definition),
@@ -289,6 +391,16 @@ impl Object {
     fn drop(&self) -> Vec<(Phase, String)> {
         let q = self.qualified();
         let (phase, sql) = match (&self.kind, &self.detail) {
+            (Kind::Function, Detail::Module { .. }) => {
+                (Phase::DropRoutines, format!("DROP FUNCTION {q};"))
+            }
+            (Kind::Procedure, Detail::Module { .. }) => {
+                (Phase::DropRoutines, format!("DROP PROCEDURE {q};"))
+            }
+            (Kind::Trigger, Detail::Module { .. }) => {
+                (Phase::DropTriggers, format!("DROP TRIGGER {q};"))
+            }
+            (_, Detail::TsqlSequence(_)) => (Phase::DropSequences, format!("DROP SEQUENCE {q};")),
             (Kind::View, _) => (Phase::DropViews, format!("DROP VIEW {q};")),
             (Kind::Function, Detail::Routine { args, .. }) => {
                 (Phase::DropRoutines, format!("DROP FUNCTION {q}({args});"))
@@ -320,6 +432,36 @@ impl Object {
     fn change_to(&self, source: &Object) -> Vec<(Phase, String)> {
         let q = self.qualified();
         match (&self.detail, &source.detail) {
+            // `CREATE OR ALTER` troca o módulo no lugar, sem perder as
+            // permissões nem o que depende dele.
+            (Detail::Module { .. }, Detail::Module { .. }) => {
+                match tsql::create_or_alter(&source.definition) {
+                    Some(sql) => source
+                        .create()
+                        .into_iter()
+                        .map(|(phase, _)| (phase, sql.clone()))
+                        .collect(),
+                    None => [self.drop(), source.create()].concat(),
+                }
+            }
+            // O tipo e o início não mudam com `ALTER SEQUENCE`.
+            (Detail::TsqlSequence(t), Detail::TsqlSequence(s))
+                if t.ty.eq_ignore_ascii_case(&s.ty) && t.start == s.start =>
+            {
+                vec![(
+                    Phase::Sequences,
+                    format!("ALTER SEQUENCE {q} {};", s.tsql_alter_options()),
+                )]
+            }
+            (Detail::TsqlSequence(_), Detail::TsqlSequence(_)) => {
+                let mut out: Vec<(Phase, String)> = self
+                    .drop()
+                    .into_iter()
+                    .map(|(_, s)| (Phase::Sequences, s))
+                    .collect();
+                out.extend(source.create());
+                out
+            }
             (Detail::Sequence(t), Detail::Sequence(s)) => {
                 let mut out = Vec::new();
                 if t.options() != s.options() {
@@ -362,7 +504,9 @@ impl Object {
             {
                 source.create()
             }
-            (Detail::Domain | Detail::None | Detail::Enum(_), _) if self.kind == Kind::Type => {
+            (Detail::Domain | Detail::None | Detail::Enum(_) | Detail::AliasType, _)
+                if self.kind == Kind::Type =>
+            {
                 // Recriar um tipo é "apagar e criar" no mesmo ponto, antes
                 // das tabelas.
                 let mut out: Vec<(Phase, String)> = self
@@ -413,6 +557,101 @@ pub fn literal(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tsql_modules_change_in_place_and_drop_by_name() {
+        let old = Object::tsql_module(
+            Kind::View,
+            "dbo",
+            "v",
+            None,
+            "-- vendas\r\ncreate view dbo.v as select 1 as a\r\n",
+        );
+        let new = Object::tsql_module(
+            Kind::View,
+            "dbo",
+            "v",
+            None,
+            "-- vendas\ncreate view dbo.v as select 2 as a",
+        );
+        assert_eq!(
+            statements(Some(&new), Some(&old)),
+            [(
+                Phase::Views,
+                "-- vendas\ncreate OR ALTER view dbo.v as select 2 as a".to_string()
+            )]
+        );
+        assert_eq!(
+            statements(Some(&new), None),
+            [(Phase::Views, new.definition.clone())]
+        );
+        assert!(statements(Some(&old), Some(&old)).is_empty());
+        let trigger = Object::tsql_module(
+            Kind::Trigger,
+            "dbo",
+            "audita",
+            Some("pedido"),
+            "CREATE TRIGGER dbo.audita ON dbo.pedido AFTER INSERT AS SET NOCOUNT ON",
+        );
+        assert_eq!(trigger.name, "pedido.audita");
+        assert_eq!(
+            statements(None, Some(&trigger)),
+            [(
+                Phase::DropTriggers,
+                "DROP TRIGGER [dbo].[audita];".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn tsql_sequences_and_alias_types() {
+        let seq = |increment: &str, ty: &str| {
+            Object::tsql_sequence(
+                "dbo",
+                "numero",
+                Sequence {
+                    ty: ty.into(),
+                    start: "1".into(),
+                    increment: increment.into(),
+                    min: "1".into(),
+                    max: "999".into(),
+                    cache: String::new(),
+                    cycle: false,
+                    owned_by: None,
+                },
+            )
+        };
+        assert_eq!(
+            sql(statements(Some(&seq("1", "int")), None)),
+            [
+                "CREATE SEQUENCE [dbo].[numero] AS int START WITH 1 INCREMENT BY 1 \
+              MINVALUE 1 MAXVALUE 999 NO CYCLE CACHE;"
+            ]
+        );
+        assert_eq!(
+            sql(statements(Some(&seq("5", "int")), Some(&seq("1", "int")))),
+            [
+                "ALTER SEQUENCE [dbo].[numero] INCREMENT BY 5 MINVALUE 1 MAXVALUE 999 NO CYCLE CACHE;"
+            ]
+        );
+        assert_eq!(
+            sql(statements(
+                Some(&seq("1", "bigint")),
+                Some(&seq("1", "int"))
+            ))
+            .len(),
+            2
+        );
+        let cep = Object::tsql_alias_type("dbo", "cep", "char(8)", false);
+        assert_eq!(
+            cep.definition,
+            "CREATE TYPE [dbo].[cep] FROM char(8) NOT NULL;"
+        );
+        assert_eq!(
+            sql(statements(None, Some(&cep))),
+            ["DROP TYPE [dbo].[cep];"]
+        );
+    }
 
     fn sql(v: Vec<(Phase, String)>) -> Vec<String> {
         v.into_iter().map(|(_, s)| s).collect()
