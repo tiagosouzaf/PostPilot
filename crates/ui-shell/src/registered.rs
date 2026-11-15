@@ -519,6 +519,32 @@ impl RegisteredServers {
         self.server(&path).map(|s| s.name.as_str())
     }
 
+    /// Todos os servidores com o caminho do nó e a pasta por extenso
+    /// ("Clientes / Acme"; vazio na raiz): primeiro os da pasta, depois os
+    /// das subpastas.
+    pub fn servers_with_folders(&self) -> Vec<(NodePath, String, &RegisteredServer)> {
+        fn walk<'a>(
+            g: &'a ServerGroup,
+            path: &mut Vec<usize>,
+            names: &mut Vec<&'a str>,
+            out: &mut Vec<(NodePath, String, &'a RegisteredServer)>,
+        ) {
+            for (i, s) in g.servers.iter().enumerate() {
+                out.push((NodePath::server(path, i), names.join(" / "), s));
+            }
+            for (i, sub) in g.groups.iter().enumerate() {
+                path.push(i);
+                names.push(&sub.name);
+                walk(sub, path, names, out);
+                names.pop();
+                path.pop();
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.root, &mut Vec::new(), &mut Vec::new(), &mut out);
+        out
+    }
+
     /// Todos os servidores, em ordem da árvore.
     pub fn all_servers(&self) -> Vec<&RegisteredServer> {
         fn walk<'a>(g: &'a ServerGroup, out: &mut Vec<&'a RegisteredServer>) {

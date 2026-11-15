@@ -503,3 +503,114 @@ fn register_and_properties_on_the_connected_server_use_the_workspace() {
     );
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn connect_to_server_offers_the_workspace_connections() {
+    let base = temp_dir("connect-saved");
+    let root = base.join("ws");
+    Workspace::create(&root, "ws").unwrap();
+
+    // Uma máquina registra o servidor no workspace, com a senha no cofre.
+    {
+        let mut h = machine(
+            Arc::new(MemoryStore::default()),
+            Vec::new(),
+            RegisteredServers::in_memory(Default::default()),
+        );
+        assert!(h.state_mut().open_workspace(&root));
+        {
+            let p = h.state_mut().workspace_panel_mut().passwords_mut().unwrap();
+            p.set_kdf(FAST);
+            p.create(MASTER, MASTER, false).unwrap();
+            p.wait(None);
+        }
+        h.state_mut().connect_to(rds(), DB_PASSWORD.into());
+        run_until(&mut h, "connected", |app| app.connection().is_some());
+        h.state_mut().register_active_server();
+        h.run();
+        {
+            let d = h
+                .state_mut()
+                .workspace_panel_mut()
+                .servers_mut()
+                .unwrap()
+                .server_dialog_mut()
+                .unwrap();
+            d.name = "tiib".into();
+            d.environment = Some("Production".into());
+        }
+        h.run();
+        h.get_by_label("Save").click();
+        h.run();
+        let start = Instant::now();
+        while Vault::at(&root).names().is_empty() {
+            assert!(start.elapsed() < Duration::from_secs(5), "vault");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    // Outra sessão: um servidor registrado só nesta máquina, sem senha
+    // guardada, e o mesmo do workspace repetido (aparece uma vez só).
+    let mut local = RegisteredServers::in_memory(Default::default());
+    let localhost = ConnectionSettings {
+        host: "localhost".into(),
+        user: "postgres".into(),
+        ..Default::default()
+    };
+    for (name, settings) in [("Local", localhost), ("rds repetido", rds())] {
+        local
+            .add_server(
+                &[],
+                RegisteredServer {
+                    name: name.into(),
+                    settings,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    let system = Arc::new(MemoryStore::default());
+    let mut h = machine(system.clone(), Vec::new(), local);
+    assert!(h.state_mut().open_workspace(&root));
+    {
+        let p = h.state_mut().workspace_panel_mut().passwords_mut().unwrap();
+        p.unlock(MASTER, false);
+        p.wait(None);
+        assert!(p.is_unlocked());
+    }
+    h.run();
+
+    let saved = h.state().saved_connections();
+    let names: Vec<_> = saved
+        .iter()
+        .map(|c| (c.name.as_str(), c.workspace))
+        .collect();
+    assert_eq!(names, [("tiib", true), ("Local", false)]);
+    assert_eq!(saved[0].environment.as_ref().unwrap().0, "Production");
+
+    // O "Connect to Server" lista as conexões; sem senha guardada, a
+    // escolha só preenche e o diálogo espera a senha.
+    h.state_mut().open_connect_dialog();
+    h.run();
+    h.get_by_label("Saved connections:");
+    h.get_by_label("Local").click();
+    h.run();
+    run_until(&mut h, "lookup done", |app| {
+        app.connect_dialog().is_some_and(|d| !d.is_looking_up())
+    });
+    let d = h.state().connect_dialog().unwrap();
+    assert_eq!(d.server, "localhost");
+    assert_eq!(d.user, "postgres");
+    assert!(h.state().connection().is_none());
+
+    // A do workspace conecta direto, com a senha do cofre.
+    h.get_by_label("tiib").click();
+    h.run();
+    run_until(&mut h, "connected from the list", |app| {
+        app.connection().is_some()
+    });
+    assert_eq!(h.state().connection().unwrap().settings.host, rds().host);
+    assert!(h.state().connect_dialog().is_none());
+    assert!(system.is_empty());
+    let _ = std::fs::remove_dir_all(base);
+}

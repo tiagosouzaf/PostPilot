@@ -4524,3 +4524,6 @@ msgstr "Volta ao último commit deste arquivo"
 
 msgid "Discard All..."
 msgstr "Descartar Tudo..."
+
+msgid "Saved connections:"
+msgstr "Conexões salvas:"
