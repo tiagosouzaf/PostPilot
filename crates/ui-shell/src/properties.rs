@@ -9,10 +9,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui::{self, Align, Layout};
-use pgstudio_core::metadata::Securable;
+use pgstudio_core::connection::Engine;
+use pgstudio_core::metadata::{PrincipalKind, Securable};
 use pgstudio_core::query::{QueryEvent, QuerySession};
 
 use crate::security::{self, GrantTarget, Grants, RoleSpec, Rows};
+use crate::security_mssql::{self, PrincipalLists, PrincipalSpec};
 
 /// Página da janela.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +50,14 @@ pub enum Content {
         listed: BTreeSet<String>,
         selected: Option<String>,
         roles: Vec<String>,
+    },
+    /// Login, usuário ou role do SQL Server.
+    Principal {
+        kind: PrincipalKind,
+        before: Option<PrincipalSpec>,
+        edit: PrincipalSpec,
+        confirm_password: String,
+        lists: PrincipalLists,
     },
 }
 
@@ -125,11 +135,14 @@ impl SecurityDialog {
         let sql = match &securable {
             Securable::Role(oid) => security::role_read_sql(Some(*oid)),
             Securable::NewRole => security::role_read_sql(None),
+            Securable::Principal { kind, name, .. } => {
+                security_mssql::principal_read_sql(*kind, name.as_deref())
+            }
             other => security::grants_read_sql(other).unwrap_or_default(),
         };
         read(&session, sql, tx.clone(), ctx);
         let page = match securable {
-            Securable::Role(_) | Securable::NewRole => Page::General,
+            Securable::Role(_) | Securable::NewRole | Securable::Principal { .. } => Page::General,
             _ => Page::Permissions,
         };
         Self {
@@ -193,7 +206,31 @@ impl SecurityDialog {
                     name = target.name
                 )
             }
+            Some(Content::Principal {
+                kind,
+                before: Some(b),
+                ..
+            }) => {
+                let name = &b.name;
+                match kind {
+                    PrincipalKind::Login => trf!("Login Properties - {name}", name = name),
+                    PrincipalKind::ServerRole => {
+                        trf!("Server Role Properties - {name}", name = name)
+                    }
+                    PrincipalKind::User => trf!("Database User - {name}", name = name),
+                    PrincipalKind::DatabaseRole => {
+                        trf!("Database Role Properties - {name}", name = name)
+                    }
+                }
+            }
             _ => match self.securable {
+                Securable::Principal { kind, .. } => tr(match kind {
+                    PrincipalKind::Login => "Login - New",
+                    PrincipalKind::ServerRole => "Server Role - New",
+                    PrincipalKind::User => "Database User - New",
+                    PrincipalKind::DatabaseRole => "Database Role - New",
+                })
+                .to_string(),
                 Securable::NewRole => tr("Role - New").to_string(),
                 Securable::Role(_) => tr("Role Properties").to_string(),
                 _ => tr("Properties").to_string(),
@@ -203,7 +240,9 @@ impl SecurityDialog {
 
     fn pages(&self) -> &'static [Page] {
         match self.securable {
-            Securable::Role(_) | Securable::NewRole => &[Page::General, Page::Membership],
+            Securable::Role(_) | Securable::NewRole | Securable::Principal { .. } => {
+                &[Page::General, Page::Membership]
+            }
             _ => &[Page::Permissions],
         }
     }
@@ -220,6 +259,9 @@ impl SecurityDialog {
                 edit,
                 ..
             }) => security::grant_sql(target, before, edit),
+            Some(Content::Principal {
+                kind, before, edit, ..
+            }) => security_mssql::principal_sql(*kind, before.as_ref(), edit, reveal_password),
             _ => Vec::new(),
         }
     }
@@ -236,6 +278,24 @@ impl SecurityDialog {
                     Some(tr("The role needs a name."))
                 } else if edit.password != *confirm_password {
                     Some(tr("The password and its confirmation do not match."))
+                } else {
+                    None
+                }
+            }
+            Some(Content::Principal {
+                kind,
+                before,
+                edit,
+                confirm_password,
+                ..
+            }) => {
+                let login = *kind == PrincipalKind::Login;
+                if edit.name.trim().is_empty() {
+                    Some(tr("The name is required."))
+                } else if login && edit.password != *confirm_password {
+                    Some(tr("The password and its confirmation do not match."))
+                } else if login && before.is_none() && edit.password.is_empty() {
+                    Some(tr("A new login needs a password."))
                 } else {
                     None
                 }
@@ -262,15 +322,24 @@ impl SecurityDialog {
         let ctx = ctx.clone();
         let session = self.session.clone();
         let mut error = None;
+        let tsql = self.session.engine() == Engine::SqlServer;
+        let (sql, rollback) = if tsql {
+            (
+                security_mssql::in_transaction(&statements),
+                security_mssql::ROLLBACK,
+            )
+        } else {
+            (security::in_transaction(&statements), "ROLLBACK")
+        };
         self.session.execute(
-            security::in_transaction(&statements),
+            sql,
             Box::new(move |event| match event {
                 QueryEvent::Error(e) => error = Some(e.message),
                 QueryEvent::Finished { .. } => {
                     let result = match error.take() {
                         Some(e) => {
                             // O erro deixou a transação aberta.
-                            session.execute("ROLLBACK".into(), Box::new(|_| {}));
+                            session.execute(rollback.into(), Box::new(|_| {}));
                             Err(e)
                         }
                         None => Ok(()),
@@ -333,6 +402,18 @@ impl SecurityDialog {
 
     fn load(&self, results: &[Rows]) -> Result<Content, String> {
         match self.securable {
+            Securable::Principal { kind, ref name, .. } => {
+                let (before, lists) =
+                    security_mssql::parse_principal(kind, results, name.is_some())?;
+                let edit = before.clone().unwrap_or_else(|| PrincipalSpec::new(kind));
+                Ok(Content::Principal {
+                    kind,
+                    before,
+                    edit,
+                    confirm_password: String::new(),
+                    lists,
+                })
+            }
             Securable::Role(_) | Securable::NewRole => {
                 let existing = matches!(self.securable, Securable::Role(_));
                 let (before, roles) = security::parse_role(results, existing)?;
@@ -503,6 +584,52 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
             });
         }
         (
+            Page::General,
+            Content::Principal {
+                kind,
+                before,
+                edit,
+                confirm_password,
+                lists,
+            },
+        ) => principal_general(ui, *kind, before.is_some(), edit, confirm_password, lists),
+        (
+            Page::Membership,
+            Content::Principal {
+                kind, edit, lists, ..
+            },
+        ) => {
+            let me = edit.name.clone();
+            match kind {
+                PrincipalKind::Login => {
+                    role_list(
+                        ui,
+                        tr("Server roles"),
+                        &lists.roles,
+                        &me,
+                        &mut edit.member_of,
+                    );
+                }
+                PrincipalKind::User => {
+                    role_list(
+                        ui,
+                        tr("Database roles"),
+                        &lists.roles,
+                        &me,
+                        &mut edit.member_of,
+                    );
+                }
+                PrincipalKind::ServerRole | PrincipalKind::DatabaseRole => {
+                    let (left, right) = (&mut edit.member_of, &mut edit.members);
+                    ui.columns(2, |cols| {
+                        let [a, b] = cols else { return };
+                        role_list(a, tr("Member of"), &lists.roles, &me, left);
+                        role_list(b, tr("Members"), &lists.candidates, &me, right);
+                    });
+                }
+            }
+        }
+        (
             Page::Permissions,
             Content::Grants {
                 target,
@@ -613,6 +740,124 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
                         });
                 });
             });
+        }
+        _ => {}
+    }
+}
+
+/// Caixa de escolha de um nome entre `options`; `empty` é o texto de
+/// "nenhum" (None: sempre há um escolhido).
+fn name_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    options: &[String],
+    empty: Option<&str>,
+) {
+    let shown = if value.is_empty() {
+        empty.unwrap_or_default().to_string()
+    } else {
+        value.clone()
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .width(240.0)
+        .show_ui(ui, |ui| {
+            if let Some(empty) = empty {
+                ui.selectable_value(value, String::new(), empty);
+            }
+            for o in options {
+                ui.selectable_value(value, o.clone(), o.as_str());
+            }
+        });
+}
+
+/// Página General de um login, usuário ou role do SQL Server.
+fn principal_general(
+    ui: &mut egui::Ui,
+    kind: PrincipalKind,
+    existing: bool,
+    edit: &mut PrincipalSpec,
+    confirm_password: &mut String,
+    lists: &PrincipalLists,
+) {
+    egui::Grid::new("principal_general")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(tr(match kind {
+                PrincipalKind::Login => "Login name:",
+                PrincipalKind::User => "User name:",
+                PrincipalKind::ServerRole | PrincipalKind::DatabaseRole => "Role name:",
+            }));
+            ui.add_enabled(
+                !edit.fixed,
+                egui::TextEdit::singleline(&mut edit.name).desired_width(240.0),
+            );
+            ui.end_row();
+            match kind {
+                PrincipalKind::Login => {
+                    if edit.sql_login {
+                        ui.label(tr("Password:"));
+                        let mut field = egui::TextEdit::singleline(&mut edit.password)
+                            .password(true)
+                            .desired_width(240.0);
+                        if existing {
+                            field = field.hint_text(tr("unchanged"));
+                        }
+                        ui.add(field);
+                        ui.end_row();
+                        ui.label(tr("Confirm password:"));
+                        ui.add(
+                            egui::TextEdit::singleline(confirm_password)
+                                .password(true)
+                                .desired_width(240.0),
+                        );
+                        ui.end_row();
+                    }
+                    ui.label(tr("Default database:"));
+                    name_combo(
+                        ui,
+                        "login_database",
+                        &mut edit.default_database,
+                        &lists.databases,
+                        None,
+                    );
+                    ui.end_row();
+                }
+                PrincipalKind::User => {
+                    ui.label(tr("Login name:"));
+                    name_combo(
+                        ui,
+                        "user_login",
+                        &mut edit.login,
+                        &lists.logins,
+                        Some(tr("(without login)")),
+                    );
+                    ui.end_row();
+                    ui.label(tr("Default schema:"));
+                    name_combo(
+                        ui,
+                        "user_schema",
+                        &mut edit.default_schema,
+                        &lists.schemas,
+                        Some(tr("(server default)")),
+                    );
+                    ui.end_row();
+                }
+                PrincipalKind::ServerRole | PrincipalKind::DatabaseRole => {}
+            }
+        });
+    ui.add_space(8.0);
+    match kind {
+        PrincipalKind::Login => {
+            if edit.sql_login {
+                ui.checkbox(&mut edit.check_policy, tr("Enforce password policy"));
+            }
+            ui.checkbox(&mut edit.disabled, tr("Login is disabled"));
+        }
+        PrincipalKind::ServerRole | PrincipalKind::DatabaseRole if edit.fixed => {
+            ui.weak(tr("This is a fixed role: only its members can change."));
         }
         _ => {}
     }

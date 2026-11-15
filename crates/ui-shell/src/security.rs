@@ -291,7 +291,7 @@ pub fn grants_read_sql(target: &Securable) -> Option<String> {
             "pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a",
             format!("p.oid = {oid}"),
         ),
-        Securable::Role(_) | Securable::NewRole => return None,
+        Securable::Role(_) | Securable::NewRole | Securable::Principal { .. } => return None,
     };
     Some(format!(
         "{head} WHERE {cond};\n\

@@ -32,6 +32,14 @@ pub enum Folder {
     Programmability,
     /// Keys de uma tabela (SQL Server: PK, UNIQUE, FK).
     Keys,
+    /// Logins do servidor (SQL Server).
+    Logins,
+    /// Server Roles (SQL Server).
+    ServerRoles,
+    /// Users de um banco (SQL Server).
+    Users,
+    /// Database Roles (SQL Server).
+    DatabaseRoles,
 }
 
 impl Folder {
@@ -58,6 +66,10 @@ impl Folder {
             Folder::SystemDatabases => "System Databases",
             Folder::Programmability => "Programmability",
             Folder::Keys => "Keys",
+            Folder::Logins => "Logins",
+            Folder::ServerRoles => "Server Roles",
+            Folder::Users => "Users",
+            Folder::DatabaseRoles => "Database Roles",
         }
     }
 }
@@ -243,6 +255,13 @@ pub trait MetadataProvider: Send + Sync {
         None
     }
 
+    /// A pasta do Object Explorer que lista `target` (para atualizar depois
+    /// de criar ou renomear um login, usuário ou role).
+    fn security_folder(&self, target: &Securable) -> Option<NodeId> {
+        let _ = target;
+        None
+    }
+
     /// O que a janela de propriedades de segurança abre a partir do nó:
     /// uma role (ou a pasta Roles, para uma nova) ou um objeto com
     /// permissões. None quando o nó não tem.
@@ -328,6 +347,29 @@ pub enum Securable {
         database: String,
         oid: u32,
     },
+    /// Login, usuário ou role do SQL Server, pelo nome (None: um novo).
+    /// `database` é o banco dos usuários e das database roles.
+    Principal {
+        kind: PrincipalKind,
+        database: Option<String>,
+        name: Option<String>,
+    },
+}
+
+/// Os tipos de principal do SQL Server que o app edita.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PrincipalKind {
+    Login,
+    ServerRole,
+    User,
+    DatabaseRole,
+}
+
+impl PrincipalKind {
+    /// Se vive no servidor (logins e server roles) e não num banco.
+    pub fn server_level(self) -> bool {
+        matches!(self, PrincipalKind::Login | PrincipalKind::ServerRole)
+    }
 }
 
 impl Securable {
@@ -340,6 +382,7 @@ impl Securable {
             Securable::Schema { database, .. }
             | Securable::Relation { database, .. }
             | Securable::Function { database, .. } => Some(database),
+            Securable::Principal { database, .. } => database.as_deref(),
         }
     }
 }
@@ -396,6 +439,10 @@ mod tests {
             SystemDatabases,
             Programmability,
             Keys,
+            Logins,
+            ServerRoles,
+            Users,
+            DatabaseRoles,
         ];
         let kinds = [
             NodeKind::Server,

@@ -474,8 +474,22 @@ impl ObjectExplorer {
                                         }
                                         ui.separator();
                                     }
-                                    if node.kind == NodeKind::Folder(Folder::Roles) {
-                                        if ui.button(tr("New Role...")).clicked() {
+                                    let new_principal = match node.kind {
+                                        NodeKind::Folder(Folder::Roles) => Some(tr("New Role...")),
+                                        NodeKind::Folder(Folder::Logins) => {
+                                            Some(tr("New Login..."))
+                                        }
+                                        NodeKind::Folder(Folder::ServerRoles) => {
+                                            Some(tr("New Server Role..."))
+                                        }
+                                        NodeKind::Folder(Folder::Users) => Some(tr("New User...")),
+                                        NodeKind::Folder(Folder::DatabaseRoles) => {
+                                            Some(tr("New Database Role..."))
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(text) = new_principal {
+                                        if ui.button(text).clicked() {
                                             events.push(Event::Properties(node.id.clone()));
                                             ui.close();
                                         }
