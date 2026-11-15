@@ -123,6 +123,13 @@ impl EditorState {
         self.focus = true;
     }
 
+    /// Seleciona do caractere `anchor` ao `cursor` no próximo frame, rola
+    /// até lá e dá o foco ao editor.
+    pub fn select_range(&mut self, anchor: usize, cursor: usize) {
+        self.select = Some((anchor, cursor));
+        self.focus = true;
+    }
+
     /// Abre a lista do IntelliSense no cursor (List Members, Complete Word).
     pub fn list_members(&mut self) {
         self.list_members = true;
