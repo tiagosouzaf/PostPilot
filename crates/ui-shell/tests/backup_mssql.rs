@@ -134,12 +134,13 @@ fn back_up_and_restore_on_the_server() {
     let log = back_up(&mut d, &ctx);
     assert_eq!(d.result(), Some(&Ok(())), "{log:?}");
 
-    // Um caminho que não existe: o erro do servidor aparece.
+    // Um caminho impossível (dentro de um arquivo): o erro do servidor
+    // aparece. Uma pasta que só não existe o SQL Server 2017 no Linux cria.
     let mut d = BackupDialog::open(db.clone(), service.open("master"), &ctx);
-    d.options.file = "/pasta/que/nao/existe/x.bak".into();
+    d.options.file = "/etc/hostname/x.bak".into();
     back_up(&mut d, &ctx);
     let error = d.result().unwrap().clone().unwrap_err();
-    assert!(error.contains("/pasta/que/nao/existe/x.bak"), "{error}");
+    assert!(error.contains("/etc/hostname/x.bak"), "{error}");
 
     // Restore: lê o arquivo, sugere o completo e o nome do banco.
     let mut d = RestoreDialog::open(None, service.open("master"), &ctx);

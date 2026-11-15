@@ -66,7 +66,8 @@ fn connects_and_reports_the_version() {
     let Some((s, pw)) = settings() else { return };
     let c = connector().connect(&s, &pw).expect("connect");
     assert_eq!(c.settings.engine, Engine::SqlServer);
-    assert!(c.server_version.starts_with("16."), "{}", c.server_version);
+    let major: u32 = c.server_version.split('.').next().unwrap().parse().unwrap();
+    assert!((14..=17).contains(&major), "{}", c.server_version);
     // Sem TLS nenhum além do login também conecta.
     let mut plain = s.clone();
     plain.ssl = SslMode::Disable;
@@ -333,11 +334,7 @@ fn explorer_lists_the_databases() {
     let Some((s, pw)) = settings() else { return };
     let c = connector().connect(&s, &pw).expect("connect");
     let roots = c.metadata.roots().unwrap();
-    assert!(
-        roots[0].name.contains("SQL Server 16."),
-        "{}",
-        roots[0].name
-    );
+    assert!(roots[0].name.contains("SQL Server 1"), "{}", roots[0].name);
     let folders = c.metadata.children(&roots[0].id).unwrap();
     let dbs = c.metadata.children(&folders[0].id).unwrap();
     // Os do sistema ficam numa pasta à parte, como no SSMS.

@@ -60,6 +60,14 @@ O SQL Server instalado sem certificado próprio usa um autoassinado; com ele,
 use uma das duas primeiras. No arquivo de conexões elas ficam como
 `disable`, `require` e `verify-full`.
 
+## Versões
+
+Testado com o SQL Server 2017, 2019, 2022 e 2025 (containers Linux, edição
+Developer). `scripts/mssql-matrix.sh` sobe cada versão num container e roda os
+testes do SQL Server contra ela. Versões anteriores à 2017 não são suportadas:
+o catálogo usa `STRING_AGG`. No 2017 o Back Up sugere a pasta de dados, porque
+a pasta padrão de backups só é informada pelo servidor a partir do 2019.
+
 ## Testes contra um SQL Server de verdade
 
 Os testes de `crates/mssql/tests/server.rs` usam `MSSQL_TEST_HOST`,

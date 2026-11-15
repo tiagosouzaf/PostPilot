@@ -71,10 +71,10 @@ fn setup(db: &str) -> Option<(ConnectionSettings, String)> {
              cliente_id int CONSTRAINT fk_pedido_cliente REFERENCES dbo.cliente (id), \
              total decimal(10,2) DEFAULT 0 CONSTRAINT ck_total CHECK (total >= 0));\n\
          CREATE INDEX ix_pedido_cliente ON dbo.pedido (cliente_id);\n\
-         INSERT INTO dbo.cliente SELECT value, CONCAT(N'cliente ', value) \
-             FROM GENERATE_SERIES(1, 5);\n\
-         INSERT INTO dbo.pedido SELECT value, 1 + value % 5, value * 10 \
-             FROM GENERATE_SERIES(1, 300);\n\
+         INSERT INTO dbo.cliente SELECT n, CONCAT(N'cliente ', n) FROM (SELECT TOP (5) \
+             ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n FROM sys.all_columns) x;\n\
+         INSERT INTO dbo.pedido SELECT n, 1 + n % 5, n * 10 FROM (SELECT TOP (300) \
+             ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n FROM sys.all_columns) x;\n\
          GO\n\
          CREATE PROCEDURE dbo.grava AS INSERT INTO dbo.cliente VALUES (99, N'x')\n\
          GO\n"
