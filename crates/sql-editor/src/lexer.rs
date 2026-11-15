@@ -1,4 +1,4 @@
-//! Tokenizador de SQL no dialeto do PostgreSQL.
+//! Tokenizador de SQL nos dialetos do PostgreSQL e do SQL Server (T-SQL).
 //!
 //! Não valida nada: só separa o texto em pedaços para o realce (e, mais
 //! tarde, para o IntelliSense). Nunca falha: texto inesperado vira
@@ -30,6 +30,17 @@ pub enum TokenKind {
     /// `( ) , ; [ ] .`
     Punctuation,
     Other,
+}
+
+/// Dialeto do texto: muda o que é string, nome entre aspas, variável e
+/// palavra-chave.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Dialect {
+    /// `"Nome"`, `E'\n'`, `$$corpo$$`, `$1`.
+    #[default]
+    Postgres,
+    /// `[Nome]`, `N'texto'`, `@variavel`, `@@ROWCOUNT`, `#temporaria`.
+    TSql,
 }
 
 /// Um pedaço do texto, em bytes.
@@ -359,8 +370,163 @@ pub const KEYWORDS: &[&str] = &[
     "zone",
 ];
 
-/// Se `word` é palavra-chave (sem diferenciar maiúsculas).
+/// Palavras-chave a mais do T-SQL, em minúsculas e em ordem alfabética.
+pub const TSQL_KEYWORDS: &[&str] = &[
+    "ansi_nulls",
+    "backup",
+    "bigint",
+    "binary",
+    "bit",
+    "break",
+    "browse",
+    "bulk",
+    "catch",
+    "checkpoint",
+    "clustered",
+    "coalesce",
+    "collate",
+    "compute",
+    "contains",
+    "containstable",
+    "continue",
+    "convert",
+    "cross",
+    "cursor",
+    "datetime",
+    "datetime2",
+    "datetimeoffset",
+    "dbcc",
+    "deallocate",
+    "declare",
+    "default",
+    "deleted",
+    "deny",
+    "disk",
+    "distributed",
+    "dump",
+    "else",
+    "end",
+    "errlvl",
+    "escape",
+    "except",
+    "exec",
+    "execute",
+    "exists",
+    "exit",
+    "external",
+    "fetch",
+    "file",
+    "fillfactor",
+    "freetext",
+    "freetexttable",
+    "function",
+    "go",
+    "goto",
+    "grant",
+    "holdlock",
+    "identity",
+    "identity_insert",
+    "identitycol",
+    "if",
+    "image",
+    "index",
+    "inner",
+    "insert",
+    "inserted",
+    "intersect",
+    "into",
+    "kill",
+    "lineno",
+    "load",
+    "merge",
+    "money",
+    "national",
+    "nchar",
+    "nocheck",
+    "nocount",
+    "nolock",
+    "nonclustered",
+    "ntext",
+    "nvarchar",
+    "off",
+    "offsets",
+    "on",
+    "open",
+    "opendatasource",
+    "openquery",
+    "openrowset",
+    "openxml",
+    "option",
+    "output",
+    "over",
+    "percent",
+    "pivot",
+    "plan",
+    "print",
+    "proc",
+    "procedure",
+    "quoted_identifier",
+    "raiserror",
+    "read",
+    "readtext",
+    "readuncommitted",
+    "reconfigure",
+    "replication",
+    "restore",
+    "return",
+    "revert",
+    "revoke",
+    "rowcount",
+    "rowguidcol",
+    "rowlock",
+    "rowversion",
+    "rule",
+    "save",
+    "schema",
+    "securityaudit",
+    "semantickeyphrasetable",
+    "setuser",
+    "shutdown",
+    "smalldatetime",
+    "smallmoney",
+    "sql_variant",
+    "statistics",
+    "system_user",
+    "tablesample",
+    "tablock",
+    "textsize",
+    "throw",
+    "tinyint",
+    "top",
+    "tran",
+    "transaction",
+    "trigger",
+    "truncate",
+    "try",
+    "try_convert",
+    "tsequal",
+    "uniqueidentifier",
+    "unpivot",
+    "updatetext",
+    "updlock",
+    "use",
+    "varbinary",
+    "waitfor",
+    "while",
+    "with",
+    "within",
+    "writetext",
+    "xact_abort",
+    "xml",
+];
+
+/// Se `word` é palavra-chave do PostgreSQL (sem diferenciar maiúsculas).
 pub fn is_keyword(word: &str) -> bool {
+    is_keyword_in(word, Dialect::Postgres)
+}
+
+/// Se `word` é palavra-chave do dialeto (sem diferenciar maiúsculas).
+pub fn is_keyword_in(word: &str, dialect: Dialect) -> bool {
     if word.len() > 24 || !word.is_ascii() {
         return false;
     }
@@ -371,6 +537,7 @@ pub fn is_keyword(word: &str) -> bool {
     lower.make_ascii_lowercase();
     let lower = std::str::from_utf8(lower).expect("ascii");
     KEYWORDS.binary_search(&lower).is_ok()
+        || dialect == Dialect::TSql && TSQL_KEYWORDS.binary_search(&lower).is_ok()
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -383,10 +550,20 @@ fn is_ident_char(c: char) -> bool {
 
 const OPERATOR_CHARS: &str = "+-*/<>=~!@#%^&|`?:";
 
-/// Separa `text` em tokens. Os tokens cobrem o texto inteiro, em ordem.
+/// Separa `text` (PostgreSQL) em tokens. Os tokens cobrem o texto inteiro,
+/// em ordem.
 pub fn tokenize(text: &str) -> Vec<Token> {
+    tokenize_in(text, Dialect::Postgres)
+}
+
+/// [`tokenize`] no dialeto `dialect`.
+pub fn tokenize_in(text: &str, dialect: Dialect) -> Vec<Token> {
     let mut tokens = Vec::new();
-    let mut lexer = Lexer { text, pos: 0 };
+    let mut lexer = Lexer {
+        text,
+        pos: 0,
+        dialect,
+    };
     while lexer.pos < text.len() {
         let start = lexer.pos;
         let kind = lexer.next_kind();
@@ -432,6 +609,18 @@ pub fn statements(text: &str) -> Vec<Range<usize>> {
 /// fim (ou até o fim da linha, numa tag `$tag$` sem fechamento), então reler
 /// a partir da linha anterior basta.
 pub fn retokenize(text: &str, tokens: &mut Vec<Token>, at: usize, removed: usize, inserted: usize) {
+    retokenize_in(text, tokens, at, removed, inserted, Dialect::Postgres);
+}
+
+/// [`retokenize`] no dialeto `dialect` (o mesmo dos `tokens`).
+pub fn retokenize_in(
+    text: &str,
+    tokens: &mut Vec<Token>,
+    at: usize,
+    removed: usize,
+    inserted: usize,
+    dialect: Dialect,
+) {
     let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
     let back = line_start.saturating_sub(8);
     let first = tokens.partition_point(|t| t.range.end <= back);
@@ -443,7 +632,11 @@ pub fn retokenize(text: &str, tokens: &mut Vec<Token>, at: usize, removed: usize
     let old_edit_end = at + removed;
     let shift = |p: usize| p + removed - inserted; // posição nova -> antiga
     let mut fresh = Vec::new();
-    let mut lexer = Lexer { text, pos: restart };
+    let mut lexer = Lexer {
+        text,
+        pos: restart,
+        dialect,
+    };
     let mut k = first;
     let mut synced = false;
     while lexer.pos < text.len() {
@@ -479,6 +672,7 @@ pub fn retokenize(text: &str, tokens: &mut Vec<Token>, at: usize, removed: usize
 struct Lexer<'a> {
     text: &'a str,
     pos: usize,
+    dialect: Dialect,
 }
 
 impl Lexer<'_> {
@@ -511,6 +705,11 @@ impl Lexer<'_> {
 
     fn next_kind(&mut self) -> TokenKind {
         let c = self.peek().expect("not at end");
+        if self.dialect == Dialect::TSql
+            && let Some(kind) = self.tsql_kind(c)
+        {
+            return kind;
+        }
         match c {
             c if c.is_whitespace() => {
                 self.eat_while(char::is_whitespace);
@@ -552,7 +751,7 @@ impl Lexer<'_> {
             c if is_ident_start(c) => {
                 let start = self.pos;
                 self.eat_while(is_ident_char);
-                if is_keyword(&self.text[start..self.pos]) {
+                if is_keyword_in(&self.text[start..self.pos], self.dialect) {
                     TokenKind::Keyword
                 } else {
                     TokenKind::Identifier
@@ -580,6 +779,45 @@ impl Lexer<'_> {
                 TokenKind::Other
             }
         }
+    }
+
+    /// O que o T-SQL lê diferente: `[nome]`, `N'texto'` (sem `\` de
+    /// escape), `@variavel`, `#temporaria`, e `$` sem corpo `$$`.
+    fn tsql_kind(&mut self, c: char) -> Option<TokenKind> {
+        let ident = |c: Option<char>| c.is_some_and(|c| is_ident_char(c) || c == '@' || c == '#');
+        Some(match c {
+            '[' => {
+                self.bump();
+                self.quoted(']', false);
+                TokenKind::QuotedIdentifier
+            }
+            'n' | 'N' if self.peek2() == Some('\'') => {
+                self.bump();
+                self.bump();
+                self.quoted('\'', false);
+                TokenKind::String
+            }
+            // Sem o `E'...'` do PostgreSQL: `e` é só uma letra.
+            'e' | 'E' if self.peek2() == Some('\'') => {
+                self.bump();
+                TokenKind::Identifier
+            }
+            '@' if ident(self.peek2()) => {
+                self.bump();
+                self.eat_while(|c| is_ident_char(c) || c == '@');
+                TokenKind::Parameter
+            }
+            '#' if ident(self.peek2()) => {
+                self.bump();
+                self.eat_while(|c| is_ident_char(c) || c == '#');
+                TokenKind::Identifier
+            }
+            '$' => {
+                self.bump();
+                TokenKind::Other
+            }
+            _ => return None,
+        })
     }
 
     fn block_comment(&mut self) {
@@ -700,6 +938,71 @@ mod tests {
             .filter(|t| t.kind != Whitespace)
             .map(|t| (t.kind, &text[t.range]))
             .collect()
+    }
+
+    fn tsql(text: &str) -> Vec<(TokenKind, &str)> {
+        tokenize_in(text, Dialect::TSql)
+            .into_iter()
+            .filter(|t| t.kind != Whitespace)
+            .map(|t| (t.kind, &text[t.range]))
+            .collect()
+    }
+
+    #[test]
+    fn tsql_brackets_unicode_strings_variables_and_temp_tables() {
+        assert_eq!(
+            tsql("SELECT TOP (5) [nome do]]x], N'd''água' FROM #t WHERE @@ROWCOUNT > @n"),
+            [
+                (Keyword, "SELECT"),
+                (Keyword, "TOP"),
+                (Punctuation, "("),
+                (Number, "5"),
+                (Punctuation, ")"),
+                (QuotedIdentifier, "[nome do]]x]"),
+                (Punctuation, ","),
+                (String, "N'd''água'"),
+                (Keyword, "FROM"),
+                (Identifier, "#t"),
+                (Keyword, "WHERE"),
+                (Parameter, "@@ROWCOUNT"),
+                (Operator, ">"),
+                (Parameter, "@n"),
+            ]
+        );
+        // Sem escape com \ nem corpo $$; GO, PRINT e NVARCHAR são palavras.
+        assert_eq!(
+            tsql(r"PRINT 'a\' GO $$"),
+            [
+                (Keyword, "PRINT"),
+                (String, r"'a\'"),
+                (Keyword, "GO"),
+                (Other, "$"),
+                (Other, "$"),
+            ]
+        );
+        assert!(is_keyword_in("nvarchar", Dialect::TSql));
+        assert!(!is_keyword("nvarchar"));
+        // No PostgreSQL, [ ] continua pontuação.
+        assert_eq!(kinds("a[1]")[1], (Punctuation, "["));
+    }
+
+    #[test]
+    fn tsql_keywords_are_sorted() {
+        assert!(TSQL_KEYWORDS.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn tsql_retokenize_matches_a_full_pass() {
+        let mut text = std::string::String::from("SELECT [a b], N'x' FROM t");
+        let mut tokens = tokenize_in(&text, Dialect::TSql);
+        // Fecha o colchete: o resto vira nome.
+        text.insert_str(7, "[c] + ");
+        retokenize_in(&text, &mut tokens, 7, 0, 6, Dialect::TSql);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::TSql));
+        text.insert(text.len(), '[');
+        let n = text.len() - 1;
+        retokenize_in(&text, &mut tokens, n, 0, 1, Dialect::TSql);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::TSql));
     }
 
     #[test]

@@ -61,6 +61,20 @@ struct GoTo {
 }
 
 impl EditorState {
+    /// Muda o dialeto do texto (o do servidor da janela); refaz os tokens
+    /// se mudou.
+    pub fn set_dialect(&mut self, dialect: lexer::Dialect) {
+        if self.buffer.dialect != dialect {
+            self.buffer.dialect = dialect;
+            self.buffer.invalidate();
+        }
+    }
+
+    /// Dialeto do texto.
+    pub fn dialect(&self) -> lexer::Dialect {
+        self.buffer.dialect
+    }
+
     /// Abre (ou foca) a barra de busca, com o texto selecionado como busca.
     pub fn open_find(&mut self, selected: Option<String>) {
         let find = self.find.get_or_insert_with(Find::default);
