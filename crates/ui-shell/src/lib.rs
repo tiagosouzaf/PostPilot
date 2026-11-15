@@ -408,10 +408,10 @@ impl ShellApp {
     /// `connections.json`).
     pub fn with_recent_connections(mut self, recent: RecentConnections) -> Self {
         self.recent = recent;
-        if let Some(dialog) = &mut self.connect_dialog {
-            if let Some(last) = self.recent.list().first() {
-                dialog.fill(&last.clone());
-            }
+        if let Some(dialog) = &mut self.connect_dialog
+            && let Some(last) = self.recent.list().first()
+        {
+            dialog.fill(&last.clone());
         }
         self
     }
@@ -482,8 +482,9 @@ impl ShellApp {
                 self.explorer.connect(connected.metadata.clone());
                 self.workspace.open(Panel::ObjectExplorer);
                 self.output.push(trf!(
-                    "Connected to {name} (PostgreSQL {version}) as {user}.",
+                    "Connected to {name} ({engine} {version}) as {user}.",
                     name = name,
+                    engine = connected.settings.engine.label(),
                     version = connected.server_version,
                     user = connected.settings.user
                 ));

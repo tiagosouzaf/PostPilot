@@ -797,10 +797,10 @@ impl SchemaCompare {
                         .hint_text(trf!("File (.{extension})", extension = snapshot::EXTENSION))
                         .desired_width(420.0),
                 );
-                if ui.button(tr("Browse...")).clicked() {
-                    if let Some(path) = dialogs.open_path() {
-                        side.file = path.display().to_string();
-                    }
+                if ui.button(tr("Browse...")).clicked()
+                    && let Some(path) = dialogs.open_path()
+                {
+                    side.file = path.display().to_string();
                 }
             }
         }

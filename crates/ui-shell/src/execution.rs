@@ -661,7 +661,12 @@ impl Execution {
                 }
             }
             QueryEvent::Notice(n) => self.messages.push(Message {
-                text: format!("{}: {}", n.severity, describe(&n)),
+                // Sem nível (o PRINT do SQL Server): só o texto, como no SSMS.
+                text: if n.severity.is_empty() {
+                    describe(&n)
+                } else {
+                    format!("{}: {}", n.severity, describe(&n))
+                },
                 kind: MessageKind::Notice,
                 position: None,
             }),
