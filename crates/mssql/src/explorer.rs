@@ -381,6 +381,7 @@ impl MssqlExplorer {
             return Ok(format!("DROP {what} {name}\nGO\n"));
         }
         match ty.as_str() {
+            "U" => self.create_table(db, obj, &name),
             "V" | "P" | "FN" | "IF" | "TF" | "TR" => {
                 let def = self
                     .rows(&format!(
@@ -403,6 +404,197 @@ impl MssqlExplorer {
             }
             _ => Err(not_yet()),
         }
+    }
+
+    /// `CREATE TABLE` como o SSMS gera: colunas, PRIMARY KEY e UNIQUE no
+    /// corpo; DEFAULT, FOREIGN KEY e CHECK em `ALTER TABLE`; depois os
+    /// índices.
+    fn create_table(&self, db: &str, obj: i64, name: &str) -> Result<String, MetadataError> {
+        let d = bracket(db);
+        let text = |r: &[Option<String>], i: usize| r.get(i).cloned().flatten().unwrap_or_default();
+        let columns = self.rows(&format!(
+            "SELECT c.name, t.name, t.is_user_defined, SCHEMA_NAME(t.schema_id), \
+                    c.max_length, c.precision, c.scale, c.is_nullable, \
+                    CAST(ic.seed_value AS varchar(40)), CAST(ic.increment_value AS varchar(40)), \
+                    cc.definition, cc.is_persisted, \
+                    dc.name, dc.definition, dc.is_system_named \
+               FROM {d}.sys.columns c \
+               JOIN {d}.sys.types t ON t.user_type_id = c.user_type_id \
+               LEFT JOIN {d}.sys.identity_columns ic ON ic.object_id = c.object_id \
+                                                   AND ic.column_id = c.column_id \
+               LEFT JOIN {d}.sys.computed_columns cc ON cc.object_id = c.object_id \
+                                                    AND cc.column_id = c.column_id \
+               LEFT JOIN {d}.sys.default_constraints dc ON dc.object_id = c.default_object_id \
+              WHERE c.object_id = {obj} ORDER BY c.column_id"
+        ))?;
+        let mut body: Vec<String> = columns
+            .iter()
+            .map(|r| {
+                let column = bracket(&text(r, 0));
+                if let Some(def) = r.get(10).cloned().flatten() {
+                    let persisted = if text(r, 11) == "1" { " PERSISTED" } else { "" };
+                    return format!("\t{column}  AS {def}{persisted}");
+                }
+                let ty = sql_type(
+                    &text(r, 1),
+                    text(r, 2) == "1",
+                    &text(r, 3),
+                    text(r, 4).parse().unwrap_or(0),
+                    text(r, 5).parse().unwrap_or(0),
+                    text(r, 6).parse().unwrap_or(0),
+                );
+                let identity = match (r.get(8).cloned().flatten(), r.get(9).cloned().flatten()) {
+                    (Some(seed), Some(step)) => format!(" IDENTITY({seed},{step})"),
+                    _ => String::new(),
+                };
+                let null = if text(r, 7) == "1" {
+                    "NULL"
+                } else {
+                    "NOT NULL"
+                };
+                format!("\t{column} {ty}{identity} {null}")
+            })
+            .collect();
+        // PRIMARY KEY e UNIQUE.
+        let keys = self.rows(&format!(
+            "SELECT k.name, k.type, i.type_desc, \
+                    STRING_AGG(QUOTENAME(c.name) + CASE ic.is_descending_key \
+                               WHEN 1 THEN ' DESC' ELSE ' ASC' END, ',') \
+                      WITHIN GROUP (ORDER BY ic.key_ordinal) \
+               FROM {d}.sys.key_constraints k \
+               JOIN {d}.sys.indexes i ON i.object_id = k.parent_object_id \
+                                     AND i.index_id = k.unique_index_id \
+               JOIN {d}.sys.index_columns ic ON ic.object_id = i.object_id \
+                                            AND ic.index_id = i.index_id AND ic.key_ordinal > 0 \
+               JOIN {d}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+              WHERE k.parent_object_id = {obj} \
+              GROUP BY k.name, k.type, i.type_desc \
+              ORDER BY CASE k.type WHEN 'PK' THEN 0 ELSE 1 END, k.name"
+        ))?;
+        for k in &keys {
+            let what = if text(k, 1) == "PK" {
+                "PRIMARY KEY"
+            } else {
+                "UNIQUE"
+            };
+            let cols = text(k, 3).replace(',', ",\n\t");
+            body.push(format!(
+                " CONSTRAINT {} {what} {}\n(\n\t{cols}\n)",
+                bracket(&text(k, 0)),
+                text(k, 2)
+            ));
+        }
+        let mut out = format!(
+            "SET ANSI_NULLS ON\nGO\nSET QUOTED_IDENTIFIER ON\nGO\nCREATE TABLE {name}(\n{}\n)\nGO\n",
+            body.join(",\n")
+        );
+        // Índices que não são de constraint.
+        for r in self.rows(&format!(
+            "SELECT i.name, i.is_unique, i.type_desc, i.filter_definition, \
+                    STRING_AGG(CASE WHEN ic.is_included_column = 0 THEN QUOTENAME(c.name) \
+                               + CASE ic.is_descending_key WHEN 1 THEN ' DESC' ELSE ' ASC' END \
+                               END, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal), \
+                    STRING_AGG(CASE WHEN ic.is_included_column = 1 THEN QUOTENAME(c.name) END, ', ') \
+               FROM {d}.sys.indexes i \
+               JOIN {d}.sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+               JOIN {d}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+              WHERE i.object_id = {obj} AND i.type IN (1, 2) AND i.is_primary_key = 0 \
+                AND i.is_unique_constraint = 0 AND i.is_hypothetical = 0 \
+              GROUP BY i.name, i.is_unique, i.type_desc, i.filter_definition \
+              ORDER BY i.name"
+        ))? {
+            let unique = if text(&r, 1) == "1" { "UNIQUE " } else { "" };
+            let include = r
+                .get(5)
+                .cloned()
+                .flatten()
+                .map(|c| format!("\nINCLUDE({c})"))
+                .unwrap_or_default();
+            let filter = r
+                .get(3)
+                .cloned()
+                .flatten()
+                .map(|f| format!("\nWHERE {f}"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "CREATE {unique}{} INDEX {} ON {name}\n(\n\t{}\n){include}{filter}\nGO\n",
+                text(&r, 2),
+                bracket(&text(&r, 0)),
+                text(&r, 4).replace(", ", ",\n\t")
+            ));
+        }
+        // DEFAULT.
+        for r in &columns {
+            if let Some(def) = r.get(13).cloned().flatten() {
+                let constraint = if text(r, 14) == "1" {
+                    String::new()
+                } else {
+                    format!(" CONSTRAINT {}", bracket(&text(r, 12)))
+                };
+                out.push_str(&format!(
+                    "ALTER TABLE {name} ADD{constraint} DEFAULT {def} FOR {}\nGO\n",
+                    bracket(&text(r, 0))
+                ));
+            }
+        }
+        // FOREIGN KEY.
+        for r in self.rows(&format!(
+            "SELECT f.name, f.is_system_named, \
+                    STRING_AGG(QUOTENAME(pc.name), ', ') WITHIN GROUP (ORDER BY fc.constraint_column_id), \
+                    QUOTENAME(SCHEMA_NAME(rt.schema_id)) + '.' + QUOTENAME(rt.name), \
+                    STRING_AGG(QUOTENAME(rc.name), ', ') WITHIN GROUP (ORDER BY fc.constraint_column_id), \
+                    f.delete_referential_action_desc, f.update_referential_action_desc, \
+                    f.is_not_trusted, f.is_disabled \
+               FROM {d}.sys.foreign_keys f \
+               JOIN {d}.sys.foreign_key_columns fc ON fc.constraint_object_id = f.object_id \
+               JOIN {d}.sys.columns pc ON pc.object_id = fc.parent_object_id \
+                                      AND pc.column_id = fc.parent_column_id \
+               JOIN {d}.sys.columns rc ON rc.object_id = fc.referenced_object_id \
+                                      AND rc.column_id = fc.referenced_column_id \
+               JOIN {d}.sys.tables rt ON rt.object_id = f.referenced_object_id \
+              WHERE f.parent_object_id = {obj} \
+              GROUP BY f.name, f.is_system_named, rt.schema_id, rt.name, \
+                       f.delete_referential_action_desc, f.update_referential_action_desc, \
+                       f.is_not_trusted, f.is_disabled \
+              ORDER BY f.name"
+        ))? {
+            let constraint = if text(&r, 1) == "1" {
+                String::new()
+            } else {
+                format!(" CONSTRAINT {}", bracket(&text(&r, 0)))
+            };
+            let check = if text(&r, 7) == "1" { "NOCHECK" } else { "CHECK" };
+            let action = |i: usize, verb: &str| match text(&r, i).as_str() {
+                "NO_ACTION" | "" => String::new(),
+                a => format!("\nON {verb} {}", a.replace('_', " ")),
+            };
+            out.push_str(&format!(
+                "ALTER TABLE {name} WITH {check} ADD{constraint} FOREIGN KEY({})\n\
+                 REFERENCES {} ({}){}{}\nGO\n",
+                text(&r, 2),
+                text(&r, 3),
+                text(&r, 4),
+                action(5, "DELETE"),
+                action(6, "UPDATE")
+            ));
+        }
+        // CHECK.
+        for r in self.rows(&format!(
+            "SELECT name, is_system_named, definition, is_not_trusted FROM {d}.sys.check_constraints \
+              WHERE parent_object_id = {obj} ORDER BY name"
+        ))? {
+            let constraint = if text(&r, 1) == "1" {
+                String::new()
+            } else {
+                format!(" CONSTRAINT {}", bracket(&text(&r, 0)))
+            };
+            let check = if text(&r, 3) == "1" { "NOCHECK" } else { "CHECK" };
+            out.push_str(&format!(
+                "ALTER TABLE {name} WITH {check} ADD{constraint} CHECK ({})\nGO\n",
+                text(&r, 2)
+            ));
+        }
+        Ok(out)
     }
 
     fn properties_of(&self, sql: &str) -> Result<Vec<Property>, MetadataError> {
@@ -454,6 +646,31 @@ fn enc(db: &str) -> String {
 
 fn dec(text: &str) -> String {
     text.replace("%2F", "/").replace("%25", "%")
+}
+
+/// Tipo de uma coluna no `CREATE TABLE`, como o SSMS escreve:
+/// `[nvarchar](60)`, `[decimal](10, 2)`, `[dbo].[Cpf]` (tipo do usuário).
+fn sql_type(
+    name: &str,
+    user_defined: bool,
+    schema: &str,
+    length: i64,
+    precision: i64,
+    scale: i64,
+) -> String {
+    if user_defined {
+        return format!("{}.{}", bracket(schema), bracket(name));
+    }
+    let base = bracket(name);
+    match name {
+        "varchar" | "char" | "varbinary" | "binary" if length == -1 => format!("{base}(max)"),
+        "varchar" | "char" | "varbinary" | "binary" => format!("{base}({length})"),
+        "nvarchar" | "nchar" if length == -1 => format!("{base}(max)"),
+        "nvarchar" | "nchar" => format!("{base}({})", length / 2),
+        "decimal" | "numeric" => format!("{base}({precision}, {scale})"),
+        "datetime2" | "time" | "datetimeoffset" => format!("{base}({scale})"),
+        _ => base,
+    }
 }
 
 /// Rótulo da coluna como no SSMS: `id (PK, int, not null)`.
@@ -668,6 +885,28 @@ mod tests {
             c(&["4", "valor", "decimal", "9", "10", "2", "0", "0", "0", "1"]),
             "valor (FK, decimal(10,2), not null)"
         );
+    }
+
+    #[test]
+    fn create_table_types_are_written_like_ssms() {
+        assert_eq!(
+            sql_type("nvarchar", false, "sys", 120, 0, 0),
+            "[nvarchar](60)"
+        );
+        assert_eq!(
+            sql_type("varbinary", false, "sys", -1, 0, 0),
+            "[varbinary](max)"
+        );
+        assert_eq!(
+            sql_type("decimal", false, "sys", 9, 10, 2),
+            "[decimal](10, 2)"
+        );
+        assert_eq!(
+            sql_type("datetime2", false, "sys", 8, 27, 0),
+            "[datetime2](0)"
+        );
+        assert_eq!(sql_type("int", false, "sys", 4, 10, 0), "[int]");
+        assert_eq!(sql_type("Cpf", true, "dbo", 11, 0, 0), "[dbo].[Cpf]");
     }
 
     #[test]

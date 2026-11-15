@@ -467,6 +467,44 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
         meta.script(&pedido.id, ScriptAction::Drop).unwrap(),
         "DROP TABLE [dbo].[pedido]\nGO\n"
     );
+    // Script as CREATE: o script recria a tabela igual (rodar, gerar de
+    // novo e comparar).
+    let create = meta.script(&pedido.id, ScriptAction::Create).unwrap();
+    for part in [
+        "CREATE TABLE [dbo].[pedido](",
+        "\t[id] [int] IDENTITY(1,1) NOT NULL,",
+        "\t[total] [decimal](10, 2) NULL,",
+        "\t[dobro]  AS ([total]*(2))",
+        "PRIMARY KEY CLUSTERED",
+        "ADD DEFAULT ((0)) FOR [total]",
+        "FOREIGN KEY([cliente_id])\nREFERENCES [dbo].[cliente] ([id])",
+        "CHECK (([total]>=(0)))",
+        "CREATE NONCLUSTERED INDEX [ix_pedido_cliente] ON [dbo].[pedido]",
+    ] {
+        assert!(create.contains(part), "{part}\n---\n{create}");
+    }
+    let again = run(
+        q.as_ref(),
+        &format!("USE pp_explorer\nGO\nDROP TABLE dbo.pedido\nGO\n{create}USE tempdb"),
+    );
+    assert!(
+        !again.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{again:?}"
+    );
+    let tables = child(meta, &db.id, "Tables");
+    let pedido = child(meta, &tables.id, "dbo.pedido");
+    assert_eq!(
+        meta.script(&pedido.id, ScriptAction::Create).unwrap(),
+        create
+    );
+
+    let cliente = child(meta, &tables.id, "dbo.cliente");
+    let script = meta.script(&cliente.id, ScriptAction::Create).unwrap();
+    assert!(
+        script.contains("UNIQUE NONCLUSTERED\n(\n\t[nome] ASC\n)"),
+        "{script}"
+    );
+
     let props = meta.properties(&pedido.id).unwrap();
     assert!(
         props.iter().any(|p| p.name == "Schema" && p.value == "dbo"),

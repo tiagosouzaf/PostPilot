@@ -1,5 +1,8 @@
 # SQL Server no PostPilot
 
+Versões: SQL Server 2017 ou mais novo (e Azure SQL). O Object Explorer usa
+`STRING_AGG`, que chegou no 2017.
+
 O PostPilot trabalha também com o Microsoft SQL Server (Fase S do plano;
 decisões em [ADR 0004](adr/0004-sql-server.md)). A paridade com o PostgreSQL
 chega marco a marco; o que ainda não existe para o SQL Server avisa na status
@@ -12,7 +15,8 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | Conectar (autenticação SQL, TLS, instância nomeada `servidor\INSTANCIA`, redirecionamento do Azure) | S1.2 |
 | Janela de consulta: `GO` (com repetição `GO 5`), vários resultados, `(n rows affected)`, `PRINT` e `RAISERROR` na aba Messages, erros com a linha do script, cancelar | S1.2 |
 | Object Explorer como o do SSMS: bancos (os do sistema em "System Databases"), Tables, Views, Programmability (procedures, funções, tipos, sequences); em cada tabela, Columns (`id (PK, int, not null)`), Keys, Constraints, Triggers e Indexes; propriedades (F4) | S2.1 |
-| Select Top 1000 Rows, Edit Top 200 Rows, Script as DROP, Script as CREATE de views, procedures, funções e triggers | S2.1 (CREATE de tabela no S2.2) |
+| Select Top 1000 Rows, Edit Top 200 Rows, Script as DROP, Script as CREATE de views, procedures, funções e triggers | S2.1 |
+| Script as CREATE de tabela como o SSMS: colunas (identidade, calculadas), PRIMARY KEY e UNIQUE, índices (com INCLUDE e filtro), DEFAULT, FOREIGN KEY e CHECK | S2.2 |
 | "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
 | Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
 | Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
