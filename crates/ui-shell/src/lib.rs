@@ -39,6 +39,7 @@ pub mod schema_compare;
 pub mod secrets;
 pub mod security;
 pub mod servers;
+pub mod system_theme;
 pub mod theme;
 pub mod update;
 
@@ -78,6 +79,8 @@ pub struct ShellApp {
     /// Preferências em uso e o arquivo delas (sem arquivo nos testes).
     preferences: preferences::Preferences,
     preferences_store: Option<preferences::PreferencesStore>,
+    /// Tema claro/escuro do sistema (para "Same as system").
+    system_theme: system_theme::SystemTheme,
     /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
     renderer: Option<String>,
     /// Versão nova: checagem, janela "Check for Updates" e instalação.
@@ -291,6 +294,7 @@ impl Default for ShellApp {
             about_open: false,
             options: None,
             preferences: preferences::Preferences::default(),
+            system_theme: Default::default(),
             preferences_store: None,
             renderer: None,
             updater: update::Updater::default(),
@@ -712,8 +716,9 @@ impl ShellApp {
             options::Action::Apply(prefs) => {
                 self.options = None;
                 prefs.apply();
-                if prefs.theme() != self.theme {
-                    self.set_theme(ctx, prefs.theme());
+                let theme = prefs.theme(self.system_theme.current());
+                if theme != self.theme {
+                    self.set_theme(ctx, theme);
                 }
                 self.save_preferences(prefs);
             }
@@ -738,8 +743,30 @@ impl ShellApp {
     fn choose_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         self.set_theme(ctx, theme);
         let mut prefs = self.preferences.clone();
-        prefs.theme = preferences::ThemeSetting(Some(theme));
+        prefs.theme = preferences::ThemeSetting::Fixed(theme);
         self.save_preferences(prefs);
+    }
+
+    /// Passa a seguir o tema claro/escuro do sistema quando a preferência é
+    /// "Same as system" (o padrão), já aplicando o tema certo. No Omarchy, a
+    /// troca de tema chega pelo portal do freedesktop.
+    pub fn with_system_theme(mut self, ctx: &egui::Context) -> Self {
+        self.system_theme = system_theme::SystemTheme::start(ctx);
+        let theme = self.preferences.theme(self.system_theme.current());
+        self.set_theme(ctx, theme);
+        self
+    }
+
+    /// Segue a troca de tema do sistema, se a preferência mandar.
+    fn follow_system_theme(&mut self, ctx: &egui::Context) {
+        if self.system_theme.poll(ctx)
+            && self.preferences.theme == preferences::ThemeSetting::System
+        {
+            let theme = self.preferences.theme(self.system_theme.current());
+            if theme != self.theme {
+                self.set_theme(ctx, theme);
+            }
+        }
     }
 
     /// Liga a checagem de versão nova (e já checa, se estiver na hora).
@@ -1507,7 +1534,9 @@ impl ShellApp {
             CommandId::About => self.about_open = true,
             CommandId::JsonGuide => self.json_guide.open = true,
             CommandId::Options => {
-                self.options = Some(options::OptionsDialog::new(&self.preferences));
+                let mut dialog = options::OptionsDialog::new(&self.preferences);
+                dialog.system_theme = self.system_theme.current();
+                self.options = Some(dialog);
             }
             CommandId::CheckForUpdates => self.updater.check_now(ctx),
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
@@ -2786,6 +2815,7 @@ impl ShellApp {
         self.restore_window(&ctx);
         self.compare_window(&ctx);
         self.connect_window(&ctx);
+        self.follow_system_theme(&ctx);
         self.options_window(&ctx);
 
         if self.about_open {

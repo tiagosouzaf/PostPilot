@@ -30,6 +30,9 @@ base64.workspace = true
 zeroize.workspace = true
 pgstudio-updater.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
 [dev-dependencies]
 egui_kittest.workspace = true
 pgstudio-pg-client.workspace = true

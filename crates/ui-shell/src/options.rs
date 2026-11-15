@@ -53,6 +53,8 @@ pub struct OptionsDialog {
     pub draft: Preferences,
     /// Página aberta.
     pub page: Page,
+    /// Tema do sistema agora, para mostrar em "Same as system".
+    pub system_theme: Option<Theme>,
 }
 
 impl OptionsDialog {
@@ -61,6 +63,7 @@ impl OptionsDialog {
         OptionsDialog {
             draft: current.clone(),
             page: Page::International,
+            system_theme: None,
         }
     }
 
@@ -135,20 +138,25 @@ impl OptionsDialog {
     }
 
     fn general(&mut self, ui: &mut egui::Ui) {
-        let current = self.draft.theme();
+        let system = self.system_theme;
+        let label = |s: ThemeSetting| match s {
+            ThemeSetting::System => format!(
+                "{} ({})",
+                tr("Same as system"),
+                tr(s.resolve(system).label())
+            ),
+            ThemeSetting::Fixed(t) => tr(t.label()).to_string(),
+        };
         ui.horizontal(|ui| {
             ui.label(tr("Color theme:"));
             egui::ComboBox::from_id_salt("options_theme")
                 .width(220.0)
-                .selected_text(current.label())
+                .selected_text(label(self.draft.theme))
                 .show_ui(ui, |ui| {
-                    for theme in Theme::ALL {
-                        if ui
-                            .selectable_label(current == theme, theme.label())
-                            .clicked()
-                        {
-                            self.draft.theme = ThemeSetting(Some(theme));
-                        }
+                    let choices = std::iter::once(ThemeSetting::System)
+                        .chain(Theme::ALL.into_iter().map(ThemeSetting::Fixed));
+                    for s in choices {
+                        ui.selectable_value(&mut self.draft.theme, s, label(s));
                     }
                 });
         });
