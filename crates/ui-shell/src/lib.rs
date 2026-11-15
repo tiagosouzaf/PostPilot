@@ -2585,7 +2585,15 @@ impl ShellApp {
                 return;
             }
             Event::Properties(node) => {
-                match provider.securable(&node) {
+                // No SQL Server, constraints, triggers e sequences dividem o
+                // id com procedures e funções, mas não têm esta janela.
+                use pgstudio_core::metadata::NodeKind;
+                let kind = self.explorer.node(&node).map(|n| n.kind);
+                let plain = matches!(kind, Some(NodeKind::Constraint | NodeKind::Trigger))
+                    || (kind == Some(NodeKind::Sequence)
+                        && self.connection.as_ref().map(|c| c.settings.engine)
+                            == Some(Engine::SqlServer));
+                match provider.securable(&node).filter(|_| !plain) {
                     Some(target) => self.open_security(ctx, target),
                     // Sem permissões: as propriedades ficam na janela F4.
                     None => self.workspace.open(Panel::Properties),

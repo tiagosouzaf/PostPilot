@@ -14,7 +14,9 @@ use pgstudio_core::metadata::{PrincipalKind, Securable};
 use pgstudio_core::query::{QueryEvent, QuerySession};
 
 use crate::security::{self, GrantTarget, Grants, RoleSpec, Rows};
-use crate::security_mssql::{self, PrincipalLists, PrincipalSpec};
+use crate::security_mssql::{
+    self, PermState, PermTarget, Permissions, PrincipalLists, PrincipalSpec,
+};
 
 /// Página da janela.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,15 @@ pub enum Content {
         listed: BTreeSet<String>,
         selected: Option<String>,
         roles: Vec<String>,
+    },
+    /// Permissões de um objeto do SQL Server (com DENY).
+    Permissions {
+        target: PermTarget,
+        before: Permissions,
+        edit: Permissions,
+        listed: BTreeSet<String>,
+        selected: Option<String>,
+        principals: Vec<String>,
     },
     /// Login, usuário ou role do SQL Server.
     Principal {
@@ -138,6 +149,9 @@ impl SecurityDialog {
             Securable::Principal { kind, name, .. } => {
                 security_mssql::principal_read_sql(*kind, name.as_deref())
             }
+            other if session.engine() == Engine::SqlServer => {
+                security_mssql::permissions_read_sql(other).unwrap_or_default()
+            }
             other => security::grants_read_sql(other).unwrap_or_default(),
         };
         read(&session, sql, tx.clone(), ctx);
@@ -206,6 +220,13 @@ impl SecurityDialog {
                     name = target.name
                 )
             }
+            Some(Content::Permissions { target, .. }) => {
+                trf!(
+                    "{kind} Properties - {name}",
+                    kind = target.kind,
+                    name = target.name
+                )
+            }
             Some(Content::Principal {
                 kind,
                 before: Some(b),
@@ -259,6 +280,12 @@ impl SecurityDialog {
                 edit,
                 ..
             }) => security::grant_sql(target, before, edit),
+            Some(Content::Permissions {
+                target,
+                before,
+                edit,
+                ..
+            }) => security_mssql::permission_sql(target, before, edit),
             Some(Content::Principal {
                 kind, before, edit, ..
             }) => security_mssql::principal_sql(*kind, before.as_ref(), edit, reveal_password),
@@ -423,6 +450,19 @@ impl SecurityDialog {
                     edit,
                     confirm_password: String::new(),
                     roles,
+                })
+            }
+            _ if self.session.engine() == Engine::SqlServer => {
+                let (target, before, principals) = security_mssql::parse_permissions(results)?;
+                let listed: BTreeSet<String> = before.keys().map(|(w, _)| w.clone()).collect();
+                let selected = listed.iter().next().cloned();
+                Ok(Content::Permissions {
+                    target,
+                    edit: before.clone(),
+                    before,
+                    listed,
+                    selected,
+                    principals,
                 })
             }
             _ => {
@@ -631,6 +671,17 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
         }
         (
             Page::Permissions,
+            Content::Permissions {
+                target,
+                edit,
+                listed,
+                selected,
+                principals,
+                ..
+            },
+        ) => permissions_page(ui, target, edit, listed, selected, principals),
+        (
+            Page::Permissions,
             Content::Grants {
                 target,
                 edit,
@@ -743,6 +794,138 @@ fn page(ui: &mut egui::Ui, page: Page, content: &mut Content) {
         }
         _ => {}
     }
+}
+
+/// Página Permissions de um objeto do SQL Server: quem, e para cada
+/// permissão as caixas Grant, With Grant e Deny do SSMS.
+fn permissions_page(
+    ui: &mut egui::Ui,
+    target: &PermTarget,
+    edit: &mut Permissions,
+    listed: &mut BTreeSet<String>,
+    selected: &mut Option<String>,
+    principals: &[String],
+) {
+    ui.label(trf!(
+        "{kind}: {name}    Owner: {owner}",
+        kind = target.kind,
+        name = target.name,
+        owner = target.owner
+    ));
+    ui.add_space(4.0);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(180.0);
+            ui.strong(tr("Users or roles"));
+            egui::ScrollArea::vertical()
+                .id_salt("grantees")
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    for who in listed.iter() {
+                        if ui
+                            .selectable_label(selected.as_deref() == Some(who), who.as_str())
+                            .clicked()
+                        {
+                            *selected = Some(who.clone());
+                        }
+                    }
+                });
+            let mut add = None;
+            egui::ComboBox::from_id_salt("grantee_add")
+                .selected_text(tr("Add..."))
+                .width(170.0)
+                .show_ui(ui, |ui| {
+                    for r in principals.iter().filter(|r| !listed.contains(*r)) {
+                        if ui.selectable_label(false, r.as_str()).clicked() {
+                            add = Some(r.clone());
+                        }
+                    }
+                });
+            if let Some(r) = add {
+                listed.insert(r.clone());
+                *selected = Some(r);
+            }
+        });
+        ui.separator();
+        ui.vertical(|ui| {
+            let Some(who) = selected.clone() else {
+                ui.weak(tr("Select or add a user or role."));
+                return;
+            };
+            ui.strong(trf!("Permissions for {who}", who = who));
+            egui::ScrollArea::vertical()
+                .id_salt("permissions")
+                .max_height(280.0)
+                .show(ui, |ui| {
+                    egui::Grid::new("permissions")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing([18.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.strong(tr("Permission"));
+                            ui.strong(tr("Grant"));
+                            ui.strong(tr("With Grant"));
+                            ui.strong(tr("Deny"));
+                            ui.end_row();
+                            for p in &target.privileges {
+                                let key = (who.clone(), p.clone());
+                                let state = edit.get(&key).copied();
+                                let mut grant =
+                                    matches!(state, Some(PermState::Grant | PermState::WithGrant));
+                                let mut option = state == Some(PermState::WithGrant);
+                                let mut deny = state == Some(PermState::Deny);
+                                ui.label(p.as_str());
+                                let boxed = |ui: &mut egui::Ui, on: &mut bool, name: String| {
+                                    let value = *on;
+                                    let r = ui.add(egui::Checkbox::without_text(on));
+                                    r.widget_info(|| {
+                                        egui::WidgetInfo::selected(
+                                            egui::WidgetType::Checkbox,
+                                            true,
+                                            value,
+                                            name.clone(),
+                                        )
+                                    });
+                                    r.changed()
+                                };
+                                let g =
+                                    boxed(ui, &mut grant, trf!("Grant {privilege}", privilege = p));
+                                let w = boxed(
+                                    ui,
+                                    &mut option,
+                                    trf!("With Grant {privilege}", privilege = p),
+                                );
+                                let d =
+                                    boxed(ui, &mut deny, trf!("Deny {privilege}", privilege = p));
+                                // "With Grant" implica "Grant"; "Deny" tira os dois.
+                                let new = if d {
+                                    Some(deny.then_some(PermState::Deny))
+                                } else if w {
+                                    Some(Some(if option {
+                                        PermState::WithGrant
+                                    } else {
+                                        PermState::Grant
+                                    }))
+                                } else if g {
+                                    Some(grant.then_some(PermState::Grant))
+                                } else {
+                                    None
+                                };
+                                match new {
+                                    Some(Some(state)) => {
+                                        edit.insert(key, state);
+                                    }
+                                    Some(None) => {
+                                        edit.remove(&key);
+                                    }
+                                    None => {}
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
+        });
+    });
 }
 
 /// Caixa de escolha de um nome entre `options`; `empty` é o texto de

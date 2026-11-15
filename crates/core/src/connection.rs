@@ -103,6 +103,7 @@ impl Engine {
                     | Feature::IntelliSense
                     | Feature::ExecutionPlan
                     | Feature::ActivityMonitor
+                    | Feature::Security
             ),
         }
     }
@@ -545,6 +546,7 @@ mod tests {
         assert!(Engine::PostgreSql.supports(Feature::ActivityMonitor));
         assert!(Engine::SqlServer.supports(Feature::Query));
         assert!(Engine::SqlServer.supports(Feature::ActivityMonitor));
+        assert!(Engine::SqlServer.supports(Feature::Security));
         assert!(!Engine::SqlServer.supports(Feature::Backup));
     }
 

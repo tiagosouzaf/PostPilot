@@ -468,7 +468,15 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
         meta.securable(&owner.id).unwrap().database(),
         Some("pp_explorer")
     );
-    assert_eq!(meta.securable(&pedido.id), None);
+    // As permissões da tabela e do banco.
+    assert!(matches!(
+        meta.securable(&pedido.id),
+        Some(Securable::Relation { ref database, .. }) if database == "pp_explorer"
+    ));
+    assert_eq!(
+        meta.securable(&db.id),
+        Some(Securable::Database("pp_explorer".into()))
+    );
 
     // O catálogo do IntelliSense.
     let cat = meta.catalog("pp_explorer").expect("catalog");

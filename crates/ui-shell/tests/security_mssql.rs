@@ -12,6 +12,7 @@ use pgstudio_core::connection::{ConnectionSettings, Engine, SslMode};
 use pgstudio_core::metadata::{PrincipalKind, Securable};
 use pgstudio_core::query::{QueryEvent, QueryService, QuerySession};
 use pgstudio_ui_shell::properties::{Content, Request, SecurityDialog};
+use pgstudio_ui_shell::security_mssql::PermState;
 
 fn service() -> Option<pgstudio_mssql::MssqlQueryService> {
     let Ok(host) = std::env::var("MSSQL_TEST_HOST") else {
@@ -307,5 +308,163 @@ fn logins_users_and_roles_reach_the_server() {
     value(
         &admin,
         &format!("DROP USER [{login}]; DROP ROLE [{role}]; DROP LOGIN [{renamed}]"),
+    );
+}
+
+#[test]
+fn object_and_database_permissions_reach_the_server() {
+    let Some(service) = service() else { return };
+    let ctx = egui::Context::default();
+    let admin = service.open("tempdb");
+    let id = std::process::id();
+    let user = format!("pp_perm_{id}");
+    let table = format!("pp_perm_t_{id}");
+    value(
+        &admin,
+        &format!(
+            "CREATE USER [{user}] WITHOUT LOGIN; CREATE TABLE dbo.[{table}] (id int); \
+             GRANT DELETE ON OBJECT::dbo.[{table}] TO [{user}]"
+        ),
+    );
+    let oid: u32 = value(&admin, &format!("SELECT OBJECT_ID('dbo.{table}')"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let key = |p: &str| (user.clone(), p.to_string());
+    // O que o usuário pode na tabela: SELECT, INSERT, UPDATE, DELETE.
+    let can = format!(
+        "EXECUTE AS USER = N'{user}'; \
+         SELECT CAST(HAS_PERMS_BY_NAME('dbo.{table}', 'OBJECT', 'SELECT') AS varchar(1)) + \
+                CAST(HAS_PERMS_BY_NAME('dbo.{table}', 'OBJECT', 'INSERT') AS varchar(1)) + \
+                CAST(HAS_PERMS_BY_NAME('dbo.{table}', 'OBJECT', 'UPDATE') AS varchar(1)) + \
+                CAST(HAS_PERMS_BY_NAME('dbo.{table}', 'OBJECT', 'DELETE') AS varchar(1)); \
+         REVERT"
+    );
+    assert_eq!(value(&admin, &can).as_deref(), Some("0001"));
+
+    let target = Securable::Relation {
+        database: "tempdb".into(),
+        oid,
+    };
+    let mut d = SecurityDialog::open(target.clone(), service.open("tempdb"), &ctx);
+    wait_loaded(&mut d);
+    assert_eq!(d.title(), format!("Table Properties - [dbo].[{table}]"));
+    let Some(Content::Permissions {
+        target: t,
+        edit,
+        listed,
+        principals,
+        ..
+    }) = d.content_mut()
+    else {
+        panic!("not permissions");
+    };
+    assert_eq!(t.owner, "dbo");
+    assert!(t.privileges.iter().any(|p| p == "SELECT"));
+    assert!(principals.contains(&user) && principals.iter().any(|p| p == "public"));
+    assert!(listed.contains(&user));
+    assert_eq!(edit.get(&key("DELETE")), Some(&PermState::Grant));
+    // SELECT com grant option, INSERT, UPDATE negado, DELETE revogado.
+    edit.insert(key("SELECT"), PermState::WithGrant);
+    edit.insert(key("INSERT"), PermState::Grant);
+    edit.insert(key("UPDATE"), PermState::Deny);
+    edit.remove(&key("DELETE"));
+    let log = apply(&mut d, &ctx).expect("grant");
+    assert!(
+        log.iter().any(|l| l.contains(&format!(
+            "GRANT SELECT ON OBJECT::[dbo].[{table}] TO [{user}] WITH GRANT OPTION"
+        ))),
+        "{log:?}"
+    );
+    assert_eq!(value(&admin, &can).as_deref(), Some("1100"));
+    let states = format!(
+        "SELECT STRING_AGG(p.permission_name + '=' + p.state, ',') \
+           WITHIN GROUP (ORDER BY p.permission_name) \
+         FROM sys.database_permissions p \
+         WHERE p.class = 1 AND p.major_id = {oid} \
+           AND p.grantee_principal_id = USER_ID(N'{user}')"
+    );
+    assert_eq!(
+        value(&admin, &states).as_deref(),
+        Some("INSERT=G,SELECT=W,UPDATE=D")
+    );
+
+    // Reabrir mostra os três estados; tirar o grant option e o DENY.
+    let mut d = SecurityDialog::open(target, service.open("tempdb"), &ctx);
+    wait_loaded(&mut d);
+    let Some(Content::Permissions { edit, .. }) = d.content_mut() else {
+        panic!("not permissions");
+    };
+    assert_eq!(edit.get(&key("SELECT")), Some(&PermState::WithGrant));
+    assert_eq!(edit.get(&key("UPDATE")), Some(&PermState::Deny));
+    edit.insert(key("SELECT"), PermState::Grant);
+    edit.insert(key("UPDATE"), PermState::Grant);
+    edit.remove(&key("INSERT"));
+    apply(&mut d, &ctx).expect("revoke");
+    assert_eq!(value(&admin, &states).as_deref(), Some("SELECT=G,UPDATE=G"));
+
+    // Permissões do banco: CREATE TABLE.
+    let mut d = SecurityDialog::open(
+        Securable::Database("tempdb".into()),
+        service.open("tempdb"),
+        &ctx,
+    );
+    wait_loaded(&mut d);
+    assert_eq!(d.title(), "Database Properties - tempdb");
+    let Some(Content::Permissions { edit, .. }) = d.content_mut() else {
+        panic!("not permissions");
+    };
+    edit.insert(key("CREATE TABLE"), PermState::Grant);
+    let log = apply(&mut d, &ctx).expect("database grant");
+    assert!(
+        log.iter()
+            .any(|l| l.contains(&format!("GRANT CREATE TABLE TO [{user}]"))),
+        "{log:?}"
+    );
+    assert_eq!(
+        value(
+            &admin,
+            &format!(
+                "SELECT p.state FROM sys.database_permissions p WHERE p.class = 0 \
+                 AND p.permission_name = 'CREATE TABLE' \
+                 AND p.grantee_principal_id = USER_ID(N'{user}')"
+            )
+        )
+        .as_deref()
+        .map(str::trim),
+        Some("G")
+    );
+
+    // Um objeto sem permissões próprias (uma constraint) é recusado.
+    value(
+        &admin,
+        &format!("ALTER TABLE dbo.[{table}] ADD CONSTRAINT [ck_{table}] CHECK (id > 0)"),
+    );
+    let ck: u32 = value(&admin, &format!("SELECT OBJECT_ID('dbo.ck_{table}')"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut d = SecurityDialog::open(
+        Securable::Function {
+            database: "tempdb".into(),
+            oid: ck,
+        },
+        service.open("tempdb"),
+        &ctx,
+    );
+    let start = Instant::now();
+    while d.is_loading() {
+        d.step();
+        assert!(start.elapsed() < Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        d.error(),
+        Some("This object has no permissions of its own.")
+    );
+
+    value(
+        &admin,
+        &format!("DROP TABLE dbo.[{table}]; DROP USER [{user}]"),
     );
 }
