@@ -125,7 +125,10 @@ pub const MENUS: &[Menu] = &[
             SEP,
             I(ActivityMonitor),
             SEP,
-            sub("Color Theme", &[I(ThemeLight), I(ThemeDark)]),
+            sub(
+                "Color Theme",
+                &[I(ThemeSystem), SEP, I(ThemeLight), I(ThemeDark)],
+            ),
             SEP,
             I(FullScreen),
         ],

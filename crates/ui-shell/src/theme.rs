@@ -5,8 +5,80 @@
 //! margem por conta própria. Os diálogos modais usam [`modal`] no lugar de
 //! `egui::Modal::new`, para terem a mesma margem interna e os mesmos cantos.
 
+use std::sync::RwLock;
+
 use eframe::egui::{self, Color32, CornerRadius, Margin, Shadow, Stroke, Vec2};
 use pgstudio_core::Theme;
+use pgstudio_sql_editor::Colors as EditorColors;
+
+/// Cores vindas do tema do sistema (hoje, do tema do Omarchy; veja
+/// [`crate::system_theme`]). Só o fundo e o texto são obrigatórios: o resto
+/// sai deles quando o tema não traz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemColors {
+    /// Fundo do tema.
+    pub background: Color32,
+    /// Texto do tema.
+    pub foreground: Color32,
+    /// Cor de destaque.
+    pub accent: Option<Color32>,
+    /// As 16 cores do terminal (`color0` a `color15`), na ordem ANSI.
+    pub ansi: [Option<Color32>; 16],
+}
+
+impl SystemColors {
+    /// Se o tema é escuro (fundo mais escuro que o texto).
+    pub fn theme(&self) -> Theme {
+        if luminance(self.background) < luminance(self.foreground) {
+            Theme::Dark
+        } else {
+            Theme::Light
+        }
+    }
+
+    fn accent(&self) -> Color32 {
+        self.accent
+            .or(self.ansi[4])
+            .unwrap_or_else(|| palette_of(self.theme()).accent)
+    }
+}
+
+/// Cores do sistema em uso, se houver. Com elas, [`palette`], [`visuals`] e
+/// [`editor_colors`] deixam de usar as paletas próprias do app.
+static SYSTEM_COLORS: RwLock<Option<SystemColors>> = RwLock::new(None);
+
+/// Passa a usar (ou deixa de usar, com `None`) as cores do sistema. Chame
+/// [`apply`] em seguida.
+pub fn set_system_colors(colors: Option<SystemColors>) {
+    if let Ok(mut current) = SYSTEM_COLORS.write() {
+        *current = colors;
+    }
+}
+
+/// Cores do sistema em uso.
+pub fn system_colors() -> Option<SystemColors> {
+    SYSTEM_COLORS.read().ok().and_then(|c| *c)
+}
+
+/// Luminância aproximada, de 0 a 255.
+fn luminance(c: Color32) -> u32 {
+    (u32::from(c.r()) * 299 + u32::from(c.g()) * 587 + u32::from(c.b()) * 114) / 1000
+}
+
+/// Mistura `a` com `b`: `t = 0` dá `a`, `t = 1` dá `b`.
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let ch = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Color32::from_rgb(ch(a.r(), b.r()), ch(a.g(), b.g()), ch(a.b(), b.b()))
+}
+
+/// Preto ou branco, o que contrastar mais com `c`.
+fn contrast(c: Color32) -> Color32 {
+    if luminance(c) > 150 {
+        Color32::from_rgb(0x12, 0x14, 0x18)
+    } else {
+        Color32::WHITE
+    }
+}
 
 /// Raio dos cantos de botões, campos e abas.
 pub const WIDGET_RADIUS: u8 = 5;
@@ -58,7 +130,90 @@ struct Base {
     shadow: Color32,
 }
 
+/// Deriva as cores de base a partir do fundo, do texto e do destaque do
+/// tema do sistema.
+fn base_from(c: &SystemColors) -> Base {
+    let (bg, fg) = (c.background, c.foreground);
+    let dark = c.theme() == Theme::Dark;
+    Base {
+        panel: bg,
+        window: mix(bg, fg, 0.05),
+        extreme: if dark {
+            mix(bg, Color32::BLACK, 0.22)
+        } else {
+            mix(bg, Color32::WHITE, 0.6)
+        },
+        faint: mix(bg, fg, 0.04),
+        widget: [mix(bg, fg, 0.10), mix(bg, fg, 0.17), mix(bg, fg, 0.24)],
+        border: mix(bg, fg, 0.13),
+        border_hover: mix(bg, fg, 0.32),
+        text: fg,
+        weak_text: mix(fg, bg, 0.40),
+        selection: mix(bg, c.accent(), if dark { 0.40 } else { 0.30 }),
+        shadow: Color32::from_black_alpha(if dark { 110 } else { 40 }),
+    }
+}
+
+fn palette_from(c: &SystemColors) -> Palette {
+    let dark = c.theme() == Theme::Dark;
+    let accent = c.accent();
+    let status_bar = if dark {
+        mix(c.background, accent, 0.45)
+    } else {
+        accent
+    };
+    Palette {
+        accent,
+        on_accent: contrast(accent),
+        status_bar,
+        on_status_bar: contrast(status_bar),
+        document_well: if dark {
+            mix(c.background, Color32::BLACK, 0.30)
+        } else {
+            mix(c.background, Color32::BLACK, 0.06)
+        },
+    }
+}
+
+/// Cores do editor de SQL a partir das cores ANSI do tema do sistema; o que
+/// faltar vem das cores próprias do app.
+fn editor_colors_from(c: &SystemColors) -> EditorColors {
+    let own = editor_colors_of(c.theme());
+    let ansi = |i: usize, fallback: Color32| c.ansi[i].unwrap_or(fallback);
+    EditorColors {
+        text: c.foreground,
+        keyword: ansi(4, own.keyword),
+        string: ansi(2, own.string),
+        comment: mix(c.foreground, c.background, 0.45),
+        number: ansi(3, own.number),
+        operator: mix(c.foreground, c.background, 0.20),
+        identifier_quoted: ansi(6, own.identifier_quoted),
+    }
+}
+
+fn editor_colors_of(theme: Theme) -> EditorColors {
+    match theme {
+        Theme::Light => EditorColors::LIGHT,
+        Theme::Dark => EditorColors::DARK,
+    }
+}
+
+/// Cores do editor de SQL (e do JSON Viewer) para o tema.
+pub fn editor_colors(theme: Theme) -> EditorColors {
+    match system_colors() {
+        Some(c) => editor_colors_from(&c),
+        None => editor_colors_of(theme),
+    }
+}
+
 fn base(theme: Theme) -> Base {
+    match system_colors() {
+        Some(c) => base_from(&c),
+        None => base_of(theme),
+    }
+}
+
+fn base_of(theme: Theme) -> Base {
     match theme {
         Theme::Light => Base {
             panel: Color32::from_rgb(0xF3, 0xF4, 0xF6),
@@ -97,8 +252,15 @@ fn base(theme: Theme) -> Base {
     }
 }
 
-/// Cores do tema.
+/// Cores do tema (as do sistema, quando em uso).
 pub fn palette(theme: Theme) -> Palette {
+    match system_colors() {
+        Some(c) => palette_from(&c),
+        None => palette_of(theme),
+    }
+}
+
+fn palette_of(theme: Theme) -> Palette {
     match theme {
         Theme::Light => Palette {
             accent: Color32::from_rgb(0x0B, 0x6B, 0xCB),
@@ -277,11 +439,81 @@ mod tests {
 
     #[test]
     fn dark_text_contrasts_with_the_panels() {
-        let b = base(Theme::Dark);
+        let b = base_of(Theme::Dark);
         // Luminância aproximada: o texto tem de ficar bem acima do fundo.
         let lum = |c: Color32| (u32::from(c.r()) + u32::from(c.g()) + u32::from(c.b())) / 3;
         assert!(lum(b.text) > lum(b.panel) + 150);
         assert!(lum(b.text) > lum(b.extreme) + 150);
+    }
+
+    fn hex(n: u32) -> Color32 {
+        Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8)
+    }
+
+    fn tokyo_night() -> SystemColors {
+        let mut ansi = [None; 16];
+        ansi[2] = Some(hex(0x9ece6a));
+        ansi[4] = Some(hex(0x7aa2f7));
+        SystemColors {
+            background: hex(0x1a1b26),
+            foreground: hex(0xa9b1d6),
+            accent: Some(hex(0x7aa2f7)),
+            ansi,
+        }
+    }
+
+    fn latte() -> SystemColors {
+        SystemColors {
+            background: hex(0xeff1f5),
+            foreground: hex(0x4c4f69),
+            accent: None,
+            ansi: [None; 16],
+        }
+    }
+
+    #[test]
+    fn system_colors_know_if_they_are_dark() {
+        assert_eq!(tokyo_night().theme(), Theme::Dark);
+        assert_eq!(latte().theme(), Theme::Light);
+    }
+
+    #[test]
+    fn system_colors_become_the_base() {
+        let c = tokyo_night();
+        let b = base_from(&c);
+        assert_eq!(b.panel, c.background);
+        assert_eq!(b.text, c.foreground);
+        // Campos mais escuros que o painel; botões mais claros.
+        assert!(luminance(b.extreme) < luminance(b.panel));
+        assert!(luminance(b.widget[0]) > luminance(b.panel));
+        assert!(luminance(b.widget[2]) > luminance(b.widget[0]));
+        let p = palette_from(&c);
+        assert_eq!(p.accent, hex(0x7aa2f7));
+        // No claro, os campos são mais claros que o painel.
+        let b = base_from(&latte());
+        assert!(luminance(b.extreme) > luminance(b.panel));
+    }
+
+    #[test]
+    fn missing_colors_fall_back_to_the_app_ones() {
+        let c = latte();
+        assert_eq!(palette_from(&c).accent, palette_of(Theme::Light).accent);
+        let e = editor_colors_from(&c);
+        assert_eq!(e.text, c.foreground);
+        assert_eq!(e.keyword, EditorColors::LIGHT.keyword);
+        let e = editor_colors_from(&tokyo_night());
+        assert_eq!(e.keyword, hex(0x7aa2f7));
+        assert_eq!(e.string, hex(0x9ece6a));
+        assert_eq!(e.number, EditorColors::DARK.number);
+    }
+
+    #[test]
+    fn text_on_the_status_bar_is_readable() {
+        for c in [tokyo_night(), latte()] {
+            let p = palette_from(&c);
+            let diff = luminance(p.status_bar).abs_diff(luminance(p.on_status_bar));
+            assert!(diff > 90, "{diff}");
+        }
     }
 
     #[test]

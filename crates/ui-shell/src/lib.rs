@@ -729,11 +729,8 @@ impl ShellApp {
             options::Action::Apply(prefs) => {
                 self.options = None;
                 prefs.apply();
-                let theme = prefs.theme(self.system_theme.current());
-                if theme != self.theme {
-                    self.set_theme(ctx, theme);
-                }
                 self.save_preferences(prefs);
+                self.apply_theme_preference(ctx, false);
             }
         }
     }
@@ -754,6 +751,7 @@ impl ShellApp {
 
     /// Troca o tema pelo menu ou pela toolbar e lembra a escolha.
     fn choose_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        theme::set_system_colors(None);
         self.set_theme(ctx, theme);
         let mut prefs = self.preferences.clone();
         prefs.theme = preferences::ThemeSetting::Fixed(theme);
@@ -765,20 +763,32 @@ impl ShellApp {
     /// troca de tema chega pelo portal do freedesktop.
     pub fn with_system_theme(mut self, ctx: &egui::Context) -> Self {
         self.system_theme = system_theme::SystemTheme::start(ctx);
-        let theme = self.preferences.theme(self.system_theme.current());
-        self.set_theme(ctx, theme);
+        self.apply_theme_preference(ctx, true);
         self
+    }
+
+    /// Aplica a preferência de tema: com "Same as system", as cores do tema
+    /// do sistema (no Omarchy) ou o claro/escuro dele; com um tema fixo, as
+    /// cores próprias do app.
+    fn apply_theme_preference(&mut self, ctx: &egui::Context, force: bool) {
+        let colors = match self.preferences.theme {
+            preferences::ThemeSetting::System => self.system_theme.colors(),
+            preferences::ThemeSetting::Fixed(_) => None,
+        };
+        let theme = match colors {
+            Some(c) => c.theme(),
+            None => self.preferences.theme(self.system_theme.current()),
+        };
+        if force || colors != theme::system_colors() || theme != self.theme {
+            theme::set_system_colors(colors);
+            self.set_theme(ctx, theme);
+        }
     }
 
     /// Segue a troca de tema do sistema, se a preferência mandar.
     fn follow_system_theme(&mut self, ctx: &egui::Context) {
-        if self.system_theme.poll(ctx)
-            && self.preferences.theme == preferences::ThemeSetting::System
-        {
-            let theme = self.preferences.theme(self.system_theme.current());
-            if theme != self.theme {
-                self.set_theme(ctx, theme);
-            }
+        if self.system_theme.poll(ctx) {
+            self.apply_theme_preference(ctx, false);
         }
     }
 
@@ -1451,7 +1461,8 @@ impl ShellApp {
         use CommandId::*;
         matches!(
             cmd,
-            Exit | ThemeLight
+            Exit | ThemeSystem
+                | ThemeLight
                 | ClaudeCodeAccess
                 | ThemeDark
                 | FullScreen
@@ -1542,6 +1553,12 @@ impl ShellApp {
                         exit: true,
                     });
                 }
+            }
+            CommandId::ThemeSystem => {
+                let mut prefs = self.preferences.clone();
+                prefs.theme = preferences::ThemeSetting::System;
+                self.save_preferences(prefs);
+                self.apply_theme_preference(ctx, false);
             }
             CommandId::ThemeLight => self.choose_theme(ctx, Theme::Light),
             CommandId::ThemeDark => self.choose_theme(ctx, Theme::Dark),
@@ -2932,10 +2949,7 @@ impl ShellApp {
                     save_results: Vec::new(),
                     open_json: Vec::new(),
                     keymap: &self.keymap,
-                    editor_colors: match self.theme {
-                        Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
-                        Theme::Dark => pgstudio_sql_editor::Colors::DARK,
-                    },
+                    editor_colors: theme::editor_colors(self.theme),
                     server,
                     doc_servers,
                     doc_tags,
@@ -3214,10 +3228,7 @@ impl ShellApp {
     /// consulta.
     fn json_step(&mut self, ctx: &egui::Context) {
         self.json_demo_step();
-        let colors = match self.theme {
-            Theme::Light => pgstudio_sql_editor::Colors::LIGHT,
-            Theme::Dark => pgstudio_sql_editor::Colors::DARK,
-        };
+        let colors = theme::editor_colors(self.theme);
         let mut insert = None;
         if let Some((doc, viewer)) = &mut self.json_viewer {
             let doc = *doc;
@@ -3684,9 +3695,16 @@ impl ShellApp {
                     let selected = (cmd == CommandId::ActualPlan && actual)
                         || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
-                            (cmd, self.theme),
-                            (CommandId::ThemeLight, Theme::Light)
-                                | (CommandId::ThemeDark, Theme::Dark)
+                            (cmd, self.preferences.theme),
+                            (CommandId::ThemeSystem, preferences::ThemeSetting::System)
+                                | (
+                                    CommandId::ThemeLight,
+                                    preferences::ThemeSetting::Fixed(Theme::Light)
+                                )
+                                | (
+                                    CommandId::ThemeDark,
+                                    preferences::ThemeSetting::Fixed(Theme::Dark)
+                                )
                         )
                         || matches!(
                             (cmd, mode),

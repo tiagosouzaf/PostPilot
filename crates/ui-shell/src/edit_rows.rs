@@ -705,11 +705,12 @@ impl EditRows {
         let Some((row, col, viewer)) = &mut self.json_editor else {
             return;
         };
-        let colors = if ctx.global_style().visuals.dark_mode {
-            pgstudio_sql_editor::Colors::DARK
+        let dark = ctx.global_style().visuals.dark_mode;
+        let colors = crate::theme::editor_colors(if dark {
+            pgstudio_core::Theme::Dark
         } else {
-            pgstudio_sql_editor::Colors::LIGHT
-        };
+            pgstudio_core::Theme::Light
+        });
         let (row, col) = (*row, *col);
         match viewer.show(ctx, &colors) {
             Some(crate::json_viewer::ViewerAction::Save(text)) => self.save_json(row, col, text),
