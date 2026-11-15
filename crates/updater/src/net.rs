@@ -3,7 +3,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -22,6 +22,9 @@ const MAX_SMALL: u64 = 1024 * 1024;
 pub struct Progress {
     pub done: AtomicU64,
     pub total: AtomicU64,
+    /// O download acabou e o pacote está sendo instalado (a janela de senha
+    /// do sistema pode estar aberta).
+    pub installing: AtomicBool,
 }
 
 impl Progress {
@@ -61,6 +64,11 @@ fn agent(user_agent: &str) -> Agent {
 /// único dado enviado, por exemplo `PostPilot/0.1.0`.
 pub fn fetch_latest(repo: &str, user_agent: &str) -> Result<Option<Release>, String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    // Só em build de desenvolvimento: aponta a consulta para um servidor de
+    // teste. Fora do build de release de propósito, para ninguém redirecionar
+    // a atualização de um app instalado por variável de ambiente.
+    #[cfg(debug_assertions)]
+    let url = std::env::var("PGSTUDIO_UPDATE_API").unwrap_or(url);
     let mut resp = agent(user_agent)
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -318,7 +326,7 @@ mod tests {
         let image = dir.join("PostPilot-0.1.0-x86_64.AppImage");
         std::fs::write(&image, b"old").unwrap();
         let kind = crate::InstallKind::AppImage(image.clone());
-        let done = crate::install(&kind, &r, "Test/1", &Progress::default()).unwrap();
+        let done = crate::install(&kind, &r, None, "Test/1", &Progress::default()).unwrap();
         assert_eq!(done, crate::Installed::Restart(image.clone()));
         assert_eq!(std::fs::read(&image).unwrap(), b"hello");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);

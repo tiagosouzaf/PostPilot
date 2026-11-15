@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// Intervalo mínimo entre duas checagens automáticas.
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Preferências e estado da checagem de versão nova.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
