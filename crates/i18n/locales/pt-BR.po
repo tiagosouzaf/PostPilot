@@ -4006,3 +4006,12 @@ msgstr "Este script ainda não está disponível para SQL Server."
 
 msgid "The definition is encrypted or not visible to this login."
 msgstr "A definição está criptografada ou não é visível para este logon."
+
+msgid "Reads"
+msgstr "Leituras"
+
+msgid "Writes"
+msgstr "Gravações"
+
+msgid "I/O (MB)"
+msgstr "E/S (MB)"

@@ -67,7 +67,7 @@ fn sql_server_refuses_what_it_does_not_have_yet() {
         harness.state().connection().unwrap().settings.engine,
         Engine::SqlServer
     );
-    for cmd in [CommandId::ActivityMonitor, CommandId::SchemaCompare] {
+    for cmd in [CommandId::SchemaCompare, CommandId::DesignQuery] {
         run(&mut harness, cmd);
         let status = harness.state().status().to_string();
         assert!(
