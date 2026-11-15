@@ -2668,6 +2668,11 @@ impl ShellApp {
                 // id com procedures e funções, mas não têm esta janela.
                 use pgstudio_core::metadata::NodeKind;
                 let kind = self.explorer.node(&node).map(|n| n.kind);
+                // O servidor: o registro dele (nome, pasta e ambiente).
+                if kind == Some(NodeKind::Server) {
+                    self.register_active_server();
+                    return;
+                }
                 let plain = matches!(kind, Some(NodeKind::Constraint | NodeKind::Trigger))
                     || (kind == Some(NodeKind::Sequence)
                         && self.connection.as_ref().map(|c| c.settings.engine)
@@ -4169,7 +4174,16 @@ impl ShellApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let color = theme::palette(self.theme).on_status_bar;
-        let connection = self.connection_label();
+        // Registrado: o nome do registro, com o servidor na dica.
+        let host = self.connection_label();
+        let connection = self
+            .connection
+            .as_ref()
+            .and_then(|c| {
+                let name = self.registered_name(&servers::server_key(&c.settings))?;
+                Some(format!("{name} ({})", c.settings.user))
+            })
+            .unwrap_or_else(|| host.clone());
         let cursor = self
             .active_doc
             .and_then(|id| self.documents.get(id))
@@ -4181,7 +4195,11 @@ impl ShellApp {
                 ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
                 ui.separator();
                 self.updater.status_badge(ui, color);
-                ui.label(RichText::new(connection).color(color));
+                let registered = connection != host;
+                let label = ui.label(RichText::new(connection).color(color));
+                if registered {
+                    label.on_hover_text(host);
+                }
                 if let Some(registered::ServerTag {
                     environment: Some(name),
                     color: env,

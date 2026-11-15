@@ -4416,3 +4416,21 @@ msgstr "Log de transações"
 
 msgid "Verify page checksums"
 msgstr "Verificar os checksums das páginas"
+
+msgid "Folder:"
+msgstr "Pasta:"
+
+msgid "This server is registered in the workspace: edit its name, environment and description here."
+msgstr "Este servidor está registrado no workspace: edite aqui o nome, o ambiente e a descrição."
+
+msgid "Register the server in the workspace: choose its name, folder and environment."
+msgstr "Registre o servidor no workspace: escolha o nome, a pasta e o ambiente."
+
+msgid "This server is registered on this computer: edit its name, environment and description here."
+msgstr "Este servidor está registrado neste computador: edite aqui o nome, o ambiente e a descrição."
+
+msgid "Register the server on this computer: choose its name, folder and environment."
+msgstr "Registre o servidor neste computador: escolha o nome, a pasta e o ambiente."
+
+msgid "Edit Registration..."
+msgstr "Editar Registro..."

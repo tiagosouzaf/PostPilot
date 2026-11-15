@@ -253,10 +253,15 @@ fn several_servers_share_the_object_explorer() {
         ]
     );
     // Uma árvore por servidor.
+    // As dos servidores registrados mostram o nome do registro; a do
+    // web-db, que não está registrado, o nome do servidor.
     let roots = harness
         .query_all_by_label_contains(pgstudio_object_explorer::fake::SERVER_NAME)
         .count();
-    assert_eq!(roots, 3);
+    assert_eq!(roots, 1);
+    for name in [" sales-db", " hr-db"] {
+        harness.get_by(|n| n.label().is_some_and(|l| l.ends_with(name)));
+    }
 
     // Conectar de novo um servidor já aberto não duplica, só o traz para a
     // frente.
@@ -303,10 +308,8 @@ fn clicking_another_tree_makes_its_server_active() {
     connect_with_dialog(&mut harness, "hr-db", false);
     assert_eq!(harness.state().connection().unwrap().settings.host, "hr-db");
     // A primeira árvore é a do sales-db.
-    let first = harness
-        .query_all_by_label_contains(pgstudio_object_explorer::fake::SERVER_NAME)
-        .next()
-        .unwrap();
+    // (Registrado, o nó mostra o nome do registro.)
+    let first = harness.get_by(|n| n.label().is_some_and(|l| l.ends_with(" sales-db")));
     first.click();
     harness.run();
     assert_eq!(

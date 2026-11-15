@@ -489,6 +489,36 @@ impl RegisteredServers {
         out
     }
 
+    /// Onde está o servidor com esta chave (`usuario@host:porta`), se ele
+    /// está registrado.
+    pub fn path_for_key(&self, key: &str) -> Option<NodePath> {
+        fn walk(g: &ServerGroup, path: &mut Vec<usize>, key: &str) -> Option<NodePath> {
+            if let Some(i) = g
+                .servers
+                .iter()
+                .position(|s| secrets::password_key(&s.settings) == key)
+            {
+                return Some(NodePath::server(path, i));
+            }
+            for (i, sub) in g.groups.iter().enumerate() {
+                path.push(i);
+                let found = walk(sub, path, key);
+                path.pop();
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        walk(&self.root, &mut Vec::new(), key)
+    }
+
+    /// O nome com que o servidor desta chave está registrado.
+    pub fn name_for_key(&self, key: &str) -> Option<&str> {
+        let path = self.path_for_key(key)?;
+        self.server(&path).map(|s| s.name.as_str())
+    }
+
     /// Todos os servidores, em ordem da árvore.
     pub fn all_servers(&self) -> Vec<&RegisteredServer> {
         fn walk<'a>(g: &'a ServerGroup, out: &mut Vec<&'a RegisteredServer>) {
@@ -991,12 +1021,29 @@ impl RegisteredPanel {
         let mut dialog = ServerDialog::new(parent.to_vec(), None, &server, store);
         dialog.environments = self.servers.environments();
         dialog.folder_environment = self.servers.group_environment(parent);
+        dialog.folders = self.folders();
         self.server_dialog = Some(dialog);
     }
 
+    /// As pastas para o campo "Folder" de um registro novo (vazio quando só
+    /// existe a raiz).
+    fn folders(&self) -> Vec<(Vec<usize>, usize, String, Option<Environment>)> {
+        let groups = self.servers.all_groups();
+        if groups.len() < 2 {
+            return Vec::new();
+        }
+        groups
+            .into_iter()
+            .map(|(path, depth, name)| {
+                let env = self.servers.group_environment(&path);
+                (path, depth, name, env)
+            })
+            .collect()
+    }
+
     /// "Register..." no servidor do Object Explorer: "New Server
-    /// Registration" em "Local Server Groups", preenchido com a conexão
-    /// dele.
+    /// Registration" na raiz desta árvore (o campo "Folder" escolhe outra
+    /// pasta), preenchido com a conexão dele.
     pub fn register(
         &mut self,
         settings: &ConnectionSettings,
@@ -1008,7 +1055,25 @@ impl RegisteredPanel {
         };
         let mut dialog = ServerDialog::new(Vec::new(), None, &server, store);
         dialog.environments = self.servers.environments();
+        dialog.folder_environment = self.servers.group_environment(&[]);
+        dialog.folders = self.folders();
         self.server_dialog = Some(dialog);
+    }
+
+    /// O registro do servidor desta conexão: edita, se ele já está na
+    /// árvore; se não, abre o "New Server Registration" preenchido.
+    pub fn register_or_edit(
+        &mut self,
+        settings: &ConnectionSettings,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) {
+        match self.servers.path_for_key(&secrets::password_key(settings)) {
+            Some(path) => {
+                self.selected = Some(path.clone());
+                self.edit_server(&path, store);
+            }
+            None => self.register(settings, store),
+        }
     }
 
     /// Move um nó para o grupo `to` (o que arrastar faz), selecionando-o
@@ -1696,6 +1761,10 @@ pub struct ServerDialog {
     environments: Vec<Environment>,
     /// Ambiente que a pasta dá ao servidor sem ambiente próprio.
     folder_environment: Option<Environment>,
+    /// As pastas onde um registro novo pode ficar: caminho, profundidade,
+    /// nome e o ambiente que a pasta dá. Vazio ao editar (aí vale "Move
+    /// To") e quando só existe a raiz.
+    folders: Vec<(Vec<usize>, usize, String, Option<Environment>)>,
     /// Uma connection string colada: preenche os campos acima e é limpa
     /// (a senha vai para o campo de senha, nunca para o arquivo).
     pub connection_string: String,
@@ -1736,6 +1805,7 @@ impl ServerDialog {
             environment: server.environment.clone(),
             environments: default_environments(),
             folder_environment: None,
+            folders: Vec::new(),
             connection_string: String::new(),
             connection_error: None,
             error: None,
@@ -2015,6 +2085,37 @@ impl ServerDialog {
                     )
                     .labelled_by(label.id);
                     ui.end_row();
+
+                    if !self.folders.is_empty() {
+                        let label = ui.label(tr("Folder:"));
+                        let name = |n: &str| display_name(n).to_string();
+                        let selected = self
+                            .folders
+                            .iter()
+                            .find(|f| f.0 == self.parent)
+                            .map(|f| name(&f.2))
+                            .unwrap_or_default();
+                        let mut chosen = None;
+                        egui::ComboBox::from_id_salt("registered_server_folder")
+                            .selected_text(selected)
+                            .width(260.0)
+                            .show_ui(ui, |ui| {
+                                for (i, (path, depth, folder, _)) in self.folders.iter().enumerate()
+                                {
+                                    let text = format!("{}{}", "    ".repeat(*depth), name(folder));
+                                    if ui.selectable_label(*path == self.parent, text).clicked() {
+                                        chosen = Some(i);
+                                    }
+                                }
+                            })
+                            .response
+                            .labelled_by(label.id);
+                        if let Some(i) = chosen {
+                            self.parent = self.folders[i].0.clone();
+                            self.folder_environment = self.folders[i].3.clone();
+                        }
+                        ui.end_row();
+                    }
 
                     let label = ui.label(tr("Environment:"));
                     environment_choice(

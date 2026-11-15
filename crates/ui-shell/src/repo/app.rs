@@ -537,6 +537,7 @@ impl ShellApp {
         if let Some(panel) = self.workspace_panel.servers_mut() {
             panel.current = self.connection.as_ref().map(|c| c.settings.clone());
         }
+        self.sync_server_labels();
         self.workspace_panel.importable = self.importable_connections();
         self.workspace_panel.unsaved_current = self.connection.as_ref().and_then(|c| {
             let ours = self.workspace_panel.servers()?.servers().root();

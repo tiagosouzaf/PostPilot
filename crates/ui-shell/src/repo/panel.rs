@@ -455,6 +455,20 @@ impl WorkspacePanel {
         }
     }
 
+    /// O registro, no workspace, do servidor desta conexão: edita, se ele
+    /// já está lá; se não, abre o "New Server Registration" preenchido. A
+    /// senha lembrada vai para o cofre do workspace.
+    pub fn register_or_edit(
+        &mut self,
+        settings: &pgstudio_core::connection::ConnectionSettings,
+        store: Option<&Arc<dyn SecretStore>>,
+    ) -> Option<&mut RegisteredPanel> {
+        let store = self.workspace_store(store);
+        let o = self.opened.as_mut()?;
+        o.servers.register_or_edit(settings, store.as_ref());
+        Some(&mut o.servers)
+    }
+
     /// Desenha o painel e devolve os pedidos.
     pub fn show(&mut self, ui: &mut egui::Ui, store: Option<&Arc<dyn SecretStore>>) -> Vec<Action> {
         let mut actions = Vec::new();

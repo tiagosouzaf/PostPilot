@@ -97,7 +97,18 @@ const ROW_HEIGHT: f32 = 20.0;
 const INDENT: f32 = 16.0;
 
 /// A árvore e as cargas em andamento.
+/// Como o nó do servidor aparece quando a conexão está registrada.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerLabel {
+    /// Nome do registro ("tiib"); o nome do servidor vai para a dica.
+    pub name: String,
+    /// Ambiente, já traduzido, e a cor dele: a etiqueta na frente do nome.
+    pub environment: Option<(String, [u8; 3])>,
+}
+
 pub struct ObjectExplorer {
+    /// O registro do servidor desta árvore, se ele está registrado.
+    server_label: Option<ServerLabel>,
     provider: Option<Arc<dyn MetadataProvider>>,
     roots: Load,
     entries: HashMap<NodeId, Entry>,
@@ -116,6 +127,7 @@ impl Default for ObjectExplorer {
         let (tx, rx) = channel();
         let (props_tx, props_rx) = channel();
         ObjectExplorer {
+            server_label: None,
             provider: None,
             roots: Load::NotLoaded,
             entries: HashMap::new(),
@@ -398,6 +410,17 @@ impl ObjectExplorer {
         }
     }
 
+    /// Diz como o nó do servidor aparece: com o nome e o ambiente do
+    /// registro (`None`: o nome do servidor, como veio da conexão).
+    pub fn set_server_label(&mut self, label: Option<ServerLabel>) {
+        self.server_label = label;
+    }
+
+    /// O registro mostrado no nó do servidor.
+    pub fn server_label(&self) -> Option<&ServerLabel> {
+        self.server_label.as_ref()
+    }
+
     /// Desenha a árvore e devolve os pedidos para a casca.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Vec<Event> {
         self.ctx = Some(ui.ctx().clone());
@@ -414,6 +437,7 @@ impl ObjectExplorer {
         let mut refresh: Option<NodeId> = None;
         let rows = self.visible_rows();
         let selected = self.selected.clone();
+        let server_label = self.server_label.clone();
         egui::ScrollArea::both().auto_shrink(false).show_rows(
             ui,
             ROW_HEIGHT,
@@ -447,11 +471,40 @@ impl ObjectExplorer {
                                     NodeKind::Folder(_) => tr(&node.name),
                                     _ => node.name.as_str(),
                                 };
+                                // Servidor registrado: a etiqueta do ambiente, o
+                                // nome do registro e o servidor na dica.
+                                let registered = server_label
+                                    .as_ref()
+                                    .filter(|_| node.kind == NodeKind::Server);
+                                if let Some((env, [r, g, b])) =
+                                    registered.and_then(|l| l.environment.as_ref())
+                                {
+                                    let light =
+                                        0.299 * *r as f32 + 0.587 * *g as f32 + 0.114 * *b as f32
+                                            > 150.0;
+                                    let ink = if light {
+                                        egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)
+                                    } else {
+                                        egui::Color32::WHITE
+                                    };
+                                    egui::Frame::new()
+                                        .fill(egui::Color32::from_rgb(*r, *g, *b))
+                                        .corner_radius(3.0)
+                                        .inner_margin(egui::Margin::symmetric(5, 0))
+                                        .show(ui, |ui| {
+                                            ui.label(egui::RichText::new(env).strong().color(ink))
+                                        });
+                                }
+                                let name = registered.map_or(name, |l| l.name.as_str());
                                 let text = format!("{} {name}", kind_icon(node.kind, expanded));
                                 let label = ui.add(
                                     egui::Button::selectable(is_selected, text)
                                         .frame_when_inactive(false),
                                 );
+                                let label = match registered {
+                                    Some(_) => label.on_hover_text(node.name.as_str()),
+                                    None => label,
+                                };
                                 if label.clicked() {
                                     select = Some(node.id.clone());
                                 }
@@ -521,7 +574,14 @@ impl ObjectExplorer {
                                         ui.separator();
                                     }
                                     if node.kind == NodeKind::Server {
-                                        if ui.button(tr("Register...")).clicked() {
+                                        // Já registrado: o mesmo pedido abre o
+                                        // registro para editar.
+                                        let register = if registered.is_some() {
+                                            tr("Edit Registration...")
+                                        } else {
+                                            tr("Register...")
+                                        };
+                                        if ui.button(register).clicked() {
                                             events.push(Event::Register(node.id.clone()));
                                             ui.close();
                                         }
@@ -617,7 +677,10 @@ impl ObjectExplorer {
                                     ui.separator();
                                     if ui
                                         .add_enabled(
-                                            node.kind.has_properties(),
+                                            // No servidor: o registro dele
+                                            // (nome, pasta e ambiente).
+                                            node.kind.has_properties()
+                                                || node.kind == NodeKind::Server,
                                             egui::Button::new(tr("Properties")),
                                         )
                                         .clicked()
