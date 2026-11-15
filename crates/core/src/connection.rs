@@ -131,6 +131,7 @@ impl Engine {
                     | Feature::Backup
                     | Feature::ObjectInfo
                     | Feature::QueryDesigner
+                    | Feature::Designers
             ),
         }
     }

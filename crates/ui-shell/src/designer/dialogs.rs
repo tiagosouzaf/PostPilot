@@ -7,7 +7,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
-use pgstudio_core::schema::{Action, Check, ForeignKey, Index, Key, Table};
+use pgstudio_core::schema::{Action, Check, Dialect, ForeignKey, Index, Key, Table};
 use pgstudio_i18n::tr;
 
 use super::{Notice, TableDesigner};
@@ -80,8 +80,6 @@ pub struct Dialog {
     original: Option<Draft>,
     error: Option<String>,
 }
-
-const METHODS: [&str; 6] = ["btree", "hash", "gist", "gin", "brin", "spgist"];
 
 impl Dialog {
     fn new(kind: DialogKind) -> Self {
@@ -233,7 +231,7 @@ impl TableDesigner {
                 name: format!("{}_{}_idx", t.name, selected_column),
                 columns: vec![selected_column],
                 unique: false,
-                method: "btree".into(),
+                method: self.doc.model.dialect.index_methods()[0].into(),
                 filter: String::new(),
             }),
             DialogKind::Checks => Draft::Check(Check {
@@ -418,6 +416,7 @@ impl TableDesigner {
             .map(|o| (o.schema.clone(), o.name.clone()))
             .collect();
         let list = items(kind, &t);
+        let dialect = self.doc.model.dialect;
         let mut open = true;
         let mut action = None;
         let Some(d) = &mut self.dialog else {
@@ -473,8 +472,8 @@ impl TableDesigner {
                         return;
                     };
                     match draft {
-                        Draft::Relationship(fk) => relationship(ui, fk, &t, &tables),
-                        Draft::IndexKey(k) => index_key(ui, k, &t),
+                        Draft::Relationship(fk) => relationship(ui, fk, &t, &tables, dialect),
+                        Draft::IndexKey(k) => index_key(ui, k, &t, dialect),
                         Draft::Check(c) => check(ui, c),
                     }
                     ui.add_space(8.0);
@@ -537,7 +536,13 @@ fn draft_name(draft: &Draft) -> String {
     }
 }
 
-fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(String, String)]) {
+fn relationship(
+    ui: &mut egui::Ui,
+    fk: &mut ForeignKey,
+    t: &Table,
+    tables: &[(String, String)],
+    dialect: Dialect,
+) {
     egui::Grid::new("relationship_props")
         .num_columns(2)
         .striped(true)
@@ -562,10 +567,10 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
             ui.label(format!("{}.{}", t.schema, t.name));
             ui.end_row();
             ui.label(tr("On Update"));
-            action_combo(ui, "fk_on_update", &mut fk.on_update);
+            action_combo(ui, "fk_on_update", &mut fk.on_update, dialect);
             ui.end_row();
             ui.label(tr("On Delete"));
-            action_combo(ui, "fk_on_delete", &mut fk.on_delete);
+            action_combo(ui, "fk_on_delete", &mut fk.on_delete, dialect);
             ui.end_row();
         });
     ui.label(tr("Columns (foreign key → primary key):"));
@@ -600,11 +605,11 @@ fn relationship(ui: &mut egui::Ui, fk: &mut ForeignKey, t: &Table, tables: &[(St
     }
 }
 
-fn action_combo(ui: &mut egui::Ui, id: &str, value: &mut Action) {
+fn action_combo(ui: &mut egui::Ui, id: &str, value: &mut Action, dialect: Dialect) {
     egui::ComboBox::from_id_salt(id)
         .selected_text(value.sql())
         .show_ui(ui, |ui| {
-            for a in Action::ALL {
+            for &a in dialect.fk_actions() {
                 ui.selectable_value(value, a, a.sql());
             }
         });
@@ -626,7 +631,7 @@ fn column_combo(
         });
 }
 
-fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
+fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table, dialect: Dialect) {
     egui::Grid::new("index_key_props")
         .num_columns(2)
         .striped(true)
@@ -654,7 +659,7 @@ fn index_key(ui: &mut egui::Ui, k: &mut IndexDraft, t: &Table) {
                 egui::ComboBox::from_id_salt("index_method")
                     .selected_text(k.method.as_str())
                     .show_ui(ui, |ui| {
-                        for m in METHODS {
+                        for &m in dialect.index_methods() {
                             ui.selectable_value(&mut k.method, m.to_string(), m);
                         }
                     });

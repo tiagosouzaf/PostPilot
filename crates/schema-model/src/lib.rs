@@ -29,6 +29,7 @@ pub mod edit;
 mod ident;
 pub mod objects;
 pub mod snapshot;
+pub mod tsql;
 
 pub use ident::quote_ident;
 
@@ -46,6 +47,102 @@ pub struct Model {
     pub tables: Vec<Arc<Table>>,
     /// Próximo [`Id`] livre para objetos novos.
     pub next_id: Id,
+    /// O SQL do banco de onde o modelo veio: decide o DDL do [`diff`].
+    #[serde(default)]
+    pub dialect: Dialect,
+}
+
+/// O SQL que o [`diff`] escreve.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Dialect {
+    #[default]
+    Postgres,
+    /// T-SQL, do SQL Server ([`tsql`]).
+    Tsql,
+}
+
+impl Dialect {
+    /// O schema onde uma tabela nova nasce.
+    pub fn default_schema(self) -> &'static str {
+        match self {
+            Dialect::Postgres => "public",
+            Dialect::Tsql => "dbo",
+        }
+    }
+
+    /// O tipo inteiro comum, como o catálogo escreve.
+    pub fn integer(self) -> &'static str {
+        match self {
+            Dialect::Postgres => "integer",
+            Dialect::Tsql => "int",
+        }
+    }
+
+    /// O tipo de uma coluna nova no designer.
+    pub fn new_column_type(self) -> &'static str {
+        match self {
+            Dialect::Postgres => "text",
+            Dialect::Tsql => "nvarchar(50)",
+        }
+    }
+
+    /// Os tipos de índice que o designer oferece; o primeiro é o comum.
+    pub fn index_methods(self) -> &'static [&'static str] {
+        match self {
+            Dialect::Postgres => &["btree", "hash", "gist", "gin", "brin", "spgist"],
+            Dialect::Tsql => &["nonclustered", "clustered"],
+        }
+    }
+
+    /// As ações de FK que o banco tem, na ordem do SSMS (o SQL Server não
+    /// tem `RESTRICT`).
+    pub fn fk_actions(self) -> &'static [Action] {
+        match self {
+            Dialect::Postgres => &Action::ALL,
+            Dialect::Tsql => &[
+                Action::NoAction,
+                Action::Cascade,
+                Action::SetNull,
+                Action::SetDefault,
+            ],
+        }
+    }
+
+    /// `schema.nome` com as aspas ou colchetes do banco.
+    pub fn qualified(self, schema: &str, name: &str) -> String {
+        match self {
+            Dialect::Postgres => qualified(schema, name),
+            Dialect::Tsql => tsql::qualified(schema, name),
+        }
+    }
+
+    /// Troca a coluna `old` por `new` numa entrada de índice (um nome,
+    /// talvez com `DESC`, ou uma expressão).
+    pub fn rename_index_column(self, entry: &mut String, old: &str, new: &str) {
+        match self {
+            Dialect::Postgres => {
+                if entry == old {
+                    *entry = new.to_string();
+                } else if entry.contains(['(', ' ', '"']) {
+                    *entry = rename_in_expr(entry, old, new);
+                }
+            }
+            Dialect::Tsql => {
+                let (name, desc) = tsql::index_column(entry);
+                if name.to_lowercase() == old.to_lowercase() {
+                    *entry = format!("{new}{}", if desc { " DESC" } else { "" });
+                }
+            }
+        }
+    }
+
+    /// Troca a coluna `old` por `new` numa expressão SQL.
+    pub fn rename_in_expr(self, expr: &str, old: &str, new: &str) -> String {
+        match self {
+            Dialect::Postgres => rename_in_expr(expr, old, new),
+            Dialect::Tsql => tsql::rename_in_expr(expr, old, new),
+        }
+    }
 }
 
 /// Uma tabela.
@@ -191,6 +288,7 @@ impl Model {
         Model {
             tables: tables.into_iter().map(Arc::new).collect(),
             next_id: (used + 1).max(FIRST_NEW_ID),
+            dialect: Dialect::default(),
         }
     }
 

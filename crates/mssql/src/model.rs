@@ -221,7 +221,92 @@ impl MssqlExplorer {
                 predicate: optional(&r, 5).map(|p| unwrap_parens(&p)),
             });
         }
-        Ok(Model::new(tables))
+        let mut model = Model::new(tables);
+        model.dialect = pgstudio_core::schema::Dialect::Tsql;
+        Ok(model)
+    }
+}
+
+/// Tipos do SQL Server sugeridos no Table Designer, como o catálogo escreve.
+const COMMON_TYPES: &[&str] = &[
+    "bigint",
+    "binary(50)",
+    "bit",
+    "char(10)",
+    "date",
+    "datetime",
+    "datetime2(7)",
+    "datetimeoffset(7)",
+    "decimal(18,2)",
+    "float",
+    "int",
+    "money",
+    "nchar(10)",
+    "nvarchar(50)",
+    "nvarchar(max)",
+    "real",
+    "smallint",
+    "time(7)",
+    "tinyint",
+    "uniqueidentifier",
+    "varbinary(max)",
+    "varchar(50)",
+    "varchar(max)",
+    "xml",
+];
+
+impl MssqlExplorer {
+    /// Os tipos comuns mais os definidos no banco (`schema.nome`).
+    pub(crate) fn read_type_names(&self, db: &str) -> Result<Vec<String>, MetadataError> {
+        let d = bracket(db);
+        let mut names: Vec<String> = COMMON_TYPES.iter().map(|t| (*t).to_string()).collect();
+        for r in self.rows(&format!(
+            "SELECT SCHEMA_NAME(t.schema_id) + '.' + t.name FROM {d}.sys.types t \
+              WHERE t.is_user_defined = 1 AND t.is_table_type = 0"
+        ))? {
+            names.extend(r.into_iter().next().flatten());
+        }
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
+    /// Roda os comandos, um lote cada, numa transação no banco: ou tudo
+    /// entra, ou nada. O erro diz qual comando falhou. A sessão fica presa
+    /// até o fim e volta para o banco onde estava.
+    pub(crate) fn run_ddl(&self, db: &str, statements: &[String]) -> Result<(), MetadataError> {
+        self.runtime.block_on(async {
+            let mut session = self.session.lock().await;
+            let home = session
+                .rows("SELECT DB_NAME()")
+                .await
+                .ok()
+                .and_then(|r| r.into_iter().next()?.into_iter().next()?)
+                .unwrap_or_else(|| "master".into());
+            let back = format!(
+                "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION; SET XACT_ABORT OFF; USE {};",
+                bracket(&home)
+            );
+            let begin = format!("USE {}; SET XACT_ABORT ON; BEGIN TRANSACTION;", bracket(db));
+            if let Err(e) = session.rows(&begin).await {
+                let _ = session.rows(&back).await;
+                return Err(MetadataError(e));
+            }
+            for (n, stmt) in statements.iter().enumerate() {
+                if let Err(e) = session.rows(stmt).await {
+                    let _ = session.rows(&back).await;
+                    return Err(MetadataError(format!(
+                        "{e} (statement {} of {}: {})",
+                        n + 1,
+                        statements.len(),
+                        stmt.lines().next().unwrap_or_default()
+                    )));
+                }
+            }
+            let done = session.rows("COMMIT TRANSACTION;").await;
+            let _ = session.rows(&back).await;
+            done.map(|_| ()).map_err(MetadataError)
+        })
     }
 }
 
