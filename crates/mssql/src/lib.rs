@@ -111,14 +111,29 @@ impl Session {
 
     /// Roda `sql` e devolve as linhas do primeiro resultado como texto.
     pub async fn rows(&mut self, sql: &str) -> Result<Vec<Vec<Option<String>>>, String> {
+        self.table(sql).await.map(|(_, rows)| rows)
+    }
+
+    /// Como [`Session::rows`], com os nomes das colunas do primeiro
+    /// resultado.
+    pub async fn table(
+        &mut self,
+        sql: &str,
+    ) -> Result<(Vec<String>, Vec<Vec<Option<String>>>), String> {
         use futures_util::TryStreamExt;
         let mut stream = self.client.batch(sql).await.map_err(|e| describe(&e))?;
+        let mut names = Vec::new();
         let mut rows = Vec::new();
         let mut results = 0;
         let mut error = None;
         while let Some(item) = stream.try_next().await.map_err(|e| describe(&e))? {
             match item {
-                tiberius::BatchItem::Metadata(_) => results += 1,
+                tiberius::BatchItem::Metadata(columns) => {
+                    results += 1;
+                    if results == 1 {
+                        names = columns.iter().map(|c| c.name().to_string()).collect();
+                    }
+                }
                 tiberius::BatchItem::Row(row) if results == 1 => rows.push(
                     row.cells()
                         .map(|(c, d)| value::to_text(d, c.column_type()))
@@ -132,7 +147,7 @@ impl Session {
         }
         match error {
             Some(e) => Err(e),
-            None => Ok(rows),
+            None => Ok((names, rows)),
         }
     }
 }

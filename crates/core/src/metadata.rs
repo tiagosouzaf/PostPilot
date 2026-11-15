@@ -26,6 +26,12 @@ pub enum Folder {
     Triggers,
     Security,
     Roles,
+    /// System Databases (SQL Server: master, model, msdb, tempdb).
+    SystemDatabases,
+    /// Programmability (SQL Server: procedures, funções, tipos...).
+    Programmability,
+    /// Keys de uma tabela (SQL Server: PK, UNIQUE, FK).
+    Keys,
 }
 
 impl Folder {
@@ -49,6 +55,9 @@ impl Folder {
             Folder::Triggers => "Triggers",
             Folder::Security => "Security",
             Folder::Roles => "Roles",
+            Folder::SystemDatabases => "System Databases",
+            Folder::Programmability => "Programmability",
+            Folder::Keys => "Keys",
         }
     }
 }
@@ -384,6 +393,9 @@ mod tests {
             Triggers,
             Security,
             Roles,
+            SystemDatabases,
+            Programmability,
+            Keys,
         ];
         let kinds = [
             NodeKind::Server,

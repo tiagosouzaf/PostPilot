@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use pgstudio_core::connection::{ConnectError, ConnectionSettings, Connector, Engine, SslMode};
-use pgstudio_core::metadata::NodeId;
+use pgstudio_core::metadata::{NodeId, ScriptAction};
 use pgstudio_core::query::{QueryEvent, QuerySession};
 use pgstudio_mssql::MssqlConnector;
 use pgstudio_pg_client::DbRuntime;
@@ -340,14 +340,158 @@ fn explorer_lists_the_databases() {
     );
     let folders = c.metadata.children(&roots[0].id).unwrap();
     let dbs = c.metadata.children(&folders[0].id).unwrap();
-    let names: Vec<_> = dbs.iter().map(|d| d.name.as_str()).collect();
-    for db in ["master", "tempdb", "msdb"] {
-        assert!(names.contains(&db), "{names:?}");
-    }
-    let tempdb = dbs.iter().find(|d| d.name == "tempdb").unwrap();
+    // Os do sistema ficam numa pasta à parte, como no SSMS.
+    assert_eq!(dbs[0].name, "System Databases");
+    let system = c.metadata.children(&dbs[0].id).unwrap();
+    let names: Vec<_> = system.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["master", "model", "msdb", "tempdb"]);
+    let tempdb = system.iter().find(|d| d.name == "tempdb").unwrap();
     assert_eq!(
         c.metadata.database_of(&tempdb.id).as_deref(),
         Some("tempdb")
     );
     assert_eq!(c.metadata.database_of(&NodeId("server".into())), None);
+}
+
+/// Acha o filho chamado `name` de `parent`.
+fn child(
+    meta: &dyn pgstudio_core::metadata::MetadataProvider,
+    parent: &NodeId,
+    name: &str,
+) -> pgstudio_core::metadata::ObjectNode {
+    let kids = meta.children(parent).unwrap();
+    kids.iter()
+        .find(|k| k.name == name)
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} not in {:?}",
+                kids.iter().map(|k| &k.name).collect::<Vec<_>>()
+            )
+        })
+}
+
+#[test]
+fn explorer_walks_tables_columns_keys_and_programmability() {
+    let Some((s, pw)) = settings() else { return };
+    let Some(q) = session("tempdb") else { return };
+    let setup = run(
+        q.as_ref(),
+        "IF DB_ID('pp_explorer') IS NOT NULL BEGIN \
+             ALTER DATABASE pp_explorer SET SINGLE_USER WITH ROLLBACK IMMEDIATE; \
+             DROP DATABASE pp_explorer; END\n\
+         GO\n\
+         CREATE DATABASE pp_explorer\n\
+         GO\n\
+         USE pp_explorer\n\
+         GO\n\
+         CREATE TABLE dbo.cliente (id int PRIMARY KEY, nome nvarchar(60) NOT NULL UNIQUE);\n\
+         CREATE TABLE dbo.pedido (id int IDENTITY PRIMARY KEY, \
+             cliente_id int NOT NULL REFERENCES dbo.cliente(id), \
+             total decimal(10,2) CHECK (total >= 0) DEFAULT 0, dobro AS (total * 2));\n\
+         CREATE INDEX ix_pedido_cliente ON dbo.pedido (cliente_id);\n\
+         GO\n\
+         CREATE VIEW dbo.v_pedido AS SELECT id, total FROM dbo.pedido\n\
+         GO\n\
+         CREATE PROCEDURE dbo.listar AS SELECT * FROM dbo.cliente\n\
+         GO\n\
+         CREATE FUNCTION dbo.dobro (@x int) RETURNS int AS BEGIN RETURN @x * 2 END\n\
+         GO\n\
+         CREATE TRIGGER dbo.t_pedido ON dbo.pedido AFTER INSERT AS SET NOCOUNT ON\n\
+         GO\n\
+         USE tempdb",
+    );
+    assert!(
+        !setup.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{setup:?}"
+    );
+    let c = connector().connect(&s, &pw).expect("connect");
+    let meta = c.metadata.as_ref();
+    let server = meta.roots().unwrap().remove(0);
+    let dbs = child(meta, &server.id, "Databases");
+    let db = child(meta, &dbs.id, "pp_explorer");
+    let tables = child(meta, &db.id, "Tables");
+    let names: Vec<_> = meta
+        .children(&tables.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(names, ["dbo.cliente", "dbo.pedido"]);
+    let pedido = child(meta, &tables.id, "dbo.pedido");
+    assert_eq!(meta.database_of(&pedido.id).as_deref(), Some("pp_explorer"));
+
+    let cols = child(meta, &pedido.id, "Columns");
+    let labels: Vec<_> = meta
+        .children(&cols.id)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "id (PK, int, not null)",
+            "cliente_id (FK, int, not null)",
+            "total (decimal(10,2), null)",
+            "dobro (Computed, decimal(12,2), null)",
+        ]
+    );
+    let keys = child(meta, &pedido.id, "Keys");
+    let keys = meta.children(&keys.id).unwrap();
+    assert_eq!(keys.len(), 2, "{keys:?}");
+    assert!(keys[0].name.starts_with("PK__pedido"), "{keys:?}");
+    let cons = child(meta, &pedido.id, "Constraints");
+    assert_eq!(meta.children(&cons.id).unwrap().len(), 2);
+    let trig = child(meta, &pedido.id, "Triggers");
+    let trig = child(meta, &trig.id, "t_pedido");
+    assert!(
+        meta.script(&trig.id, ScriptAction::Create)
+            .unwrap()
+            .contains("CREATE TRIGGER dbo.t_pedido")
+    );
+    let idx = child(meta, &pedido.id, "Indexes");
+    let ix = child(meta, &idx.id, "ix_pedido_cliente (Non-Clustered)");
+    assert_eq!(
+        meta.script(&ix.id, ScriptAction::Drop).unwrap(),
+        "DROP INDEX [ix_pedido_cliente] ON [dbo].[pedido]\nGO\n"
+    );
+
+    // Select Top 1000 Rows.
+    assert_eq!(
+        meta.script(&pedido.id, ScriptAction::SelectTop(1000))
+            .unwrap(),
+        "SELECT TOP (1000) [id]\n      ,[cliente_id]\n      ,[total]\n      ,[dobro]\n  FROM [dbo].[pedido]\n"
+    );
+    assert_eq!(
+        meta.script(&pedido.id, ScriptAction::Drop).unwrap(),
+        "DROP TABLE [dbo].[pedido]\nGO\n"
+    );
+    let props = meta.properties(&pedido.id).unwrap();
+    assert!(
+        props.iter().any(|p| p.name == "Schema" && p.value == "dbo"),
+        "{props:?}"
+    );
+
+    let views = child(meta, &db.id, "Views");
+    let v = child(meta, &views.id, "dbo.v_pedido");
+    assert!(
+        meta.script(&v.id, ScriptAction::Create)
+            .unwrap()
+            .contains("CREATE VIEW dbo.v_pedido")
+    );
+    let prog = child(meta, &db.id, "Programmability");
+    let procs = child(meta, &prog.id, "Procedures");
+    child(meta, &procs.id, "dbo.listar");
+    let funcs = child(meta, &prog.id, "Functions");
+    let f = child(meta, &funcs.id, "dbo.dobro");
+    assert_eq!(
+        meta.script(&f.id, ScriptAction::Drop).unwrap(),
+        "DROP FUNCTION [dbo].[dobro]\nGO\n"
+    );
+    drop(c);
+    run(
+        q.as_ref(),
+        "ALTER DATABASE pp_explorer SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE pp_explorer",
+    );
 }

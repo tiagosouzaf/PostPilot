@@ -11,11 +11,12 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | --- | --- |
 | Conectar (autenticação SQL, TLS, instância nomeada `servidor\INSTANCIA`, redirecionamento do Azure) | S1.2 |
 | Janela de consulta: `GO` (com repetição `GO 5`), vários resultados, `(n rows affected)`, `PRINT` e `RAISERROR` na aba Messages, erros com a linha do script, cancelar | S1.2 |
-| Object Explorer: servidor e bancos | S1.2 (pastas de cada banco no S2.1) |
+| Object Explorer como o do SSMS: bancos (os do sistema em "System Databases"), Tables, Views, Programmability (procedures, funções, tipos, sequences); em cada tabela, Columns (`id (PK, int, not null)`), Keys, Constraints, Triggers e Indexes; propriedades (F4) | S2.1 |
+| Select Top 1000 Rows, Edit Top 200 Rows, Script as DROP, Script as CREATE de views, procedures, funções e triggers | S2.1 (CREATE de tabela no S2.2) |
 | "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
 | Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
 | Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
-| Editar e excluir linhas na grade do resultado (SELECT de uma tabela com chave primária, ou de uma view sobre ela) | S1.4 (Edit Top 200 Rows no S2.1, com as tabelas no Object Explorer) |
+| Editar e excluir linhas na grade do resultado (SELECT de uma tabela com chave primária, ou de uma view sobre ela) | S1.4 |
 
 Na grade, o PostPilot descobre de onde vem cada coluna com
 `sys.dm_exec_describe_first_result_set`. O UPDATE e o DELETE não usam

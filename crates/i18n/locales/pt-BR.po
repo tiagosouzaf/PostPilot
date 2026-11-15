@@ -3967,3 +3967,39 @@ msgstr "Obrigatória, confiar no certificado do servidor"
 
 msgid "Mandatory, verify certificate"
 msgstr "Obrigatória, conferir o certificado"
+
+msgid "System Databases"
+msgstr "Bancos de Dados do Sistema"
+
+msgid "Programmability"
+msgstr "Programação"
+
+msgid "Created"
+msgstr "Criado em"
+
+msgid "Last modified"
+msgstr "Última alteração"
+
+msgid "Recovery model"
+msgstr "Modelo de recuperação"
+
+msgid "Compatibility level"
+msgstr "Nível de compatibilidade"
+
+msgid "Computed"
+msgstr "Calculada"
+
+msgid "Clustered"
+msgstr "Clusterizado"
+
+msgid "Non-Clustered"
+msgstr "Não clusterizado"
+
+msgid "The object no longer exists. Refresh the Object Explorer."
+msgstr "O objeto não existe mais. Atualize o Pesquisador de Objetos."
+
+msgid "This script is not available for SQL Server yet."
+msgstr "Este script ainda não está disponível para SQL Server."
+
+msgid "The definition is encrypted or not visible to this login."
+msgstr "A definição está criptografada ou não é visível para este logon."
