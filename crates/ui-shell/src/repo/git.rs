@@ -24,6 +24,9 @@ pub enum GitError {
     NotRepo,
     /// O git rodou e falhou; a mensagem é a dele.
     Failed(String),
+    /// O Pull parou porque o remoto mudou arquivos que têm alterações
+    /// locais ainda não commitadas (os arquivos, relativos à raiz).
+    LocalChanges(Vec<String>),
 }
 
 impl std::fmt::Display for GitError {
@@ -34,6 +37,10 @@ impl std::fmt::Display for GitError {
             )),
             GitError::NotRepo => f.write_str(tr("The workspace is not under source control.")),
             GitError::Failed(m) => f.write_str(m),
+            GitError::LocalChanges(files) => f.write_str(&trf!(
+                "Pull stopped: {files} changed on this computer and in the repository. Commit your changes or discard them, then Pull again.",
+                files = files.join(", ")
+            )),
         }
     }
 }
@@ -155,8 +162,13 @@ pub struct Git {
 
 fn command() -> Command {
     let mut cmd = Command::new("git");
+    // Mensagens do git em inglês, qualquer que seja o idioma do sistema:
+    // o Pull reconhece pelo texto quando são alterações locais no caminho.
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_MERGE_AUTOEDIT", "no")
+        .env("LC_MESSAGES", "C")
+        .env_remove("LANGUAGE")
+        .env_remove("LC_ALL")
         .args(["-c", "core.quotepath=false", "-c", "color.ui=false"]);
     // Sem janela de console a cada chamada no Windows.
     #[cfg(windows)]
@@ -313,13 +325,32 @@ impl Git {
     }
 
     /// Traz o remoto: `git pull` com merge (nunca rebase, para não reescrever
-    /// commits locais). Um conflito volta como erro, e [`Self::status`]
-    /// lista os arquivos.
+    /// commits locais). Um conflito só no `secrets.json` (as duas máquinas
+    /// salvaram senhas) é resolvido sozinho, juntando as senhas. Outro
+    /// conflito volta como erro, e [`Self::status`] lista os arquivos.
+    /// Alterações locais no caminho voltam como [`GitError::LocalChanges`].
     pub fn pull(&self) -> Result<String, GitError> {
         match self.git(&["pull", "--no-rebase", "--no-edit"]) {
             Ok(o) => Ok(o.trim().lines().last().unwrap_or_default().to_string()),
             Err(e) => {
-                let conflicts = self.status().map(|s| s.conflicts).unwrap_or_default();
+                if let GitError::Failed(m) = &e
+                    && let Some(files) = overwritten_files(m)
+                {
+                    return Err(GitError::LocalChanges(files));
+                }
+                let mut conflicts = self.status().map(|s| s.conflicts).unwrap_or_default();
+                let merged_passwords = conflicts.iter().any(|c| c == super::vault::FILE)
+                    && self.merge_passwords().is_ok();
+                if merged_passwords {
+                    conflicts.retain(|c| c != super::vault::FILE);
+                    if conflicts.is_empty() {
+                        self.git(&["commit", "--no-edit"])?;
+                        return Ok(tr(
+                            "merged the passwords saved on this computer with the ones from the repository",
+                        )
+                        .into());
+                    }
+                }
                 if conflicts.is_empty() {
                     Err(e)
                 } else {
@@ -330,6 +361,57 @@ impl Git {
                 }
             }
         }
+    }
+
+    /// Resolve o conflito do `secrets.json` juntando as senhas dos dois
+    /// lados (veja [`super::vault::merge`]) e marca o arquivo como resolvido.
+    fn merge_passwords(&self) -> Result<(), GitError> {
+        let file = super::vault::FILE;
+        let stage = |n: u8| self.git(&["show", &format!(":{n}:{file}")]);
+        let base = stage(1).ok();
+        let (ours, theirs) = (stage(2)?, stage(3)?);
+        let merged = super::vault::merge(base.as_deref(), &ours, &theirs).ok_or_else(|| {
+            GitError::Failed(
+                tr("The passwords of the two sides use different master passwords.").into(),
+            )
+        })?;
+        std::fs::write(self.root.join(file), merged).map_err(|e| {
+            GitError::Failed(trf!("Could not save {file}: {e}", file = file, e = e))
+        })?;
+        self.git(&["add", "--", file]).map(|_| ())
+    }
+
+    /// Descarta as alterações locais destes arquivos: os alterados e os
+    /// apagados voltam ao último commit; os novos são apagados do disco.
+    /// Devolve quantos arquivos foram descartados.
+    pub fn discard(&self, paths: &[String]) -> Result<usize, GitError> {
+        // Tira tudo do index antes (o PostPilot sempre commita tudo): assim
+        // só há dois casos, arquivo do último commit ou arquivo novo. Num
+        // repositório sem commits o reset falha e tudo é arquivo novo.
+        let _ = self.git(&["reset", "-q"]);
+        let status = self.status()?;
+        let mut done = 0;
+        for change in status.changes.iter().filter(|c| paths.contains(&c.path)) {
+            if change.code == "??" {
+                let target = self.root.join(&change.path);
+                let removed = if target.is_dir() {
+                    std::fs::remove_dir_all(&target)
+                } else {
+                    std::fs::remove_file(&target)
+                };
+                removed.map_err(|e| {
+                    GitError::Failed(trf!(
+                        "Could not delete {path}: {e}",
+                        path = change.path,
+                        e = e
+                    ))
+                })?;
+            } else {
+                self.git(&["checkout", "HEAD", "--", &change.path])?;
+            }
+            done += 1;
+        }
+        Ok(done)
     }
 
     /// Envia os commits. Sem branch remoto ainda, cria em `origin`.
@@ -401,6 +483,22 @@ pub fn repo_name(url: &str) -> String {
     } else {
         name.into()
     }
+}
+
+/// Os arquivos de "Your local changes to the following files would be
+/// overwritten by merge" (ou a variante dos arquivos novos), se a mensagem
+/// do git é essa.
+fn overwritten_files(message: &str) -> Option<Vec<String>> {
+    if !message.contains("would be overwritten by") {
+        return None;
+    }
+    let files: Vec<String> = message
+        .lines()
+        .filter(|l| l.starts_with('\t') || l.starts_with("    "))
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    (!files.is_empty()).then_some(files)
 }
 
 /// O que uma operação do git devolve à interface.
@@ -513,6 +611,16 @@ mod tests {
         let s = Status::parse("## Ação ünicode\0 M queries/relatório.sql\0");
         assert_eq!(s.branch, "Ação ünicode");
         assert_eq!(s.changes[0].path, "queries/relatório.sql");
+    }
+
+    #[test]
+    fn reads_the_files_that_block_a_pull() {
+        let m = "error: Your local changes to the following files would be overwritten by merge:\n\tsecrets.json\n\tqueries/a b.sql\nPlease commit your changes or stash them before you merge.\nAborting";
+        assert_eq!(
+            overwritten_files(m).unwrap(),
+            ["secrets.json", "queries/a b.sql"]
+        );
+        assert_eq!(overwritten_files("fatal: unable to access"), None);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use ureq::Agent;
 use ureq::tls::{Certificate, RootCerts, TlsConfig, TlsProvider};
 
-use crate::release::{Asset, Release, parse_release, parse_sha256sums};
+use crate::release::{Asset, Release, parse_release, parse_sha256sums, release_from_sums};
 
 /// Maior arquivo aceito no download (os pacotes têm uns 13 MB).
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
@@ -77,7 +77,16 @@ pub fn fetch_latest(repo: &str, user_agent: &str) -> Result<Option<Release>, Str
     match resp.status().as_u16() {
         200 => {}
         404 => return Ok(None),
-        403 | 429 => return Err("GitHub is limiting requests right now; try again later.".into()),
+        // Limite de pedidos sem login (60 por hora por IP, que numa rede
+        // compartilhada acaba rápido): lê o Release pelo `SHA256SUMS`, que
+        // não passa pela API.
+        403 | 429 => {
+            return fetch_latest_from_sums(repo, user_agent)
+                .map(Some)
+                .map_err(|e| {
+                    format!("GitHub is limiting requests right now, and the fallback failed: {e}")
+                });
+        }
         s => return Err(format!("GitHub answered with HTTP {s}")),
     }
     let body = resp
@@ -87,6 +96,20 @@ pub fn fetch_latest(repo: &str, user_agent: &str) -> Result<Option<Release>, Str
         .read_to_string()
         .map_err(|e| format!("could not read the answer from GitHub: {e}"))?;
     parse_release(&body).map_err(|e| e.to_string())
+}
+
+/// O Release mais recente sem a API: `releases/latest/download/SHA256SUMS`
+/// redireciona para o arquivo do último Release.
+pub fn fetch_latest_from_sums(repo: &str, user_agent: &str) -> Result<Release, String> {
+    let url = format!("https://github.com/{repo}/releases/latest/download/SHA256SUMS");
+    let text = get(&agent(user_agent), &url)?
+        .body_mut()
+        .with_config()
+        .limit(MAX_SMALL)
+        .read_to_string()
+        .map_err(|e| format!("could not read SHA256SUMS: {e}"))?;
+    release_from_sums(repo, &text)
+        .ok_or_else(|| "the latest release has no usable SHA256SUMS".to_string())
 }
 
 /// Baixa `asset` para `dest` e confere o SHA-256 contra o `SHA256SUMS` do
@@ -331,6 +354,16 @@ mod tests {
         assert_eq!(std::fs::read(&image).unwrap(), b"hello");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// O caminho sem a API, de verdade: `cargo test -p pgstudio-updater -- --ignored`.
+    #[test]
+    #[ignore = "precisa de rede"]
+    fn fetches_the_real_release_without_the_api() {
+        let r = fetch_latest_from_sums(crate::REPOSITORY, "PostPilot-test/0").unwrap();
+        assert!(r.is_newer_than("0.2.2"));
+        assert!(r.asset_ending_with("-x86_64.pkg.tar.zst").is_some());
+        assert!(r.checksums().is_some());
     }
 
     /// Consulta de verdade no GitHub: `cargo test -p pgstudio-updater -- --ignored`.

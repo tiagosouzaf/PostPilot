@@ -100,6 +100,44 @@ pub fn parse_release(json: &str) -> Result<Option<Release>, ReleaseError> {
     }))
 }
 
+/// Monta o Release a partir do `SHA256SUMS` dele, para quando a API do GitHub
+/// recusa a consulta (limite de pedidos por IP): a versão sai do nome dos
+/// arquivos (`postpilot-0.2.3-linux-x86_64.tar.gz`) e os endereços, do padrão
+/// de download do GitHub. Fica sem as notas e sem os tamanhos.
+pub fn release_from_sums(repo: &str, sums: &str) -> Option<Release> {
+    let names: Vec<&str> = sums
+        .lines()
+        .filter_map(|line| {
+            let (hash, name) = line.split_once(char::is_whitespace)?;
+            let name = name.trim().trim_start_matches('*');
+            (hash.len() == 64 && !name.is_empty() && !name.contains('/')).then_some(name)
+        })
+        .collect();
+    let version = names.iter().find_map(|name| {
+        name.split(['-', '_'])
+            .find_map(|part| Version::parse(part).ok())
+    })?;
+    if !version.pre.is_empty() {
+        return None;
+    }
+    let tag = format!("v{version}");
+    let base = format!("https://github.com/{repo}/releases/download/{tag}");
+    let asset = |name: &str| Asset {
+        name: name.to_string(),
+        url: format!("{base}/{name}"),
+        size: 0,
+    };
+    let mut assets: Vec<Asset> = names.iter().map(|n| asset(n)).collect();
+    assets.push(asset("SHA256SUMS"));
+    Some(Release {
+        page: format!("https://github.com/{repo}/releases/tag/{tag}"),
+        tag,
+        version,
+        notes: String::new(),
+        assets,
+    })
+}
+
 /// `v1.2.3` ou `1.2.3`.
 fn parse_tag(tag: &str) -> Option<Version> {
     let t = tag.trim();
@@ -186,6 +224,33 @@ mod tests {
         );
         assert_eq!(r.asset_ending_with("-windows-x86_64.zip").unwrap().size, 12);
         assert_eq!(r.checksums().unwrap().url, "https://example.test/s");
+    }
+
+    #[test]
+    fn builds_the_release_from_its_checksums_file() {
+        let h = "a".repeat(64);
+        let sums = format!(
+            "{h}  postpilot-0.2.5-linux-x86_64.tar.gz\n{h}  postpilot-0.2.5-1-x86_64.pkg.tar.zst\n\
+             {h} *postpilot_0.2.5_amd64.deb\n{h}  PostPilot-0.2.5-x86_64.AppImage\n"
+        );
+        let r = release_from_sums("o/r", &sums).unwrap();
+        assert_eq!(r.tag, "v0.2.5");
+        assert!(r.is_newer_than("0.2.3") && !r.is_newer_than("0.2.5"));
+        assert_eq!(r.page, "https://github.com/o/r/releases/tag/v0.2.5");
+        assert_eq!(
+            r.asset_ending_with("-x86_64.pkg.tar.zst").unwrap().url,
+            "https://github.com/o/r/releases/download/v0.2.5/postpilot-0.2.5-1-x86_64.pkg.tar.zst"
+        );
+        assert_eq!(
+            r.asset_ending_with("_amd64.deb").unwrap().name,
+            "postpilot_0.2.5_amd64.deb"
+        );
+        assert_eq!(
+            r.checksums().unwrap().url,
+            "https://github.com/o/r/releases/download/v0.2.5/SHA256SUMS"
+        );
+        assert_eq!(release_from_sums("o/r", "<html>Not Found</html>"), None);
+        assert_eq!(release_from_sums("o/r", ""), None);
     }
 
     #[test]

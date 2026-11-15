@@ -4439,3 +4439,59 @@ msgstr "Editar Registro..."
 
 msgid "A PostgreSQL database cannot be compared with a SQL Server database."
 msgstr "Não dá para comparar um banco PostgreSQL com um banco SQL Server."
+msgid "Pull stopped: {files} changed on this computer and in the repository. Commit your changes or discard them, then Pull again."
+msgstr "O Pull parou: {files} mudou neste computador e no repositório. Faça Commit das suas alterações ou descarte-as, e faça Pull de novo."
+
+msgid "merged the passwords saved on this computer with the ones from the repository"
+msgstr "as senhas salvas neste computador foram juntadas com as do repositório"
+
+msgid "The passwords of the two sides use different master passwords."
+msgstr "As senhas dos dois lados usam senhas mestras diferentes."
+
+msgid "Could not delete {path}: {e}"
+msgstr "Não foi possível apagar {path}: {e}"
+
+msgid "Discarding..."
+msgstr "Descartando..."
+
+msgid "Discarded the changes in 1 file."
+msgstr "Alterações de 1 arquivo descartadas."
+
+msgid "Discarded the changes in {n} files."
+msgstr "Alterações de {n} arquivos descartadas."
+
+msgid "1 change"
+msgstr "1 alteração"
+
+msgid "{n} changes"
+msgstr "{n} alterações"
+
+msgid "Changes and Discard..."
+msgstr "Alterações e Descartar..."
+
+msgid "Changes"
+msgstr "Alterações"
+
+msgid "Delete the new file {path}? This cannot be undone."
+msgstr "Apagar o arquivo novo {path}? Isto não pode ser desfeito."
+
+msgid "Discard your changes in {path} and go back to the last commit? This cannot be undone."
+msgstr "Descartar suas alterações em {path} e voltar ao último commit? Isto não pode ser desfeito."
+
+msgid "Discard your changes in all the files and go back to the last commit? New files are kept. This cannot be undone."
+msgstr "Descartar suas alterações em todos os arquivos e voltar ao último commit? Os arquivos novos ficam. Isto não pode ser desfeito."
+
+msgid "Discard"
+msgstr "Descartar"
+
+msgid "No local changes."
+msgstr "Nenhuma alteração local."
+
+msgid "Delete this new file"
+msgstr "Apaga este arquivo novo"
+
+msgid "Go back to the last commit of this file"
+msgstr "Volta ao último commit deste arquivo"
+
+msgid "Discard All..."
+msgstr "Descartar Tudo..."
