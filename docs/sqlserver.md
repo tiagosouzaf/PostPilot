@@ -12,21 +12,28 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | Conectar (autenticação SQL, TLS, instância nomeada `servidor\INSTANCIA`, redirecionamento do Azure) | S1.2 |
 | Janela de consulta: `GO` (com repetição `GO 5`), vários resultados, `(n rows affected)`, `PRINT` e `RAISERROR` na aba Messages, erros com a linha do script, cancelar | S1.2 |
 | Object Explorer: servidor e bancos | S1.2 (pastas de cada banco no S2.1) |
+| "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
+| Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
+| Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
+
+Autenticação do Windows (Kerberos/NTLM) ainda não funciona: a biblioteca de
+autenticação que o driver usa não compila junto com as outras dependências
+do PostPilot. Por enquanto, use login do SQL Server.
 
 ### Criptografia
 
-O campo "Encryption" do Connect to Server vale para os dois motores. No SQL
-Server:
+O campo "Encryption" muda de opções conforme o "Server type". No SQL Server
+são as do SSMS:
 
 | Opção | O que faz |
 | --- | --- |
-| Disable | só o login vai cifrado, como o "Optional" do SSMS |
-| Prefer | tudo cifrado, sem conferir o certificado ("Trust server certificate") |
-| Require | tudo cifrado e o servidor precisa aceitar, sem conferir o certificado |
-| Verify full | tudo cifrado, conferindo certificado e nome do servidor |
+| Optional (login only) | só o login vai cifrado |
+| Mandatory, trust server certificate | tudo cifrado, sem conferir o certificado (padrão) |
+| Mandatory, verify certificate | tudo cifrado, conferindo certificado e nome do servidor |
 
 O SQL Server instalado sem certificado próprio usa um autoassinado; com ele,
-use Disable, Prefer ou Require.
+use uma das duas primeiras. No arquivo de conexões elas ficam como
+`disable`, `require` e `verify-full`.
 
 ## Testes contra um SQL Server de verdade
 
@@ -47,3 +54,6 @@ Para abrir o app já conectado (screenshots, demonstrações), o prefixo
 ```sh
 PGSTUDIO_CONNECT='sqlserver:127.0.0.1,14330' PGUSER=sa PGPASSWORD='PostPilot!2026' postpilot
 ```
+
+`PGSTUDIO_CONNECT=dialog:sqlserver` abre o Connect to Server já com o SQL
+Server escolhido.

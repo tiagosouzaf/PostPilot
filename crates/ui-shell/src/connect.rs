@@ -17,7 +17,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use eframe::egui;
-use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector, SslMode};
+use pgstudio_core::connection::{
+    ConnectError, Connected, ConnectionSettings, Connector, Engine, SslMode,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::secrets::{self, Lookup, SecretStore};
@@ -118,6 +120,8 @@ pub enum DialogAction {
 
 /// Estado do diálogo "Connect to Server".
 pub struct ConnectDialog {
+    /// "Server type": PostgreSQL ou SQL Server.
+    pub engine: Engine,
     pub server: String,
     pub user: String,
     pub password: String,
@@ -149,11 +153,18 @@ impl ConnectDialog {
     /// Abre preenchido com `settings` (a conexão mais recente ou o padrão).
     pub fn new(settings: &ConnectionSettings) -> Self {
         ConnectDialog {
+            engine: settings.engine,
             server: settings.server_name(),
             user: settings.user.clone(),
             password: String::new(),
             database: settings.database.clone(),
-            ssl: settings.ssl,
+            // Conexões gravadas antes do S1.3 podem ter um modo que o motor não
+            // oferece (Prefer no SQL Server): vale o equivalente.
+            ssl: if SslMode::options(settings.engine).contains(&settings.ssl) {
+                settings.ssl
+            } else {
+                SslMode::Require
+            },
             remember: false,
             error: None,
             pending: None,
@@ -188,6 +199,32 @@ impl ConnectDialog {
             ..ConnectDialog::new(settings)
         }
         .with_store(store);
+    }
+
+    /// Troca o "Server type". Login, banco e criptografia que estavam no
+    /// padrão do motor antigo passam para o padrão do novo; a senha
+    /// guardada é procurada de novo (a chave do cofre muda com o motor).
+    pub fn set_engine(&mut self, engine: Engine) {
+        let old = self.engine;
+        if old == engine {
+            return;
+        }
+        if self.user.trim().is_empty() || self.user.trim() == old.default_user() {
+            self.user = engine.default_user().into();
+        }
+        if self.database.trim() == old.default_database() {
+            self.database = engine.default_database().into();
+        }
+        if !SslMode::options(engine).contains(&self.ssl) {
+            self.ssl = SslMode::Require;
+        }
+        self.engine = engine;
+        if self.saved {
+            self.password.clear();
+            self.saved = false;
+            self.remember = false;
+        }
+        self.start_lookup();
     }
 
     fn start_lookup(&mut self) {
@@ -257,14 +294,14 @@ impl ConnectDialog {
             user: self.user.trim().to_string(),
             database: self.database.trim().to_string(),
             ssl: self.ssl,
-            ..Default::default()
+            ..ConnectionSettings::for_engine(self.engine)
         };
         s.set_server_name(&self.server)?;
         if s.user.is_empty() {
             return Err(tr("Enter a login.").into());
         }
         if s.database.is_empty() {
-            s.database = pgstudio_core::connection::DEFAULT_DATABASE.into();
+            s.database = self.engine.default_database().into();
         }
         Ok(s)
     }
@@ -381,7 +418,20 @@ impl ConnectDialog {
 
     fn fields(&mut self, ui: &mut egui::Ui, recent: &[ConnectionSettings]) {
         let label = ui.label(tr("Server type:"));
-        ui.label(tr("PostgreSQL")).labelled_by(label.id);
+        let mut engine = self.engine;
+        egui::ComboBox::from_id_salt("connect_engine")
+            .selected_text(engine.label())
+            .width(300.0)
+            .show_ui(ui, |ui| {
+                for e in Engine::ALL {
+                    ui.selectable_value(&mut engine, e, e.label());
+                }
+            })
+            .response
+            .labelled_by(label.id);
+        if engine != self.engine {
+            self.set_engine(engine);
+        }
         ui.end_row();
 
         let label = ui.label(tr("Server name:"));
@@ -390,7 +440,10 @@ impl ConnectDialog {
                 .add(
                     egui::TextEdit::singleline(&mut self.server)
                         .desired_width(270.0)
-                        .hint_text(tr("host or host,port")),
+                        .hint_text(match self.engine {
+                            Engine::PostgreSql => tr("host or host,port"),
+                            Engine::SqlServer => tr("host, host,port or host\\instance"),
+                        }),
                 )
                 .labelled_by(label.id);
             // O primeiro frame do modal só mede o tamanho; insiste até o
@@ -406,7 +459,10 @@ impl ConnectDialog {
             ui.add_enabled_ui(!recent.is_empty(), |ui| {
                 ui.menu_button(egui_phosphor::regular::CARET_DOWN, |ui| {
                     for s in recent {
-                        let text = format!("{} ({})", s.server_name(), s.user);
+                        let text = match s.engine {
+                            Engine::PostgreSql => format!("{} ({})", s.server_name(), s.user),
+                            e => format!("{} ({}, {})", s.server_name(), s.user, e.label()),
+                        };
                         if ui.button(text).clicked() {
                             chosen = Some(s.clone());
                             ui.close();
@@ -448,18 +504,18 @@ impl ConnectDialog {
         ui.add(
             egui::TextEdit::singleline(&mut self.database)
                 .desired_width(300.0)
-                .hint_text(pgstudio_core::connection::DEFAULT_DATABASE),
+                .hint_text(self.engine.default_database()),
         )
         .labelled_by(label.id);
         ui.end_row();
 
         let label = ui.label(tr("Encryption:"));
         egui::ComboBox::from_id_salt("connect_ssl")
-            .selected_text(self.ssl.label())
+            .selected_text(self.ssl.label_for(self.engine))
             .width(300.0)
             .show_ui(ui, |ui| {
-                for mode in SslMode::ALL {
-                    ui.selectable_value(&mut self.ssl, mode, mode.label());
+                for &mode in SslMode::options(self.engine) {
+                    ui.selectable_value(&mut self.ssl, mode, mode.label_for(self.engine));
                 }
             })
             .response
@@ -530,5 +586,30 @@ mod tests {
         d.server = "db".into();
         d.user = " ".into();
         assert_eq!(d.settings().unwrap_err(), "Enter a login.");
+    }
+
+    #[test]
+    fn server_type_switches_the_defaults() {
+        let mut d = ConnectDialog::new(&ConnectionSettings::default());
+        d.server = "sql01,14330".into();
+        d.set_engine(Engine::SqlServer);
+        assert_eq!((d.user.as_str(), d.database.as_str()), ("sa", "master"));
+        assert_eq!(d.ssl, SslMode::Require);
+        let s = d.settings().unwrap();
+        assert_eq!(s.engine, Engine::SqlServer);
+        assert_eq!((s.host.as_str(), s.port), ("sql01", 14330));
+        d.server = "sql01".into();
+        d.database.clear();
+        let s = d.settings().unwrap();
+        assert_eq!((s.port, s.database.as_str()), (1433, "master"));
+        // O que a pessoa digitou fica.
+        d.user = "app".into();
+        d.database = "vendas".into();
+        d.set_engine(Engine::PostgreSql);
+        assert_eq!((d.user.as_str(), d.database.as_str()), ("app", "vendas"));
+        assert_eq!(d.settings().unwrap().port, 5432);
+        // Reabrir com uma conexão recente traz o motor dela.
+        let recent = ConnectionSettings::for_engine(Engine::SqlServer);
+        assert_eq!(ConnectDialog::new(&recent).engine, Engine::SqlServer);
     }
 }

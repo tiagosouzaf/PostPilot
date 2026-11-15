@@ -78,6 +78,30 @@ impl Engine {
         }
     }
 
+    /// Bancos que aparecem no seletor da janela de consulta, um por linha.
+    pub fn list_databases_sql(self) -> &'static str {
+        match self {
+            Engine::PostgreSql => {
+                "SELECT datname FROM pg_catalog.pg_database \
+                 WHERE datallowconn AND NOT datistemplate ORDER BY datname"
+            }
+            Engine::SqlServer => {
+                "SELECT name FROM sys.databases \
+                 WHERE HAS_DBACCESS(name) = 1 AND state = 0 ORDER BY name"
+            }
+        }
+    }
+
+    /// Uma linha que diz se a sessão está dentro de uma transação: `t` no
+    /// PostgreSQL (o `now()` é o começo da transação), o `@@TRANCOUNT` no
+    /// SQL Server.
+    pub fn in_transaction_sql(self) -> &'static str {
+        match self {
+            Engine::PostgreSql => "SELECT now() <> statement_timestamp()",
+            Engine::SqlServer => "SELECT @@TRANCOUNT",
+        }
+    }
+
     /// Para o `serde(skip_serializing_if)`: o PostgreSQL não é gravado,
     /// e os arquivos ficam como eram.
     pub fn is_postgres(&self) -> bool {
@@ -111,6 +135,8 @@ pub enum Feature {
     QueryDesigner,
     /// Ferramentas do Claude sobre o servidor.
     Claude,
+    /// IntelliSense (catálogo do banco no editor).
+    IntelliSense,
 }
 
 /// Uso de TLS na conexão, com os mesmos nomes do `sslmode` do libpq.
@@ -137,6 +163,30 @@ impl SslMode {
         SslMode::Require,
         SslMode::VerifyFull,
     ];
+
+    /// Os modos que o diálogo oferece para `engine`. No SQL Server o
+    /// `Prefer` não existe: lá é `Require` (cifrar sem conferir o
+    /// certificado, o "Trust server certificate" do SSMS).
+    pub fn options(engine: Engine) -> &'static [SslMode] {
+        match engine {
+            Engine::PostgreSql => &SslMode::ALL,
+            Engine::SqlServer => &[SslMode::Disable, SslMode::Require, SslMode::VerifyFull],
+        }
+    }
+
+    /// Nome exibido no diálogo para `engine`.
+    pub fn label_for(self, engine: Engine) -> &'static str {
+        match (engine, self) {
+            (Engine::PostgreSql, _) => self.label(),
+            (Engine::SqlServer, SslMode::Disable) => pgstudio_i18n::tr("Optional (login only)"),
+            (Engine::SqlServer, SslMode::Prefer | SslMode::Require) => {
+                pgstudio_i18n::tr("Mandatory, trust server certificate")
+            }
+            (Engine::SqlServer, SslMode::VerifyFull) => {
+                pgstudio_i18n::tr("Mandatory, verify certificate")
+            }
+        }
+    }
 
     /// Nome exibido no diálogo.
     pub fn label(self) -> &'static str {
@@ -182,6 +232,10 @@ impl ConnectionSettings {
     pub fn for_engine(engine: Engine) -> Self {
         ConnectionSettings {
             engine,
+            ssl: match engine {
+                Engine::PostgreSql => SslMode::Prefer,
+                Engine::SqlServer => SslMode::Require,
+            },
             port: engine.default_port(),
             database: engine.default_database().into(),
             user: engine.default_user().into(),
@@ -204,6 +258,9 @@ impl ConnectionSettings {
         }
         if self.user.is_empty() || self.user == old.default_user() {
             self.user = engine.default_user().into();
+        }
+        if !SslMode::options(engine).contains(&self.ssl) {
+            self.ssl = SslMode::Require;
         }
         self.engine = engine;
     }

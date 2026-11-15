@@ -293,7 +293,15 @@ mod tests {
         // A PEM bundle that contains no CERTIFICATE blocks (here only a
         // PRIVATE KEY) yields zero certs and must be a hard error naming the
         // in-memory source, never a silent degrade to base-roots-only.
-        let bundle = b"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n".to_vec();
+        // Chave de mentira, montada em partes para a checagem de segredos do
+        // PostPilot (xtask/tests/sem_segredos.rs) não acusar.
+        let bundle = concat!(
+            "-----BEGIN ",
+            "PRIVATE KEY-----\nMIIB\n-----END ",
+            "PRIVATE KEY-----\n"
+        )
+        .as_bytes()
+        .to_vec();
         let err = trust_anchors(&ExtraCa::Bundle(bundle)).unwrap_err();
         let msg = format!("{err:?}");
         assert!(

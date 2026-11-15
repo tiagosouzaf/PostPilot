@@ -17,6 +17,11 @@ pub trait QueryService: Send + Sync {
     /// Cria uma sessão no banco `database`. A conexão só abre na primeira
     /// execução, fora da thread da interface.
     fn open(&self, database: &str) -> Arc<dyn QuerySession>;
+
+    /// Motor do servidor, para o SQL que a interface monta.
+    fn engine(&self) -> crate::connection::Engine {
+        crate::connection::Engine::PostgreSql
+    }
 }
 
 /// A conexão de uma janela de consulta.
@@ -31,6 +36,11 @@ pub trait QuerySession: Send + Sync {
 
     /// Banco da sessão.
     fn database(&self) -> String;
+
+    /// Motor do servidor, para o SQL que a interface monta.
+    fn engine(&self) -> crate::connection::Engine {
+        crate::connection::Engine::PostgreSql
+    }
 
     /// De onde vem cada coluna do resultado de `sql` (um comando só), sem
     /// rodar nada: o servidor prepara o comando e diz, para cada coluna,

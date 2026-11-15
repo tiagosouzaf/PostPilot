@@ -1,9 +1,9 @@
 [package]
 authors = [
-    "Steffen Butzer <steffen.butzer@outlook.com>",
-    "Julius de Bruijn <bruijn@prisma.io>",
-    "Eric Sheppard <eric@eigenmo.de>",
-    "Yoshua Wuyts <yoshuawuyts@gmail.com>",
+    "Steffen Butzer",
+    "Julius de Bruijn",
+    "Eric Sheppard",
+    "Yoshua Wuyts",
 ]
 description = "A TDS (MSSQL) driver"
 documentation = "https://docs.rs/tiberius/"
