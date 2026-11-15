@@ -15,6 +15,7 @@ use pgstudio_i18n::{tr, trf};
 use std::fmt;
 use std::ops::ControlFlow;
 
+use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::Model;
 use pgstudio_core::schema::Id;
 use sqlparser::ast::{
@@ -23,7 +24,7 @@ use sqlparser::ast::{
     OrderBySort, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Value,
     visit_expressions,
 };
-use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::dialect::{MsSqlDialect, PostgreSqlDialect};
 use sqlparser::parser::Parser;
 
 use super::{Aggregate, JoinKind, Query, QueryTable, Row, SortType, condition};
@@ -92,10 +93,104 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, ReadError> {
     Err(ReadError::Unsupported(what.into()))
 }
 
+thread_local! {
+    /// Lendo T-SQL: os nomes não diferenciam maiúsculas e o schema padrão
+    /// é `dbo`.
+    static TSQL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn tsql() -> bool {
+    TSQL.with(|t| t.get())
+}
+
 /// Lê `sql` (um SELECT) com as tabelas de `model`.
 pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
-    let statements = Parser::parse_sql(&PostgreSqlDialect {}, sql)
-        .map_err(|e| ReadError::Syntax(e.to_string()))?;
+    read_for(sql, model, Engine::PostgreSql)
+}
+
+/// [`read`] no dialeto do motor. No SQL Server os nomes são comparados sem
+/// diferenciar maiúsculas (o resultado volta com a grafia do banco), o
+/// schema padrão é `dbo` e o `TOP (n)` faz o papel do `LIMIT`.
+pub fn read_for(sql: &str, model: &Model, engine: Engine) -> Result<Query, ReadError> {
+    if engine != Engine::SqlServer {
+        return read_dialect(sql, model);
+    }
+    // A leitura compara nomes em minúsculas contra uma cópia do modelo em
+    // minúsculas; depois os nomes voltam à grafia do banco.
+    let mut lower = model.clone();
+    for t in &mut lower.tables {
+        let t = std::sync::Arc::make_mut(t);
+        t.schema = t.schema.to_lowercase();
+        t.name = t.name.to_lowercase();
+        for c in &mut t.columns {
+            c.name = c.name.to_lowercase();
+        }
+        for fk in &mut t.foreign_keys {
+            fk.ref_schema = fk.ref_schema.to_lowercase();
+            fk.ref_table = fk.ref_table.to_lowercase();
+            for c in fk.columns.iter_mut().chain(&mut fk.ref_columns) {
+                *c = c.to_lowercase();
+            }
+        }
+    }
+    TSQL.with(|t| t.set(true));
+    let result = read_dialect(sql, &lower);
+    TSQL.with(|t| t.set(false));
+    let mut query = result?;
+    query.engine = engine;
+    let real = |table: usize, column: &str| -> Option<String> {
+        let t = model.table(query.tables.get(table)?.table)?;
+        t.columns
+            .iter()
+            .find(|c| c.name.to_lowercase() == column)
+            .map(|c| c.name.clone())
+    };
+    let rows: Vec<Option<String>> = query
+        .rows
+        .iter()
+        .map(|r| (!r.expression).then(|| real(r.table, &r.column)).flatten())
+        .collect();
+    for (r, name) in query.rows.iter_mut().zip(rows) {
+        if let Some(name) = name {
+            r.column = name;
+        }
+    }
+    let joins: Vec<Vec<(Option<String>, Option<String>)>> = query
+        .joins
+        .iter()
+        .map(|j| {
+            j.on.iter()
+                .map(|(l, r)| (real(j.left, l), real(j.right, r)))
+                .collect()
+        })
+        .collect();
+    for (j, names) in query.joins.iter_mut().zip(joins) {
+        for ((l, r), (nl, nr)) in j.on.iter_mut().zip(names) {
+            if let Some(n) = nl {
+                *l = n;
+            }
+            if let Some(n) = nr {
+                *r = n;
+            }
+        }
+    }
+    for t in &mut query.tables {
+        if let Some(table) = model.table(t.table)
+            && table.name.to_lowercase() == t.alias
+        {
+            t.alias = table.name.clone();
+        }
+    }
+    Ok(query)
+}
+
+fn read_dialect(sql: &str, model: &Model) -> Result<Query, ReadError> {
+    let statements = if tsql() {
+        Parser::parse_sql(&MsSqlDialect {}, sql)
+    } else {
+        Parser::parse_sql(&PostgreSqlDialect {}, sql)
+    }
+    .map_err(|e| ReadError::Syntax(e.to_string()))?;
     let [Statement::Query(query)] = statements.as_slice() else {
         return Err(ReadError::NotSelect);
     };
@@ -167,7 +262,23 @@ pub fn read(sql: &str, model: &Model) -> Result<Query, ReadError> {
         names: Vec::new(),
         grouped: Vec::new(),
     };
-    r.query.limit = limit;
+    r.query.limit = match &select.top {
+        Some(top) if tsql() => match &top.quantity {
+            _ if top.percent || top.with_ties => {
+                return unsupported("TOP ... PERCENT / WITH TIES");
+            }
+            Some(sqlparser::ast::TopQuantity::Constant(n)) => Some(*n),
+            Some(sqlparser::ast::TopQuantity::Expr(Expr::Value(v))) => match &v.value {
+                Value::Number(n, _) => match n.parse::<u64>() {
+                    Ok(n) => Some(n),
+                    Err(_) => return unsupported(format!("TOP ({n})")),
+                },
+                _ => return unsupported("TOP"),
+            },
+            _ => return unsupported("TOP"),
+        },
+        _ => limit,
+    };
     r.query.distinct = matches!(select.distinct, Some(Distinct::Distinct));
     for from in &select.from {
         r.from(from)?;
@@ -311,7 +422,7 @@ fn check_select(s: &Select) -> Result<(), ReadError> {
     if let Some(Distinct::On(_)) = &s.distinct {
         return unsupported("DISTINCT ON");
     }
-    if s.top.is_some() {
+    if s.top.is_some() && !tsql() {
         return unsupported(tr("TOP (use LIMIT)"));
     }
     if s.into.is_some() {
@@ -372,6 +483,9 @@ fn disjuncts(e: &Expr) -> Vec<&Expr> {
 
 /// Nome como o PostgreSQL entende: sem aspas, em minúsculas.
 fn name(ident: &Ident) -> String {
+    if tsql() {
+        return ident.value.to_lowercase();
+    }
     match ident.quote_style {
         Some(_) => ident.value.clone(),
         None => ident.value.to_lowercase(),
@@ -519,7 +633,7 @@ impl Reader<'_> {
                     .collect();
                 matches
                     .iter()
-                    .find(|t| t.schema == "public")
+                    .find(|t| t.schema == if tsql() { "dbo" } else { "public" })
                     .or(match matches.as_slice() {
                         [only] => Some(only),
                         _ => None,
@@ -1303,5 +1417,82 @@ mod tests {
         // Uma expressão vazia não entra no SQL.
         q.add_expression("  ");
         assert!(!q.sql(&m).contains("  ,"));
+    }
+
+    /// Um modelo com a grafia do SQL Server: `dbo.Clientes` e `dbo.Pedidos`.
+    fn tsql_model() -> Model {
+        use pgstudio_core::schema::{Column, ForeignKey, Table};
+        let column = |id, name: &str| Column {
+            id,
+            name: name.into(),
+            ty: "int".into(),
+            ..Default::default()
+        };
+        Model::new(vec![
+            Table {
+                id: 1,
+                schema: "dbo".into(),
+                name: "Clientes".into(),
+                columns: vec![column(11, "Id"), column(12, "Nome")],
+                ..Default::default()
+            },
+            Table {
+                id: 2,
+                schema: "dbo".into(),
+                name: "Pedidos".into(),
+                columns: vec![
+                    column(21, "Id"),
+                    column(22, "ClienteId"),
+                    column(23, "Valor Total"),
+                ],
+                foreign_keys: vec![ForeignKey {
+                    name: "fk".into(),
+                    columns: vec!["ClienteId".into()],
+                    ref_schema: "dbo".into(),
+                    ref_table: "Clientes".into(),
+                    ref_columns: vec!["Id".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ])
+    }
+
+    #[test]
+    fn tsql_is_read_without_case_and_written_with_brackets() {
+        let model = tsql_model();
+        let q = read_for(
+            "select top (10) c.NOME, p.[valor total] as Total \
+             from CLIENTES c left join dbo.pedidos p on p.clienteid = c.id \
+             where p.[Valor Total] > 100 order by c.nome desc",
+            &model,
+            Engine::SqlServer,
+        )
+        .unwrap();
+        assert_eq!(q.limit, Some(10));
+        assert_eq!(
+            q.sql(&model),
+            "SELECT TOP (10) c.Nome,\n       p.[Valor Total] AS total\n\
+             FROM dbo.Clientes AS c\n    LEFT JOIN dbo.Pedidos AS p ON p.ClienteId = c.Id\n\
+             WHERE p.[Valor Total] > 100\nORDER BY c.Nome DESC;"
+        );
+        // Sem apelido, a tabela volta com a grafia do banco; TOP sem parênteses.
+        let q = read_for("SELECT TOP 5 * FROM pedidos", &model, Engine::SqlServer).unwrap();
+        assert_eq!(q.sql(&model), "SELECT TOP (5) *\nFROM dbo.Pedidos;");
+        // O que o designer não desenha continua recusado.
+        assert!(matches!(
+            read_for(
+                "SELECT TOP 5 PERCENT * FROM pedidos",
+                &model,
+                Engine::SqlServer
+            ),
+            Err(ReadError::Unsupported(_))
+        ));
+        assert!(matches!(
+            read_for("SELECT * FROM nada", &model, Engine::SqlServer),
+            Err(ReadError::UnknownTable(_))
+        ));
+        // E o PostgreSQL segue recusando o TOP.
+        assert!(read("SELECT TOP 5 * FROM pedidos", &model).is_err());
     }
 }

@@ -11,6 +11,7 @@
 //! Decisões em `docs/adr/0004-sql-server.md`.
 
 mod explorer;
+mod model;
 mod query;
 pub mod script;
 pub mod value;

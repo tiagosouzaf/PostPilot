@@ -3375,7 +3375,9 @@ impl ShellApp {
             .documents
             .get(doc)
             .and_then(|d| pgstudio_sql_editor::selected_text(ctx, panels::editor_id(doc), &d.text));
+        let engine = self.document_engine(doc).unwrap_or_default();
         let qd = query_designer::QueryDesigner::open(provider, db, doc, ctx)
+            .with_engine(engine)
             .with_sql(selected.unwrap_or_default());
         self.query_designer = Some(if self.diagram_all_tables {
             qd.with_all_tables()
