@@ -44,29 +44,74 @@ Novas crates entram na fase do roteiro que as usa.
 
 ## Instalação
 
-`cargo xtask dist` gera os pacotes em `target/packages/` (veja
-[Pacotes](#pacotes)):
+Os pacotes ficam na [página de Releases](https://github.com/tiagosouzaf/postpilot/releases/latest).
 
+### Linux: um comando só
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash
+```
+
+O [`install.sh`](install.sh) baixa a versão mais recente, confere o SHA-256
+contra o `SHA256SUMS` do Release e instala do jeito do seu sistema:
+
+- **Arch Linux e derivados (Omarchy, Manjaro, EndeavourOS):** o
+  `.pkg.tar.zst`, com `sudo pacman -U`. Ele substitui o antigo `pgstudio` (o
+  pacman pergunta; responda `y`).
+- **Ubuntu, Debian e derivados:** o `.deb`, com `sudo apt install`.
+- **Outras distribuições (Fedora, openSUSE…):** o AppImage em
+  `~/.local/bin/PostPilot.AppImage`, com atalho no menu de aplicativos, sem
+  sudo. O AppImage precisa da `fuse2` (`libfuse2` no Debian e no Ubuntu).
+
+Para **atualizar**, rode o mesmo comando de novo (ele não faz nada se a versão
+já estiver instalada); o próprio app avisa quando sai uma versão nova
+(Ajuda > Verificar se Há Atualizações) e mostra esse comando. Opções vão depois de
+`bash -s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash -s -- --appimage   # AppImage mesmo em Arch/Debian
+curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash -s -- --uninstall
+```
+
+Prefere ver o script antes de rodar? Baixe com
+`curl -fsSLO https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh`,
+leia e rode `bash install.sh`.
+
+**AUR:** o pacote `tf-postpilot-bin` está pronto, mas ainda não foi publicado
+(o AUR fechou temporariamente o cadastro de contas novas). Quando sair, vai
+ser `yay -S tf-postpilot-bin`. Até lá, use o comando acima.
+
+### Linux: à mão
+
+Baixe o arquivo do Release e:
+
+- **Arch e derivados:** `sudo pacman -U ./postpilot-<versão>-1-x86_64.pkg.tar.zst`
+  (pelo arquivo baixado: `pacman -U <URL>` falha procurando uma assinatura
+  `.sig` que o Release não tem), ou compile do código com
+  `cd packaging/arch && makepkg -si`. Para remover, `sudo pacman -R postpilot`.
 - **Ubuntu, Debian e derivados:** `sudo apt install ./postpilot_<versão>_amd64.deb`.
-  O PostPilot aparece no menu de aplicativos; para remover,
-  `sudo apt remove postpilot`.
-- **Arch Linux e derivados (Omarchy, Manjaro, EndeavourOS):**
-  `sudo pacman -U postpilot-<versão>-1-x86_64.pkg.tar.zst`, ou compile do código
-  com `cd packaging/arch && makepkg -si`. O atalho aparece no lançador de
-  aplicativos; para remover, `sudo pacman -R postpilot`.
-- **Outras distribuições Linux:** `chmod +x PostPilot-<versão>-x86_64.AppImage`
+  Para remover, `sudo apt remove postpilot`.
+- **Qualquer distribuição:** `chmod +x PostPilot-<versão>-x86_64.AppImage`
   e execute. Sem FUSE (alguns containers), use
-  `./PostPilot-<versão>-x86_64.AppImage --appimage-extract-and-run`.
-- **Windows 10 e 11 (64 bits):** dê dois cliques em
-  `PostPilot-<versão>-x86_64.msi` (ou `msiexec /i PostPilot-<versão>-x86_64.msi`).
-  Ele instala para todos os usuários em `C:\Program Files\PostPilot`, pede
-  elevação, põe o atalho no menu Iniciar e o PostPilot no "Abrir com" dos
-  arquivos `.sql` (sem virar o programa padrão). Uma versão nova substitui a
-  anterior; para remover, Configurações > Aplicativos > PostPilot. Sem
-  instalar, extraia o `.zip` e abra `postpilot.exe`. O exe e o msi não são
-  assinados, então o SmartScreen pode avisar ("Mais informações" > "Executar
-  assim mesmo"). O instalador só foi testado no Wine (`msiexec` do Wine 9), não
-  num Windows de verdade.
+  `./PostPilot-<versão>-x86_64.AppImage --appimage-extract-and-run`. Ou extraia
+  o `postpilot-<versão>-linux-x86_64.tar.gz` em `/` (tem `usr/bin`, ícones e
+  atalho).
+
+### Windows 10 e 11 (64 bits)
+
+Baixe o `PostPilot-<versão>-x86_64.msi` e dê dois cliques (ou
+`msiexec /i PostPilot-<versão>-x86_64.msi`). Ele instala para todos os
+usuários em `C:\Program Files\PostPilot`, pede elevação, põe o atalho no menu
+Iniciar e o PostPilot no "Abrir com" dos arquivos `.sql` (sem virar o programa
+padrão). Uma versão nova substitui a anterior, e o próprio app se atualiza
+pelo menu Ajuda; para remover, Configurações > Aplicativos > PostPilot. Sem
+instalar, extraia o `PostPilot-<versão>-windows-x86_64.zip` e abra
+`postpilot.exe`. O exe e o msi não são assinados, então o SmartScreen pode
+avisar ("Mais informações" > "Executar assim mesmo"). O instalador só foi
+testado no Wine (`msiexec` do Wine 9), não num Windows de verdade.
+
+### Requisitos
 
 No Linux, o binário é ligado contra a glibc 2.31 (Ubuntu 20.04, Debian 11 e
 posteriores) e precisa de Vulkan ou OpenGL ES (o Mesa de qualquer desktop
