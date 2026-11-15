@@ -271,16 +271,48 @@ impl ShellApp {
         self.new_query_on_connect = new_query.then_some(key);
     }
 
-    /// "Register..." no servidor do Object Explorer: abre a janela
-    /// Registered Servers com "New Server Registration" preenchido com a
-    /// conexão do servidor ativo (a árvore que recebeu o clique).
+    /// "Register..." e "Properties" no servidor do Object Explorer: o
+    /// registro da conexão ativa (a árvore que recebeu o clique), onde ficam
+    /// o nome, a pasta e o ambiente dela. Com um workspace aberto, o registro
+    /// é o do workspace, para ir ao repositório; sem um, o dos Registered
+    /// Servers. Um servidor já registrado abre para editar; um novo abre o
+    /// "New Server Registration" preenchido, com a senha em uso.
     pub fn register_active_server(&mut self) {
         let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
             self.status = tr("Only a real connection can be registered.").to_string();
             return;
         };
-        self.workspace.open(Panel::RegisteredServers);
-        self.registered.register(&settings, self.secrets.as_ref());
+        let key = server_key(&settings);
+        let password = self.password.clone();
+        let in_workspace = self.workspace_panel.workspace().is_some();
+        let panel = if in_workspace {
+            self.workspace.open(Panel::WorkspaceExplorer);
+            self.workspace_panel
+                .register_or_edit(&settings, self.secrets.as_ref())
+        } else {
+            self.workspace.open(Panel::RegisteredServers);
+            let store = self.secrets.clone();
+            self.registered.register_or_edit(&settings, store.as_ref());
+            Some(&mut self.registered)
+        };
+        let Some(panel) = panel else {
+            return;
+        };
+        let editing = panel.servers().path_for_key(&key).is_some();
+        if !editing
+            && !password.is_empty()
+            && let Some(d) = panel.server_dialog_mut()
+        {
+            d.password = password;
+            d.remember = true;
+        }
+        self.status = match (in_workspace, editing) {
+            (true, true) => tr("This server is registered in the workspace: edit its name, environment and description here."),
+            (true, false) => tr("Register the server in the workspace: choose its name, folder and environment."),
+            (false, true) => tr("This server is registered on this computer: edit its name, environment and description here."),
+            (false, false) => tr("Register the server on this computer: choose its name, folder and environment."),
+        }
+        .to_string();
     }
 
     /// Tasks > Import... num grupo do Registered Servers.
@@ -351,6 +383,53 @@ impl ShellApp {
             .servers()
             .and_then(|p| p.servers().tag_for_key(key))
             .or_else(|| self.registered.servers().tag_for_key(key))
+    }
+
+    /// O nome com que o servidor desta chave está registrado: no workspace
+    /// aberto ou, se não está lá, nos Registered Servers.
+    pub fn registered_name(&self, key: &str) -> Option<String> {
+        self.workspace_panel
+            .servers()
+            .and_then(|p| p.servers().name_for_key(key))
+            .or_else(|| self.registered.servers().name_for_key(key))
+            .map(str::to_string)
+    }
+
+    /// Como um servidor conectado aparece no Object Explorer quando está
+    /// registrado: o nome do registro e o ambiente dele.
+    pub fn server_label(
+        &self,
+        settings: &ConnectionSettings,
+    ) -> Option<pgstudio_object_explorer::ServerLabel> {
+        let key = server_key(settings);
+        let name = self.registered_name(&key)?;
+        let environment = self
+            .server_tag(&key)
+            .and_then(|t| Some((t.environment?, t.color.0)));
+        Some(pgstudio_object_explorer::ServerLabel { name, environment })
+    }
+
+    /// Atualiza o nó do servidor de cada árvore do Object Explorer (a ativa
+    /// e as outras conectadas) com o registro dele.
+    pub(crate) fn sync_server_labels(&mut self) {
+        let active = self
+            .connection
+            .as_ref()
+            .and_then(|c| self.server_label(&c.settings));
+        self.explorer.set_server_label(active);
+        let labels: Vec<_> = self
+            .servers
+            .parked
+            .iter()
+            .map(|p| {
+                p.connection
+                    .as_ref()
+                    .and_then(|c| self.server_label(&c.settings))
+            })
+            .collect();
+        for (p, label) in self.servers.parked.iter_mut().zip(labels) {
+            p.explorer.set_server_label(label);
+        }
     }
 
     /// Ambiente e cor de cada janela de consulta, para a faixa de status

@@ -377,3 +377,129 @@ fn connected_server_outside_the_workspace_can_be_added_from_the_panel() {
     assert!(!text.contains(DB_PASSWORD));
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn register_and_properties_on_the_connected_server_use_the_workspace() {
+    let base = temp_dir("register");
+    let system = Arc::new(MemoryStore::default());
+    let mut h = machine(
+        system.clone(),
+        Vec::new(),
+        RegisteredServers::in_memory(Default::default()),
+    );
+    let root = base.join("ws");
+    Workspace::create(&root, "ws").unwrap();
+    assert!(h.state_mut().open_workspace(&root));
+    {
+        let p = h.state_mut().workspace_panel_mut().passwords_mut().unwrap();
+        p.set_kdf(FAST);
+        p.create(MASTER, MASTER, false).unwrap();
+        p.wait(None);
+    }
+    // Uma pasta de produção no workspace.
+    h.state_mut()
+        .workspace_panel_mut()
+        .servers_mut()
+        .unwrap()
+        .servers_mut()
+        .add_group(
+            &[],
+            pgstudio_ui_shell::registered::ServerGroup {
+                name: "Clientes".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    h.state_mut().connect_to(rds(), DB_PASSWORD.into());
+    run_until(&mut h, "connected", |app| app.connection().is_some());
+    h.run();
+
+    // Botão direito no servidor: Properties já não fica apagado e abre o
+    // registro no workspace, com a pasta para escolher.
+    h.get_by_label_contains(pgstudio_object_explorer::fake::SERVER_NAME)
+        .click_secondary();
+    h.run();
+    h.get_by_label("Properties").click();
+    h.run();
+    assert!(
+        h.state()
+            .is_panel_open(pgstudio_ui_shell::panels::Panel::WorkspaceExplorer)
+    );
+    h.get_by_label("Folder:");
+    {
+        let d = h
+            .state_mut()
+            .workspace_panel_mut()
+            .servers_mut()
+            .unwrap()
+            .server_dialog_mut()
+            .expect("New Server Registration in the workspace");
+        assert_eq!(d.server, "prod.abc123.us-east-1.rds.amazonaws.com");
+        assert_eq!(d.password, DB_PASSWORD);
+        assert!(d.remember);
+        d.name = "Produção".into();
+        d.environment = Some("Production".into());
+    }
+    h.run();
+    h.get_by_label("Save").click();
+    h.run();
+    let key = "tiago@prod.abc123.us-east-1.rds.amazonaws.com:5432";
+    let start = Instant::now();
+    while Vault::at(&root).names().is_empty() {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "password in vault"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(Vault::at(&root).names(), [key]);
+    assert!(system.is_empty());
+    let saved = RegisteredServers::open(root.join(SERVERS));
+    let server = saved.all_servers()[0].clone();
+    assert_eq!(server.name, "Produção");
+    assert_eq!(server.environment.as_deref(), Some("Production"));
+    // Nada foi para os Registered Servers desta máquina.
+    assert!(h.state().registered().servers().all_servers().is_empty());
+
+    // O Object Explorer passa a mostrar o nome do registro com a etiqueta
+    // do ambiente na frente, e o menu edita o registro.
+    h.run();
+    let label = h.state().explorer().server_label().cloned().unwrap();
+    assert_eq!(label.name, "Produção");
+    assert_eq!(label.environment.unwrap().0, "Production");
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .execute(&ctx, pgstudio_core::CommandId::ObjectExplorer);
+    h.run();
+    assert_eq!(h.query_all_by_label("Production").count(), 2);
+    // (A status bar também mostra o nome, seguido do usuário.)
+    h.get_by(|n| n.label().is_some_and(|l| l.ends_with(" Produção")))
+        .click_secondary();
+    h.run();
+    assert!(h.query_by_label("Register...").is_none());
+
+    // De novo: agora edita o registro que já existe, em vez de duplicar.
+    h.get_by_label("Edit Registration...").click();
+    h.run();
+    {
+        let d = h
+            .state_mut()
+            .workspace_panel_mut()
+            .servers_mut()
+            .unwrap()
+            .server_dialog_mut()
+            .expect("edit the registration");
+        assert_eq!(d.name, "Produção");
+        d.environment = Some("Staging".into());
+    }
+    h.run();
+    h.get_by_label("Save").click();
+    h.run();
+    let saved = RegisteredServers::open(root.join(SERVERS));
+    assert_eq!(saved.all_servers().len(), 1);
+    assert_eq!(
+        saved.all_servers()[0].environment.as_deref(),
+        Some("Staging")
+    );
+    let _ = std::fs::remove_dir_all(base);
+}

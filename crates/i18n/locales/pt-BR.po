@@ -4419,3 +4419,20 @@ msgstr "Verificar os checksums das páginas"
 
 msgid "SQL Server cannot add or remove IDENTITY on the existing column {column} of {table}. Create a new column or a new table instead."
 msgstr "O SQL Server não põe nem tira IDENTITY da coluna {column}, que já existe em {table}. Crie uma coluna nova ou uma tabela nova."
+msgid "Folder:"
+msgstr "Pasta:"
+
+msgid "This server is registered in the workspace: edit its name, environment and description here."
+msgstr "Este servidor está registrado no workspace: edite aqui o nome, o ambiente e a descrição."
+
+msgid "Register the server in the workspace: choose its name, folder and environment."
+msgstr "Registre o servidor no workspace: escolha o nome, a pasta e o ambiente."
+
+msgid "This server is registered on this computer: edit its name, environment and description here."
+msgstr "Este servidor está registrado neste computador: edite aqui o nome, o ambiente e a descrição."
+
+msgid "Register the server on this computer: choose its name, folder and environment."
+msgstr "Registre o servidor neste computador: escolha o nome, a pasta e o ambiente."
+
+msgid "Edit Registration..."
+msgstr "Editar Registro..."

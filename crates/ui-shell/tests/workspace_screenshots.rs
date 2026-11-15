@@ -146,5 +146,58 @@ fn bring_connections_into_the_workspace() {
     }
     show_workspace(&mut h);
     save(&mut h, "5-adicionar-conexao-ativa.png");
+
+    // Properties (ou Register...) no servidor conectado: o registro no
+    // workspace, com pasta e ambiente.
+    for name in ["Clientes", "Interno"] {
+        h.state_mut()
+            .workspace_panel_mut()
+            .servers_mut()
+            .unwrap()
+            .servers_mut()
+            .add_group(
+                &[],
+                pgstudio_ui_shell::registered::ServerGroup {
+                    name: name.into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    h.state_mut().register_active_server();
+    h.run();
+    if let Some(d) = h
+        .state_mut()
+        .workspace_panel_mut()
+        .servers_mut()
+        .unwrap()
+        .server_dialog_mut()
+    {
+        d.name = "Local".into();
+        d.environment = Some("Development".into());
+    }
+    save(&mut h, "6-registrar-no-workspace.png");
+
+    // Registrado: o Object Explorer mostra a etiqueta e o nome do registro.
+    if let Some(d) = h
+        .state_mut()
+        .workspace_panel_mut()
+        .servers_mut()
+        .unwrap()
+        .server_dialog_mut()
+    {
+        d.name = "tiib".into();
+        d.environment = Some("Production".into());
+    }
+    h.run();
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label("Salvar").click();
+    }
+    h.run();
+    let ctx = h.ctx.clone();
+    h.state_mut().execute(&ctx, CommandId::ObjectExplorer);
+    h.run();
+    save(&mut h, "7-pesquisador-com-etiqueta.png");
     let _ = std::fs::remove_dir_all(root.parent().unwrap());
 }
