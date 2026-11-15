@@ -20,7 +20,8 @@ const MAX_ROUNDS: usize = 40;
 
 /// Instruções do painel para um modelo que não é o Claude Code.
 pub const PANEL_PROMPT: &str = "You are the AI assistant panel inside PostPilot, the user's \
-desktop database manager (PostgreSQL and SQL Server). The user is looking at PostPilot right now \
+desktop database manager (PostgreSQL and SQL Server). list_servers says the engine of each \
+server: write PostgreSQL SQL or T-SQL to match. The user is looking at PostPilot right now \
 and sees every tool you call as a card in the panel. Use the tools to look at their servers, \
 schema, query windows and results; you have no shell or file tools here. Reading is free; \
 anything that changes data or schema shows them a confirmation dialog. When they ask for a \

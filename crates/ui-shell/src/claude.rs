@@ -21,11 +21,11 @@ use std::sync::mpsc;
 use eframe::egui;
 use pgstudio_automation::collect::{self, Collector, DEFAULT_ROWS, MAX_BYTES, MAX_ROWS};
 use pgstudio_automation::endpoint::Listener;
-use pgstudio_automation::safety::read_only_batch;
+use pgstudio_automation::safety::{classify_for, read_only_batch_for};
 use pgstudio_automation::{
-    Client, EditMode, Inbox, Origin, Pending, Reply, Responder, Safety, ToolCall, catalog, classify,
+    Client, EditMode, Inbox, Origin, Pending, Reply, Responder, Safety, ToolCall, catalog,
 };
-use pgstudio_core::connection::Connected;
+use pgstudio_core::connection::{Connected, Engine};
 use pgstudio_core::query::QueryService;
 use serde_json::{Value, json};
 
@@ -129,6 +129,9 @@ struct Target {
     queries: Arc<dyn QueryService>,
     key: String,
     database: String,
+    /// O motor do servidor: decide o SQL do catálogo e do embrulho de
+    /// leitura.
+    engine: Engine,
 }
 
 impl ShellApp {
@@ -345,7 +348,10 @@ impl ShellApp {
                 server,
                 None,
                 responder,
-                |_| (catalog::list_databases(), &[]),
+                |t| match t.engine {
+                    Engine::PostgreSql => (catalog::list_databases(), &[]),
+                    Engine::SqlServer => (catalog::tsql::list_databases(), &[]),
+                },
             ),
             ToolCall::ListObjects {
                 server,
@@ -358,7 +364,10 @@ impl ShellApp {
                 server,
                 database,
                 responder,
-                move |_| (catalog::list_objects(schema.as_deref()), &[]),
+                move |t| match t.engine {
+                    Engine::PostgreSql => (catalog::list_objects(schema.as_deref()), &[]),
+                    Engine::SqlServer => (catalog::tsql::list_objects(schema.as_deref()), &[]),
+                },
             ),
             ToolCall::DescribeTable {
                 table,
@@ -371,9 +380,12 @@ impl ShellApp {
                 server,
                 database,
                 responder,
-                move |_| {
+                move |t| {
                     (
-                        catalog::describe_table(&table),
+                        match t.engine {
+                            Engine::PostgreSql => catalog::describe_table(&table),
+                            Engine::SqlServer => catalog::tsql::describe_table(&table),
+                        },
                         catalog::DESCRIBE_TABLE_LABELS,
                     )
                 },
@@ -389,7 +401,10 @@ impl ShellApp {
                 server,
                 database,
                 responder,
-                move |_| (catalog::describe_function(&function), &[]),
+                move |t| match t.engine {
+                    Engine::PostgreSql => (catalog::describe_function(&function), &[]),
+                    Engine::SqlServer => (catalog::tsql::describe_function(&function), &[]),
+                },
             ),
             ToolCall::RunQuery {
                 sql,
@@ -402,10 +417,10 @@ impl ShellApp {
                     Err(e) => return responder.send(Reply::error(e)),
                 };
                 let max_rows = max_rows.unwrap_or(DEFAULT_ROWS);
-                let safety = classify(&sql);
+                let safety = classify_for(target.engine, &sql);
                 if safety.is_read_only() {
-                    let collector = Collector::new(max_rows).wrapped();
-                    let batch = read_only_batch(&sql);
+                    let collector = Collector::new(max_rows).wrapped_for(target.engine);
+                    let batch = read_only_batch_for(target.engine, &sql);
                     self.output.push(trf!(
                         "{who}: run_query (read only): {sql}",
                         who = who,
@@ -525,7 +540,7 @@ impl ShellApp {
                 if sql.trim().is_empty() {
                     return responder.send(Reply::error("The query window is empty."));
                 }
-                let safety = classify(&sql);
+                let safety = classify_for(self.document_engine(id).unwrap_or_default(), &sql);
                 if safety.is_read_only() {
                     self.output.push(trf!(
                         "{who}: executing {title} (read only)",
@@ -600,14 +615,16 @@ impl ShellApp {
             target.key,
             target.database
         ));
-        let collector = Collector::new(MAX_ROWS).wrapped().labels(labels);
+        let collector = Collector::new(MAX_ROWS)
+            .wrapped_for(target.engine)
+            .labels(labels);
         self.claude_run_sql(
             ctx,
             origin,
             tool,
             &target.queries,
             &target.database,
-            read_only_batch(&sql),
+            read_only_batch_for(target.engine, &sql),
             collector,
             responder,
         );
@@ -804,7 +821,11 @@ impl ShellApp {
                     "name": c.settings.server_name(),
                     "user": c.settings.user,
                     "default_database": c.settings.database,
-                    "postgres_version": c.server_version,
+                    "engine": match c.settings.engine {
+                        Engine::PostgreSql => "postgresql",
+                        Engine::SqlServer => "sqlserver",
+                    },
+                    "version": c.server_version,
                     "active": active,
                 })
             })
@@ -879,6 +900,7 @@ impl ShellApp {
             queries: connection.queries.clone(),
             key: server_key(&connection.settings),
             database,
+            engine: connection.settings.engine,
         })
     }
 

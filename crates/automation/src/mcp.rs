@@ -26,15 +26,16 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05
 pub const SERVER_NAME: &str = "postpilot";
 
 /// Instruções que o Claude recebe ao conectar.
-pub const INSTRUCTIONS: &str = "PostPilot is the user's desktop PostgreSQL manager (like SQL \
-Server Management Studio). These tools act on the PostPilot window that is open on the user's \
+pub const INSTRUCTIONS: &str = "PostPilot is the user's desktop database manager for PostgreSQL \
+and SQL Server (like SQL Server Management Studio). These tools act on the PostPilot window that is open on the user's \
 machine: its connected servers, its query windows (editor tabs) and their results. Start with \
-list_servers. Explore with list_databases, list_objects and describe_table before writing SQL. \
-Reading is free: run_query runs read-only SQL at once inside a READ ONLY transaction. Anything \
+list_servers, which also says the engine of each server: write PostgreSQL SQL or T-SQL to match. Explore with list_databases, list_objects and describe_table before writing SQL. \
+Reading is free: run_query runs read-only SQL at once (inside a READ ONLY transaction on \
+PostgreSQL, inside a transaction that is always rolled back on SQL Server). Anything \
 that can change data or schema opens a confirmation dialog in PostPilot showing the SQL; the \
 user decides. When the user asks you to write or fix a query, prefer edit_query_window (they see \
 it in their editor and can undo with Ctrl+Z) and let them run it, unless they ask you to run it. \
-Results sent to you are capped; use LIMIT and aggregates instead of reading whole tables.";
+Results sent to you are capped; use LIMIT (TOP on SQL Server) and aggregates instead of reading whole tables.";
 
 /// Quem atende `tools/call` (o app pelo canal local, ou um falso nos
 /// testes).

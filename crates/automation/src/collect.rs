@@ -72,6 +72,16 @@ impl Collector {
         self
     }
 
+    /// Como [`Collector::wrapped`], para o embrulho do motor
+    /// ([`crate::safety::read_only_batch_for`]). No SQL Server os comandos
+    /// do embrulho não geram resposta, então não há o que esconder.
+    pub fn wrapped_for(self, engine: pgstudio_core::connection::Engine) -> Self {
+        match engine {
+            pgstudio_core::connection::Engine::PostgreSql => self.wrapped(),
+            pgstudio_core::connection::Engine::SqlServer => self,
+        }
+    }
+
     /// Nomes dos resultados, na ordem (ferramentas com várias consultas).
     pub fn labels(mut self, labels: &[&str]) -> Self {
         self.labels = labels.iter().map(|l| l.to_string()).collect();

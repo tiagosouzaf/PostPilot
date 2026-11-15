@@ -98,6 +98,16 @@ pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Saf
                 .split_inclusive('\n')
                 .map(|line| if is_go_line(line) { "\n" } else { line })
                 .collect();
+            // Consultas a outros servidores e a arquivos rodam o que
+            // vier dentro delas, fora da transação.
+            let lower = without_go.to_lowercase();
+            for function in ["openquery", "openrowset", "opendatasource"] {
+                if lower.contains(function) {
+                    return Safety::Writes {
+                        reason: format!("calls {}", function.to_uppercase()),
+                    };
+                }
+            }
             // T-SQL não exige `;` entre comandos.
             let options = sqlparser::parser::ParserOptions {
                 require_semicolon_stmt_delimiter: false,
@@ -260,6 +270,20 @@ pub fn read_only_batch(sql: &str) -> String {
     )
 }
 
+/// Como [`read_only_batch`], no motor. O SQL Server não tem transação só
+/// de leitura: o lote (que o [`classify_for`] já viu que só lê) roda numa
+/// transação que é sempre desfeita, com `XACT_ABORT` e sem esperar mais
+/// de um minuto por um bloqueio. O embrulho fica na primeira linha, para
+/// as linhas das mensagens de erro baterem com as do lote.
+pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str) -> String {
+    match engine {
+        pgstudio_core::connection::Engine::PostgreSql => read_only_batch(sql),
+        pgstudio_core::connection::Engine::SqlServer => format!(
+            "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION; {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +298,25 @@ mod tests {
             "{sql}: {:?}",
             classify(sql)
         );
+    }
+
+    #[test]
+    fn tsql_reads_and_writes() {
+        use pgstudio_core::connection::Engine::SqlServer;
+        let ro = |sql: &str| assert_eq!(classify_for(SqlServer, sql), Safety::ReadOnly, "{sql}");
+        let rw = |sql: &str| assert!(!classify_for(SqlServer, sql).is_read_only(), "{sql}");
+        ro("select top (10) [nome] from dbo.clientes order by id");
+        ro("with x as (select 1 as a) select * from x");
+        ro("select 1\nGO\nselect 2");
+        rw("select * into dbo.copia from dbo.clientes");
+        rw("exec sp_who2");
+        rw("update dbo.clientes set nome = N'x'");
+        rw("select * from openquery(outro, 'delete from t')");
+        rw("drop table dbo.clientes");
+        let batch = read_only_batch_for(SqlServer, "select 1");
+        assert!(batch.starts_with("SET XACT_ABORT ON;"));
+        assert!(batch.ends_with("ROLLBACK TRANSACTION;"));
+        assert_eq!(batch.lines().next().unwrap().matches("select 1").count(), 1);
     }
 
     #[test]
