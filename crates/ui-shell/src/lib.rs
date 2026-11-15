@@ -10,6 +10,7 @@ pub mod ai;
 pub mod ai_names;
 pub mod applog;
 pub mod backup;
+pub mod backup_mssql;
 pub mod bench;
 pub mod claude;
 pub mod claude_panel;
@@ -118,6 +119,9 @@ pub struct ShellApp {
     /// "Back Up Database" aberta.
     backup: Option<backup::BackupDialog>,
     restore: Option<restore::RestoreDialog>,
+    /// "Back Up Database" e "Restore Database" do SQL Server.
+    backup_mssql: Option<backup_mssql::BackupDialog>,
+    restore_mssql: Option<backup_mssql::RestoreDialog>,
     compare: Option<schema_compare::SchemaCompare>,
     /// Origem e destino que o Schema Compare já compara ao abrir
     /// (screenshots).
@@ -354,6 +358,8 @@ impl Default for ShellApp {
             json_demo: None,
             design_query_on_open: false,
             restore_file: None,
+            backup_mssql: None,
+            restore_mssql: None,
             query_on_open: None,
             active_doc: None,
             focus_editor: None,
@@ -3094,6 +3100,8 @@ impl ShellApp {
             || self.security.is_some()
             || self.backup.is_some()
             || self.restore.is_some()
+            || self.backup_mssql.is_some()
+            || self.restore_mssql.is_some()
             || self.compare.is_some()
         {
             Vec::new()
@@ -3258,6 +3266,7 @@ impl ShellApp {
         self.security_window(&ctx);
         self.backup_window(&ctx);
         self.restore_window(&ctx);
+        self.backup_mssql_windows(&ctx);
         self.compare_window(&ctx);
         self.connect_window(&ctx);
         self.follow_system_theme(&ctx);
@@ -3583,6 +3592,11 @@ impl ShellApp {
             self.status = tr("Connect to a PostgreSQL server to back up a database.").to_string();
             return;
         };
+        if c.settings.engine == Engine::SqlServer {
+            let session = c.queries.open("master");
+            self.backup_mssql = Some(backup_mssql::BackupDialog::open(database, session, ctx));
+            return;
+        }
         let session = c.queries.open(&database);
         self.backup = Some(backup::BackupDialog::open(
             database,
@@ -3615,6 +3629,51 @@ impl ShellApp {
         }
     }
 
+    /// "Back Up Database" do SQL Server, mutável (testes).
+    pub fn backup_mssql_mut(&mut self) -> Option<&mut backup_mssql::BackupDialog> {
+        self.backup_mssql.as_mut()
+    }
+
+    /// "Restore Database" do SQL Server, mutável (testes).
+    pub fn restore_mssql_mut(&mut self) -> Option<&mut backup_mssql::RestoreDialog> {
+        self.restore_mssql.as_mut()
+    }
+
+    /// As janelas de backup e restore do SQL Server.
+    fn backup_mssql_windows(&mut self, ctx: &egui::Context) {
+        use backup_mssql::Request;
+        let mut requests = Vec::new();
+        if let Some(d) = &mut self.backup_mssql
+            && let Some(r) = d.show(ctx)
+        {
+            requests.push((true, r));
+        }
+        if let Some(d) = &mut self.restore_mssql
+            && let Some(r) = d.show(ctx)
+        {
+            requests.push((false, r));
+        }
+        for (backup, request) in requests {
+            match request {
+                Request::Log(lines) => self.output.extend(lines),
+                Request::Script(sql) => {
+                    let id = self.documents.new_script(sql, Some("master".into()));
+                    self.activate_document(id);
+                    self.backup_mssql = None;
+                    self.restore_mssql = None;
+                }
+                Request::Restored(lines) => {
+                    self.output.extend(lines);
+                    // O banco restaurado pode ser novo na árvore.
+                    self.explorer
+                        .refresh(&pgstudio_core::metadata::NodeId("server/Databases".into()));
+                }
+                Request::Closed if backup => self.backup_mssql = None,
+                Request::Closed => self.restore_mssql = None,
+            }
+        }
+    }
+
     /// Abre "Restore Database"; `database` é o destino sugerido (None:
     /// banco novo).
     fn open_restore(&mut self, ctx: &egui::Context, database: Option<String>) {
@@ -3622,6 +3681,16 @@ impl ShellApp {
             self.status = tr("Connect to a PostgreSQL server to restore a database.").to_string();
             return;
         };
+        if c.settings.engine == Engine::SqlServer {
+            let session = c.queries.open("master");
+            let mut dialog = backup_mssql::RestoreDialog::open(database, session, ctx);
+            if let Some(file) = self.restore_file.take() {
+                dialog.options.file = file;
+                dialog.list(ctx);
+            }
+            self.restore_mssql = Some(dialog);
+            return;
+        }
         let session = c.queries.open(&c.settings.database);
         let mut dialog = restore::RestoreDialog::open(
             database,
