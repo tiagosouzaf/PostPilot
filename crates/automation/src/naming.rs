@@ -32,7 +32,10 @@ pub fn file_name(answer: &str) -> Option<String> {
     }
     let line = text
         .lines()
-        .map(|l| l.trim().trim_matches(|c| matches!(c, '`' | '"' | '\'' | '*')))
+        .map(|l| {
+            l.trim()
+                .trim_matches(|c| matches!(c, '`' | '"' | '\'' | '*'))
+        })
         .find(|l| !l.is_empty())?;
     let line = line.strip_suffix(".sql").unwrap_or(line);
     let mut name = String::new();
@@ -81,7 +84,10 @@ mod tests {
             file_name("<think>x</think>\n\"relatório-de-ações\"").as_deref(),
             Some("relatorio_de_acoes.sql")
         );
-        assert_eq!(file_name("../../etc/passwd").as_deref(), Some("etc_passwd.sql"));
+        assert_eq!(
+            file_name("../../etc/passwd").as_deref(),
+            Some("etc_passwd.sql")
+        );
         assert_eq!(file_name("  \n"), None);
         assert_eq!(
             file_name("Sure! Here is a good name for this file you asked about"),

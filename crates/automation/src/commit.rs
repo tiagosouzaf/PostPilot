@@ -36,11 +36,25 @@ pub fn clean(answer: &str) -> String {
         text = text[end + "</think>".len()..].trim();
     }
     let mut lines: Vec<&str> = text.lines().collect();
-    if lines.first().is_some_and(|l| l.trim_start().starts_with("```")) {
+    if lines
+        .first()
+        .is_some_and(|l| l.trim_start().starts_with("```"))
+    {
         lines.remove(0);
         if let Some(end) = lines.iter().rposition(|l| l.trim() == "```") {
             lines.truncate(end);
         }
+    }
+    // O Claude Code costuma assinar os commits que ele mesmo faz; este é
+    // do usuário.
+    while lines.last().is_some_and(|l| {
+        let l = l.trim();
+        l.is_empty()
+            || l.starts_with("Co-Authored-By:")
+            || l.starts_with("Claude-Session:")
+            || l.contains("Generated with [Claude Code]")
+    }) {
+        lines.pop();
     }
     let mut text = lines.join("\n").trim().to_string();
     for prefix in ["Commit message:", "commit message:", "Mensagem de commit:"] {
@@ -67,12 +81,24 @@ mod tests {
     #[test]
     fn cleans_what_models_add() {
         assert_eq!(clean("  Adiciona consulta\n"), "Adiciona consulta");
-        assert_eq!(clean("```\nAdiciona consulta\n\n- x\n```"), "Adiciona consulta\n\n- x");
+        assert_eq!(
+            clean("```\nAdiciona consulta\n\n- x\n```"),
+            "Adiciona consulta\n\n- x"
+        );
         assert_eq!(clean("```text\nA\n```\n"), "A");
         assert_eq!(clean("\"Adiciona consulta\""), "Adiciona consulta");
         assert_eq!(clean("Commit message: Add query"), "Add query");
         assert_eq!(clean("<think>hmm</think>\n\nAdd query"), "Add query");
-        assert_eq!(clean("Renomeia \"a\" para \"b\""), "Renomeia \"a\" para \"b\"");
+        assert_eq!(
+            clean(
+                "Add query\n\n- x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nClaude-Session: https://x\n"
+            ),
+            "Add query\n\n- x"
+        );
+        assert_eq!(
+            clean("Renomeia \"a\" para \"b\""),
+            "Renomeia \"a\" para \"b\""
+        );
     }
 
     #[test]

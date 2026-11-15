@@ -241,7 +241,12 @@ impl Assembler {
         };
         let text = part["content"].as_str().unwrap_or_default().to_string();
         self.answer.content.push_str(&text);
-        for (n, call) in part["tool_calls"].as_array().into_iter().flatten().enumerate() {
+        for (n, call) in part["tool_calls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
             let index = call["index"].as_u64().map_or(n, |i| i as usize);
             while self.answer.tool_calls.len() <= index {
                 self.answer.tool_calls.push(ToolRequest {
@@ -554,9 +559,14 @@ pub(crate) mod tests {
         );
         let seen = server.join().unwrap();
         let request = &seen[0];
-        assert!(request.starts_with("POST /v1/chat/completions "), "{request}");
         assert!(
-            request.to_lowercase().contains("authorization: bearer sk-test\r\n"),
+            request.starts_with("POST /v1/chat/completions "),
+            "{request}"
+        );
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: bearer sk-test\r\n"),
             "{request}"
         );
         let sent: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();

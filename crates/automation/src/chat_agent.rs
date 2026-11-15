@@ -215,8 +215,10 @@ mod tests {
 
     #[test]
     fn calls_the_tool_and_answers() {
-        let first = sse(&[json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",
-            "function":{"name":"list_servers","arguments":"{}"}}]}}]})]);
+        let first = sse(&[
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",
+            "function":{"name":"list_servers","arguments":"{}"}}]}}]}),
+        ]);
         let second = sse(&[
             json!({"choices":[{"delta":{"content":"Um "}}]}),
             json!({"choices":[{"delta":{"content":"servidor."}}]}),
@@ -231,13 +233,7 @@ mod tests {
             model: "m".into(),
         };
         let call: ToolCaller = Arc::new(|tool, _| Reply::ok(&json!({ "tool": tool })));
-        let mut agent = ChatAgent::start(
-            conn,
-            "sys",
-            &crate::tools::all(),
-            call,
-            Arc::new(|| {}),
-        );
+        let mut agent = ChatAgent::start(conn, "sys", &crate::tools::all(), call, Arc::new(|| {}));
         agent.send("quais servidores?").unwrap();
         let mut events = Vec::new();
         let start = Instant::now();
@@ -255,7 +251,13 @@ mod tests {
         );
         assert_eq!(events[3], AgentEvent::TextDelta("Um ".into()));
         assert_eq!(events[5], AgentEvent::Text("Um servidor.".into()));
-        assert!(matches!(&events[6], AgentEvent::TurnDone { is_error: false, .. }));
+        assert!(matches!(
+            &events[6],
+            AgentEvent::TurnDone {
+                is_error: false,
+                ..
+            }
+        ));
 
         // A segunda chamada leva a conversa inteira, com o resultado.
         let seen = server.join().unwrap();
@@ -268,7 +270,10 @@ mod tests {
             .collect();
         assert_eq!(roles, ["system", "user", "assistant", "tool"]);
         assert_eq!(sent["messages"][3]["tool_call_id"], "c1");
-        assert_eq!(sent["tools"].as_array().unwrap().len(), crate::tools::all().len());
+        assert_eq!(
+            sent["tools"].as_array().unwrap().len(),
+            crate::tools::all().len()
+        );
     }
 
     #[test]

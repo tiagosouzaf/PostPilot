@@ -175,7 +175,10 @@ fn commit_message_written_by_the_ai() {
     assert_eq!(sent["model"], "glm-test");
     let user = sent["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("Added queries/clientes.sql"), "{user}");
-    assert!(user.contains("select * from clientes where ativo;"), "{user}");
+    assert!(
+        user.contains("select * from clientes where ativo;"),
+        "{user}"
+    );
     assert!(user.contains("Added secrets.json"), "{user}");
     assert!(!user.contains("NAO-ENVIAR"), "{user}");
     assert!(seen.lock().unwrap()[0].contains("Bearer sk-test"));
@@ -263,8 +266,10 @@ fn saving_a_new_query_suggests_a_name() {
 
 #[test]
 fn panel_talks_to_the_provider_and_runs_its_tools() {
-    let first = sse(&[json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",
-        "function":{"name":"list_query_windows","arguments":"{}"}}]}}]})]);
+    let first = sse(&[
+        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",
+        "function":{"name":"list_query_windows","arguments":"{}"}}]}}]}),
+    ]);
     let (url, seen) = fake_provider(vec![first, text_reply("Há uma janela aberta.")]);
     let mut h = harness(ShellApp::default().with_ai(ai_at(&url)));
     h.run();

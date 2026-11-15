@@ -249,10 +249,7 @@ impl AiDraft {
                 }
             }
         });
-        let Some(index) = self
-            .selected
-            .filter(|i| *i < self.settings.providers.len())
-        else {
+        let Some(index) = self.selected.filter(|i| *i < self.settings.providers.len()) else {
             return;
         };
         let id = self.settings.providers[index].id.clone();

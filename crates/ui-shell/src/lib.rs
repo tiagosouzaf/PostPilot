@@ -6,12 +6,12 @@
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
 pub mod activity;
+pub mod ai;
+pub mod ai_names;
 pub mod applog;
 pub mod backup;
 pub mod bench;
 pub mod claude;
-pub mod ai;
-pub mod ai_names;
 pub mod claude_panel;
 pub mod connect;
 pub mod databases;
@@ -775,11 +775,8 @@ impl ShellApp {
     fn open_options(&mut self, page: Option<options::Page>) {
         let mut dialog = options::OptionsDialog::new(&self.preferences);
         dialog.system_theme = self.system_theme.current();
-        dialog.ai = options::AiDraft::new(
-            self.ai.settings(),
-            self.ai.keys(),
-            self.ai.claude_code(),
-        );
+        dialog.ai =
+            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code());
         if let Some(page) = page {
             dialog.page = page;
         }

@@ -17,8 +17,8 @@ use std::sync::Arc;
 use eframe::egui;
 use pgstudio_automation::agent::{self, Agent, AgentEvent};
 use pgstudio_automation::chat_agent::{self, ChatAgent};
-use pgstudio_automation::llm::Backend;
 use pgstudio_automation::endpoint::{self, Listener};
+use pgstudio_automation::llm::Backend;
 use pgstudio_automation::{EditMode, Origin};
 use pgstudio_core::CommandId;
 use pgstudio_i18n::{tr, tr_noop, trf};
@@ -265,7 +265,9 @@ impl ClaudePanel {
                 }
                 if ui
                     .button(egui_phosphor::regular::GEAR)
-                    .on_hover_text(tr("Choose the AI provider (Tools > Options > AI Providers)"))
+                    .on_hover_text(tr(
+                        "Choose the AI provider (Tools > Options > AI Providers)",
+                    ))
                     .clicked()
                 {
                     actions.push(PanelAction::Settings);
@@ -686,8 +688,11 @@ impl crate::ShellApp {
             Err(e) => {
                 self.claude_panel.agent = None;
                 let who = self.ai.active_label();
-                self.claude_panel
-                    .note(trf!("Could not talk to {who}: {error}", who = who, error = e));
+                self.claude_panel.note(trf!(
+                    "Could not talk to {who}: {error}",
+                    who = who,
+                    error = e
+                ));
             }
         }
     }

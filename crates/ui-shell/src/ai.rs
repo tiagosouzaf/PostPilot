@@ -257,7 +257,12 @@ impl Ai {
     /// O cofre pode esperar o D-Bus: a leitura não roda na thread da
     /// interface.
     fn load_keys(&self) {
-        let ids: Vec<String> = self.settings.providers.iter().map(|p| p.id.clone()).collect();
+        let ids: Vec<String> = self
+            .settings
+            .providers
+            .iter()
+            .map(|p| p.id.clone())
+            .collect();
         if ids.is_empty() {
             return;
         }
@@ -340,7 +345,11 @@ impl Ai {
     /// Aplica o que saiu de Tools > Options: grava `ai.json`, guarda as
     /// chaves novas e esquece as dos provedores removidos. Devolve um
     /// problema para a status bar, se houver.
-    pub fn apply(&mut self, settings: AiSettings, new_keys: HashMap<String, String>) -> Option<String> {
+    pub fn apply(
+        &mut self,
+        settings: AiSettings,
+        new_keys: HashMap<String, String>,
+    ) -> Option<String> {
         let removed: Vec<String> = self
             .settings
             .providers
@@ -438,7 +447,9 @@ mod tests {
         let mut settings = ai.settings().clone();
         let id = settings.new_id(ProviderKind::Glm);
         assert_eq!(id, "glm-1");
-        settings.providers.push(Provider::new(ProviderKind::Glm, &id));
+        settings
+            .providers
+            .push(Provider::new(ProviderKind::Glm, &id));
         settings.active = id.clone();
         assert_eq!(ai.apply(settings.clone(), HashMap::new()), None);
         // Escolhido, mas sem chave: não há IA conectada.
