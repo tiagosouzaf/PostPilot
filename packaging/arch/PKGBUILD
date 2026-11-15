@@ -9,7 +9,7 @@
 # ARCH_DEPENDS em xtask/src/dist.rs; um teste confere.
 
 pkgname=postpilot
-pkgver=0.2.6
+pkgver=0.2.7
 pkgrel=1
 pkgdesc='PostgreSQL management studio inspired by SSMS'
 arch=('x86_64')
