@@ -94,3 +94,15 @@ fn postgres_keeps_every_command() {
     run(&mut harness, CommandId::ActivityMonitor);
     assert!(!harness.state().status().contains("not available"));
 }
+
+#[test]
+fn query_windows_use_the_dialect_of_their_server() {
+    use pgstudio_sql_editor::lexer::Dialect;
+    for (host, dialect) in [("mssql", Dialect::TSql), ("localhost", Dialect::Postgres)] {
+        let mut harness = connected(host);
+        run(&mut harness, CommandId::NewQuery);
+        let id = harness.state().active_document().expect("query window");
+        let doc = harness.state().documents().get(id).unwrap();
+        assert_eq!(doc.editor.dialect(), dialect, "{host}");
+    }
+}

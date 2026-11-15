@@ -2670,6 +2670,32 @@ impl ShellApp {
         }
     }
 
+    /// Motor do servidor da janela de consulta: o da sessão dela, o do
+    /// servidor em que ela foi aberta, ou o da conexão ativa.
+    fn document_engine(&self, id: u32) -> Option<Engine> {
+        let doc = self.documents.get(id)?;
+        if let Some(s) = &doc.session {
+            return Some(s.0.engine());
+        }
+        self.doc_servers
+            .get(&id)
+            .and_then(|key| self.engine_of_key(key))
+            .or_else(|| self.connection.as_ref().map(|c| c.settings.engine))
+    }
+
+    /// Realce e erros do editor no dialeto do servidor de cada janela.
+    fn dialect_step(&mut self) {
+        for id in self.documents.ids() {
+            let dialect = match self.document_engine(id) {
+                Some(Engine::SqlServer) => pgstudio_sql_editor::lexer::Dialect::TSql,
+                _ => pgstudio_sql_editor::lexer::Dialect::Postgres,
+            };
+            if let Some(doc) = self.documents.get_mut(id) {
+                doc.editor.set_dialect(dialect);
+            }
+        }
+    }
+
     /// Lê os catálogos que as janelas de consulta precisam e recebe os que
     /// chegaram.
     fn intellisense_step(&mut self, ctx: &egui::Context) {
@@ -2956,6 +2982,7 @@ impl ShellApp {
         self.expand_step();
         self.execution_step(&ctx);
         self.claude_step(&ctx);
+        self.dialect_step();
         self.intellisense_step(&ctx);
         self.databases_step();
         self.script_step(&ctx);

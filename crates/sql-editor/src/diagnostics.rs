@@ -8,7 +8,7 @@
 use pgstudio_i18n::tr;
 use std::ops::Range;
 
-use crate::lexer::{Token, TokenKind, tokenize};
+use crate::lexer::{Dialect, Token, TokenKind, tokenize_in};
 
 /// Um trecho sublinhado, em bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,15 +19,20 @@ pub struct Diagnostic {
 
 /// Se o token, que vai até o fim do texto, ficou sem fechar: relido com
 /// algo depois, ele engoliria o que vem depois.
-fn unterminated(piece: &str) -> bool {
+fn unterminated(piece: &str, dialect: Dialect) -> bool {
     let probe = format!("{piece}\n x");
-    tokenize(&probe)
+    tokenize_in(&probe, dialect)
         .first()
         .is_some_and(|t| t.range.end > piece.len())
 }
 
-/// Erros visíveis pelos tokens.
+/// Erros visíveis pelos tokens (PostgreSQL).
 pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
+    check_in(text, tokens, Dialect::Postgres)
+}
+
+/// [`check`] com tokens do dialeto `dialect`.
+pub fn check_in(text: &str, tokens: &[Token], dialect: Dialect) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     if let Some(last) = tokens.last()
         && last.range.end == text.len()
@@ -54,11 +59,14 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
                 piece.len() >= 2 * tag_end && piece.ends_with(&piece[..tag_end])
             }
             TokenKind::String => piece.len() >= 2 && piece.ends_with('\''),
-            TokenKind::QuotedIdentifier => piece.len() >= 2 && piece.ends_with('"'),
+            TokenKind::QuotedIdentifier => {
+                let close = if piece.starts_with('[') { ']' } else { '"' };
+                piece.len() >= 2 && piece.ends_with(close)
+            }
             _ => piece.len() >= 4 && piece.ends_with("*/"),
         };
         if let Some(message) = message
-            && (!closes || unterminated(piece))
+            && (!closes || unterminated(piece, dialect))
         {
             out.push(Diagnostic {
                 range: last.range.clone(),
@@ -114,12 +122,34 @@ pub fn server_range(text: &str, tokens: &[Token], at: usize) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexer::tokenize;
 
     fn errors(sql: &str) -> Vec<(String, String)> {
         check(sql, &tokenize(sql))
             .into_iter()
             .map(|d| (sql[d.range].to_string(), d.message))
             .collect()
+    }
+
+    #[test]
+    fn tsql_brackets_and_unicode_strings() {
+        let errors = |sql: &str| {
+            check_in(sql, &tokenize_in(sql, Dialect::TSql), Dialect::TSql)
+                .into_iter()
+                .map(|d| d.message)
+                .collect::<Vec<_>>()
+        };
+        assert!(errors("SELECT [a]]b], N'x''y' FROM [t]").is_empty());
+        assert_eq!(
+            errors("SELECT [abc"),
+            ["Unclosed quotation mark after the identifier."]
+        );
+        assert_eq!(
+            errors("SELECT N'abc"),
+            ["Unclosed quotation mark after the character string."]
+        );
+        // `\` não escapa no T-SQL: a string fecha.
+        assert!(errors(r"SELECT 'a\'").is_empty());
     }
 
     #[test]

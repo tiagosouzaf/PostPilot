@@ -19,7 +19,7 @@ use crate::buffer::{Change, EditKind, History, LineIndex, is_word, line_text};
 use crate::complete::{Completion, Kind, best, complete};
 use crate::diagnostics::{Diagnostic, server_range};
 use crate::highlight::{Colors, line_job};
-use crate::lexer::{Token, tokenize};
+use crate::lexer::{Dialect, Token, tokenize_in};
 use pgstudio_core::catalog::Catalog;
 
 /// Espaços de um Tab.
@@ -56,6 +56,8 @@ pub struct Buffer {
     shadow: String,
     index: LineIndex,
     tokens: Vec<Token>,
+    /// Dialeto do texto (o do servidor da janela).
+    pub(crate) dialect: Dialect,
     history: History,
     synced: bool,
     /// Lista do IntelliSense aberta.
@@ -101,7 +103,7 @@ impl Buffer {
 
     /// Depois de uma edição feita aqui: retokeniza só o trecho mudado.
     fn apply(&mut self, text: &str, at: usize, removed: usize, inserted: usize) {
-        crate::lexer::retokenize(text, &mut self.tokens, at, removed, inserted);
+        crate::lexer::retokenize_in(text, &mut self.tokens, at, removed, inserted, self.dialect);
         self.shadow
             .replace_range(at..at + removed, &text[at..at + inserted]);
         self.index = LineIndex::new(text);
@@ -109,7 +111,7 @@ impl Buffer {
     }
 
     fn text_changed(&mut self, text: &str) {
-        self.diagnostics = crate::diagnostics::check(text, &self.tokens);
+        self.diagnostics = crate::diagnostics::check_in(text, &self.tokens, self.dialect);
         self.server_error = None;
     }
 
@@ -131,11 +133,16 @@ impl Buffer {
         })
     }
 
+    /// Força refazer índice e tokens no próximo frame.
+    pub(crate) fn invalidate(&mut self) {
+        self.synced = false;
+    }
+
     fn rebuild(&mut self, text: &str) {
         self.shadow.clear();
         self.shadow.push_str(text);
         self.index = LineIndex::new(text);
-        self.tokens = tokenize(text);
+        self.tokens = tokenize_in(text, self.dialect);
         self.synced = true;
         self.text_changed(text);
     }

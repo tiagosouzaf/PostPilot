@@ -17,6 +17,7 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | Object Explorer como o do SSMS: bancos (os do sistema em "System Databases"), Tables, Views, Programmability (procedures, funções, tipos, sequences); em cada tabela, Columns (`id (PK, int, not null)`), Keys, Constraints, Triggers e Indexes; propriedades (F4) | S2.1 |
 | Select Top 1000 Rows, Edit Top 200 Rows, Script as DROP, Script as CREATE de views, procedures, funções e triggers | S2.1 |
 | Script as CREATE de tabela como o SSMS: colunas (identidade, calculadas), PRIMARY KEY e UNIQUE, índices (com INCLUDE e filtro), DEFAULT, FOREIGN KEY e CHECK | S2.2 |
+| Editor em T-SQL: realce de `[nomes]`, `N'texto'`, `@variáveis`, `#temporárias` e palavras do T-SQL (`TOP`, `GO`, `PRINT`, `NVARCHAR`...); erro de colchete ou aspa sem fechar | S3.1 |
 | "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
 | Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
 | Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
