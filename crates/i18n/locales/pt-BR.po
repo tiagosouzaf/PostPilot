@@ -3863,3 +3863,16 @@ msgstr "Me fale sobre {name}."
 
 msgid "Claude is still answering. Wait for it, or press Stop."
 msgstr "O Claude ainda está respondendo. Espere ou clique em Parar."
+
+msgid "Color:"
+msgstr "Cor:"
+
+msgctxt "color"
+msgid "None"
+msgstr "Nenhuma"
+
+msgid "Other color..."
+msgstr "Outra cor..."
+
+msgid "Move To"
+msgstr "Mover Para"

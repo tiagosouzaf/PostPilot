@@ -540,6 +540,82 @@ fn dragging_a_server_to_another_group_survives_a_restart() {
 }
 
 #[test]
+fn move_to_menu_and_folder_color_survive_a_restart() {
+    let dir = temp_dir("move-to");
+    let file = dir.join("registered_servers.json");
+    let mut r = RegisteredServers::open(&file);
+    for name in ["Production", "Development"] {
+        r.add_group(
+            &[],
+            ServerGroup {
+                name: name.into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    r.add_server(
+        &[0],
+        RegisteredServer {
+            name: "sales-db".into(),
+            description: String::new(),
+            settings: settings("sales-db"),
+        },
+    )
+    .unwrap();
+    drop(r);
+
+    let mut harness = registered_harness(&file, Answer(dir.join("unused")));
+    // Botão direito no servidor > Move To > Development.
+    harness.get_by_label_contains("sales-db").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Move To").hover();
+    harness.run();
+    harness
+        .query_all_by_label_contains("Development")
+        .last()
+        .unwrap()
+        .click();
+    harness.run();
+    let r = harness.state().registered().servers();
+    assert!(r.group(&[0]).unwrap().servers.is_empty(), "left Production");
+    assert_eq!(r.group(&[1]).unwrap().servers[0].name, "sales-db");
+
+    // Properties da pasta Production: cor vermelha.
+    harness
+        .query_all_by_label_contains("Production")
+        .next()
+        .unwrap()
+        .click_secondary();
+    harness.run();
+    harness.get_by_label("Properties").click();
+    harness.run();
+    harness.get_by_label("#e5534b").click();
+    harness.run();
+    harness.get_by_label("OK").click();
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .registered()
+            .servers()
+            .group(&[0])
+            .unwrap()
+            .color,
+        Some(pgstudio_ui_shell::registered::FOLDER_COLORS[0])
+    );
+    drop(harness);
+
+    let again = RegisteredServers::open(&file);
+    assert_eq!(again.group(&[1]).unwrap().servers[0].name, "sales-db");
+    assert_eq!(
+        again.group(&[0]).unwrap().color.map(|c| c.hex()),
+        Some("#e5534b".to_string())
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn export_then_import_from_the_group_menu() {
     let dir = temp_dir("export");
     let exported = dir.join("RegisteredServers.json");

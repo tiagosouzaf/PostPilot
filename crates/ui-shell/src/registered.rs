@@ -7,7 +7,7 @@
 //! conectar um servidor registrado procura a senha lá e só pede ao usuário
 //! quando não acha (ou quando não há cofre).
 
-use pgstudio_i18n::{tr, trf};
+use pgstudio_i18n::{tr, trc, trf};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,6 +35,60 @@ pub fn display_name(name: &str) -> &str {
     }
 }
 
+/// Uma cor de pasta, gravada no arquivo como `"#rrggbb"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Rgb(pub [u8; 3]);
+
+impl Rgb {
+    /// Lê `#rrggbb` (o `#` é opcional).
+    pub fn parse(text: &str) -> Option<Rgb> {
+        let hex = text.trim().trim_start_matches('#');
+        if hex.len() != 6 || !hex.is_ascii() {
+            return None;
+        }
+        let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+        Some(Rgb([byte(0)?, byte(2)?, byte(4)?]))
+    }
+
+    /// `#rrggbb`.
+    pub fn hex(self) -> String {
+        let [r, g, b] = self.0;
+        format!("#{r:02x}{g:02x}{b:02x}")
+    }
+
+    pub fn color32(self) -> egui::Color32 {
+        let [r, g, b] = self.0;
+        egui::Color32::from_rgb(r, g, b)
+    }
+}
+
+impl Serialize for Rgb {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Rgb {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        Rgb::parse(&text)
+            .ok_or_else(|| serde::de::Error::custom(format!("not a #rrggbb color: {text}")))
+    }
+}
+
+/// As cores oferecidas para as pastas, como as do DataGrip: vermelho,
+/// laranja, amarelo, verde, azul-petróleo, azul, roxo e cinza.
+pub const FOLDER_COLORS: [Rgb; 8] = [
+    Rgb([0xE5, 0x53, 0x4B]),
+    Rgb([0xE8, 0x91, 0x2D]),
+    Rgb([0xD4, 0xB1, 0x06]),
+    Rgb([0x3F, 0xA3, 0x4D]),
+    Rgb([0x2A, 0xA1, 0x98]),
+    Rgb([0x3B, 0x82, 0xF6]),
+    Rgb([0x8B, 0x5C, 0xF6]),
+    Rgb([0x8B, 0x8B, 0x8B]),
+];
+
 /// Um servidor registrado.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredServer {
@@ -52,6 +106,10 @@ pub struct ServerGroup {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Cor da pasta (o ícone dela e o dos servidores dentro). Subpastas sem
+    /// cor usam a da pasta de cima.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgb>,
     #[serde(default)]
     pub groups: Vec<ServerGroup>,
     #[serde(default)]
@@ -165,6 +223,34 @@ impl RegisteredServers {
         self.group(&path.groups)?.servers.get(path.server?)
     }
 
+    /// A cor de um grupo: a dele ou, sem cor, a do grupo de cima mais
+    /// próximo que tenha uma.
+    pub fn color(&self, groups: &[usize]) -> Option<Rgb> {
+        (0..=groups.len())
+            .rev()
+            .find_map(|n| self.group(&groups[..n]).and_then(|g| g.color))
+    }
+
+    /// Todos os grupos, em ordem da árvore: caminho, profundidade (a raiz é
+    /// 0) e nome.
+    pub fn all_groups(&self) -> Vec<(Vec<usize>, usize, String)> {
+        fn walk(
+            g: &ServerGroup,
+            path: &mut Vec<usize>,
+            out: &mut Vec<(Vec<usize>, usize, String)>,
+        ) {
+            out.push((path.clone(), path.len(), g.name.clone()));
+            for (i, sub) in g.groups.iter().enumerate() {
+                path.push(i);
+                walk(sub, path, out);
+                path.pop();
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.root, &mut Vec::new(), &mut out);
+        out
+    }
+
     /// Todos os servidores, em ordem da árvore.
     pub fn all_servers(&self) -> Vec<&RegisteredServer> {
         fn walk<'a>(g: &'a ServerGroup, out: &mut Vec<&'a RegisteredServer>) {
@@ -196,12 +282,13 @@ impl RegisteredServers {
         Ok(path)
     }
 
-    /// Troca nome e descrição de um grupo (a raiz não muda).
+    /// Troca nome, descrição e cor de um grupo (a raiz não muda).
     pub fn update_group(
         &mut self,
         groups: &[usize],
         name: &str,
         description: &str,
+        color: Option<Rgb>,
     ) -> Result<(), String> {
         let Some((&last, parent)) = groups.split_last() else {
             return Err(tr("The root group cannot be renamed.").into());
@@ -223,6 +310,7 @@ impl RegisteredServers {
             .ok_or(tr("The group no longer exists."))?;
         g.name = name;
         g.description = description.trim().to_string();
+        g.color = color;
         self.save_or_log();
         Ok(())
     }
@@ -506,6 +594,7 @@ fn merge_group(into: &mut ServerGroup, group: ServerGroup) -> usize {
             into.groups.push(ServerGroup {
                 name,
                 description: group.description.trim().to_string(),
+                color: group.color,
                 ..Default::default()
             });
             into.groups.len() - 1
@@ -716,6 +805,7 @@ impl RegisteredPanel {
             editing: false,
             name: String::new(),
             description: String::new(),
+            color: None,
             error: None,
         });
     }
@@ -729,6 +819,7 @@ impl RegisteredPanel {
             editing: true,
             name: g.name.clone(),
             description: g.description.clone(),
+            color: g.color,
             error: None,
         });
     }
@@ -785,6 +876,7 @@ impl RegisteredPanel {
         let name = group.name.clone();
         let description = group.description.clone();
         let (subgroups, servers) = (group.groups.len(), group.servers.clone());
+        let color = self.servers.color(groups);
         let mut toggle = false;
         ui.horizontal(|ui| {
             ui.add_space(depth as f32 * 16.0 + 8.0);
@@ -806,13 +898,11 @@ impl RegisteredPanel {
             } else {
                 egui::Sense::click_and_drag()
             };
+            let text = icon_text(ui, folder, color, display_name(&name));
             let label = ui.add(
-                egui::Button::selectable(
-                    self.selected.as_ref() == Some(&here),
-                    format!("{folder} {}", display_name(&name)),
-                )
-                .frame_when_inactive(false)
-                .sense(sense),
+                egui::Button::selectable(self.selected.as_ref() == Some(&here), text)
+                    .frame_when_inactive(false)
+                    .sense(sense),
             );
             if !is_root {
                 label.dnd_set_drag_payload(here.clone());
@@ -852,6 +942,7 @@ impl RegisteredPanel {
                 });
                 if !is_root {
                     ui.separator();
+                    self.move_to_menu(ui, &here, menu);
                     if ui.button(tr("Delete")).clicked() {
                         *menu = Some(Menu::Delete(here.clone()));
                         ui.close();
@@ -883,13 +974,11 @@ impl RegisteredPanel {
             let path = NodePath::server(groups, i);
             ui.horizontal(|ui| {
                 ui.add_space((depth + 1) as f32 * 16.0 + 8.0 + 14.0);
+                let text = icon_text(ui, icon::DESKTOP_TOWER, color, &server.name);
                 let label = ui.add(
-                    egui::Button::selectable(
-                        self.selected.as_ref() == Some(&path),
-                        format!("{} {}", icon::DESKTOP_TOWER, server.name),
-                    )
-                    .frame_when_inactive(false)
-                    .sense(egui::Sense::click_and_drag()),
+                    egui::Button::selectable(self.selected.as_ref() == Some(&path), text)
+                        .frame_when_inactive(false)
+                        .sense(egui::Sense::click_and_drag()),
                 );
                 label.dnd_set_drag_payload(path.clone());
                 // Soltar em cima de um servidor põe no grupo dele.
@@ -928,6 +1017,7 @@ impl RegisteredPanel {
                         }
                     });
                     ui.separator();
+                    self.move_to_menu(ui, &path, menu);
                     if ui.button(tr("Delete")).clicked() {
                         *menu = Some(Menu::Delete(path.clone()));
                         ui.close();
@@ -940,6 +1030,42 @@ impl RegisteredPanel {
                 });
             });
         }
+    }
+
+    /// "Move To" no menu de um servidor ou grupo: os grupos para onde ele
+    /// pode ir, em árvore. O grupo onde ele já está e, para um grupo, ele
+    /// mesmo e os de dentro ficam de fora.
+    fn move_to_menu(&self, ui: &mut egui::Ui, node: &NodePath, menu: &mut Option<Menu>) {
+        let current: &[usize] = match node.server {
+            Some(_) => &node.groups,
+            None => node.groups.split_last().map(|(_, p)| p).unwrap_or(&[]),
+        };
+        let targets: Vec<_> = self
+            .servers
+            .all_groups()
+            .into_iter()
+            .filter(|(g, ..)| {
+                g.as_slice() != current && (node.server.is_some() || !g.starts_with(&node.groups))
+            })
+            .collect();
+        ui.add_enabled_ui(!targets.is_empty(), |ui| {
+            ui.menu_button(tr("Move To"), |ui| {
+                for (groups, depth, name) in targets {
+                    let color = self.servers.color(&groups);
+                    let text = icon_text(ui, icon::FOLDER, color, display_name(&name));
+                    let clicked = ui
+                        .horizontal(|ui| {
+                            ui.add_space(depth as f32 * 12.0);
+                            ui.button(text).clicked()
+                        })
+                        .inner;
+                    if clicked {
+                        *menu = Some(Menu::Move(node.clone(), groups));
+                        ui.close();
+                    }
+                }
+            });
+        });
     }
 
     /// Desenha os diálogos abertos. Devolve uma mensagem para a status bar
@@ -980,7 +1106,12 @@ impl RegisteredPanel {
                 Reply::Ok => {
                     let result = if dialog.editing {
                         self.servers
-                            .update_group(&dialog.parent, &dialog.name, &dialog.description)
+                            .update_group(
+                                &dialog.parent,
+                                &dialog.name,
+                                &dialog.description,
+                                dialog.color,
+                            )
                             .map(|()| dialog.parent.clone())
                     } else {
                         self.servers.add_group(
@@ -988,6 +1119,7 @@ impl RegisteredPanel {
                             ServerGroup {
                                 name: dialog.name.clone(),
                                 description: dialog.description.clone(),
+                                color: dialog.color,
                                 ..Default::default()
                             },
                         )
@@ -1055,6 +1187,69 @@ impl RegisteredPanel {
         }
         status
     }
+}
+
+/// Escolha de cor: "Nenhuma", as cores prontas e uma livre.
+fn color_choice(ui: &mut egui::Ui, color: &mut Option<Rgb>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if ui
+            .selectable_label(color.is_none(), trc("color", "None"))
+            .clicked()
+        {
+            *color = None;
+        }
+        for c in FOLDER_COLORS {
+            let selected = *color == Some(c);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, c.hex())
+            });
+            ui.painter().rect_filled(rect.shrink(2.0), 3.0, c.color32());
+            if selected || response.hovered() {
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    ui.visuals().selection.stroke,
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if response.on_hover_text(c.hex()).clicked() {
+                *color = Some(c);
+            }
+        }
+        let mut rgb = color.unwrap_or(FOLDER_COLORS[5]).0;
+        if egui::color_picker::color_edit_button_srgb(ui, &mut rgb)
+            .on_hover_text(tr("Other color..."))
+            .changed()
+        {
+            *color = Some(Rgb(rgb));
+        }
+    });
+}
+
+/// Ícone colorido seguido do nome, para as linhas da árvore.
+fn icon_text(ui: &egui::Ui, glyph: &str, color: Option<Rgb>, text: &str) -> egui::WidgetText {
+    let mut job = egui::text::LayoutJob::default();
+    let mut glyph = egui::RichText::new(glyph);
+    if let Some(c) = color {
+        glyph = glyph.color(c.color32());
+    }
+    glyph.append_to(
+        &mut job,
+        ui.style(),
+        egui::FontSelection::Default,
+        egui::Align::Center,
+    );
+    // i18n-ignore
+    egui::RichText::new(format!(" {text}")).append_to(
+        &mut job,
+        ui.style(),
+        egui::FontSelection::Default,
+        egui::Align::Center,
+    );
+    job.into()
 }
 
 enum Menu {
@@ -1406,6 +1601,8 @@ pub struct GroupDialog {
     editing: bool,
     pub name: String,
     pub description: String,
+    /// Cor da pasta (`None`: sem cor própria).
+    pub color: Option<Rgb>,
     error: Option<String>,
 }
 
@@ -1442,6 +1639,9 @@ impl GroupDialog {
                     )
                     .labelled_by(label.id);
                     ui.end_row();
+                    ui.label(tr("Color:"));
+                    color_choice(ui, &mut self.color);
+                    ui.end_row();
                 });
             if let Some(error) = &self.error {
                 ui.add_space(6.0);
@@ -1477,6 +1677,87 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn folder_colors_are_saved_as_hex_and_inherited() {
+        assert_eq!(Rgb::parse("#E5534b"), Some(Rgb([0xE5, 0x53, 0x4B])));
+        assert_eq!(Rgb::parse("3fa34d").unwrap().hex(), "#3fa34d");
+        assert_eq!(Rgb::parse("#12345"), None);
+        assert_eq!(Rgb::parse("#gg0000"), None);
+
+        let dir = std::env::temp_dir().join(format!("pgstudio-colors-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("registered_servers.json");
+        let mut r = RegisteredServers::open(&file);
+        let prod = r
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "Production".into(),
+                    color: Some(FOLDER_COLORS[0]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let eu = r
+            .add_group(
+                &prod,
+                ServerGroup {
+                    name: "EU".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let dev = r
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "Dev".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        // Subpasta sem cor usa a da pasta de cima; a raiz não tem cor.
+        assert_eq!(r.color(&eu), Some(FOLDER_COLORS[0]));
+        assert_eq!(r.color(&dev), None);
+        assert_eq!(r.color(&[]), None);
+        r.update_group(&dev, "Dev", "", Some(FOLDER_COLORS[3]))
+            .unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"color\": \"#e5534b\""), "{text}");
+        assert!(text.contains("\"color\": \"#3fa34d\""), "{text}");
+        // Pasta sem cor não grava a chave: arquivos antigos não mudam.
+        assert_eq!(text.matches("\"color\"").count(), 2, "{text}");
+        let again = RegisteredServers::open(&file);
+        assert_eq!(again.root(), r.root());
+        let groups: Vec<_> = again
+            .all_groups()
+            .into_iter()
+            .map(|(p, d, n)| (p, d, n))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                (vec![], 0, ROOT_NAME.to_string()),
+                (vec![0], 1, "Production".to_string()),
+                (vec![0, 0], 2, "EU".to_string()),
+                (vec![1], 1, "Dev".to_string()),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn files_without_colors_still_open() {
+        // Um servers.json de antes das cores.
+        let text = r#"{"version":1,"root":{"name":"x","groups":[{"name":"Prod","servers":[]}],"servers":[]}}"#;
+        let file: File = serde_json::from_str(text).unwrap();
+        assert_eq!(file.root.groups[0].color, None);
+        // Uma cor ruim não perde a árvore inteira em silêncio: o arquivo
+        // não abre (e o erro aparece no import).
+        let bad = r#"{"version":1,"root":{"name":"x","groups":[{"name":"Prod","color":"red"}]}}"#;
+        assert!(serde_json::from_str::<File>(bad).is_err());
     }
 
     #[test]
@@ -1523,9 +1804,9 @@ mod tests {
         let names: Vec<_> = r.all_servers().iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["db1.example.com", "local"]);
 
-        r.update_group(&eu, "Europe", "west").unwrap();
+        r.update_group(&eu, "Europe", "west", None).unwrap();
         assert_eq!(r.group(&eu).unwrap().description, "west");
-        assert!(r.update_group(&[], "x", "").is_err());
+        assert!(r.update_group(&[], "x", "", None).is_err());
         r.update_server(&a, server("primary", "db1.example.com"))
             .unwrap();
         assert_eq!(r.server(&a).unwrap().name, "primary");
