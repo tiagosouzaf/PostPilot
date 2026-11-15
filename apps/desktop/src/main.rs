@@ -94,9 +94,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pgstudio_core::Theme;
-use pgstudio_core::connection::{ConnectionSettings, DEFAULT_DATABASE};
+use pgstudio_core::connection::{ConnectionSettings, Engine};
 use pgstudio_core::keymap::Keymap;
 use pgstudio_i18n::{tr, trf};
+use pgstudio_mssql::{EngineConnector, MssqlConnector};
 use pgstudio_pg_metadata::{PgConnector, Runtime as DbRuntime};
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
@@ -303,13 +304,12 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             // Claude Code pelo MCP (Tools > Allow Claude Code), fora dos
             // modos de screenshot e medição, a menos que o canal seja dado.
             let explicit_endpoint = std::env::var_os(pgstudio_automation::endpoint::ENV).is_some();
-            if (screenshot.is_none() && !bench) || explicit_endpoint {
-                if let (Some(endpoint), Some(dir)) =
+            if ((screenshot.is_none() && !bench) || explicit_endpoint)
+                && let (Some(endpoint), Some(dir)) =
                     (pgstudio_automation::endpoint::default_path(), config_dir())
-                {
-                    let settings = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("claude.json");
-                    app = app.with_claude_code(&cc.egui_ctx, endpoint, settings);
-                }
+            {
+                let settings = dir.join(pgstudio_core::CONFIG_DIR_NAME).join("claude.json");
+                app = app.with_claude_code(&cc.egui_ctx, endpoint, settings);
             }
             if let Some(root) = std::env::var_os("PGSTUDIO_WORKSPACE").map(PathBuf::from) {
                 app.open_workspace(&root);
@@ -325,9 +325,12 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             if !demo {
                 match DbRuntime::new() {
                     Ok(runtime) => {
-                        app = app
-                            .with_recent_connections(recent)
-                            .with_connector(Arc::new(PgConnector::new(runtime)));
+                        app = app.with_recent_connections(recent).with_connector(Arc::new(
+                            EngineConnector {
+                                postgres: Arc::new(PgConnector::new(runtime.clone())),
+                                sql_server: Arc::new(MssqlConnector::new(runtime)),
+                            },
+                        ));
                     }
                     Err(e) => {
                         eprintln!("could not start the database runtime: {e}");
@@ -457,14 +460,21 @@ fn connect_from_env(mut app: ShellApp, servers: &str) -> ShellApp {
 }
 
 /// Conexão para um servidor de `PGSTUDIO_CONNECT`, com `PGUSER` e
-/// `PGDATABASE`.
+/// `PGDATABASE`. O prefixo `sqlserver:` (`sqlserver:db,1433`) conecta num
+/// SQL Server.
 fn env_settings(server: &str) -> Option<ConnectionSettings> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-    let mut settings = ConnectionSettings {
-        user: env("PGUSER").unwrap_or_else(|| "postgres".into()),
-        database: env("PGDATABASE").unwrap_or_else(|| DEFAULT_DATABASE.into()),
-        ..Default::default()
+    let (engine, server) = match server.trim().strip_prefix("sqlserver:") {
+        Some(rest) => (Engine::SqlServer, rest),
+        None => (Engine::PostgreSql, server),
     };
+    let mut settings = ConnectionSettings::for_engine(engine);
+    if let Some(user) = env("PGUSER") {
+        settings.user = user;
+    }
+    if let Some(db) = env("PGDATABASE") {
+        settings.database = db;
+    }
     if let Err(e) = settings.set_server_name(server) {
         eprintln!("PGSTUDIO_CONNECT: {e}");
         return None;

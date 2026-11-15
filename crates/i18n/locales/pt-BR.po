@@ -307,8 +307,8 @@ msgstr "Conecte-se a um servidor para usar o IntelliSense."
 msgid "Connect to the server of the diagram first."
 msgstr "Conecte-se primeiro ao servidor do diagrama."
 
-msgid "Connected to {name} (PostgreSQL {version}) as {user}."
-msgstr "Conectado a {name} (PostgreSQL {version}) como {user}."
+msgid "Connected to {name} ({engine} {version}) as {user}."
+msgstr "Conectado a {name} ({engine} {version}) como {user}."
 
 msgid "Connected to {name}."
 msgstr "Conectado a {name}."
@@ -3940,3 +3940,18 @@ msgstr "\"{command}\" ainda não está disponível para {engine}."
 
 msgid "not available for this server"
 msgstr "não disponível neste servidor"
+
+msgid "Timed out connecting to {server}."
+msgstr "Tempo esgotado ao conectar a {server}."
+
+msgid "Could not connect to {server}: {e}"
+msgstr "Não foi possível conectar a {server}: {e}"
+
+msgid "Could not set up encryption with {server}: {m}"
+msgstr "Não foi possível configurar a criptografia com {server}: {m}"
+
+msgid "{server} redirected the connection too many times."
+msgstr "{server} redirecionou a conexão vezes demais."
+
+msgid "Procedure {procedure}, Line {line}"
+msgstr "Procedure {procedure}, linha {line}"

@@ -1,0 +1,20 @@
+[package]
+name = "pgstudio-mssql"
+description = "Conexão do PostPilot com o Microsoft SQL Server (TDS, pelo tiberius)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+pgstudio-i18n.workspace = true
+pgstudio-pg-client.workspace = true
+tiberius.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures-util = { workspace = true }
+
+[lints]
+workspace = true

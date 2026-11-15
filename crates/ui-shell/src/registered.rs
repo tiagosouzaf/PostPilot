@@ -1775,14 +1775,13 @@ impl ServerDialog {
 
     /// Espera a leitura da senha guardada (testes).
     pub fn wait_lookup(&mut self) {
-        if let Some(l) = self.lookup.take() {
-            if let Some(p) = l.wait()
-                && self.password.is_empty()
-            {
-                self.password = p;
-                self.remember = true;
-                self.saved = true;
-            }
+        if let Some(l) = self.lookup.take()
+            && let Some(p) = l.wait()
+            && self.password.is_empty()
+        {
+            self.password = p;
+            self.remember = true;
+            self.saved = true;
         }
     }
 

@@ -80,10 +80,10 @@ impl RecentConnections {
         });
         self.list.insert(0, settings.clone());
         self.list.truncate(MAX_RECENT);
-        if let Err(e) = self.save() {
-            if let Some(path) = &self.path {
-                eprintln!("connections: could not save {}: {e}", path.display());
-            }
+        if let Err(e) = self.save()
+            && let Some(path) = &self.path
+        {
+            eprintln!("connections: could not save {}: {e}", path.display());
         }
     }
 
