@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Color32, Layout, Sense, Stroke, vec2};
 use egui_phosphor::regular as icon;
+use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{QueryEvent, QuerySession};
 
 /// Intervalos de atualização oferecidos, em segundos (o SSMS usa 10).
@@ -122,7 +123,10 @@ type Rows = Vec<Vec<Option<String>>>;
 
 /// Consultas de cada atualização. A última só vai quando
 /// `pg_stat_statements` existe.
-pub fn refresh_sql(with_statements: bool) -> String {
+pub fn refresh_sql(engine: Engine, with_statements: bool) -> String {
+    if engine == Engine::SqlServer {
+        return mssql_refresh_sql(with_statements);
+    }
     let mut sql = String::from(
         "SELECT pid, usename, datname, application_name, host(client_addr), state, \
          wait_event_type, wait_event, array_to_string(pg_blocking_pids(pid), ', '), \
@@ -141,6 +145,80 @@ pub fn refresh_sql(with_statements: bool) -> String {
         sql.push_str(
             ";\nSELECT calls, total_exec_time, mean_exec_time, rows, query \
              FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 25",
+        );
+    }
+    sql
+}
+
+/// As mesmas leituras no SQL Server, pelas DMVs, nas mesmas colunas:
+/// sessões (`sys.dm_exec_sessions` com o pedido em andamento), E/S e
+/// transações por banco, locks (`sys.dm_tran_locks`, sem o lock de banco
+/// que toda sessão tem) e as consultas mais caras do cache de planos.
+/// Precisa da permissão `VIEW SERVER STATE`.
+fn mssql_refresh_sql(with_statements: bool) -> String {
+    let mut sql = String::from(
+        "SET NOCOUNT ON; SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SET LOCK_TIMEOUT 2000;\n\
+         SELECT s.session_id, s.login_name, DB_NAME(s.database_id), s.program_name, \
+           COALESCE(c.client_net_address, s.host_name), \
+           CASE WHEN s.is_user_process = 0 THEN 'background' \
+                WHEN r.session_id IS NOT NULL THEN 'active' \
+                WHEN s.open_transaction_count > 0 THEN 'idle in transaction' ELSE 'idle' END, \
+           CASE WHEN r.wait_type IS NULL THEN NULL \
+                WHEN r.wait_type LIKE 'LCK%' THEN 'Lock' \
+                WHEN r.wait_type = 'WAITFOR' THEN 'Timeout' \
+                WHEN r.wait_type LIKE 'PAGEIOLATCH%' OR r.wait_type LIKE 'IO[_]%' \
+                     OR r.wait_type = 'WRITELOG' THEN 'IO' \
+                WHEN r.wait_type LIKE '%LATCH%' THEN 'Latch' \
+                WHEN r.wait_type LIKE 'ASYNC_NETWORK%' THEN 'Network' ELSE 'Other' END, \
+           r.wait_type, CAST(NULLIF(r.blocking_session_id, 0) AS varchar(12)), \
+           (SELECT MAX(DATEDIFF(SECOND, a.transaction_begin_time, GETDATE())) \
+              FROM sys.dm_tran_session_transactions t \
+              JOIN sys.dm_tran_active_transactions a ON a.transaction_id = t.transaction_id \
+             WHERE t.session_id = s.session_id), \
+           DATEDIFF(SECOND, COALESCE(r.start_time, s.last_request_start_time), GETDATE()), \
+           CASE WHEN s.is_user_process = 1 THEN 'client backend' ELSE 'system' END, \
+           COALESCE(rt.text, ct.text) \
+         FROM sys.dm_exec_sessions s \
+         LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id \
+         LEFT JOIN sys.dm_exec_connections c \
+           ON c.session_id = s.session_id AND c.parent_connection_id IS NULL \
+         OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) rt \
+         OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) ct \
+         WHERE s.session_id <> @@SPID ORDER BY s.session_id;\n\
+         SELECT d.name, ISNULL(pc.cntr_value, 0), ISNULL(io.reads, 0), ISNULL(io.writes, 0), \
+           ISNULL(io.bytes, 0) \
+         FROM sys.databases d \
+         LEFT JOIN (SELECT RTRIM(instance_name) AS name, cntr_value \
+                      FROM sys.dm_os_performance_counters \
+                     WHERE counter_name = 'Transactions/sec' \
+                       AND object_name LIKE '%:Databases%') pc \
+           ON pc.name COLLATE DATABASE_DEFAULT = d.name COLLATE DATABASE_DEFAULT \
+         LEFT JOIN (SELECT database_id, SUM(num_of_reads) AS reads, SUM(num_of_writes) AS writes, \
+                           SUM(num_of_bytes_read + num_of_bytes_written) AS bytes \
+                      FROM sys.dm_io_virtual_file_stats(NULL, NULL) GROUP BY database_id) io \
+           ON io.database_id = d.database_id \
+         ORDER BY d.name;\n\
+         SELECT l.request_session_id, l.resource_type, l.request_mode, \
+           CASE l.request_status WHEN 'GRANT' THEN 't' ELSE 'f' END, \
+           CASE WHEN l.resource_type = 'OBJECT' THEN \
+             OBJECT_SCHEMA_NAME(l.resource_associated_entity_id, l.resource_database_id) + '.' \
+             + OBJECT_NAME(l.resource_associated_entity_id, l.resource_database_id) END, \
+           NULLIF(RTRIM(l.resource_description), ''), DB_NAME(l.resource_database_id) \
+         FROM sys.dm_tran_locks l \
+         WHERE l.request_session_id <> @@SPID AND l.resource_type <> 'DATABASE' \
+         ORDER BY CASE l.request_status WHEN 'GRANT' THEN 1 ELSE 0 END, l.request_session_id;\n\
+         SELECT 1",
+    );
+    if with_statements {
+        sql.push_str(
+            ";\nSELECT TOP 25 q.execution_count, q.total_elapsed_time / 1000.0, \
+               q.total_elapsed_time / 1000.0 / q.execution_count, q.total_rows, \
+               SUBSTRING(t.text, q.statement_start_offset / 2 + 1, \
+                 (CASE q.statement_end_offset WHEN -1 THEN DATALENGTH(t.text) \
+                  ELSE q.statement_end_offset END - q.statement_start_offset) / 2 + 1) \
+             FROM sys.dm_exec_query_stats q \
+             CROSS APPLY sys.dm_exec_sql_text(q.sql_handle) t \
+             ORDER BY q.total_elapsed_time DESC",
         );
     }
     sql
@@ -321,10 +399,16 @@ pub enum Action {
 }
 
 impl Action {
-    fn sql(self) -> String {
-        match self {
-            Action::Cancel(pid) => format!("SELECT pg_cancel_backend({pid})"),
-            Action::Kill(pid) => format!("SELECT pg_terminate_backend({pid})"),
+    fn sql(self, engine: Engine) -> String {
+        match (self, engine) {
+            // No SQL Server não dá para cancelar a consulta de outra sessão
+            // sem derrubá-la: só existe o `KILL` (a tela não oferece o
+            // Cancel).
+            (Action::Cancel(pid) | Action::Kill(pid), Engine::SqlServer) => {
+                format!("KILL {pid};\nSELECT 't'")
+            }
+            (Action::Cancel(pid), _) => format!("SELECT pg_cancel_backend({pid})"),
+            (Action::Kill(pid), _) => format!("SELECT pg_terminate_backend({pid})"),
         }
     }
 
@@ -366,16 +450,16 @@ enum Column {
 }
 
 const PROCESS_COLUMNS: &[(Column, &str, f32)] = &[
-    (Column::Pid, tr_noop("Process ID"), 78.0),
-    (Column::User, tr_noop("User"), 70.0),
-    (Column::Database, tr_noop("Database"), 70.0),
+    (Column::Pid, tr_noop("Process ID"), 112.0),
+    (Column::User, tr_noop("User"), 80.0),
+    (Column::Database, tr_noop("Database"), 112.0),
     (Column::Application, tr_noop("Application"), 90.0),
-    (Column::Client, tr_noop("Client"), 80.0),
+    (Column::Client, tr_noop("Client"), 90.0),
     (Column::State, tr_noop("State"), 110.0),
-    (Column::WaitType, tr_noop("Wait Type"), 70.0),
-    (Column::WaitEvent, tr_noop("Wait Resource"), 100.0),
-    (Column::BlockedBy, tr_noop("Blocked By"), 70.0),
-    (Column::Duration, tr_noop("Duration"), 64.0),
+    (Column::WaitType, tr_noop("Wait Type"), 104.0),
+    (Column::WaitEvent, tr_noop("Wait Resource"), 124.0),
+    (Column::BlockedBy, tr_noop("Blocked By"), 104.0),
+    (Column::Duration, tr_noop("Duration"), 72.0),
     (Column::Query, tr_noop("Command"), 320.0),
 ];
 
@@ -490,7 +574,7 @@ impl ActivityMonitor {
         let mut current: Option<Rows> = None;
         let mut error: Option<String> = None;
         self.session.execute(
-            refresh_sql(with_statements),
+            refresh_sql(self.session.engine(), with_statements),
             Box::new(move |event| match event {
                 QueryEvent::Columns(_) => current = Some(Vec::new()),
                 QueryEvent::Row(r) => {
@@ -535,7 +619,7 @@ impl ActivityMonitor {
         let mut value: Option<bool> = None;
         let mut error: Option<String> = None;
         self.session.execute(
-            action.sql(),
+            action.sql(self.session.engine()),
             Box::new(move |event| match event {
                 QueryEvent::Row(r) => {
                     value = Some(r.first().cloned().flatten().as_deref() == Some("t"))
@@ -840,6 +924,12 @@ impl ActivityMonitor {
         });
     }
 
+    /// Se dá para cancelar a consulta de uma sessão sem derrubá-la (no
+    /// SQL Server só existe o `KILL`).
+    pub fn can_cancel(&self) -> bool {
+        self.session.engine() != Engine::SqlServer
+    }
+
     fn processes(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(tr("Filter:"));
@@ -850,9 +940,10 @@ impl ActivityMonitor {
             );
             ui.checkbox(&mut self.show_system, tr("System processes"));
             let selected = self.selected;
-            if ui
-                .add_enabled(selected.is_some(), egui::Button::new(tr("Cancel Query")))
-                .clicked()
+            if self.can_cancel()
+                && ui
+                    .add_enabled(selected.is_some(), egui::Button::new(tr("Cancel Query")))
+                    .clicked()
                 && let Some(pid) = selected
             {
                 self.request(Action::Cancel(pid));
@@ -876,6 +967,7 @@ impl ActivityMonitor {
         let mut action = None;
         let sort = self.sort;
         let selected = self.selected;
+        let can_cancel = self.session.engine() != Engine::SqlServer;
         let drawn = table(
             ui,
             "activity_processes",
@@ -906,7 +998,7 @@ impl ActivityMonitor {
                 }
                 response.context_menu(|ui| {
                     select = Some(p.pid);
-                    if ui.button(tr("Cancel Query")).clicked() {
+                    if can_cancel && ui.button(tr("Cancel Query")).clicked() {
                         action = Some(Action::Cancel(p.pid));
                         ui.close();
                     }
@@ -1010,31 +1102,31 @@ impl ActivityMonitor {
             ui,
             "activity_locks",
             vec![
-                (tr("Process ID").into(), 78.0),
-                (tr("Lock Type").into(), 100.0),
+                (tr("Process ID").into(), 112.0),
+                (tr("Lock Type").into(), 120.0),
                 (tr("Mode").into(), 150.0),
-                (tr("Status").into(), 80.0),
+                (tr("Status").into(), 90.0),
                 (tr("Object").into(), 180.0),
-                (tr("Transaction").into(), 100.0),
-                (tr("Database").into(), 90.0),
+                (tr("Transaction").into(), 130.0),
+                (tr("Database").into(), 120.0),
             ],
             locks.len(),
             220.0,
             &mut |_| {},
             &mut |ui, i| {
                 let l = &locks[i];
-                cell(ui, 78.0, egui::Label::new(l.pid.to_string()));
-                cell(ui, 100.0, egui::Label::new(l.lock_type.as_str()));
+                cell(ui, 112.0, egui::Label::new(l.pid.to_string()));
+                cell(ui, 120.0, egui::Label::new(l.lock_type.as_str()));
                 cell(ui, 150.0, egui::Label::new(l.mode.as_str()).truncate());
                 let status = if l.granted {
                     egui::RichText::new(tr("Granted"))
                 } else {
                     egui::RichText::new(tr("Waiting")).color(ui.visuals().warn_fg_color)
                 };
-                cell(ui, 80.0, egui::Label::new(status));
+                cell(ui, 90.0, egui::Label::new(status));
                 cell(ui, 180.0, egui::Label::new(l.relation.as_str()).truncate());
-                cell(ui, 100.0, egui::Label::new(l.target.as_str()).truncate());
-                cell(ui, 90.0, egui::Label::new(l.database.as_str()).truncate());
+                cell(ui, 130.0, egui::Label::new(l.target.as_str()).truncate());
+                cell(ui, 120.0, egui::Label::new(l.database.as_str()).truncate());
             },
         );
     }
@@ -1073,6 +1165,41 @@ impl ActivityMonitor {
         let Some(snap) = &self.snapshot else {
             return;
         };
+        if self.session.engine() == Engine::SqlServer {
+            // O SQL Server conta leituras e gravações nos arquivos de cada
+            // banco; não há o acerto de cache por banco.
+            table(
+                ui,
+                "activity_io",
+                vec![
+                    (tr("Database").into(), 160.0),
+                    (tr("Reads").into(), 110.0),
+                    (tr("Writes").into(), 110.0),
+                    (tr("I/O (MB)").into(), 110.0),
+                    (tr("Transactions").into(), 110.0),
+                ],
+                snap.databases.len(),
+                200.0,
+                &mut |_| {},
+                &mut |ui, i| {
+                    let d = &snap.databases[i];
+                    cell(ui, 160.0, egui::Label::new(d.name.as_str()).truncate());
+                    cell(ui, 110.0, egui::Label::new(format!("{:.0}", d.blocks_read)));
+                    cell(ui, 110.0, egui::Label::new(format!("{:.0}", d.blocks_hit)));
+                    cell(
+                        ui,
+                        110.0,
+                        egui::Label::new(format!("{:.1}", d.temp_bytes / 1_048_576.0)),
+                    );
+                    cell(
+                        ui,
+                        110.0,
+                        egui::Label::new(format!("{:.0}", d.transactions)),
+                    );
+                },
+            );
+            return;
+        }
         table(
             ui,
             "activity_io",
@@ -1222,7 +1349,10 @@ fn table(
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     for (i, (text, width)) in headers.iter().enumerate() {
+                        // Um título maior que a coluna (nas traduções) é
+                        // cortado, para as colunas não saírem do lugar.
                         let b = egui::Button::new(egui::RichText::new(text).strong())
+                            .truncate()
                             .frame_when_inactive(false);
                         if cell(ui, *width, b).clicked() {
                             on_header(i);
@@ -1412,8 +1542,14 @@ mod tests {
         assert_eq!(s.transactions_per_second, 20.0);
         assert_eq!(s.reads_per_second, 10.0);
         assert!(b.has_statements);
-        assert!(refresh_sql(true).contains("pg_stat_statements ORDER BY"));
-        assert!(!refresh_sql(false).contains("pg_stat_statements ORDER BY"));
+        let pg = Engine::PostgreSql;
+        assert!(refresh_sql(pg, true).contains("pg_stat_statements ORDER BY"));
+        assert!(!refresh_sql(pg, false).contains("pg_stat_statements ORDER BY"));
+        let ms = Engine::SqlServer;
+        assert!(refresh_sql(ms, true).contains("sys.dm_exec_query_stats"));
+        assert!(!refresh_sql(ms, false).contains("sys.dm_exec_query_stats"));
+        assert_eq!(Action::Kill(7).sql(ms), "KILL 7;\nSELECT 't'");
+        assert_eq!(Action::Kill(7).sql(pg), "SELECT pg_terminate_backend(7)");
     }
 
     #[test]
