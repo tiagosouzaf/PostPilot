@@ -1,5 +1,8 @@
 //! "Check for Updates": avisa de versão nova e, onde dá, se atualiza.
 //!
+//! Uma versão nova aparece sozinha numa faixa no alto da janela
+//! ([`Updater::banner`]), com o botão "Update now", e na status bar.
+//!
 //! A checagem roda numa thread e manda o resultado por um canal; a UI só lê
 //! o canal a cada frame. Veja `pgstudio_updater` para o que é enviado e como
 //! cada tipo de instalação se atualiza.
@@ -7,12 +10,15 @@
 use pgstudio_i18n::{tr, trf};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::SystemTime;
 
 use eframe::egui::{self, RichText};
 use pgstudio_core::{APP_NAME, CommandId, VERSION};
-use pgstudio_updater::{Progress, REPOSITORY, aur_helper};
+use pgstudio_updater::{
+    CANCELLED, CHECK_INTERVAL, NOT_AUTHORIZED, Progress, REPOSITORY, aur_helper, find_pkexec,
+};
 
 pub use pgstudio_updater::{
     InstallKind, Installed, Release, UpdateSettings, cleanup_old_binary, parse_release,
@@ -31,7 +37,21 @@ pub enum State {
     Downloading(Release),
     /// A versão nova está instalada; falta reabrir o app.
     Installed(Release, Installed),
+    /// A checagem falhou.
     Failed(String),
+    /// O download ou a instalação falhou; dá para tentar de novo.
+    InstallFailed(Release, String),
+}
+
+/// O que um clique na faixa ou na janela pede.
+enum Action {
+    Install(Release),
+    Skip(String),
+    Restart(PathBuf),
+    CloseApp,
+    OpenWindow,
+    Later,
+    CheckNow,
 }
 
 enum Msg {
@@ -44,6 +64,12 @@ pub struct Updater {
     settings: UpdateSettings,
     kind: InstallKind,
     helper: Option<&'static str>,
+    /// O `pkexec`, para instalar o pacote do sistema com a senha de
+    /// administrador.
+    pkexec: Option<PathBuf>,
+    /// "Later": a faixa some até o app reabrir (a status bar continua
+    /// avisando).
+    banner_dismissed: bool,
     state: State,
     /// Se pode consultar a rede. Desligado no padrão (testes, screenshots e
     /// medição); o app de verdade usa [`Updater::detect`].
@@ -78,6 +104,8 @@ impl Updater {
             settings,
             kind,
             helper,
+            pkexec: None,
+            banner_dismissed: false,
             state: State::Idle,
             network: true,
             manual: false,
@@ -91,7 +119,21 @@ impl Updater {
     /// As preferências salvas em `<config>/.../update.json` e a instalação
     /// detectada.
     pub fn detect(settings_file: PathBuf) -> Self {
-        Updater::new(UpdateSettings::open(settings_file), InstallKind::detect())
+        let kind = InstallKind::detect();
+        let pkexec = kind.is_release_package().then(find_pkexec).flatten();
+        Updater::new(UpdateSettings::open(settings_file), kind).with_pkexec(pkexec)
+    }
+
+    /// O `pkexec` que instala o pacote do sistema (`None`: só mostra o
+    /// comando).
+    pub fn with_pkexec(mut self, pkexec: Option<PathBuf>) -> Self {
+        self.pkexec = pkexec;
+        self
+    }
+
+    /// Se o botão "Update now" faz tudo: baixa, confere e instala.
+    pub fn can_install(&self) -> bool {
+        self.kind.can_self_update() || (self.kind.is_release_package() && self.pkexec.is_some())
     }
 
     pub fn state(&self) -> &State {
@@ -147,6 +189,7 @@ impl Updater {
         self.progress = Arc::new(Progress::default());
         let progress = self.progress.clone();
         let kind = self.kind.clone();
+        let pkexec = self.pkexec.clone();
         let ctx2 = ctx.clone();
         let r = release.clone();
         std::thread::spawn(move || {
@@ -161,7 +204,8 @@ impl Updater {
                     }
                 })
             };
-            let result = pgstudio_updater::install(&kind, &r, &user_agent(), &progress);
+            let result =
+                pgstudio_updater::install(&kind, &r, pkexec.as_deref(), &user_agent(), &progress);
             done.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = ticker.join();
             let _ = tx.send(Msg::Installed(result));
@@ -195,16 +239,159 @@ impl Updater {
             (Msg::Checked(Err(e)), _) => State::Failed(e),
             (Msg::Installed(Ok(done)), State::Downloading(r)) => State::Installed(r, done),
             (Msg::Installed(Ok(_)), other) => other,
+            (Msg::Installed(Err(e)), State::Downloading(r)) => State::InstallFailed(r, e),
             (Msg::Installed(Err(e)), _) => State::Failed(e),
         };
+    }
+
+    /// Com o app aberto por horas ou dias, repete a checagem automática no
+    /// mesmo intervalo da de abertura.
+    fn recheck_if_due(&mut self, ctx: &egui::Context) {
+        if !self.network || !self.settings.check_on_startup || self.rx.is_some() {
+            return;
+        }
+        if matches!(self.state, State::Idle | State::UpToDate | State::NoRelease) {
+            if self.settings.due(SystemTime::now()) {
+                self.check(ctx, false);
+            }
+            // A janela parada não redesenha sozinha: acorda para checar.
+            ctx.request_repaint_after(CHECK_INTERVAL);
+        }
     }
 
     /// Versão nova a anunciar na status bar.
     pub fn available(&self) -> Option<&Release> {
         match &self.state {
-            State::Available(r) | State::Downloading(r) | State::Installed(r, _) => Some(r),
+            State::Available(r)
+            | State::Downloading(r)
+            | State::Installed(r, _)
+            | State::InstallFailed(r, _) => Some(r),
             _ => None,
         }
+    }
+
+    /// Se a faixa de versão nova deve aparecer no alto da janela.
+    pub fn banner_visible(&mut self) -> bool {
+        self.poll();
+        match &self.state {
+            State::Available(_) => !self.banner_dismissed,
+            State::Downloading(_) | State::Installed(..) | State::InstallFailed(..) => true,
+            _ => false,
+        }
+    }
+
+    /// A faixa "há uma versão nova", com o botão que atualiza. `color` é a
+    /// cor do texto sobre o fundo da faixa. Devolve um comando quando o app
+    /// precisa fechar.
+    pub fn banner(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        color: egui::Color32,
+    ) -> Option<CommandId> {
+        let mut action = None;
+        let text = |t: String| RichText::new(t).color(color).strong();
+        ui.horizontal(|ui| match &self.state {
+            State::Available(r) => {
+                ui.label(text(trf!(
+                    "{app} {version} is available.",
+                    app = APP_NAME,
+                    version = r.version
+                )));
+                if self.can_install() && self.kind.asset(r).is_some() {
+                    if ui.button(tr("Update now")).clicked() {
+                        action = Some(Action::Install(r.clone()));
+                    }
+                    if ui.button(tr("What's new")).clicked() {
+                        action = Some(Action::OpenWindow);
+                    }
+                } else if ui.button(tr("How to update")).clicked() {
+                    action = Some(Action::OpenWindow);
+                }
+                if ui.button(tr("Later")).clicked() {
+                    action = Some(Action::Later);
+                }
+            }
+            State::Downloading(r) => {
+                if self.progress.installing.load(Ordering::Relaxed) {
+                    ui.spinner();
+                    ui.label(text(self.installing_text(r)));
+                } else {
+                    ui.label(text(trf!("Downloading {version}…", version = r.version)));
+                    let bar = match self.progress.fraction() {
+                        Some(f) => egui::ProgressBar::new(f).show_percentage(),
+                        None => egui::ProgressBar::new(0.0).animate(true),
+                    };
+                    ui.add(bar.desired_width(220.0));
+                }
+            }
+            State::Installed(r, Installed::Restart(program)) => {
+                ui.label(text(trf!(
+                    "Version {version} is installed.",
+                    version = r.version
+                )));
+                if ui.button(tr("Restart now")).clicked() {
+                    action = Some(Action::Restart(program.clone()));
+                }
+            }
+            State::Installed(r, Installed::InstallerStarted) => {
+                ui.label(text(trf!(
+                    "The installer for {version} is running. Close {app} so it can replace the files.",
+                    version = r.version,
+                    app = APP_NAME
+                )));
+                if ui.button(trf!("Close {app}", app = APP_NAME)).clicked() {
+                    action = Some(Action::CloseApp);
+                }
+            }
+            State::InstallFailed(r, e) => {
+                ui.label(text(trf!(
+                    "The update to {version} failed: {error}",
+                    version = r.version,
+                    error = error_text(e)
+                )));
+                if ui.button(tr("Try again")).clicked() {
+                    action = Some(Action::Install(r.clone()));
+                }
+                if ui.button(tr("Details")).clicked() {
+                    action = Some(Action::OpenWindow);
+                }
+            }
+            _ => {}
+        });
+        action.and_then(|a| self.apply(ctx, a))
+    }
+
+    fn installing_text(&self, r: &Release) -> String {
+        if self.kind.is_release_package() {
+            trf!(
+                "Installing {version}… Enter your password in the system prompt.",
+                version = r.version
+            )
+        } else {
+            trf!("Installing {version}…", version = r.version)
+        }
+    }
+
+    fn apply(&mut self, ctx: &egui::Context, action: Action) -> Option<CommandId> {
+        match action {
+            Action::Install(r) => self.start_install(ctx, r),
+            Action::Skip(v) => {
+                self.settings.skipped_version = Some(v);
+                let _ = self.settings.save();
+                self.state = State::UpToDate;
+                self.open = false;
+            }
+            Action::Restart(program) => {
+                self.restart = Some(program);
+                return Some(CommandId::Exit);
+            }
+            Action::CloseApp => return Some(CommandId::Exit),
+            Action::OpenWindow => self.open = true,
+            Action::Later => self.banner_dismissed = true,
+            Action::CheckNow => self.check(ctx, true),
+        }
+        None
     }
 
     /// O aviso na status bar, à direita da versão. Clicar abre a janela.
@@ -213,6 +400,7 @@ impl Updater {
             State::Available(r) => trf!("Update available: {version}", version = r.version),
             State::Downloading(_) => tr("Downloading update…").to_string(),
             State::Installed(..) => tr("Restart to update").to_string(),
+            State::InstallFailed(..) => tr("Update failed").to_string(),
             _ => return,
         };
         let badge = egui::Button::new(RichText::new(text).color(color).strong()).frame(false);
@@ -262,6 +450,18 @@ impl Updater {
     /// fechar (para reabrir na versão nova ou deixar o instalador trabalhar).
     pub fn window(&mut self, ctx: &egui::Context) -> Option<CommandId> {
         self.poll();
+        self.recheck_if_due(ctx);
+        // Só em build de desenvolvimento, para o teste de ponta a ponta sem
+        // mouse: instala a versão encontrada como se o botão fosse clicado.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("PGSTUDIO_UPDATE_AUTO").is_some()
+            && let State::Available(r) = &self.state
+            && !self.banner_dismissed
+        {
+            let r = r.clone();
+            self.banner_dismissed = true;
+            self.start_install(ctx, r);
+        }
         if !self.open {
             return None;
         }
@@ -298,13 +498,11 @@ impl Updater {
     }
 
     fn window_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> Option<CommandId> {
-        let mut command = None;
-        let mut install = None;
-        let mut skip = None;
+        let mut action = None;
         match &self.state {
             State::Idle => {
                 if ui.button(tr("Check now")).clicked() {
-                    self.check(ctx, true);
+                    action = Some(Action::CheckNow);
                 }
             }
             State::Checking => {
@@ -325,7 +523,7 @@ impl Updater {
             State::Failed(e) => {
                 ui.colored_label(ui.visuals().error_fg_color, e);
                 if ui.button(tr("Try again")).clicked() {
-                    self.check(ctx, true);
+                    action = Some(Action::CheckNow);
                 }
             }
             State::Available(r) => {
@@ -338,19 +536,24 @@ impl Updater {
                     ctx.open_url(egui::OpenUrl::new_tab(&r.page));
                 }
                 ui.add_space(6.0);
-                if self.kind.can_self_update() {
+                if self.can_install() {
                     if self.kind.asset(r).is_some() {
                         ui.horizontal(|ui| {
                             if ui.button(tr("Download and install")).clicked() {
-                                install = Some(r.clone());
+                                action = Some(Action::Install(r.clone()));
                             }
                             if ui.button(tr("Skip this version")).clicked() {
-                                skip = Some(r.version.to_string());
+                                action = Some(Action::Skip(r.version.to_string()));
                             }
                         });
                         ui.small(tr(
                             "The download is checked against the release's SHA256SUMS.",
                         ));
+                        if self.kind.is_release_package() {
+                            ui.small(tr(
+                                "The system asks for your password to install the package.",
+                            ));
+                        }
                     } else {
                         ui.label(tr("This release has no package for this installation."));
                     }
@@ -358,35 +561,36 @@ impl Updater {
                     ui.label(tr(
                         "This copy is managed by your package manager. Update it with:",
                     ));
-                    ui.horizontal(|ui| {
-                        ui.code(&cmd);
-                        if ui.small_button(tr("Copy")).clicked() {
-                            ctx.copy_text(cmd.clone());
-                        }
-                    });
+                    command_line(ui, ctx, &cmd);
                     if ui.button(tr("Skip this version")).clicked() {
-                        skip = Some(r.version.to_string());
+                        action = Some(Action::Skip(r.version.to_string()));
                     }
                 } else {
                     ui.label(tr("Download the new version from the release page."));
                     if ui.button(tr("Skip this version")).clicked() {
-                        skip = Some(r.version.to_string());
+                        action = Some(Action::Skip(r.version.to_string()));
                     }
                 }
             }
             State::Downloading(r) => {
-                ui.label(trf!("Downloading {version}…", version = r.version));
-                let bar = match self.progress.fraction() {
-                    Some(f) => egui::ProgressBar::new(f).show_percentage(),
-                    None => egui::ProgressBar::new(0.0).animate(true),
-                };
-                ui.add(bar);
+                if self.progress.installing.load(Ordering::Relaxed) {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(self.installing_text(r));
+                    });
+                } else {
+                    ui.label(trf!("Downloading {version}…", version = r.version));
+                    let bar = match self.progress.fraction() {
+                        Some(f) => egui::ProgressBar::new(f).show_percentage(),
+                        None => egui::ProgressBar::new(0.0).animate(true),
+                    };
+                    ui.add(bar);
+                }
             }
             State::Installed(r, Installed::Restart(program)) => {
                 ui.label(trf!("Version {version} is installed.", version = r.version));
                 if ui.button(tr("Restart now")).clicked() {
-                    self.restart = Some(program.clone());
-                    command = Some(CommandId::Exit);
+                    action = Some(Action::Restart(program.clone()));
                 }
             }
             State::Installed(r, Installed::InstallerStarted) => {
@@ -396,20 +600,29 @@ impl Updater {
                     app = APP_NAME
                 ));
                 if ui.button(trf!("Close {app}", app = APP_NAME)).clicked() {
-                    command = Some(CommandId::Exit);
+                    action = Some(Action::CloseApp);
+                }
+            }
+            State::InstallFailed(r, e) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    trf!(
+                        "The update to {version} failed: {error}",
+                        version = r.version,
+                        error = error_text(e)
+                    ),
+                );
+                if ui.button(tr("Try again")).clicked() {
+                    action = Some(Action::Install(r.clone()));
+                }
+                if let Some(cmd) = self.kind.update_command(r, self.helper) {
+                    ui.add_space(6.0);
+                    ui.label(tr("Or update it in a terminal with:"));
+                    command_line(ui, ctx, &cmd);
                 }
             }
         }
-        if let Some(r) = install {
-            self.start_install(ctx, r);
-        }
-        if let Some(v) = skip {
-            self.settings.skipped_version = Some(v);
-            let _ = self.settings.save();
-            self.state = State::UpToDate;
-            self.open = false;
-        }
-        command
+        action.and_then(|a| self.apply(ctx, a))
     }
 
     /// Para testes: põe a janela num estado sem passar pela rede.
@@ -427,6 +640,29 @@ impl Updater {
         self.network = false;
         self
     }
+}
+
+/// O erro da instalação, traduzido quando é um dos conhecidos.
+fn error_text(e: &str) -> &str {
+    if e == CANCELLED {
+        tr("The update was cancelled at the password prompt.")
+    } else if e == NOT_AUTHORIZED {
+        tr(
+            "The system did not authorize the installation (wrong password, or no polkit agent is running).",
+        )
+    } else {
+        e
+    }
+}
+
+/// Um comando para copiar e rodar no terminal.
+fn command_line(ui: &mut egui::Ui, ctx: &egui::Context, cmd: &str) {
+    ui.horizontal(|ui| {
+        ui.code(cmd);
+        if ui.small_button(tr("Copy")).clicked() {
+            ctx.copy_text(cmd.to_string());
+        }
+    });
 }
 
 /// As notas do Release, numa área com rolagem.

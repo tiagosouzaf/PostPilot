@@ -63,10 +63,13 @@ contra o `SHA256SUMS` do Release e instala do jeito do seu sistema:
   `~/.local/bin/PostPilot.AppImage`, com atalho no menu de aplicativos, sem
   sudo. O AppImage precisa da `fuse2` (`libfuse2` no Debian e no Ubuntu).
 
-Para **atualizar**, rode o mesmo comando de novo (ele não faz nada se a versão
-já estiver instalada); o próprio app avisa quando sai uma versão nova
-(Ajuda > Verificar se Há Atualizações) e mostra esse comando. Opções vão depois de
-`bash -s --`:
+Para **atualizar**, use o próprio app: quando sai uma versão nova ele mostra
+uma faixa no alto da janela com o botão **Atualizar agora** (ou em Ajuda >
+Verificar se Há Atualizações). Ele baixa o pacote, confere o SHA-256, pede a
+senha de administrador pela janela do sistema (`pkexec`/polkit) para instalar
+e oferece reiniciar. Sem `pkexec`, o app mostra o comando acima; rodar o
+instalador de novo também atualiza (ele não faz nada se a versão já estiver
+instalada). Opções vão depois de `bash -s --`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/tiagosouzaf/postpilot/main/install.sh | bash -s -- --appimage   # AppImage mesmo em Arch/Debian

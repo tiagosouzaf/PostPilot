@@ -4021,3 +4021,44 @@ msgstr "Pesquisar bancos"
 
 msgid "No databases found."
 msgstr "Nenhum banco encontrado."
+msgid "{app} {version} is available."
+msgstr "O {app} {version} está disponível."
+
+msgid "Update now"
+msgstr "Atualizar agora"
+
+msgid "What's new"
+msgstr "Novidades"
+
+msgid "How to update"
+msgstr "Como atualizar"
+
+msgid "Later"
+msgstr "Depois"
+
+msgid "Details"
+msgstr "Detalhes"
+
+msgid "Update failed"
+msgstr "A atualização falhou"
+
+msgid "Installing {version}… Enter your password in the system prompt."
+msgstr "Instalando a {version}… Digite sua senha na janela do sistema."
+
+msgid "Installing {version}…"
+msgstr "Instalando a {version}…"
+
+msgid "The update to {version} failed: {error}"
+msgstr "A atualização para a {version} falhou: {error}"
+
+msgid "The system asks for your password to install the package."
+msgstr "O sistema pede a sua senha para instalar o pacote."
+
+msgid "Or update it in a terminal with:"
+msgstr "Ou atualize pelo terminal com:"
+
+msgid "The update was cancelled at the password prompt."
+msgstr "A atualização foi cancelada na janela de senha."
+
+msgid "The system did not authorize the installation (wrong password, or no polkit agent is running)."
+msgstr "O sistema não autorizou a instalação (senha errada ou nenhum agente do polkit em execução)."
