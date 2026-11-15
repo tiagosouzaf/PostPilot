@@ -148,10 +148,13 @@ impl Updater {
         &self.kind
     }
 
-    /// Checa ao abrir o app, se a preferência estiver ligada e já tiver
-    /// passado o intervalo desde a última checagem.
+    /// Checa ao abrir o app, se a preferência estiver ligada. Sempre, sem
+    /// olhar a última checagem: com o intervalo valendo aqui, quem acabava
+    /// de atualizar (ou reabria o app em menos de uma hora) ficava sem saber
+    /// da versão seguinte, e uma versão já encontrada era esquecida. O
+    /// intervalo vale só para a repetição com o app aberto.
     pub fn check_if_due(&mut self, ctx: &egui::Context) {
-        if self.network && self.settings.due(SystemTime::now()) {
+        if self.network && self.settings.check_on_startup {
             self.check(ctx, false);
         }
     }

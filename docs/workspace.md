@@ -219,8 +219,20 @@ enviar e a trazer (↑/↓) e as alterações:
 - **Push** envia os commits. Na primeira vez, cria o branch em `origin`.
 - **Remote...** define a URL de `origin`.
 - **Initialize Git** aparece quando a pasta ainda não é um repositório.
+- **Alterações**: clique em "N alterações" (ou em ⋯ > **Changes and
+  Discard...**) para ver os arquivos alterados. **Discard** (Descartar) volta
+  um arquivo ao último commit, ou apaga um arquivo novo. **Discard All...**
+  volta todos os arquivos do repositório e deixa os novos. Sempre pede
+  confirmação.
 
 O PostPilot usa o `git` instalado no sistema (no Windows, o Git for Windows).
+Quando o Pull para porque um arquivo mudou neste computador e também no
+repositório, o PostPilot explica quais são os arquivos e abre "Alterações"
+para você fazer Commit ou descartar.
+
 Um conflito no Pull lista os arquivos. Corrija os trechos entre `<<<<<<<` e
-`>>>>>>>` e faça o Commit. Em `secrets.json` cada senha é uma linha, então um
-conflito ali normalmente se resolve mantendo as duas linhas.
+`>>>>>>>` e faça o Commit. O `secrets.json` é exceção: quando duas máquinas
+salvaram senhas, o Pull junta as senhas dos dois lados sozinho (se os dois
+mudaram a mesma senha, vale a deste computador). Só fica para você quando
+os dois lados têm senhas mestras diferentes. Conectar com a mesma senha já
+salva não altera o `secrets.json`.

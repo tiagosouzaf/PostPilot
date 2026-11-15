@@ -278,3 +278,80 @@ fn screenshot_of_the_search() {
     }
     save(&mut harness, "pesquisa-nas-consultas.png");
 }
+
+/// "Alterações": o Pull parou em alterações locais e o painel mostra quais
+/// são, com o descartar.
+#[test]
+fn changes_and_discard() {
+    use pgstudio_ui_shell::repo::QUERIES;
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let base = std::env::temp_dir().join(format!("postpilot-ws-shots-git-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    let remote = base.join("sql.git");
+    std::fs::create_dir_all(&remote).unwrap();
+    git(&remote, &["init", "--bare"]);
+    git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    // Outra máquina cria o workspace e envia.
+    let other = base.join("outra").join("sql");
+    let mut a = ShellApp::default();
+    assert!(a.create_workspace(&other));
+    std::fs::write(other.join(QUERIES).join("clientes.sql"), "select 1;\n").unwrap();
+    {
+        let sc = a.workspace_panel_mut().source_control_mut().unwrap();
+        sc.wait();
+        sc.init();
+        sc.wait();
+        git(&other, &["config", "user.name", "a"]);
+        git(&other, &["config", "user.email", "a@example.com"]);
+        sc.set_remote(remote.to_str().unwrap());
+        sc.wait();
+        sc.commit("Workspace", true);
+        sc.wait();
+        sc.wait();
+    }
+
+    // Esta máquina clona, mexe sem commitar, e a outra envia uma mudança
+    // nos mesmos arquivos.
+    let here = base.join("aqui");
+    std::fs::create_dir_all(&here).unwrap();
+    let mut app = ShellApp::default();
+    app.clone_workspace(remote.to_str().unwrap(), &here);
+    let result = app.workspace_panel_mut().wait_clone().unwrap();
+    app.finish_clone(result);
+    let root = app.current_workspace().unwrap().root().to_path_buf();
+    std::fs::write(other.join(QUERIES).join("clientes.sql"), "select 2;\n").unwrap();
+    {
+        let sc = a.workspace_panel_mut().source_control_mut().unwrap();
+        sc.commit("Clientes", true);
+        sc.wait();
+        sc.wait();
+    }
+    std::fs::write(root.join(QUERIES).join("clientes.sql"), "select 3;\n").unwrap();
+    std::fs::write(root.join(QUERIES).join("rascunho.sql"), "select 0;\n").unwrap();
+    {
+        let sc = app.workspace_panel_mut().source_control_mut().unwrap();
+        sc.wait();
+        sc.pull();
+        sc.wait();
+    }
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&h.ctx);
+    pgstudio_ui_shell::theme::apply(&h.ctx, pgstudio_core::Theme::Dark);
+    h.run();
+    save(&mut h, "8-pull-parou-alteracoes.png");
+    let _ = std::fs::remove_dir_all(base);
+}

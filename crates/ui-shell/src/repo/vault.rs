@@ -208,6 +208,42 @@ pub fn check_new_password(password: &str, confirm: &str) -> Result<(), VaultErro
     Ok(())
 }
 
+/// Junta dois `secrets.json` que divergiram (as duas máquinas salvaram
+/// senhas e o git acusou conflito), com `base` sendo o ancestral comum, se
+/// houver. Cada senha é uma entrada independente: vale a do lado que mudou;
+/// se os dois mudaram a mesma, vale a deste computador (`ours`), que acabou
+/// de ser usada aqui. `None` quando os lados não têm a mesma senha mestra
+/// (sal diferente) ou algum não é um cofre válido: aí só uma pessoa resolve.
+pub fn merge(base: Option<&str>, ours: &str, theirs: &str) -> Option<String> {
+    let parse = |t: &str| serde_json::from_str::<VaultFile>(t).ok();
+    let (ours, theirs) = (parse(ours)?, parse(theirs)?);
+    if ours.kdf != theirs.kdf || ours.format != theirs.format {
+        return None;
+    }
+    let base = base
+        .and_then(parse)
+        .filter(|b| b.kdf == ours.kdf)
+        .map(|b| b.secrets)
+        .unwrap_or_default();
+    let mut merged = ours.clone();
+    let names: std::collections::BTreeSet<&String> =
+        ours.secrets.keys().chain(theirs.secrets.keys()).collect();
+    for name in names {
+        let (o, t, b) = (
+            ours.secrets.get(name),
+            theirs.secrets.get(name),
+            base.get(name),
+        );
+        // Só o outro lado mexeu nesta senha: vale a dele (inclusive apagar).
+        let value = if o == b && t != b { t } else { o };
+        match value {
+            Some(v) => merged.secrets.insert(name.clone(), v.clone()),
+            None => merged.secrets.remove(name),
+        };
+    }
+    Some(serde_json::to_string_pretty(&merged).expect("always serializable") + "\n")
+}
+
 /// O cofre de um workspace.
 #[derive(Clone, Debug)]
 pub struct Vault {
@@ -514,6 +550,38 @@ mod tests {
         assert_ne!(std::fs::read_to_string(v.path()).unwrap(), before);
         assert_eq!(v.get("alice@db:5432").unwrap().as_deref(), Some("outro"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn merge_keeps_the_passwords_of_both_sides() {
+        let dir = temp_dir("merge");
+        let mut v = Vault::at(&dir);
+        v.create("uma senha mestra", FAST).unwrap();
+        v.set("a@db:5432", "um").unwrap();
+        let base = std::fs::read_to_string(v.path()).unwrap();
+        // Este computador salva b e troca a; o outro salva c e apaga... nada.
+        v.set("b@db:5432", "dois").unwrap();
+        v.set("a@db:5432", "um-novo").unwrap();
+        let ours = std::fs::read_to_string(v.path()).unwrap();
+        std::fs::write(v.path(), &base).unwrap();
+        v.set("c@db:5432", "tres").unwrap();
+        let theirs = std::fs::read_to_string(v.path()).unwrap();
+
+        let merged = merge(Some(&base), &ours, &theirs).unwrap();
+        std::fs::write(v.path(), merged).unwrap();
+        assert_eq!(v.names(), ["a@db:5432", "b@db:5432", "c@db:5432"]);
+        assert_eq!(v.get("a@db:5432").unwrap().as_deref(), Some("um-novo"));
+        assert_eq!(v.get("b@db:5432").unwrap().as_deref(), Some("dois"));
+        assert_eq!(v.get("c@db:5432").unwrap().as_deref(), Some("tres"));
+
+        // Outra senha mestra do outro lado: não dá para juntar sozinho.
+        let other_dir = temp_dir("merge-other");
+        let mut other = Vault::at(&other_dir);
+        other.create("outra senha mestra", FAST).unwrap();
+        let foreign = std::fs::read_to_string(other.path()).unwrap();
+        assert_eq!(merge(Some(&base), &ours, &foreign), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&other_dir).unwrap();
     }
 
     #[test]

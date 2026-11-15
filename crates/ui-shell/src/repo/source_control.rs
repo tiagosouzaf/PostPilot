@@ -38,6 +38,21 @@ struct RemoteDialog {
 type Work = Box<dyn FnOnce(&Git) -> Result<String, GitError> + Send>;
 
 /// Git do workspace aberto.
+/// O que o "Changes" está pedindo para confirmar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Discard {
+    One(git::Change),
+    All,
+}
+
+/// "Changes": os arquivos alterados, com descartar por arquivo e tudo.
+#[derive(Default)]
+struct ChangesDialog {
+    /// Por que abriu sozinho (o Pull parou em alterações locais).
+    note: Option<String>,
+    confirm: Option<Discard>,
+}
+
 pub struct SourceControl {
     git: Git,
     /// Último estado lido; `None` antes da primeira leitura.
@@ -51,6 +66,7 @@ pub struct SourceControl {
     push_after_commit: bool,
     commit: Option<CommitDialog>,
     remote: Option<RemoteDialog>,
+    changes: Option<ChangesDialog>,
     message: Option<String>,
     /// Arquivos do workspace podem ter mudado (pull): o painel relê.
     files_changed: bool,
@@ -68,6 +84,7 @@ impl SourceControl {
             push_after_commit: false,
             commit: None,
             remote: None,
+            changes: None,
             message: None,
             files_changed: false,
         };
@@ -175,6 +192,46 @@ impl SourceControl {
         });
     }
 
+    /// Abre "Changes" (o botão das alterações e os testes).
+    pub fn open_changes(&mut self) {
+        self.changes = Some(ChangesDialog::default());
+    }
+
+    /// Se "Changes" está aberto.
+    pub fn is_showing_changes(&self) -> bool {
+        self.changes.is_some()
+    }
+
+    /// Descarta as alterações locais destes arquivos (os novos são
+    /// apagados).
+    pub fn discard(&mut self, paths: Vec<String>) {
+        self.start(tr_noop("Discarding..."), move |g| {
+            g.discard(&paths).map(|n| {
+                if n == 1 {
+                    tr("Discarded the changes in 1 file.").to_string()
+                } else {
+                    trf!("Discarded the changes in {n} files.", n = n)
+                }
+            })
+        });
+    }
+
+    /// Descarta as alterações de todos os arquivos que já estavam no
+    /// repositório. Os arquivos novos ficam.
+    pub fn discard_all(&mut self) {
+        let paths = self
+            .status()
+            .map(|s| {
+                s.changes
+                    .iter()
+                    .filter(|c| c.code != "??")
+                    .map(|c| c.path.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.discard(paths);
+    }
+
     /// Define a URL do remoto `origin`.
     pub fn set_remote(&mut self, url: &str) {
         let url = url.to_string();
@@ -276,7 +333,7 @@ impl SourceControl {
 
     /// Se algum diálogo está aberto.
     pub fn has_dialog(&self) -> bool {
-        self.commit.is_some() || self.remote.is_some()
+        self.commit.is_some() || self.remote.is_some() || self.changes.is_some()
     }
 
     /// Trata o fim da operação em andamento. Devolve `true` quando algo
@@ -322,10 +379,19 @@ impl SourceControl {
                     Err(e) => {
                         self.push_after_commit = false;
                         self.message = Some(e.to_string());
+                        // O Pull parou em alterações locais: mostra quais
+                        // são, com o botão de descartar ao lado.
+                        if matches!(e, GitError::LocalChanges(_)) {
+                            self.changes = Some(ChangesDialog {
+                                note: Some(e.to_string()),
+                                confirm: None,
+                            });
+                        }
                     }
                 }
-                // Pull (mesmo com conflito) e init mexem nos arquivos.
-                if what == "Pulling..." || what == "Initializing..." {
+                // Pull (mesmo com conflito), init e descartar mexem nos
+                // arquivos.
+                if what == "Pulling..." || what == "Initializing..." || what == "Discarding..." {
                     self.files_changed = true;
                 }
             }
@@ -362,6 +428,7 @@ impl SourceControl {
             }
             Some(Ok(status)) => {
                 let status = status.clone();
+                let mut open_changes = false;
                 ui.horizontal_wrapped(|ui| {
                     let branch = if status.branch.is_empty() {
                         tr("(detached)").to_string()
@@ -387,12 +454,16 @@ impl SourceControl {
                     }
                     let n = status.changes.len();
                     if n > 0 {
-                        ui.weak(if n == 1 {
-                            "1 change".to_string()
+                        let text = if n == 1 {
+                            tr("1 change").to_string()
                         } else {
-                            format!("{n} changes")
-                        })
-                        .on_hover_text(
+                            trf!("{n} changes", n = n)
+                        };
+                        let link = ui.link(text);
+                        if link.clicked() {
+                            open_changes = true;
+                        }
+                        link.on_hover_text(
                             status
                                 .changes
                                 .iter()
@@ -434,6 +505,16 @@ impl SourceControl {
                         self.push();
                     }
                     ui.menu_button(icon::DOTS_THREE, |ui| {
+                        if ui
+                            .add_enabled(
+                                !status.changes.is_empty(),
+                                egui::Button::new(tr("Changes and Discard...")),
+                            )
+                            .clicked()
+                        {
+                            open_changes = true;
+                            ui.close();
+                        }
                         if ui.button(tr("Remote...")).clicked() {
                             self.open_remote();
                             ui.close();
@@ -444,6 +525,9 @@ impl SourceControl {
                         }
                     });
                 });
+                if open_changes {
+                    self.open_changes();
+                }
             }
         }
     }
@@ -553,6 +637,94 @@ impl SourceControl {
                 self.commit = None;
                 self.commit(&message, push);
             }
+        }
+
+        let mut close = false;
+        let mut discard: Option<Discard> = None;
+        if let Some(dialog) = &mut self.changes {
+            let busy = self.job.is_some();
+            crate::theme::modal(egui::Id::new("workspace_changes")).show(ctx, |ui| {
+                ui.set_width(480.0);
+                ui.heading(tr("Changes"));
+                if let Some(note) = &dialog.note {
+                    ui.colored_label(ui.visuals().warn_fg_color, note);
+                    ui.add_space(4.0);
+                }
+                if let Some(confirm) = dialog.confirm.clone() {
+                    ui.label(match &confirm {
+                        Discard::One(c) if c.code == "??" => trf!(
+                            "Delete the new file {path}? This cannot be undone.",
+                            path = c.path
+                        ),
+                        Discard::One(c) => trf!(
+                            "Discard your changes in {path} and go back to the last commit? This cannot be undone.",
+                            path = c.path
+                        ),
+                        Discard::All => tr("Discard your changes in all the files and go back to the last commit? New files are kept. This cannot be undone.").to_string(),
+                    });
+                    ui.add_space(6.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(tr("Cancel")).clicked() {
+                            dialog.confirm = None;
+                        }
+                        if ui.button(tr("Discard")).clicked() {
+                            discard = Some(confirm);
+                            dialog.confirm = None;
+                        }
+                    });
+                    return;
+                }
+                if busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak(tr("Discarding..."));
+                    });
+                } else if changes.is_empty() {
+                    ui.weak(tr("No local changes."));
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .show(ui, |ui| {
+                        for c in &changes {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new(tr("Discard")).small())
+                                    .on_hover_text(if c.code == "??" {
+                                        tr("Delete this new file")
+                                    } else {
+                                        tr("Go back to the last commit of this file")
+                                    })
+                                    .clicked()
+                                {
+                                    dialog.confirm = Some(Discard::One(c.clone()));
+                                }
+                                ui.weak(tr(c.kind()));
+                                ui.label(&c.path);
+                            });
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tr("Close")).clicked() {
+                        close = true;
+                    }
+                    let tracked = changes.iter().any(|c| c.code != "??");
+                    if ui
+                        .add_enabled(tracked && !busy, egui::Button::new(tr("Discard All...")))
+                        .clicked()
+                    {
+                        dialog.confirm = Some(Discard::All);
+                    }
+                });
+            });
+        }
+        if close {
+            self.changes = None;
+        }
+        match discard {
+            Some(Discard::One(c)) => self.discard(vec![c.path]),
+            Some(Discard::All) => self.discard_all(),
+            None => {}
         }
 
         let mut ok = false;
