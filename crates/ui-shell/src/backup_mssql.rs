@@ -109,7 +109,10 @@ pub fn server_path(dir: &str, file: &str) -> String {
 }
 
 /// As pastas padrão do servidor (backup, dados e log), numa linha.
-const DEFAULTS_SQL: &str = "SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(260)), \
+/// A pasta de backups só existe como propriedade a partir do SQL Server
+/// 2019; antes disso a sugestão é a pasta de dados.
+const DEFAULTS_SQL: &str = "SELECT CAST(COALESCE(SERVERPROPERTY('InstanceDefaultBackupPath'), \
+     SERVERPROPERTY('InstanceDefaultDataPath')) AS nvarchar(260)), \
      CAST(SERVERPROPERTY('InstanceDefaultDataPath') AS nvarchar(260)), \
      CAST(SERVERPROPERTY('InstanceDefaultLogPath') AS nvarchar(260))";
 
