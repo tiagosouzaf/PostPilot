@@ -4439,6 +4439,35 @@ msgstr "Editar Registro..."
 
 msgid "A PostgreSQL database cannot be compared with a SQL Server database."
 msgstr "Não dá para comparar um banco PostgreSQL com um banco SQL Server."
+# Pesquisa nas consultas do workspace
+
+msgid "Search queries by name or content"
+msgstr "Pesquisar consultas pelo nome ou conteúdo"
+
+msgid "Clear the search"
+msgstr "Limpar a pesquisa"
+
+msgid "Searching inside the files..."
+msgstr "Procurando dentro dos arquivos..."
+
+msgid "No queries found."
+msgstr "Nenhuma consulta encontrada."
+
+msgid "1 query found."
+msgstr "1 consulta encontrada."
+
+msgid "{n} queries found."
+msgstr "{n} consultas encontradas."
+
+msgid "Found inside the file. Click to open it at this line."
+msgstr "Encontrado dentro do arquivo. Clique para abrir nesta linha."
+
+msgid "(+1 line)"
+msgstr "(+1 linha)"
+
+msgid "(+{n} lines)"
+msgstr "(+{n} linhas)"
+
 msgid "Pull stopped: {files} changed on this computer and in the repository. Commit your changes or discard them, then Pull again."
 msgstr "O Pull parou: {files} mudou neste computador e no repositório. Faça Commit das suas alterações ou descarte-as, e faça Pull de novo."
 

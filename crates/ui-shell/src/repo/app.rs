@@ -326,6 +326,34 @@ impl ShellApp {
         self.open_file(&path);
     }
 
+    /// Seleciona `term` na linha `line` (a partir de 1) da janela de
+    /// consulta ativa e rola até ela: é onde a pesquisa das consultas
+    /// achou o termo. Se o arquivo mudou e o termo não está mais lá, o
+    /// cursor vai para o começo da linha.
+    pub(crate) fn select_in_active_document(&mut self, line: usize, term: &str) {
+        let Some(doc) = self.active_doc.and_then(|id| self.documents.get_mut(id)) else {
+            return;
+        };
+        let index = line.saturating_sub(1);
+        let start = pgstudio_sql_editor::edit::line_start(&doc.text, index);
+        let text: String = doc
+            .text
+            .lines()
+            .nth(index)
+            .map(super::search::fold)
+            .unwrap_or_default();
+        let found = text
+            .find(&super::search::fold(term))
+            .filter(|_| !term.is_empty())
+            .map(|byte| text[..byte].chars().count());
+        match found {
+            Some(at) => doc
+                .editor
+                .select_range(start + at, start + at + term.chars().count()),
+            None => doc.editor.select_range(start, start),
+        }
+    }
+
     /// "New Server Registration" na raiz dos servidores do workspace.
     pub fn new_workspace_server(&mut self) {
         let store = self.secrets.clone();
@@ -561,6 +589,11 @@ impl ShellApp {
                 Action::Open => self.ask_open_workspace(),
                 Action::OpenQuery(path) => {
                     self.open_file(&path);
+                }
+                Action::OpenQueryAt { path, line, term } => {
+                    if self.open_file(&path) {
+                        self.select_in_active_document(line, &term);
+                    }
                 }
                 Action::NewQuery(folder) => self.new_workspace_query(&folder),
                 Action::ImportRegistered => {

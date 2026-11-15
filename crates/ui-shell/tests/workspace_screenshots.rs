@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use pgstudio_core::CommandId;
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
 use pgstudio_object_explorer::fake::FakeProvider;
@@ -200,6 +201,82 @@ fn bring_connections_into_the_workspace() {
     h.run();
     save(&mut h, "7-pesquisador-com-etiqueta.png");
     let _ = std::fs::remove_dir_all(root.parent().unwrap());
+}
+
+/// A pesquisa nas consultas do workspace: acha pelo nome e pelo conteúdo.
+#[test]
+fn screenshot_of_the_search() {
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let root = std::env::temp_dir()
+        .join(format!("postpilot-ws-search-shot-{}", std::process::id()))
+        .join("sql");
+    let _ = std::fs::remove_dir_all(&root);
+    let ws = pgstudio_ui_shell::repo::Workspace::create(&root, "sql").unwrap();
+    let q = ws.queries_dir().join("PostGreSql");
+    std::fs::create_dir_all(&q).unwrap();
+    for n in 1..=14 {
+        std::fs::write(q.join(format!("Query_{n}.sql")), "select now();\n").unwrap();
+    }
+    std::fs::write(
+        q.join("Criar indice status_migracao.sql"),
+        "create index on controle_migracao (pagina);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        q.join("Query_1.sql"),
+        "-- conferência\nselect *\n  from resumo_diario\n where status_migração = 2;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        q.join("Query_9.sql"),
+        "update controle_migracao\n   set status_migracao = 3\n where status_migracao = 2;\n",
+    )
+    .unwrap();
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_registered_servers(RegisteredServers::default())
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()));
+    let mut harness = Harness::builder()
+        .with_size([1100.0, 720.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&harness.ctx);
+    pgstudio_ui_shell::theme::apply(&harness.ctx, pgstudio_core::Theme::Dark);
+    harness.run();
+    assert!(harness.state_mut().open_workspace(&root));
+    harness.run();
+    // Alarga o painel arrastando a divisória.
+    {
+        use eframe::egui::{Event, Modifiers, PointerButton, pos2};
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let (from, to) = (pos2(225.0, 300.0), pos2(470.0, 300.0));
+        harness.event(Event::PointerMoved(from));
+        harness.step();
+        harness.event(button(from, true));
+        harness.step();
+        harness.event(Event::PointerMoved(to));
+        harness.step();
+        harness.event(button(to, false));
+        harness.run();
+    }
+    harness
+        .get_by_role(eframe::egui::accesskit::Role::TextInput)
+        .focus();
+    harness.run();
+    harness
+        .get_by_role(eframe::egui::accesskit::Role::TextInput)
+        .type_text("status_migracao");
+    let start = Instant::now();
+    while harness.state().workspace_panel().is_searching() {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    save(&mut harness, "pesquisa-nas-consultas.png");
 }
 
 /// "Alterações": o Pull parou em alterações locais e o painel mostra quais
