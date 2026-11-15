@@ -12,6 +12,7 @@ pgstudio-i18n.workspace = true
 eframe.workspace = true
 egui-phosphor.workspace = true
 serde_json.workspace = true
+roxmltree = "0.21.2"
 
 [dev-dependencies]
 egui_kittest.workspace = true
