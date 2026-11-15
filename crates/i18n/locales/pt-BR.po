@@ -2781,8 +2781,8 @@ msgstr "Não foi possível encontrar o programa do PostPilot: {error}"
 msgid "Could not start Claude Code ({program}): {error}"
 msgstr "Não foi possível iniciar o Claude Code ({program}): {error}"
 
-msgid "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path."
-msgstr "O Claude Code não foi encontrado. Instale-o (https://claude.com/claude-code), rode `claude` uma vez num terminal para fazer login e tente de novo. Se ele está instalado em outro lugar, ponha o caminho em PGSTUDIO_CLAUDE."
+msgid "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path. Or connect another AI (OpenAI, OpenRouter, GLM) in Tools > Options > AI Providers."
+msgstr "O Claude Code não foi encontrado. Instale-o (https://claude.com/claude-code), rode `claude` uma vez num terminal para fazer login e tente de novo. Se ele está instalado em outro lugar, ponha o caminho em PGSTUDIO_CLAUDE. Ou conecte outra IA (OpenAI, OpenRouter, GLM) em Ferramentas > Opções > Provedores de IA."
 
 msgid "Listed servers"
 msgstr "Listou os servidores"
@@ -4114,6 +4114,129 @@ msgstr "Pesquisar bancos"
 
 msgid "No databases found."
 msgstr "Nenhum banco encontrado."
+
+# Provedores de IA, mensagem de commit e nome de arquivo sugerido
+
+msgid "AI"
+msgstr "IA"
+
+msgid "AI Providers"
+msgstr "Provedores de IA"
+
+msgid "AI Providers…"
+msgstr "Provedores de IA…"
+
+msgid "API key:"
+msgstr "Chave de API:"
+
+msgid "API keys are kept in the system keyring (or, when there is none, in a file only you can read). They never go into the workspace or to Git."
+msgstr "As chaves de API ficam no cofre do sistema (ou, quando não há cofre, num arquivo que só você pode ler). Elas nunca vão para o workspace nem para o Git."
+
+msgid "Assistant used by the AI panel, by Commit and to suggest file names:"
+msgstr "Assistente usado pelo painel de IA, pelo Commit e para sugerir nomes de arquivo:"
+
+msgid "Base URL:"
+msgstr "URL base:"
+
+msgid "Choose the AI provider (Tools > Options > AI Providers)"
+msgstr "Escolher o provedor de IA (Ferramentas > Opções > Provedores de IA)"
+
+msgid "Claude Code is installed ({path}); it uses its own sign-in, no key needed."
+msgstr "O Claude Code está instalado ({path}); ele usa o próprio login, sem chave."
+
+msgid "Claude Code is not installed on this computer."
+msgstr "O Claude Code não está instalado neste computador."
+
+msgid "Could not save the AI providers: {error}"
+msgstr "Não foi possível salvar os provedores de IA: {error}"
+
+msgid "Could not talk to {who}: {error}"
+msgstr "Não foi possível falar com {who}: {error}"
+
+msgid "Generate with AI"
+msgstr "Gerar com IA"
+
+msgid "It works: the model answered."
+msgstr "Funcionou: o modelo respondeu."
+
+msgid "Message {provider}"
+msgstr "Mensagem para {provider}"
+
+msgid "Model:"
+msgstr "Modelo:"
+
+msgid "Name:"
+msgstr "Nome:"
+
+msgid "Needs an API key from platform.openai.com; a ChatGPT subscription alone does not include one."
+msgstr "Precisa de uma chave de API de platform.openai.com; a assinatura do ChatGPT sozinha não inclui uma."
+
+msgid "No AI is connected. Install Claude Code or add a provider in Tools > AI Providers."
+msgstr "Nenhuma IA conectada. Instale o Claude Code ou adicione um provedor em Ferramentas > Provedores de IA."
+
+msgid "None yet. Add OpenAI (ChatGPT), OpenRouter, GLM or any OpenAI-compatible service with its API key."
+msgstr "Nenhum ainda. Adicione OpenAI (ChatGPT), OpenRouter, GLM ou qualquer serviço compatível com a OpenAI, com a chave de API dele."
+
+msgid "Now using {provider}. The conversation starts over."
+msgstr "Agora usando {provider}. A conversa recomeça."
+
+msgid "Other (OpenAI-compatible)…"
+msgstr "Outro (compatível com OpenAI)…"
+
+msgid "Other provider"
+msgstr "Outro provedor"
+
+msgid "Paste the key here"
+msgstr "Cole a chave aqui"
+
+msgid "Providers"
+msgstr "Provedores"
+
+msgid "Ready to use."
+msgstr "Pronto para usar."
+
+msgid "Saved. Type to replace it."
+msgstr "Salva. Digite para trocar."
+
+msgid "Skip"
+msgstr "Pular"
+
+msgid "Test connection"
+msgstr "Testar conexão"
+
+msgid "The AI answered with an empty message."
+msgstr "A IA respondeu com uma mensagem vazia."
+
+msgid "The AI could not write the message: {error}"
+msgstr "A IA não conseguiu escrever a mensagem: {error}"
+
+msgid "The AI is suggesting a file name…"
+msgstr "A IA está sugerindo um nome de arquivo…"
+
+msgid "This address is the one for the GLM Coding Plan subscription key. A pay-as-you-go key uses https://api.z.ai/api/paas/v4."
+msgstr "Este endereço é o da chave da assinatura GLM Coding Plan. Uma chave paga por uso usa https://api.z.ai/api/paas/v4."
+
+msgid "This provider has no API key yet."
+msgstr "Este provedor ainda não tem chave de API."
+
+msgid "Uses your {provider} API key. What the assistant reads is sent to {host}."
+msgstr "Usa a sua chave de API de {provider}. O que o assistente lê é enviado para {host}."
+
+msgid "Writing the message…"
+msgstr "Escrevendo a mensagem…"
+
+msgid "{name} writes the message from the changes. The list of files and the diff are sent to it."
+msgstr "{name} escreve a mensagem a partir das alterações. A lista de arquivos e o diff são enviados para ele."
+
+msgid "{provider} has no API key yet. Add it in Tools > Options > AI Providers."
+msgstr "{provider} ainda não tem chave de API. Adicione em Ferramentas > Opções > Provedores de IA."
+
+msgid "{provider} is working…"
+msgstr "{provider} está trabalhando…"
+
+msgid "{provider} reported an error: {text}"
+msgstr "{provider} informou um erro: {text}"
+
 msgid "{app} {version} is available."
 msgstr "O {app} {version} está disponível."
 
