@@ -322,3 +322,57 @@ fn ctrl_alt_l_opens_the_workspace_explorer_without_a_workspace() {
     harness.get_by_label_contains("New Workspace...");
     harness.get_by_label_contains("Open Workspace...");
 }
+
+/// Um seletor de pasta "nativo": espera a pessoa (aqui, o teste) responder.
+struct SlowFolder {
+    answer: std::sync::mpsc::Receiver<PathBuf>,
+}
+
+impl FileDialogs for SlowFolder {
+    fn save_path(&mut self, _: &str, _: Option<&Path>) -> Option<PathBuf> {
+        None
+    }
+    fn open_path(&mut self) -> Option<PathBuf> {
+        None
+    }
+    fn folder_path(&mut self, _: &str) -> Option<PathBuf> {
+        self.answer.recv().ok()
+    }
+    fn blocks(&self) -> bool {
+        true
+    }
+}
+
+/// Com o seletor de pasta aberto, a janela continua desenhando (na 0.2.1
+/// o File > New Workspace travava a janela até escolher a pasta, e o
+/// Hyprland avisava que o app não respondia). O workspace é criado quando
+/// a resposta chega.
+#[test]
+fn new_workspace_dialog_does_not_freeze_the_window() {
+    let (tx, answer) = std::sync::mpsc::channel();
+    let app = ShellApp::default()
+        .with_registered_servers(RegisteredServers::default())
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_file_dialogs(SlowFolder { answer });
+    let mut harness = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    harness.run();
+    let ctx = harness.ctx.clone();
+    harness.state_mut().execute(&ctx, CommandId::NewWorkspace);
+    // A chamada voltou na hora e os frames seguem com o diálogo aberto.
+    assert!(harness.state().is_file_dialog_open());
+    for _ in 0..5 {
+        harness.step();
+    }
+    assert!(harness.state().current_workspace().is_none());
+    // Um segundo pedido não abre outro diálogo.
+    harness.state_mut().execute(&ctx, CommandId::OpenWorkspace);
+    let dir = temp_dir("slow-dialog");
+    tx.send(dir.clone()).unwrap();
+    run_until(&mut harness, "workspace created", |app| {
+        app.current_workspace().is_some()
+    });
+    assert!(!harness.state().is_file_dialog_open());
+    assert!(dir.join(MANIFEST).exists());
+}

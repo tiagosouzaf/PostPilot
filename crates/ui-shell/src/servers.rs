@@ -285,28 +285,35 @@ impl ShellApp {
 
     /// Tasks > Import... num grupo do Registered Servers.
     fn import_registered(&mut self, group: &[usize]) {
-        let Some(path) = self.dialogs.open_path() else {
-            return;
-        };
-        self.status = match self.registered.servers_mut().import(group, &path) {
-            Ok(1) => tr("Imported 1 registered server.").to_string(),
-            Ok(n) => trf!("Imported {n} registered servers.", n = n),
-            Err(e) => e,
-        };
+        let group = group.to_vec();
+        self.ask_path(crate::file_dialogs::Question::Open, move |app, _, path| {
+            let Some(path) = path else {
+                return;
+            };
+            app.status = match app.registered.servers_mut().import(&group, &path) {
+                Ok(1) => tr("Imported 1 registered server.").to_string(),
+                Ok(n) => trf!("Imported {n} registered servers.", n = n),
+                Err(e) => e,
+            };
+        });
     }
 
     /// Tasks > Export... num grupo do Registered Servers (sem senhas).
     fn export_registered(&mut self, group: &[usize]) {
-        let Some(path) = self.dialogs.save_path("RegisteredServers.json", None) else {
-            return;
-        };
-        self.status = match self.registered.servers().export(group, &path) {
-            Ok(()) => trf!(
-                "Exported registered servers to {path} (passwords are not exported).",
-                path = path.display()
-            ),
-            Err(e) => e,
-        };
+        let group = group.to_vec();
+        let question = crate::file_dialogs::Question::save("RegisteredServers.json");
+        self.ask_path(question, move |app, _, path| {
+            let Some(path) = path else {
+                return;
+            };
+            app.status = match app.registered.servers().export(&group, &path) {
+                Ok(()) => trf!(
+                    "Exported registered servers to {path} (passwords are not exported).",
+                    path = path.display()
+                ),
+                Err(e) => e,
+            };
+        });
     }
 
     /// Servidor de cada janela de consulta, como "servidor (usuário)",

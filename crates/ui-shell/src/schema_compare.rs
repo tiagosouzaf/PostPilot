@@ -25,7 +25,7 @@ pub use pgstudio_core::schema::compare::{Item, Outcome, Status};
 pub use pgstudio_core::schema::objects::{Key, Kind};
 use pgstudio_core::schema::snapshot::{self, Schema, Snapshot};
 
-use crate::documents::FileDialogs;
+use crate::file_dialogs::Question;
 
 pub mod catalog;
 
@@ -251,6 +251,20 @@ pub struct SchemaCompare {
     confirming: bool,
     error: Option<String>,
     status: Option<String>,
+    /// Diálogo de arquivo pedido neste frame (a casca pergunta e devolve
+    /// a resposta em [`SchemaCompare::answered`]).
+    asking: Option<(Ask, Question)>,
+}
+
+/// Para que serve o arquivo pedido.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    /// Onde salvar o script (Generate Script fora do servidor conectado).
+    Script,
+    /// Onde salvar o snapshot de um lado.
+    Snapshot(Which),
+    /// O snapshot a comparar num lado (Browse...).
+    Browse(Which),
 }
 
 impl SchemaCompare {
@@ -303,6 +317,7 @@ impl SchemaCompare {
             confirming: false,
             error: None,
             status: None,
+            asking: None,
         }
     }
 
@@ -607,9 +622,35 @@ impl SchemaCompare {
         self.phase = Phase::Comparing(rx, source_label, target);
     }
 
-    /// Desenha a janela. Os diálogos de arquivo abrem e salvam snapshots e
-    /// scripts.
-    pub fn show(&mut self, ctx: &egui::Context, dialogs: &mut dyn FileDialogs) -> Option<Request> {
+    /// O diálogo de arquivo que a janela pediu, para a casca perguntar.
+    pub fn take_question(&mut self) -> Option<(Ask, Question)> {
+        self.asking.take()
+    }
+
+    /// A resposta do diálogo pedido em [`SchemaCompare::take_question`].
+    pub fn answered(
+        &mut self,
+        ask: Ask,
+        path: Option<std::path::PathBuf>,
+        ctx: &egui::Context,
+    ) -> Option<Request> {
+        let path = path?;
+        match ask {
+            Ask::Script => self.save_script(&path),
+            Ask::Snapshot(which) => {
+                self.save_snapshot(which, path, ctx);
+                None
+            }
+            Ask::Browse(which) => {
+                self.side_mut(which).file = path.display().to_string();
+                None
+            }
+        }
+    }
+
+    /// Desenha a janela. Os diálogos de arquivo (snapshots e scripts) são
+    /// pedidos à casca por [`SchemaCompare::take_question`].
+    pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("schema_compare")).show(ctx, |ui| {
             ui.set_width(980.0);
@@ -626,7 +667,7 @@ impl SchemaCompare {
                                 Which::Source => "Source:",
                                 Which::Target => "Target:",
                             }));
-                            ui.horizontal(|ui| self.side_ui(ui, ctx, which, dialogs));
+                            ui.horizontal(|ui| self.side_ui(ui, which));
                             ui.end_row();
                         }
                     });
@@ -698,7 +739,7 @@ impl SchemaCompare {
                     )
                     .clicked()
                 {
-                    request = self.generate_script(dialogs);
+                    request = self.generate_script();
                 }
             });
         });
@@ -711,40 +752,38 @@ impl SchemaCompare {
     /// "Generate Script": num banco do servidor conectado, abre numa janela
     /// de consulta nele; em outro servidor ou num snapshot, salva num
     /// arquivo `.sql` (uma janela de consulta rodaria no servidor errado).
-    fn generate_script(&mut self, dialogs: &mut dyn FileDialogs) -> Option<Request> {
+    fn generate_script(&mut self) -> Option<Request> {
         let text = self.script_text();
         match &self.compared.as_ref()?.target {
             Endpoint::Here(db) => Some(Request::Script(text, db.clone())),
             _ => {
-                let path = dialogs.save_path("SchemaCompare.sql", None)?;
-                match std::fs::write(&path, text) {
-                    Ok(()) => {
-                        self.status = Some(trf!(
-                            "The script was saved to {path}.",
-                            path = path.display()
-                        ));
-                        Some(Request::Log(vec![trf!(
-                            "Schema Compare: the script was saved to {path}.",
-                            path = path.display()
-                        )]))
-                    }
-                    Err(e) => {
-                        self.error = Some(format!("{}: {e}", path.display()));
-                        None
-                    }
-                }
+                self.asking = Some((Ask::Script, Question::save("SchemaCompare.sql")));
+                None
+            }
+        }
+    }
+
+    fn save_script(&mut self, path: &std::path::Path) -> Option<Request> {
+        match std::fs::write(path, self.script_text()) {
+            Ok(()) => {
+                self.status = Some(trf!(
+                    "The script was saved to {path}.",
+                    path = path.display()
+                ));
+                Some(Request::Log(vec![trf!(
+                    "Schema Compare: the script was saved to {path}.",
+                    path = path.display()
+                )]))
+            }
+            Err(e) => {
+                self.error = Some(format!("{}: {e}", path.display()));
+                None
             }
         }
     }
 
     /// Os campos de um lado.
-    fn side_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        which: Which,
-        dialogs: &mut dyn FileDialogs,
-    ) {
+    fn side_ui(&mut self, ui: &mut egui::Ui, which: Which) {
         let dbs: Vec<String> = self.databases.clone().unwrap_or_default();
         let id = match which {
             Which::Source => "source",
@@ -760,6 +799,7 @@ impl SchemaCompare {
                 }
             });
         let mut save = false;
+        let mut asking = None;
         match side.place {
             Place::Database => {
                 egui::ComboBox::from_id_salt(format!("compare_{id}"))
@@ -798,17 +838,16 @@ impl SchemaCompare {
                         .desired_width(420.0),
                 );
                 if ui.button(tr("Browse...")).clicked() {
-                    if let Some(path) = dialogs.open_path() {
-                        side.file = path.display().to_string();
-                    }
+                    asking = Some((Ask::Browse(which), Question::Open));
                 }
             }
         }
         if save {
             let name = format!("{}.{}", side.database.trim(), snapshot::EXTENSION);
-            if let Some(path) = dialogs.save_path(&name, None) {
-                self.save_snapshot(which, path, ctx);
-            }
+            asking = Some((Ask::Snapshot(which), Question::save(name)));
+        }
+        if asking.is_some() {
+            self.asking = asking;
         }
     }
 
