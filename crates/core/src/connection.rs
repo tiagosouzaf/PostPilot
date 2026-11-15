@@ -98,7 +98,11 @@ impl Engine {
             Engine::PostgreSql => true,
             Engine::SqlServer => matches!(
                 feature,
-                Feature::Query | Feature::EditRows | Feature::IntelliSense | Feature::ExecutionPlan
+                Feature::Query
+                    | Feature::EditRows
+                    | Feature::IntelliSense
+                    | Feature::ExecutionPlan
+                    | Feature::ActivityMonitor
             ),
         }
     }
@@ -540,7 +544,8 @@ mod tests {
     fn sql_server_supports_only_what_is_done() {
         assert!(Engine::PostgreSql.supports(Feature::ActivityMonitor));
         assert!(Engine::SqlServer.supports(Feature::Query));
-        assert!(!Engine::SqlServer.supports(Feature::ActivityMonitor));
+        assert!(Engine::SqlServer.supports(Feature::ActivityMonitor));
+        assert!(!Engine::SqlServer.supports(Feature::Backup));
     }
 
     #[test]

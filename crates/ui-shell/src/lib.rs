@@ -3132,6 +3132,7 @@ impl ShellApp {
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands, &mut picked));
         self.open_database_list = false;
         if picked.opened {
+            databases::reset_list(&ctx);
             self.refresh_database_list(&ctx);
         }
         if let (Some(database), Some(id)) = (picked.database, self.active_doc) {
@@ -4040,28 +4041,16 @@ impl ShellApp {
                             picker.current.as_str()
                         };
                         let inner = ui.add_enabled_ui(picker.enabled, |ui| {
+                            // A lista tem a própria rolagem (a pesquisa fica
+                            // parada em cima), então a do ComboBox não entra.
                             egui::ComboBox::from_id_salt("database")
                                 .selected_text(shown)
                                 .width(160.0)
-                                .height(320.0)
+                                .height(f32::INFINITY)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                                 .show_ui(ui, |ui| {
-                                    let mut names: Vec<&str> =
-                                        picker.list.iter().map(String::as_str).collect();
-                                    if !names.contains(&picker.current.as_str()) {
-                                        names.insert(0, &picker.current);
-                                    }
-                                    for name in names {
-                                        if ui
-                                            .selectable_label(name == picker.current, name)
-                                            .clicked()
-                                        {
-                                            picked.database = Some(name.to_string());
-                                        }
-                                    }
-                                    if picker.loading {
-                                        ui.weak(tr("Loading..."));
-                                    } else if let Some(e) = picker.error {
-                                        ui.weak(e);
+                                    if let Some(name) = picker.list_ui(ui) {
+                                        picked.database = Some(name);
                                     }
                                 })
                         });

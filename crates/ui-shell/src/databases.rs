@@ -225,6 +225,153 @@ pub struct Picker<'a> {
     pub enabled: bool,
 }
 
+/// Linhas que a lista do seletor mostra de uma vez; o resto rola. A lista
+/// abre sempre com esta altura, mesmo vazia ou filtrada, para não mudar de
+/// tamanho enquanto carrega ou enquanto se digita.
+pub const VISIBLE_ROWS: usize = 13;
+
+/// Os nomes que contêm `filter`, sem diferenciar maiúsculas, na ordem em
+/// que vieram. Um filtro vazio deixa todos.
+pub fn matching<'a>(names: &[&'a str], filter: &str) -> Vec<&'a str> {
+    let filter = filter.trim().to_lowercase();
+    names
+        .iter()
+        .copied()
+        .filter(|n| filter.is_empty() || n.to_lowercase().contains(&filter))
+        .collect()
+}
+
+/// O que a lista aberta guarda entre um frame e outro.
+#[derive(Clone, Default)]
+struct ListState {
+    filter: String,
+    /// Linha marcada pelo teclado, entre as que o filtro deixou.
+    highlight: Option<usize>,
+    /// A lista acabou de abrir: o cursor vai para a pesquisa e a lista
+    /// rola até o banco atual.
+    opening: bool,
+}
+
+fn list_state_id() -> egui::Id {
+    egui::Id::new("database_picker_list")
+}
+
+/// A lista vai abrir: começa sem filtro e com o cursor na pesquisa.
+pub(crate) fn reset_list(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            list_state_id(),
+            ListState {
+                opening: true,
+                ..Default::default()
+            },
+        );
+    });
+}
+
+impl Picker<'_> {
+    /// O conteúdo da lista aberta: a pesquisa em cima e, embaixo, os
+    /// bancos que ela deixa passar. Devolve o banco escolhido (com um
+    /// clique ou com Enter).
+    pub(crate) fn list_ui(&self, ui: &mut egui::Ui) -> Option<String> {
+        let mut state: ListState = ui.data(|d| d.get_temp(list_state_id())).unwrap_or_default();
+        let opening = std::mem::take(&mut state.opening);
+        let mut picked: Option<String> = None;
+
+        let search = ui.add(
+            egui::TextEdit::singleline(&mut state.filter)
+                .hint_text(tr("Search databases"))
+                .desired_width(f32::INFINITY),
+        );
+        if opening {
+            search.request_focus();
+        }
+        if search.changed() {
+            state.highlight = None;
+        }
+
+        let mut names: Vec<&str> = self.list.iter().map(String::as_str).collect();
+        if !self.current.is_empty() && !names.contains(&self.current.as_str()) {
+            names.insert(0, &self.current);
+        }
+        let shown = matching(&names, &state.filter);
+
+        // Setas andam pela lista e Enter escolhe, com o cursor na pesquisa.
+        let (down, up, enter) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::ArrowUp),
+                i.key_pressed(egui::Key::Enter),
+            )
+        });
+        let filtering = !state.filter.trim().is_empty();
+        let start = shown.iter().position(|n| *n == self.current);
+        let mut moved = false;
+        if !shown.is_empty() && (down || up) {
+            let last = shown.len() - 1;
+            let at = state.highlight.or(if filtering { None } else { start });
+            state.highlight = Some(match (at, down) {
+                (None, true) => 0,
+                (None, false) => last,
+                (Some(i), true) => (i + 1).min(last),
+                (Some(i), false) => i.saturating_sub(1),
+            });
+            moved = true;
+        }
+        // Com filtro, Enter sem seta escolhe o primeiro que sobrou.
+        let highlight =
+            state
+                .highlight
+                .filter(|i| *i < shown.len())
+                .or(if filtering && !shown.is_empty() {
+                    Some(0)
+                } else {
+                    None
+                });
+        if enter && let Some(i) = highlight {
+            picked = Some(shown[i].to_string());
+        }
+
+        let spacing = ui.spacing().item_spacing.y;
+        let row = ui.spacing().interact_size.y;
+        let height = VISIBLE_ROWS as f32 * (row + spacing) - spacing;
+        egui::ScrollArea::vertical()
+            .id_salt("database_picker_rows")
+            .max_height(height)
+            .min_scrolled_height(height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_height(height);
+                for (i, name) in shown.iter().enumerate() {
+                    let current = *name == self.current;
+                    let mut response = ui.selectable_label(current, *name);
+                    if highlight == Some(i) && !current {
+                        response = response.highlight();
+                    }
+                    if (moved && highlight == Some(i)) || (opening && current) {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
+                        picked = Some(name.to_string());
+                    }
+                }
+                if self.loading {
+                    ui.weak(tr("Loading..."));
+                } else if let Some(e) = self.error {
+                    ui.weak(e);
+                } else if shown.is_empty() {
+                    ui.weak(tr("No databases found."));
+                }
+            });
+
+        ui.data_mut(|d| d.insert_temp(list_state_id(), state));
+        if picked.is_some() {
+            ui.close();
+        }
+        picked
+    }
+}
+
 impl crate::ShellApp {
     /// Servidor da janela `id`, se é o servidor ativo (o único de onde se
     /// pode ler a lista e abrir conexões agora).
@@ -478,6 +625,15 @@ mod tests {
                 ..ServerMessage::error("current transaction is aborted")
             })]));
         assert_eq!(TransactionProbe::start(&aborted, &ctx).poll(), Some(true));
+    }
+
+    #[test]
+    fn the_search_ignores_case_and_keeps_the_order() {
+        let names = ["Evolution", "finops", "tiib", "tiib_signer_prd"];
+        assert_eq!(matching(&names, ""), names);
+        assert_eq!(matching(&names, " TIIB "), ["tiib", "tiib_signer_prd"]);
+        assert_eq!(matching(&names, "evo"), ["Evolution"]);
+        assert!(matching(&names, "xyz").is_empty());
     }
 
     #[test]
