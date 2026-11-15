@@ -18,7 +18,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{MetadataError, MetadataProvider, Model, NodeId};
-use pgstudio_core::schema::diff::diff;
+use pgstudio_core::schema::diff::{diff, unsupported};
 use pgstudio_core::schema::edit::{Document, EditError};
 use pgstudio_core::schema::{Column, ForeignKey, Id};
 use pgstudio_diagram_engine::{Camera, Diagram, DiagramEvent};
@@ -580,13 +580,14 @@ impl DiagramView {
             .and_then(|id| m.table(id))
             .map(|t| t.schema.clone())
             .or_else(|| {
+                let default = m.dialect.default_schema();
                 m.tables
                     .iter()
-                    .any(|t| t.schema == "public")
-                    .then(|| "public".to_string())
+                    .any(|t| t.schema == default)
+                    .then(|| default.to_string())
             })
             .or_else(|| m.tables.first().map(|t| t.schema.clone()))
-            .unwrap_or_else(|| "public".to_string())
+            .unwrap_or_else(|| m.dialect.default_schema().to_string())
     }
 
     /// "New Table": `Table_N` com uma coluna `id` e chave primária, no
@@ -627,7 +628,7 @@ impl DiagramView {
             .expect("algum nome está livre");
         let column = Column {
             name,
-            ty: crate::designer::NEW_COLUMN_TYPE.into(),
+            ty: self.doc.model.dialect.new_column_type().into(),
             nullable: true,
             ..Default::default()
         };
@@ -694,6 +695,10 @@ impl DiagramView {
             return;
         };
         if !matches!(self.state, State::Ready) || self.saving.is_some() {
+            return;
+        }
+        if let Some(e) = unsupported(&self.base, &self.doc.model).into_iter().next() {
+            self.notice = Some(Notice::Error(e));
             return;
         }
         self.path = Some(path);

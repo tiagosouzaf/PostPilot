@@ -54,8 +54,8 @@ const LOGIN_TYPES: &str = "'S', 'U', 'G', 'E', 'X'";
 
 /// Lê os metadados com a sessão aberta pelo Connect to Server.
 pub struct MssqlExplorer {
-    runtime: DbRuntime,
-    session: tokio::sync::Mutex<Session>,
+    pub(crate) runtime: DbRuntime,
+    pub(crate) session: tokio::sync::Mutex<Session>,
     label: String,
 }
 
@@ -133,6 +133,7 @@ impl MssqlExplorer {
     fn database_children(&self, id: &str, db: &str) -> Result<Vec<ObjectNode>, MetadataError> {
         let _ = db;
         Ok([
+            ("diagrams", Folder::Diagrams),
             ("tables", Folder::Tables),
             ("views", Folder::Views),
             ("prog", Folder::Programmability),
@@ -152,6 +153,8 @@ impl MssqlExplorer {
         let d = bracket(db);
         let base = format!("db/{}/", enc(db));
         match tag {
+            // Os diagramas ficam em arquivos `.pgsdiagram`, não no banco.
+            "diagrams" => Ok(Vec::new()),
             "security" => Ok(vec![
                 folder(format!("{base}f/users"), Folder::Users),
                 folder(format!("{base}f/dbroles"), Folder::DatabaseRoles),
@@ -961,17 +964,30 @@ impl MetadataProvider for MssqlExplorer {
         }
     }
 
-    /// Só a tabela (para o Edit Top 200 Rows); o Table Designer do SQL
-    /// Server ainda não existe.
+    /// A tabela (para o Table Designer e o Edit Top 200 Rows) ou a pasta
+    /// Tables, onde uma tabela nova nasce no `dbo`.
     fn design_target(&self, node: &NodeId) -> Option<DesignTarget> {
         match node.0.split('/').collect::<Vec<_>>().as_slice() {
             ["db", db, "t", obj] => Some(DesignTarget {
                 database: dec(db),
-                schema: String::new(),
+                schema: "dbo".into(),
                 table: Some(obj.parse().ok()?),
+            }),
+            ["db", db, "f", "tables"] => Some(DesignTarget {
+                database: dec(db),
+                schema: "dbo".into(),
+                table: None,
             }),
             _ => None,
         }
+    }
+
+    fn apply_ddl(&self, database: &str, statements: &[String]) -> Result<(), MetadataError> {
+        self.run_ddl(database, statements)
+    }
+
+    fn type_names(&self, database: &str) -> Result<Vec<String>, MetadataError> {
+        self.read_type_names(database)
     }
 
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {

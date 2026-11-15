@@ -32,8 +32,10 @@ pub use install::{
     AUR_PACKAGE, CANCELLED, INSTALL_COMMAND, InstallKind, Installed, NOT_AUTHORIZED, aur_helper,
     cleanup_old_binary, find_pkexec, install,
 };
-pub use net::{Progress, download_verified, fetch_latest};
-pub use release::{Asset, Release, ReleaseError, parse_release, parse_sha256sums};
+pub use net::{Progress, download_verified, fetch_latest, fetch_latest_from_sums};
+pub use release::{
+    Asset, Release, ReleaseError, parse_release, parse_sha256sums, release_from_sums,
+};
 pub use settings::{CHECK_INTERVAL, UpdateSettings};
 
 /// Repositório consultado, no formato `dono/nome`.
