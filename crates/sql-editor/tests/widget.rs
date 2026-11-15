@@ -19,6 +19,7 @@ fn catalog() -> Catalog {
             .collect(),
     };
     Catalog {
+        engine: Default::default(),
         database: "loja".into(),
         search_path: vec!["public".into()],
         schemas: vec![Schema {

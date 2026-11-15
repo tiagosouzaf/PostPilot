@@ -448,6 +448,7 @@ impl MetadataProvider for FakeProvider {
                 .into(),
         });
         Ok(Catalog {
+            engine: Default::default(),
             database: database.to_string(),
             search_path: vec!["public".into(), "pg_catalog".into()],
             schemas,

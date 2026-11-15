@@ -18,6 +18,8 @@
 //! | procedure, função, constraint, trigger, sequence | `db/<banco>/o/<object_id>` |
 //! | tipo | `db/<banco>/type/<user_type_id>` |
 
+use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
+use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::{
     DesignTarget, Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property,
     ScriptAction,
@@ -597,6 +599,89 @@ impl MssqlExplorer {
         Ok(out)
     }
 
+    /// Catálogo do banco para o IntelliSense: tabelas e views com as
+    /// colunas, procedures e funções por schema, e as funções internas mais
+    /// usadas em `sys`.
+    fn read_catalog(&self, db: &str) -> Result<Catalog, MetadataError> {
+        let d = bracket(db);
+        let text = |r: &[Option<String>], i: usize| r.get(i).cloned().flatten().unwrap_or_default();
+        let mut schemas: Vec<Schema> = self
+            .rows(&format!(
+                "SELECT s.name FROM {d}.sys.schemas s \
+                  WHERE s.schema_id < 16384 AND s.name NOT IN ('guest', 'INFORMATION_SCHEMA', 'sys') \
+                  ORDER BY s.name"
+            ))?
+            .iter()
+            .map(|r| Schema {
+                name: text(r, 0),
+                ..Default::default()
+            })
+            .collect();
+        let schema = |schemas: &mut Vec<Schema>, name: String| -> usize {
+            match schemas.iter().position(|s| s.name == name) {
+                Some(i) => i,
+                None => {
+                    schemas.push(Schema {
+                        name,
+                        ..Default::default()
+                    });
+                    schemas.len() - 1
+                }
+            }
+        };
+        for r in self.rows(&format!(
+            "SELECT s.name, o.name, RTRIM(o.type), c.name, t.name, c.max_length, c.precision, c.scale \
+               FROM {d}.sys.objects o \
+               JOIN {d}.sys.schemas s ON s.schema_id = o.schema_id \
+               JOIN {d}.sys.columns c ON c.object_id = o.object_id \
+               JOIN {d}.sys.types t ON t.user_type_id = c.user_type_id \
+              WHERE o.type IN ('U', 'V') AND o.is_ms_shipped = 0 \
+              ORDER BY s.name, o.name, c.column_id"
+        ))? {
+            let i = schema(&mut schemas, text(&r, 0));
+            let name = text(&r, 1);
+            if schemas[i].relations.last().is_none_or(|rel| rel.name != name) {
+                schemas[i].relations.push(Relation {
+                    name,
+                    kind: if text(&r, 2) == "V" {
+                        RelationKind::View
+                    } else {
+                        RelationKind::Table
+                    },
+                    columns: Vec::new(),
+                });
+            }
+            let number = |n: usize| text(&r, n).parse::<i64>().unwrap_or(0);
+            let ty = plain_type(&text(&r, 4), number(5), number(6), number(7));
+            if let Some(rel) = schemas[i].relations.last_mut() {
+                rel.columns.push(Column {
+                    name: text(&r, 3),
+                    ty,
+                });
+            }
+        }
+        for r in self.rows(&format!(
+            "SELECT s.name, o.name FROM {d}.sys.objects o \
+               JOIN {d}.sys.schemas s ON s.schema_id = o.schema_id \
+              WHERE o.type IN ('P', 'FN', 'IF', 'TF') AND o.is_ms_shipped = 0 \
+              ORDER BY s.name, o.name"
+        ))? {
+            let i = schema(&mut schemas, text(&r, 0));
+            schemas[i].functions.push(text(&r, 1));
+        }
+        schemas.push(Schema {
+            name: "sys".into(),
+            relations: Vec::new(),
+            functions: BUILTIN_FUNCTIONS.iter().map(|f| f.to_string()).collect(),
+        });
+        Ok(Catalog {
+            engine: Engine::SqlServer,
+            database: db.to_string(),
+            search_path: vec!["dbo".into(), "sys".into()],
+            schemas,
+        })
+    }
+
     fn properties_of(&self, sql: &str) -> Result<Vec<Property>, MetadataError> {
         let (names, rows) = self.table(sql)?;
         let row = rows.into_iter().next().ok_or_else(gone)?;
@@ -648,6 +733,73 @@ fn dec(text: &str) -> String {
     text.replace("%2F", "/").replace("%25", "%")
 }
 
+/// Funções internas do T-SQL sugeridas pelo IntelliSense.
+const BUILTIN_FUNCTIONS: &[&str] = &[
+    "ABS",
+    "AVG",
+    "CAST",
+    "CEILING",
+    "CHARINDEX",
+    "COALESCE",
+    "CONCAT",
+    "CONVERT",
+    "COUNT",
+    "DATEADD",
+    "DATEDIFF",
+    "DATENAME",
+    "DATEPART",
+    "DAY",
+    "DB_NAME",
+    "EOMONTH",
+    "FLOOR",
+    "FORMAT",
+    "GETDATE",
+    "GETUTCDATE",
+    "IIF",
+    "ISNULL",
+    "ISNUMERIC",
+    "LEFT",
+    "LEN",
+    "LOWER",
+    "LTRIM",
+    "MAX",
+    "MIN",
+    "MONTH",
+    "NEWID",
+    "NULLIF",
+    "OBJECT_ID",
+    "PATINDEX",
+    "REPLACE",
+    "RIGHT",
+    "ROUND",
+    "ROW_NUMBER",
+    "RTRIM",
+    "SCOPE_IDENTITY",
+    "STRING_AGG",
+    "STUFF",
+    "SUBSTRING",
+    "SUM",
+    "SYSDATETIME",
+    "TRIM",
+    "TRY_CAST",
+    "TRY_CONVERT",
+    "UPPER",
+    "YEAR",
+];
+
+/// Tipo de uma coluna como o IntelliSense mostra: `nvarchar(60)`.
+fn plain_type(name: &str, length: i64, precision: i64, scale: i64) -> String {
+    match name {
+        "varchar" | "char" | "varbinary" | "binary" if length == -1 => format!("{name}(max)"),
+        "varchar" | "char" | "varbinary" | "binary" => format!("{name}({length})"),
+        "nvarchar" | "nchar" if length == -1 => format!("{name}(max)"),
+        "nvarchar" | "nchar" => format!("{name}({})", length / 2),
+        "decimal" | "numeric" => format!("{name}({precision},{scale})"),
+        "datetime2" | "time" | "datetimeoffset" => format!("{name}({scale})"),
+        _ => name.to_string(),
+    }
+}
+
 /// Tipo de uma coluna no `CREATE TABLE`, como o SSMS escreve:
 /// `[nvarchar](60)`, `[decimal](10, 2)`, `[dbo].[Cpf]` (tipo do usuário).
 fn sql_type(
@@ -677,17 +829,7 @@ fn sql_type(
 fn column_label(r: &[Option<String>]) -> String {
     let text = |i: usize| r.get(i).cloned().flatten().unwrap_or_default();
     let number = |i: usize| text(i).parse::<i64>().unwrap_or(0);
-    let ty = text(2);
-    let length = number(3);
-    let ty = match ty.as_str() {
-        "varchar" | "char" | "varbinary" | "binary" if length == -1 => format!("{ty}(max)"),
-        "varchar" | "char" | "varbinary" | "binary" => format!("{ty}({length})"),
-        "nvarchar" | "nchar" if length == -1 => format!("{ty}(max)"),
-        "nvarchar" | "nchar" => format!("{ty}({})", length / 2),
-        "decimal" | "numeric" => format!("{ty}({},{})", number(4), number(5)),
-        "datetime2" | "time" | "datetimeoffset" => format!("{ty}({})", number(5)),
-        _ => ty,
-    };
+    let ty = plain_type(&text(2), number(3), number(4), number(5));
     let mut parts = Vec::new();
     if text(8) == "1" {
         parts.push("PK".to_string());
@@ -758,6 +900,10 @@ impl MetadataProvider for MssqlExplorer {
             }),
             _ => None,
         }
+    }
+
+    fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
+        self.read_catalog(database)
     }
 
     fn database_of(&self, node: &NodeId) -> Option<String> {
