@@ -233,7 +233,9 @@ fn import_registered_servers_brings_their_passwords_into_the_vault() {
     let mut h = app(system.clone(), local_servers());
     let root = open_workspace(&mut h, &base, true);
 
-    h.get_by_label_contains("Import from this computer").click();
+    // O workspace está vazio: o botão grande, no lugar do atalho.
+    h.get_by_label_contains("Import the 2 connections from this computer")
+        .click();
     h.run();
     // A cópia das senhas termina sozinha e avisa na status bar.
     let start = Instant::now();

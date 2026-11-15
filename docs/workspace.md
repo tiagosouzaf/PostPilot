@@ -60,11 +60,25 @@ para `servers.json`.
 
   A connection string não é guardada. A senha vai para o cofre do workspace
   (veja abaixo) e nunca para `servers.json`.
-- **"Import from this computer" (Importar deste computador):** este botão, ao lado de "Servers", traz os
-  Registered Servers desta máquina para o workspace. Grupos de mesmo nome se
-  juntam e um servidor de mesmo nome é substituído. Com as senhas do workspace
-  destrancadas, as senhas lembradas desses servidores são copiadas para o
-  cofre. O keyring do sistema continua com a cópia dele.
+- **Um workspace novo nasce sem conexões.** As que você já usava ficam nesta
+  máquina (Registered Servers, conexões recentes e a conexão ativa) e só vão
+  para o repositório depois de importadas. Por isso, ao criar o workspace, o
+  PostPilot pergunta **"Trazer suas conexões?"**. Se você responder "Agora
+  não", o painel continua mostrando o botão **Importar as N conexões deste
+  computador** enquanto o workspace estiver vazio.
+- **"Import from this computer" (Importar deste computador):** traz para o
+  workspace os Registered Servers desta máquina, as conexões recentes do
+  "Connect to Server" e a conexão ativa. Grupos de mesmo nome se juntam e um
+  servidor de mesmo nome é substituído. As senhas lembradas (e a senha em uso
+  na conexão ativa) são copiadas para o cofre do workspace: se ele ainda não
+  existe ou está trancado, a senha mestra é pedida e a cópia acontece em
+  seguida. O keyring do sistema continua com a cópia dele. Sem nada para
+  importar, o botão abre o New Server Registration do workspace.
+- **"Add to workspace" (Adicionar ao workspace):** aparece quando você está
+  conectado a um servidor que não está no workspace, e o registra nele com a
+  senha em uso.
+- Depois de importar, faça **Commit** e **Push**. Na outra máquina, o clone
+  (ou o Pull) mostra os servidores, e as senhas vêm depois da senha mestra.
 
 ## Pastas e ambientes
 

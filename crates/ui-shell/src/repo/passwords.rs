@@ -454,12 +454,12 @@ impl Passwords {
                 }
             } else {
                 let text = match count {
-                    0 => tr("No passwords saved yet").to_string(),
-                    1 => tr("1 password in the workspace").to_string(),
-                    n => trf!("{n} passwords in the workspace", n = n),
+                    0 => tr("Master password set, no server passwords saved yet").to_string(),
+                    1 => tr("1 server password in the workspace").to_string(),
+                    n => trf!("{n} server passwords in the workspace", n = n),
                 };
                 ui.label(format!("{} {text}", icon::LOCK_OPEN)) // i18n-ignore
-                    .on_hover_text(tr("Remembered passwords of this workspace's servers are saved here, encrypted with the master password."));
+                    .on_hover_text(tr("The master password is set and unlocked. The passwords of this workspace's servers are saved here, encrypted with it, when you register or connect to a server with Remember password checked, or import the connections from this computer."));
                 ui.menu_button(icon::DOTS_THREE, |ui| {
                     if ui.button(tr("Change Master Password...")).clicked() {
                         self.open_dialog(DialogKind::Change);

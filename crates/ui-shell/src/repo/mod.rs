@@ -162,9 +162,42 @@ impl Workspace {
         path.starts_with(root)
     }
 
-    /// As consultas, em árvore, com pastas antes e ordem alfabética.
+    /// As consultas, em árvore, com pastas antes e ordem alfabética: as de
+    /// `queries/` e, para um repositório que já tinha consultas antes de
+    /// virar workspace, as outras pastas da raiz que têm `.sql` e os `.sql`
+    /// soltos na raiz.
     pub fn queries(&self) -> Folder {
-        Folder::read(&self.queries_dir(), String::new())
+        let dir = self.queries_dir();
+        let mut tree = Folder::read(&dir, String::new());
+        let same = |p: &Path| match (std::fs::canonicalize(p), std::fs::canonicalize(&dir)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => p == dir,
+        };
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
+            return tree;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || same(&p) {
+                continue;
+            }
+            if p.is_dir() {
+                let folder = Folder::read(&p, name);
+                if folder.count() > 0 {
+                    tree.folders.push(folder);
+                }
+            } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sql")) {
+                tree.files.push(p);
+            }
+        }
+        tree.folders.sort_by_key(|f| f.name.to_lowercase());
+        tree.files.sort_by_key(|f| {
+            f.file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default()
+        });
+        tree
     }
 
     /// Caminho livre `SQLQueryN.sql` em `folder`.
