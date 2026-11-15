@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
 use pgstudio_execution_plan::{Plan, PlanView};
 use pgstudio_result_grid::export::{Format, Writer};
@@ -240,6 +241,31 @@ impl Batch {
         })
     }
 
+    /// SQL Server: o lote entre `SET <option> ON` e `OFF` (`SHOWPLAN_XML`
+    /// para o plano estimado, `STATISTICS XML` para o real), cada um no
+    /// seu lote como o servidor exige. Com `roll_back`, tudo roda numa
+    /// transação desfeita no fim. Sem comandos, devolve `None`.
+    pub fn showplan(sql: &str, option: &str, roll_back: bool) -> Option<Self> {
+        if pgstudio_sql_editor::lexer::statements(sql).is_empty() {
+            return None;
+        }
+        let mut prefix = format!("SET {option} ON\nGO\n");
+        let mut suffix = format!("\nGO\nSET {option} OFF");
+        if roll_back {
+            prefix.push_str("BEGIN TRANSACTION\nGO\n");
+            suffix = format!("\nGO\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION{suffix}");
+        }
+        Some(Batch {
+            sent: format!("{prefix}{sql}{suffix}"),
+            segments: vec![Segment {
+                sent: prefix.chars().count(),
+                original: 0,
+                len: sql.chars().count(),
+            }],
+            statements: Vec::new(),
+        })
+    }
+
     /// Põe o lote entre `BEGIN` e `ROLLBACK`, para o `EXPLAIN ANALYZE` de
     /// comandos que alteram dados não deixar rastro.
     pub fn in_rolled_back_transaction(mut self) -> Self {
@@ -309,6 +335,9 @@ pub struct Execution {
     /// Ctrl+L: cada resultado é um plano em JSON, mostrado na aba
     /// Execution plan em vez da grade.
     plan_mode: bool,
+    /// Plano real do SQL Server: os resultados dos comandos ficam, e os
+    /// planos vêm em resultados à parte.
+    keep_results: bool,
     pub plans: Vec<(Plan, PlanView)>,
     /// O lote roda entre `BEGIN` e `ROLLBACK` (plano real de DML).
     rolled_back: bool,
@@ -352,7 +381,10 @@ impl Execution {
         offset: usize,
         ctx: &egui::Context,
     ) -> Option<Self> {
-        let batch = Batch::explain(&sql, "FORMAT JSON")?;
+        let batch = match session.engine() {
+            Engine::PostgreSql => Batch::explain(&sql, "FORMAT JSON")?,
+            Engine::SqlServer => Batch::showplan(&sql, "SHOWPLAN_XML", false)?,
+        };
         let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
         exec.plan_mode = true;
         exec.tab = Tab::Plan;
@@ -421,6 +453,7 @@ impl Execution {
             mode: ResultsMode::Grid,
             batch,
             plan_mode: false,
+            keep_results: false,
             plans: Vec::new(),
             rolled_back: false,
             finished: false,
@@ -536,6 +569,7 @@ impl Execution {
             mode: ResultsMode::File,
             batch,
             plan_mode: false,
+            keep_results: false,
             plans: Vec::new(),
             rolled_back: false,
             finished: false,
@@ -559,11 +593,21 @@ impl Execution {
         roll_back: bool,
         ctx: &egui::Context,
     ) -> Option<Self> {
-        let mut batch = Batch::explain(&sql, "ANALYZE, BUFFERS, FORMAT JSON")?;
-        if roll_back {
-            batch = batch.in_rolled_back_transaction();
-        }
+        // No SQL Server o comando roda normalmente e o plano real vem junto
+        // com os resultados, como no SSMS.
+        let sql_server = session.engine() == Engine::SqlServer;
+        let batch = if sql_server {
+            Batch::showplan(&sql, "STATISTICS XML", roll_back)?
+        } else {
+            let batch = Batch::explain(&sql, "ANALYZE, BUFFERS, FORMAT JSON")?;
+            if roll_back {
+                batch.in_rolled_back_transaction()
+            } else {
+                batch
+            }
+        };
         let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
+        exec.keep_results = sql_server;
         exec.plan_mode = true;
         exec.rolled_back = roll_back;
         exec.tab = Tab::Plan;
@@ -637,7 +681,10 @@ impl Execution {
         match event {
             // Colunas e linhas vão direto para o buffer (ver `start`).
             QueryEvent::Columns(_) | QueryEvent::Row(_) => {}
-            QueryEvent::CommandComplete { .. } if self.plan_mode => {
+            QueryEvent::CommandComplete { .. }
+                if self.plan_mode
+                    && (!self.keep_results || (self.open_result && self.last_is_showplan())) =>
+            {
                 if std::mem::take(&mut self.open_result) {
                     self.take_plan();
                 }
@@ -791,8 +838,17 @@ impl Execution {
         }
     }
 
+    /// Se o último resultado é um plano do SQL Server (uma coluna com o
+    /// Showplan XML).
+    fn last_is_showplan(&self) -> bool {
+        self.results.last().is_some_and(|set| {
+            matches!(set.store().columns(), [c] if c == pgstudio_execution_plan::SHOWPLAN_COLUMN)
+        })
+    }
+
     /// O resultado que acabou de chegar é a saída de um `EXPLAIN (FORMAT
-    /// JSON)`: vira um plano e sai da lista de resultados.
+    /// JSON)` ou um Showplan XML: vira um plano e sai da lista de
+    /// resultados.
     fn take_plan(&mut self) {
         let Some(set) = self.results.pop() else {
             return;
@@ -810,7 +866,11 @@ impl Execution {
             .get(self.plans.len())
             .cloned()
             .unwrap_or_default();
-        match pgstudio_execution_plan::parse(&json, &statement) {
+        let parsed = match self.session.engine() {
+            Engine::PostgreSql => pgstudio_execution_plan::parse(&json, &statement),
+            Engine::SqlServer => pgstudio_execution_plan::parse_showplan(&json),
+        };
+        match parsed {
             Ok(plans) => {
                 for plan in plans {
                     let view = PlanView::new(&plan);

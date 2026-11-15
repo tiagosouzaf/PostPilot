@@ -104,6 +104,15 @@ impl QuerySession for MssqlQuerySession {
             let (canceled, broken) = run(session, &sql, &mut sink).await;
             if broken {
                 *guard = None;
+            } else if canceled && turns_plans_on(&sql) {
+                // O cancelamento pulou o `SET ... OFF` do fim: sem isto a
+                // sessão ficaria devolvendo planos em vez de executar.
+                session.cancel_handle().reset();
+                let mut quiet: QuerySink = Box::new(|_| {});
+                let off = "SET SHOWPLAN_XML OFF\nGO\nSET STATISTICS XML OFF";
+                if run(session, off, &mut quiet).await.1 {
+                    *guard = None;
+                }
             }
             sink(QueryEvent::Finished { canceled });
         });
@@ -151,6 +160,23 @@ impl QuerySession for MssqlQuerySession {
             );
         });
     }
+}
+
+/// Se o script liga o plano em XML (`SET SHOWPLAN_XML ON` ou `SET
+/// STATISTICS XML ON`).
+fn turns_plans_on(sql: &str) -> bool {
+    script::split(sql).iter().any(|b| {
+        let words: Vec<String> = b
+            .sql
+            .split_whitespace()
+            .map(|w| w.trim_end_matches(';').to_ascii_uppercase())
+            .collect();
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        matches!(
+            words.as_slice(),
+            ["SET", "SHOWPLAN_XML", "ON"] | ["SET", "STATISTICS", "XML", "ON"]
+        )
+    })
 }
 
 /// De onde vem cada coluna do resultado de `sql`, sem rodar:
@@ -322,6 +348,16 @@ mod tests {
             line,
             is_error,
         }
+    }
+
+    #[test]
+    fn scripts_that_turn_plans_on_are_noticed() {
+        assert!(turns_plans_on(
+            "SET SHOWPLAN_XML ON\nGO\nSELECT 1\nGO\nSET SHOWPLAN_XML OFF"
+        ));
+        assert!(turns_plans_on("set statistics xml on;\nGO\nSELECT 1"));
+        assert!(!turns_plans_on("SELECT 'SET SHOWPLAN_XML ON'"));
+        assert!(!turns_plans_on("SET STATISTICS IO ON"));
     }
 
     #[test]

@@ -538,6 +538,26 @@ pub fn operator_icon(kind: &str) -> &'static str {
         "Values Scan" | "Result" => icon::ROWS,
         "LockRows" => icon::KEY,
         "Foreign Scan" | "Custom Scan" => icon::LINK,
+        // SQL Server.
+        "Table Scan" | "Clustered Index Scan" | "Columnstore Index Scan" => icon::TABLE,
+        "Index Seek" | "Clustered Index Seek" => icon::MAGNIFYING_GLASS,
+        "Key Lookup" | "RID Lookup" => icon::LIST_MAGNIFYING_GLASS,
+        "Nested Loops" | "Hash Match" | "Adaptive Join" => icon::INTERSECT,
+        "Stream Aggregate" | "Window Aggregate" => icon::SIGMA,
+        "Top" => icon::SCISSORS,
+        "Table Spool" | "Index Spool" | "Row Count Spool" | "Window Spool" => icon::STACK,
+        "Concatenation" | "Parallelism" | "Merge Interval" => icon::ARROWS_MERGE,
+        "Filter" => icon::FUNNEL,
+        "Compute Scalar" | "Table-valued function" => icon::BRACKETS_CURLY,
+        "Constant Scan" => icon::ROWS,
+        "Remote Query" | "Remote Scan" => icon::LINK,
+        k if k.ends_with(" Insert")
+            || k.ends_with(" Update")
+            || k.ends_with(" Delete")
+            || k.ends_with(" Merge") =>
+        {
+            icon::PENCIL_SIMPLE
+        }
         _ => icon::CUBE,
     }
 }

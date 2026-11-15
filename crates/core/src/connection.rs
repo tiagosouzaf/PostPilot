@@ -98,7 +98,7 @@ impl Engine {
             Engine::PostgreSql => true,
             Engine::SqlServer => matches!(
                 feature,
-                Feature::Query | Feature::EditRows | Feature::IntelliSense
+                Feature::Query | Feature::EditRows | Feature::IntelliSense | Feature::ExecutionPlan
             ),
         }
     }

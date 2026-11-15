@@ -2016,7 +2016,10 @@ impl ShellApp {
         } else if ask == Ask::Plan {
             Run::EstimatedPlan
         } else if doc.actual_plan {
-            if execution::changes_data(&sql) {
+            // No SQL Server o plano real acompanha a execução normal (como
+            // no SSMS): não há o que perguntar.
+            let asks = self.document_engine(id) != Some(Engine::SqlServer);
+            if asks && execution::changes_data(&sql) {
                 // O EXPLAIN ANALYZE executa o comando: pergunta antes.
                 self.actual_confirm = Some(PendingActual {
                     doc: id,

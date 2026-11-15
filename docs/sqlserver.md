@@ -20,6 +20,7 @@ bar ("... ainda não está disponível para SQL Server") em vez de rodar.
 | Editor em T-SQL: realce de `[nomes]`, `N'texto'`, `@variáveis`, `#temporárias` e palavras do T-SQL (`TOP`, `GO`, `PRINT`, `NVARCHAR`...); erro de colchete ou aspa sem fechar | S3.1 |
 | IntelliSense: tabelas, views, colunas (com o tipo), procedures, funções e as funções internas do T-SQL; nomes sem diferenciar maiúsculas e com `[colchetes]` só quando precisa | S3.2 |
 | Formatar Documento (Shift+Alt+F) em T-SQL: comandos sem `;`, `BEGIN ... END` e `TRY/CATCH` indentados, `GO` sozinho na linha, `CROSS APPLY`, `OUTPUT`, `MERGE` | S3.3 |
+| Planos de execução: estimado (Ctrl+L, `SET SHOWPLAN_XML`, não roda o comando) e real (Ctrl+M, `SET STATISTICS XML`, junto com os resultados), com custo por operador, linhas reais e estimadas, predicados, avisos e índices sugeridos nas propriedades | S4.1 |
 | "Server type" no Connect to Server e nos Registered Servers; login `sa`, banco `master` e porta 1433 como padrão | S1.3 |
 | Seletor de bancos da janela de consulta (`sys.databases` que o login abre) e aviso de transação aberta (`@@TRANCOUNT`) | S1.3 |
 | Confirmação de comandos perigosos (DROP, DELETE sem WHERE...) lendo T-SQL, com `GO` | S1.3 |
