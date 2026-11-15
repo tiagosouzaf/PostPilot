@@ -77,6 +77,12 @@ para `servers.json`.
 - **"Add to workspace" (Adicionar ao workspace):** aparece quando você está
   conectado a um servidor que não está no workspace, e o registra nele com a
   senha em uso.
+- **"Connect to Server" lista as conexões salvas:** com um workspace aberto,
+  o diálogo mostra no alto as conexões dele (etiqueta do ambiente, nome e
+  pasta) e, abaixo, os Registered Servers desta máquina que não estão no
+  workspace. Um clique preenche os campos e, se a senha está no cofre,
+  conecta direto; sem senha guardada, o diálogo fica aberto esperando a
+  senha. Os campos continuam ali para uma conexão digitada à mão.
 - **Register... e Properties no servidor do Object Explorer:** com um
   workspace aberto, abrem o registro desse servidor no workspace (e não nos
   Registered Servers desta máquina), com a senha em uso, o campo **Folder**

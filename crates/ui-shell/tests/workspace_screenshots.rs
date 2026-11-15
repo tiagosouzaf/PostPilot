@@ -355,3 +355,87 @@ fn changes_and_discard() {
     save(&mut h, "8-pull-parou-alteracoes.png");
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn connect_dialog_lists_saved_connections() {
+    use pgstudio_ui_shell::registered::{RegisteredServer, ServerGroup};
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let root = std::env::temp_dir()
+        .join(format!("postpilot-ws-shots-connect-{}", std::process::id()))
+        .join("sql");
+    let _ = std::fs::remove_dir_all(&root);
+
+    let server = |name: &str, host: &str, user: &str, env: Option<&str>| RegisteredServer {
+        name: name.into(),
+        environment: env.map(str::to_string),
+        settings: ConnectionSettings {
+            host: host.into(),
+            user: user.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut local = RegisteredServers::in_memory(Default::default());
+    local
+        .add_server(
+            &[],
+            server("Local", "localhost", "postgres", Some("Development")),
+        )
+        .unwrap();
+    let app = ShellApp::default()
+        .with_secret_store(Arc::new(MemoryStore::default()))
+        .with_recent_connections(RecentConnections::in_memory(Vec::new()))
+        .with_registered_servers(local)
+        .with_connector(Arc::new(FakeConnector));
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&h.ctx);
+    pgstudio_ui_shell::theme::apply(&h.ctx, pgstudio_core::Theme::Dark);
+    h.run();
+    pgstudio_ui_shell::repo::Workspace::create(&root, "sql").unwrap();
+    assert!(h.state_mut().open_workspace(&root));
+    {
+        let servers = h
+            .state_mut()
+            .workspace_panel_mut()
+            .servers_mut()
+            .unwrap()
+            .servers_mut();
+        let clientes = servers
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "Clientes".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        servers
+            .add_server(
+                &clientes,
+                server(
+                    "tiib",
+                    "trust-saas-cluster.cluster-abc123.sa-east-1.rds.amazonaws.com",
+                    "tiibuser",
+                    Some("Production"),
+                ),
+            )
+            .unwrap();
+        servers
+            .add_server(
+                &clientes,
+                server(
+                    "tiib homologação",
+                    "hml.abc123.sa-east-1.rds.amazonaws.com",
+                    "tiibuser",
+                    Some("Staging"),
+                ),
+            )
+            .unwrap();
+    }
+    show_workspace(&mut h);
+    h.state_mut().open_connect_dialog();
+    h.run();
+    save(&mut h, "9-conectar-lista-conexoes.png");
+}

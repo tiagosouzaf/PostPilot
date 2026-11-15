@@ -376,6 +376,37 @@ impl ShellApp {
             .collect()
     }
 
+    /// As conexões guardadas, para o "Connect to Server": as do workspace
+    /// aberto primeiro, depois as dos Registered Servers que não estão lá.
+    pub fn saved_connections(&self) -> Vec<crate::connect::SavedConnection> {
+        let mut out: Vec<crate::connect::SavedConnection> = Vec::new();
+        let mut keys: Vec<String> = Vec::new();
+        let workspace = self.workspace_panel.servers().map(|p| p.servers());
+        let sources = workspace
+            .into_iter()
+            .map(|r| (r, true))
+            .chain([(self.registered.servers(), false)]);
+        for (servers, workspace) in sources {
+            for (path, folder, s) in servers.servers_with_folders() {
+                let key = server_key(&s.settings);
+                if keys.contains(&key) {
+                    continue;
+                }
+                keys.push(key);
+                out.push(crate::connect::SavedConnection {
+                    name: s.name.clone(),
+                    folder,
+                    environment: servers
+                        .node_tag(&path)
+                        .and_then(|t| Some((t.environment?, t.color))),
+                    workspace,
+                    settings: s.settings.clone(),
+                });
+            }
+        }
+        out
+    }
+
     /// Ambiente e cor do servidor com esta chave (`usuario@host:porta`),
     /// vindos do workspace aberto ou, sem ele lá, dos Registered Servers.
     pub fn server_tag(&self, key: &str) -> Option<crate::registered::ServerTag> {

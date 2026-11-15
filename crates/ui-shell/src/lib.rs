@@ -529,10 +529,14 @@ impl ShellApp {
     }
 
     fn connect_window(&mut self, ctx: &egui::Context) {
+        if self.connect_dialog.is_none() {
+            return;
+        }
+        let saved = self.saved_connections();
         let Some(dialog) = &mut self.connect_dialog else {
             return;
         };
-        match dialog.show(ctx, self.recent.list()) {
+        match dialog.show(ctx, self.recent.list(), &saved) {
             DialogAction::None => {}
             DialogAction::Cancel => self.connect_dialog = None,
             DialogAction::Connect(settings, password) => {

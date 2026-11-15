@@ -107,6 +107,21 @@ impl RecentConnections {
     }
 }
 
+/// Uma conexão guardada (no workspace aberto ou nos Registered Servers),
+/// oferecida no "Connect to Server" para conectar sem digitar de novo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedConnection {
+    /// Nome do registro.
+    pub name: String,
+    /// Pasta por extenso ("Clientes / Acme"); vazio na raiz.
+    pub folder: String,
+    /// Ambiente (nome e cor), para a etiqueta na frente do nome.
+    pub environment: Option<(String, crate::registered::Rgb)>,
+    /// Veio do workspace aberto (senão, dos Registered Servers).
+    pub workspace: bool,
+    pub settings: ConnectionSettings,
+}
+
 /// O que o usuário fez no diálogo neste frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogAction {
@@ -352,8 +367,21 @@ impl ConnectDialog {
         }
     }
 
-    /// Desenha o diálogo. `recent` alimenta o menu do campo "Server name".
-    pub fn show(&mut self, ctx: &egui::Context, recent: &[ConnectionSettings]) -> DialogAction {
+    /// Escolheu uma conexão guardada: preenche e, se o cofre tiver a senha,
+    /// conecta sozinho; sem senha guardada, fica aberto pedindo a senha.
+    pub fn choose(&mut self, settings: &ConnectionSettings) {
+        self.fill(settings);
+        self.auto_connect = self.lookup.is_some();
+    }
+
+    /// Desenha o diálogo. `recent` alimenta o menu do campo "Server name";
+    /// `saved` são as conexões do workspace e dos Registered Servers.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        recent: &[ConnectionSettings],
+        saved: &[SavedConnection],
+    ) -> DialogAction {
         let mut action = DialogAction::None;
         if self.poll_lookup()
             && self.pending.is_none()
@@ -370,6 +398,10 @@ impl ConnectDialog {
             ui.heading(tr("Connect to Server"));
             ui.add_space(4.0);
             ui.add_enabled_ui(!connecting, |ui| {
+                if !saved.is_empty() {
+                    self.saved_list(ui, saved);
+                    ui.add_space(6.0);
+                }
                 egui::Grid::new("connect_fields")
                     .num_columns(2)
                     .spacing([12.0, 6.0])
@@ -414,6 +446,59 @@ impl ConnectDialog {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         action
+    }
+
+    /// A lista de conexões guardadas, no alto do diálogo: um clique
+    /// preenche os campos e conecta com a senha guardada.
+    fn saved_list(&mut self, ui: &mut egui::Ui, saved: &[SavedConnection]) {
+        ui.label(tr("Saved connections:"));
+        let current = self.settings().ok().map(|s| secrets::password_key(&s));
+        let mut chosen = None;
+        egui::Frame::new()
+            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+            .corner_radius(4.0)
+            .inner_margin(4.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("connect_saved")
+                    .max_height(132.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        let mut section = None;
+                        for c in saved {
+                            if section != Some(c.workspace) {
+                                section = Some(c.workspace);
+                                ui.weak(if c.workspace {
+                                    tr("Workspace")
+                                } else {
+                                    tr("Registered Servers")
+                                });
+                            }
+                            ui.horizontal(|ui| {
+                                if let Some((name, color)) = &c.environment {
+                                    crate::registered::environment_badge(ui, name, *color);
+                                }
+                                let key = secrets::password_key(&c.settings);
+                                let row = ui
+                                    .selectable_label(current.as_ref() == Some(&key), &c.name)
+                                    .on_hover_text(format!(
+                                        "{} ({})",
+                                        c.settings.server_name(),
+                                        c.settings.user
+                                    ));
+                                if row.clicked() {
+                                    chosen = Some(c.settings.clone());
+                                }
+                                if !c.folder.is_empty() {
+                                    ui.weak(&c.folder);
+                                }
+                            });
+                        }
+                    });
+            });
+        if let Some(s) = chosen {
+            self.choose(&s);
+        }
     }
 
     fn fields(&mut self, ui: &mut egui::Ui, recent: &[ConnectionSettings]) {
