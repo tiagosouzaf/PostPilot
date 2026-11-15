@@ -17,12 +17,14 @@
 //! | índice | `db/<banco>/ix/<object_id>/<index_id>` |
 //! | procedure, função, constraint, trigger, sequence | `db/<banco>/o/<object_id>` |
 //! | tipo | `db/<banco>/type/<user_type_id>` |
+//! | login, server role | `login/<nome>`, `srvrole/<nome>` |
+//! | usuário, database role | `db/<banco>/user/<nome>`, `db/<banco>/dbrole/<nome>` |
 
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::{
-    DesignTarget, Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property,
-    ScriptAction,
+    DesignTarget, Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
+    PrincipalKind, Property, ScriptAction, Securable,
 };
 use pgstudio_i18n::tr;
 use pgstudio_pg_client::DbRuntime;
@@ -42,6 +44,13 @@ const SYSTEM_DATABASES: [&str; 4] = ["master", "model", "msdb", "tempdb"];
 const SERVER: &str = "server";
 const DATABASES: &str = "server/Databases";
 const SYSTEM: &str = "server/Databases/System";
+const SECURITY: &str = "server/Security";
+const LOGINS: &str = "server/Security/Logins";
+const SERVER_ROLES: &str = "server/Security/ServerRoles";
+
+/// `sys.server_principals.type` e `sys.database_principals.type` de quem
+/// entra (SQL, Windows, grupo, Entra), sem roles nem certificados.
+const LOGIN_TYPES: &str = "'S', 'U', 'G', 'E', 'X'";
 
 /// Lê os metadados com a sessão aberta pelo Connect to Server.
 pub struct MssqlExplorer {
@@ -103,12 +112,31 @@ impl MssqlExplorer {
             .collect())
     }
 
+    /// Logins, usuários e roles de uma consulta de uma coluna (o nome, que
+    /// também é o id).
+    fn principals(&self, sql: &str, prefix: &str) -> Result<Vec<ObjectNode>, MetadataError> {
+        Ok(self
+            .rows(sql)?
+            .into_iter()
+            .filter_map(|r| r.into_iter().next().flatten())
+            .map(|name| {
+                node(
+                    format!("{prefix}{}", enc(&name)),
+                    name,
+                    NodeKind::Role,
+                    false,
+                )
+            })
+            .collect())
+    }
+
     fn database_children(&self, id: &str, db: &str) -> Result<Vec<ObjectNode>, MetadataError> {
         let _ = db;
         Ok([
             ("tables", Folder::Tables),
             ("views", Folder::Views),
             ("prog", Folder::Programmability),
+            ("security", Folder::Security),
         ]
         .into_iter()
         .map(|(tag, f)| folder(format!("{id}/f/{tag}"), f))
@@ -124,6 +152,24 @@ impl MssqlExplorer {
         let d = bracket(db);
         let base = format!("db/{}/", enc(db));
         match tag {
+            "security" => Ok(vec![
+                folder(format!("{base}f/users"), Folder::Users),
+                folder(format!("{base}f/dbroles"), Folder::DatabaseRoles),
+            ]),
+            "users" => self.principals(
+                &format!(
+                    "SELECT name FROM {d}.sys.database_principals \
+                     WHERE type IN ({LOGIN_TYPES}) ORDER BY name"
+                ),
+                &format!("{base}user/"),
+            ),
+            "dbroles" => self.principals(
+                &format!(
+                    "SELECT name FROM {d}.sys.database_principals \
+                     WHERE type = 'R' ORDER BY name"
+                ),
+                &format!("{base}dbrole/"),
+            ),
             "tables" => self.listed(
                 &format!(
                     "SELECT o.object_id, s.name + '.' + o.name FROM {d}.sys.tables o \
@@ -858,7 +904,33 @@ impl MetadataProvider for MssqlExplorer {
     fn children(&self, parent: &NodeId) -> Result<Vec<ObjectNode>, MetadataError> {
         let id = parent.0.as_str();
         match id {
-            SERVER => return Ok(vec![folder(DATABASES.into(), Folder::Databases)]),
+            SERVER => {
+                return Ok(vec![
+                    folder(DATABASES.into(), Folder::Databases),
+                    folder(SECURITY.into(), Folder::Security),
+                ]);
+            }
+            SECURITY => {
+                return Ok(vec![
+                    folder(LOGINS.into(), Folder::Logins),
+                    folder(SERVER_ROLES.into(), Folder::ServerRoles),
+                ]);
+            }
+            LOGINS => {
+                return self.principals(
+                    &format!(
+                        "SELECT name FROM sys.server_principals \
+                         WHERE type IN ({LOGIN_TYPES}) AND name NOT LIKE '##%' ORDER BY name"
+                    ),
+                    "login/",
+                );
+            }
+            SERVER_ROLES => {
+                return self.principals(
+                    "SELECT name FROM sys.server_principals WHERE type = 'R' ORDER BY name",
+                    "srvrole/",
+                );
+            }
             DATABASES | SYSTEM => {
                 let system = id == SYSTEM;
                 let mut nodes: Vec<ObjectNode> = self
@@ -904,6 +976,45 @@ impl MetadataProvider for MssqlExplorer {
 
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
         self.read_catalog(database)
+    }
+
+    fn securable(&self, node: &NodeId) -> Option<Securable> {
+        let principal = |kind, database: Option<&str>, name: Option<&str>| {
+            Some(Securable::Principal {
+                kind,
+                database: database.map(dec),
+                name: name.map(dec),
+            })
+        };
+        match node.0.as_str() {
+            LOGINS => return principal(PrincipalKind::Login, None, None),
+            SERVER_ROLES => return principal(PrincipalKind::ServerRole, None, None),
+            _ => {}
+        }
+        match node.0.split('/').collect::<Vec<_>>().as_slice() {
+            ["login", name] => principal(PrincipalKind::Login, None, Some(name)),
+            ["srvrole", name] => principal(PrincipalKind::ServerRole, None, Some(name)),
+            ["db", db, "f", "users"] => principal(PrincipalKind::User, Some(db), None),
+            ["db", db, "f", "dbroles"] => principal(PrincipalKind::DatabaseRole, Some(db), None),
+            ["db", db, "user", name] => principal(PrincipalKind::User, Some(db), Some(name)),
+            ["db", db, "dbrole", name] => {
+                principal(PrincipalKind::DatabaseRole, Some(db), Some(name))
+            }
+            _ => None,
+        }
+    }
+
+    fn security_folder(&self, target: &Securable) -> Option<NodeId> {
+        let Securable::Principal { kind, database, .. } = target else {
+            return None;
+        };
+        let db = || database.as_deref().map(enc);
+        Some(NodeId(match kind {
+            PrincipalKind::Login => LOGINS.to_string(),
+            PrincipalKind::ServerRole => SERVER_ROLES.to_string(),
+            PrincipalKind::User => format!("db/{}/f/users", db()?),
+            PrincipalKind::DatabaseRole => format!("db/{}/f/dbroles", db()?),
+        }))
     }
 
     fn database_of(&self, node: &NodeId) -> Option<String> {
@@ -995,6 +1106,25 @@ impl MetadataProvider for MssqlExplorer {
                       WHERE c.object_id = {} AND c.column_id = {}",
                     number(obj)?,
                     number(col)?
+                ))
+            }
+            ["login" | "srvrole", name] => self.properties_of(&format!(
+                "SELECT p.type_desc AS [Principal type], p.default_database_name AS [Default database], \
+                        CASE p.is_disabled WHEN 1 THEN 'yes' ELSE 'no' END AS [Disabled], \
+                        CONVERT(varchar(19), p.create_date, 120) AS [Created], \
+                        CONVERT(varchar(19), p.modify_date, 120) AS [Last modified] \
+                   FROM sys.server_principals p WHERE p.name = N'{}'",
+                dec(name).replace('\'', "''")
+            )),
+            ["db", db, "user" | "dbrole", name] => {
+                let d = bracket(&dec(db));
+                self.properties_of(&format!(
+                    "SELECT p.type_desc AS [Principal type], SUSER_SNAME(p.sid) AS [Login], \
+                            p.default_schema_name AS [Default schema], \
+                            CONVERT(varchar(19), p.create_date, 120) AS [Created], \
+                            CONVERT(varchar(19), p.modify_date, 120) AS [Last modified] \
+                       FROM {d}.sys.database_principals p WHERE p.name = N'{}'",
+                    dec(name).replace('\'', "''")
                 ))
             }
             _ => Ok(Vec::new()),

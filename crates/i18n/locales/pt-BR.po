@@ -4016,6 +4016,99 @@ msgstr "Gravações"
 msgid "I/O (MB)"
 msgstr "E/S (MB)"
 
+msgid "Logins"
+msgstr "Logins"
+
+msgid "Server Roles"
+msgstr "Roles do Servidor"
+
+msgid "Users"
+msgstr "Usuários"
+
+msgid "Database Roles"
+msgstr "Roles do Banco"
+
+msgid "New Login..."
+msgstr "Novo Login..."
+
+msgid "New Server Role..."
+msgstr "Nova Role do Servidor..."
+
+msgid "New User..."
+msgstr "Novo Usuário..."
+
+msgid "New Database Role..."
+msgstr "Nova Role do Banco..."
+
+msgid "Login Properties - {name}"
+msgstr "Propriedades do Login - {name}"
+
+msgid "Server Role Properties - {name}"
+msgstr "Propriedades da Role do Servidor - {name}"
+
+msgid "Database User - {name}"
+msgstr "Usuário do Banco - {name}"
+
+msgid "Database Role Properties - {name}"
+msgstr "Propriedades da Role do Banco - {name}"
+
+msgid "Login - New"
+msgstr "Login - Novo"
+
+msgid "Server Role - New"
+msgstr "Role do Servidor - Nova"
+
+msgid "Database User - New"
+msgstr "Usuário do Banco - Novo"
+
+msgid "Database Role - New"
+msgstr "Role do Banco - Nova"
+
+msgid "The name is required."
+msgstr "O nome é obrigatório."
+
+msgid "A new login needs a password."
+msgstr "Um login novo precisa de senha."
+
+msgid "Server roles"
+msgstr "Roles do servidor"
+
+msgid "Database roles"
+msgstr "Roles do banco"
+
+msgid "Login name:"
+msgstr "Nome do login:"
+
+msgid "User name:"
+msgstr "Nome do usuário:"
+
+msgid "Default database:"
+msgstr "Banco padrão:"
+
+msgid "Default schema:"
+msgstr "Schema padrão:"
+
+msgid "(without login)"
+msgstr "(sem login)"
+
+msgid "(server default)"
+msgstr "(padrão do servidor)"
+
+msgid "Enforce password policy"
+msgstr "Exigir a política de senhas"
+
+msgid "Login is disabled"
+msgstr "O login está desabilitado"
+
+msgid "This is a fixed role: only its members can change."
+msgstr "Esta é uma role fixa: só os membros dela podem mudar."
+
+msgid "The login, user or role could not be read."
+msgstr "Não foi possível ler o login, usuário ou role."
+
+msgid "The login, user or role no longer exists."
+msgstr "O login, usuário ou role não existe mais."
+
 msgid "Search databases"
 msgstr "Pesquisar bancos"
 
@@ -4143,3 +4236,45 @@ msgstr "{provider} está trabalhando…"
 
 msgid "{provider} reported an error: {text}"
 msgstr "{provider} informou um erro: {text}"
+
+msgid "{app} {version} is available."
+msgstr "O {app} {version} está disponível."
+
+msgid "Update now"
+msgstr "Atualizar agora"
+
+msgid "What's new"
+msgstr "Novidades"
+
+msgid "How to update"
+msgstr "Como atualizar"
+
+msgid "Later"
+msgstr "Depois"
+
+msgid "Details"
+msgstr "Detalhes"
+
+msgid "Update failed"
+msgstr "A atualização falhou"
+
+msgid "Installing {version}… Enter your password in the system prompt."
+msgstr "Instalando a {version}… Digite sua senha na janela do sistema."
+
+msgid "Installing {version}…"
+msgstr "Instalando a {version}…"
+
+msgid "The update to {version} failed: {error}"
+msgstr "A atualização para a {version} falhou: {error}"
+
+msgid "The system asks for your password to install the package."
+msgstr "O sistema pede a sua senha para instalar o pacote."
+
+msgid "Or update it in a terminal with:"
+msgstr "Ou atualize pelo terminal com:"
+
+msgid "The update was cancelled at the password prompt."
+msgstr "A atualização foi cancelada na janela de senha."
+
+msgid "The system did not authorize the installation (wrong password, or no polkit agent is running)."
+msgstr "O sistema não autorizou a instalação (senha errada ou nenhum agente do polkit em execução)."

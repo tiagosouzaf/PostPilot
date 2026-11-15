@@ -42,6 +42,7 @@ pub mod results;
 pub mod schema_compare;
 pub mod secrets;
 pub mod security;
+pub mod security_mssql;
 pub mod servers;
 pub mod system_theme;
 pub mod theme;
@@ -3127,6 +3128,18 @@ impl ShellApp {
         let mut picked = Picked::default();
         self.phase("toolbar");
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui, &mut commands, &mut picked));
+        if self.updater.banner_visible() {
+            let palette = theme::palette(self.theme);
+            egui::Panel::top("update_banner")
+                .frame(
+                    egui::Frame::new()
+                        .fill(palette.accent)
+                        .inner_margin(egui::Margin::symmetric(10, 5)),
+                )
+                .show(ui, |ui| {
+                    commands.extend(self.updater.banner(ui, &ctx, palette.on_accent));
+                });
+        }
         self.open_database_list = false;
         if picked.opened {
             databases::reset_list(&ctx);
@@ -3737,6 +3750,11 @@ impl ShellApp {
             pgstudio_core::metadata::Securable::Role(_)
                 | pgstudio_core::metadata::Securable::NewRole
         );
+        // A pasta que lista o principal (SQL Server), para atualizar.
+        let folder = self
+            .explorer
+            .provider()
+            .and_then(|p| p.security_folder(dialog.securable()));
         match dialog.show(ctx) {
             None => {}
             Some(properties::Request::Closed) => self.security = None,
@@ -3750,7 +3768,9 @@ impl ShellApp {
                 self.security = None;
                 self.output.extend(log);
                 self.status = tr("The changes were applied.").to_string();
-                if roles {
+                if let Some(folder) = folder {
+                    self.explorer.refresh(&folder);
+                } else if roles {
                     self.explorer.refresh(&pgstudio_core::metadata::NodeId(
                         "server/Security/Roles".into(),
                     ));

@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use std::sync::atomic::Ordering;
+
 use crate::net::{Progress, download_verified, with_suffix};
 use crate::release::{Asset, Release};
 
@@ -74,6 +76,18 @@ impl InstallKind {
         )
     }
 
+    /// Se é um pacote do sistema que o app instala sozinho com a senha de
+    /// administrador pedida pelo `pkexec` ([`find_pkexec`]): o pacote
+    /// `postpilot` do Release (pacman) e o `.deb`. O pacote do AUR fica com o
+    /// `yay`/`paru`, que é quem sabe atualizá-lo.
+    pub fn is_release_package(&self) -> bool {
+        match self {
+            InstallKind::Pacman(pkg) => pkg != AUR_PACKAGE,
+            InstallKind::Dpkg => true,
+            _ => false,
+        }
+    }
+
     /// Descrição curta para a janela de atualização.
     pub fn describe(&self) -> &'static str {
         match self {
@@ -110,9 +124,116 @@ impl InstallKind {
             InstallKind::AppImage(_) => release.asset_ending_with("-x86_64.AppImage"),
             InstallKind::WindowsMsi => release.asset_ending_with("-x86_64.msi"),
             InstallKind::WindowsPortable(_) => release.asset_ending_with("-windows-x86_64.zip"),
-            InstallKind::Pacman(_) | InstallKind::Dpkg | InstallKind::Other => None,
+            InstallKind::Pacman(pkg) if pkg != AUR_PACKAGE => {
+                release.asset_ending_with("-x86_64.pkg.tar.zst")
+            }
+            InstallKind::Dpkg => release.asset_ending_with("_amd64.deb"),
+            InstallKind::Pacman(_) | InstallKind::Other => None,
         }
     }
+
+    /// O comando que instala o pacote baixado em `file`, sem o `pkexec` na
+    /// frente. Caminhos completos: o `pkexec` não usa o `PATH` do usuário.
+    fn package_command(&self, file: &Path) -> Option<Vec<std::ffi::OsString>> {
+        let args: &[&str] = match self {
+            // Pelo arquivo local, como o install.sh: `pacman -U <URL>` procura
+            // um .sig que o Release não tem. `--noconfirm` sozinho responde
+            // "não" à troca do pacote antigo `pgstudio`; `--ask=4` inverte
+            // essa resposta.
+            InstallKind::Pacman(pkg) if pkg != AUR_PACKAGE => {
+                &["/usr/bin/pacman", "-U", "--noconfirm", "--ask=4"]
+            }
+            InstallKind::Dpkg => &[
+                "/usr/bin/env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "/usr/bin/apt-get",
+                "install",
+                "-y",
+            ],
+            _ => return None,
+        };
+        let mut cmd: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+        cmd.push(file.into());
+        Some(cmd)
+    }
+}
+
+/// O `pkexec` (polkit) no `PATH`: abre a janela de senha do sistema e roda um
+/// comando como administrador. Sem ele, o app mostra o comando para o
+/// usuário rodar no terminal.
+pub fn find_pkexec() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("pkexec"))
+        .find(|p| p.is_file())
+}
+
+/// Pasta dos downloads de pacote: na pasta de cache do usuário, só dele
+/// (0700). Não em `/tmp`: lá outro usuário da máquina poderia trocar o
+/// arquivo entre a conferência do SHA-256 e a instalação como administrador.
+fn package_cache_dir() -> Result<PathBuf, String> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .ok_or("could not find the user's cache folder")?;
+    let dir = base.join("PostPilot").join("update");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    Ok(dir)
+}
+
+/// Erro de [`install`] quando o usuário fecha a janela de senha.
+pub const CANCELLED: &str = "The update was cancelled at the password prompt.";
+/// Erro de [`install`] quando o polkit nega a instalação.
+pub const NOT_AUTHORIZED: &str = "The system did not authorize the installation (wrong password, or no polkit agent is running).";
+
+/// Roda `command` pelo `pkexec` e espera terminar.
+fn run_elevated(pkexec: &Path, command: &[std::ffi::OsString]) -> Result<(), String> {
+    let out = Command::new(pkexec)
+        .args(command)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run {}: {e}", pkexec.display()))?;
+    match out.status.code() {
+        Some(0) => Ok(()),
+        // Os dois códigos do próprio pkexec: janela de senha fechada e
+        // autorização negada (ou nenhum agente do polkit na sessão).
+        Some(126) => Err(CANCELLED.into()),
+        Some(127) => Err(NOT_AUTHORIZED.into()),
+        code => {
+            let text = String::from_utf8_lossy(&out.stderr);
+            let mut tail: Vec<&str> = text
+                .lines()
+                .rev()
+                .filter(|l| !l.trim().is_empty())
+                .take(4)
+                .collect();
+            tail.reverse();
+            let code = code.map_or_else(|| "a signal".to_string(), |c| format!("code {c}"));
+            Err(format!(
+                "The package manager failed ({code}): {}",
+                tail.join(" / ")
+            ))
+        }
+    }
+}
+
+/// O programa em execução, para reabrir depois da troca. O Linux acrescenta
+/// " (deleted)" quando o arquivo já foi substituído.
+fn running_exe() -> Result<PathBuf, String> {
+    let exe =
+        std::env::current_exe().map_err(|e| format!("could not find the running program: {e}"))?;
+    let text = exe.to_string_lossy();
+    Ok(match text.strip_suffix(" (deleted)") {
+        Some(clean) => PathBuf::from(clean),
+        None => exe,
+    })
 }
 
 /// O primeiro ajudante do AUR encontrado no `PATH`.
@@ -156,9 +277,14 @@ pub enum Installed {
 }
 
 /// Baixa, confere e instala a versão nova. Bloqueia: rode numa thread.
+///
+/// `pkexec` ([`find_pkexec`]) só é usado pelos pacotes do sistema
+/// ([`InstallKind::is_release_package`]): o pacote é baixado e conferido como
+/// o usuário, e só a instalação roda como administrador.
 pub fn install(
     kind: &InstallKind,
     release: &Release,
+    pkexec: Option<&Path>,
     user_agent: &str,
     progress: &Progress,
 ) -> Result<Installed, String> {
@@ -199,7 +325,26 @@ pub fn install(
             let _ = std::fs::remove_file(&zip);
             result.map(|()| Installed::Restart(exe.clone()))
         }
-        _ => Err("This installation is updated by its package manager.".into()),
+        InstallKind::Pacman(_) | InstallKind::Dpkg => {
+            let pkexec = pkexec.ok_or(
+                "pkexec (polkit) was not found, so the app cannot ask for the administrator password.",
+            )?;
+            let exe = running_exe()?;
+            let dir = package_cache_dir()?;
+            let file =
+                download_verified(release, asset, &dir.join(&asset.name), user_agent, progress)?;
+            let result = kind
+                .package_command(&file)
+                .ok_or_else(|| "This installation is updated by its package manager.".to_string())
+                .and_then(|command| {
+                    progress.installing.store(true, Ordering::Relaxed);
+                    run_elevated(pkexec, &command)
+                });
+            progress.installing.store(false, Ordering::Relaxed);
+            let _ = std::fs::remove_file(&file);
+            result.map(|()| Installed::Restart(exe))
+        }
+        InstallKind::Other => Err("This installation is updated by its package manager.".into()),
     }
 }
 
@@ -359,6 +504,89 @@ mod tests {
             Some(INSTALL_COMMAND)
         );
         assert_eq!(InstallKind::Other.update_command(&r, None), None);
+    }
+
+    #[test]
+    fn release_packages_download_their_package_and_install_it_as_root() {
+        let r = release(&[
+            "postpilot-0.2.0-1-x86_64.pkg.tar.zst",
+            "postpilot_0.2.0_amd64.deb",
+            "postpilot-0.2.0-linux-x86_64.tar.gz",
+            "SHA256SUMS",
+        ]);
+        let pacman = InstallKind::Pacman("postpilot".into());
+        assert!(pacman.is_release_package() && InstallKind::Dpkg.is_release_package());
+        assert_eq!(
+            pacman.asset(&r).unwrap().name,
+            "postpilot-0.2.0-1-x86_64.pkg.tar.zst"
+        );
+        assert_eq!(
+            InstallKind::Dpkg.asset(&r).unwrap().name,
+            "postpilot_0.2.0_amd64.deb"
+        );
+        let text = |cmd: Vec<std::ffi::OsString>| {
+            cmd.iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(
+            text(
+                pacman
+                    .package_command(Path::new("/c/p.pkg.tar.zst"))
+                    .unwrap()
+            ),
+            "/usr/bin/pacman -U --noconfirm --ask=4 /c/p.pkg.tar.zst"
+        );
+        assert_eq!(
+            text(
+                InstallKind::Dpkg
+                    .package_command(Path::new("/c/p.deb"))
+                    .unwrap()
+            ),
+            "/usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y /c/p.deb"
+        );
+        // O pacote do AUR continua com o yay/paru.
+        let aur = InstallKind::Pacman(AUR_PACKAGE.into());
+        assert!(!aur.is_release_package());
+        assert_eq!(aur.asset(&r), None);
+        assert_eq!(aur.package_command(Path::new("/c/p")), None);
+        assert!(!InstallKind::Other.is_release_package());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pkexec_exit_codes_become_messages() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("updater-pkexec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Um "pkexec" que grava o que recebeu e sai com o código pedido.
+        let fake = dir.join("pkexec");
+        let log = dir.join("log");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {}\necho 'error: boom' >&2\nexit \"$1\"\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |code: &str| run_elevated(&fake, &[code.into(), "arg".into()]);
+        assert_eq!(run("0"), Ok(()));
+        assert!(run("126").unwrap_err().contains("cancelled"));
+        assert!(run("127").unwrap_err().contains("did not authorize"));
+        let err = run("1").unwrap_err();
+        assert!(
+            err.contains("code 1") && err.contains("error: boom"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "0 arg\n126 arg\n127 arg\n1 arg\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

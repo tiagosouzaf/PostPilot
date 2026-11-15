@@ -11,11 +11,12 @@
 //! - **AppImage** e **Windows** (`.msi` ou `.zip`): o app baixa o arquivo do
 //!   Release, confere o SHA-256 contra o `SHA256SUMS` do mesmo Release e se
 //!   atualiza ([`install`]).
-//! - **Pacote do sistema** (pacman/AUR, `.deb`): os arquivos são do
-//!   gerenciador de pacotes, então o app não se sobrescreve; ele só avisa e
-//!   mostra o comando ([`InstallKind::update_command`]): o
-//!   `yay` para o pacote do AUR, o instalador ([`INSTALL_COMMAND`]) para o
-//!   pacote do Release e o `.deb`.
+//! - **Pacote do Release** (o `postpilot` do pacman e o `.deb`): o app baixa
+//!   o pacote, confere o SHA-256 como o usuário e só a instalação roda como
+//!   administrador, com a senha pedida pelo `pkexec` ([`find_pkexec`]). Sem
+//!   `pkexec`, ele mostra o comando do instalador ([`INSTALL_COMMAND`]).
+//! - **Pacote do AUR**: os arquivos são do `yay`/`paru`, então o app só avisa
+//!   e mostra o comando ([`InstallKind::update_command`]).
 //! - **Outros** (`cargo build`, `cargo install`): só avisa, com o link.
 //!
 //! O `SHA256SUMS` protege contra download corrompido ou trocado no caminho,
@@ -28,11 +29,12 @@ mod release;
 mod settings;
 
 pub use install::{
-    AUR_PACKAGE, INSTALL_COMMAND, InstallKind, Installed, aur_helper, cleanup_old_binary, install,
+    AUR_PACKAGE, CANCELLED, INSTALL_COMMAND, InstallKind, Installed, NOT_AUTHORIZED, aur_helper,
+    cleanup_old_binary, find_pkexec, install,
 };
 pub use net::{Progress, download_verified, fetch_latest};
 pub use release::{Asset, Release, ReleaseError, parse_release, parse_sha256sums};
-pub use settings::UpdateSettings;
+pub use settings::{CHECK_INTERVAL, UpdateSettings};
 
 /// Repositório consultado, no formato `dono/nome`.
 pub const REPOSITORY: &str = "tiagosouzaf/postpilot";
