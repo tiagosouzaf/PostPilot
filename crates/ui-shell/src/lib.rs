@@ -57,7 +57,7 @@ use documents::{Documents, FileDialogs, NoDialogs};
 use layout::{LayoutStore, SavedLayout, WindowGeometry};
 use menus::{Entry, MENUS, TOOLBAR, Tool};
 use panels::Panel;
-use pgstudio_core::connection::{Connected, ConnectionSettings, Connector};
+use pgstudio_core::connection::{Connected, ConnectionSettings, Connector, Engine, Feature};
 use pgstudio_docking::Workspace;
 use pgstudio_object_explorer::ObjectExplorer;
 use pgstudio_object_explorer::fake::FakeProvider;
@@ -1484,6 +1484,11 @@ impl ShellApp {
     pub fn execute(&mut self, ctx: &egui::Context, cmd: CommandId) {
         self.last_command = Some(cmd);
         self.status = tr(READY).to_string();
+        if let Some(feature) = command_feature(cmd)
+            && self.refuse_feature(cmd.label(), self.command_engine(cmd), feature)
+        {
+            return;
+        }
         let mut available = Self::is_available(cmd);
         match cmd {
             // F5 no Object Explorer atualiza o nó selecionado, como no SSMS.
@@ -1820,6 +1825,58 @@ impl ShellApp {
             documents::Session(queries.0.open(&db))
         });
         self.dispatch_query(ctx, id, sql, offset, ask, false);
+    }
+
+    /// Motor do servidor conectado com a chave `key` (o ativo ou um dos
+    /// guardados).
+    fn engine_of_key(&self, key: &str) -> Option<Engine> {
+        self.connection
+            .iter()
+            .chain(
+                self.servers
+                    .parked
+                    .iter()
+                    .filter_map(|p| p.connection.as_ref()),
+            )
+            .find(|c| servers::server_key(&c.settings) == key)
+            .map(|c| c.settings.engine)
+    }
+
+    /// Motor do servidor em que `cmd` age: o da janela de consulta ativa
+    /// para os comandos do editor, o do Object Explorer para os outros.
+    fn command_engine(&self, cmd: CommandId) -> Option<Engine> {
+        let active = || self.connection.as_ref().map(|c| c.settings.engine);
+        let editor = matches!(
+            cmd,
+            CommandId::EstimatedPlan
+                | CommandId::ActualPlan
+                | CommandId::ObjectInfo
+                | CommandId::DesignQuery
+        );
+        if editor && let Some(key) = self.active_doc.and_then(|id| self.doc_servers.get(&id)) {
+            return self.engine_of_key(key).or_else(active);
+        }
+        active()
+    }
+
+    /// Recusa, com aviso na status bar, uma ação que o motor do servidor
+    /// ainda não tem. Devolve `true` quando recusou.
+    fn refuse_feature(&mut self, label: &str, engine: Option<Engine>, feature: Feature) -> bool {
+        match engine {
+            Some(engine) if !engine.supports(feature) => {
+                self.status = trf!(
+                    "\"{command}\" is not available for {engine} yet.",
+                    command = label.trim_end_matches(['…', '.']),
+                    engine = engine.label()
+                );
+                self.output.push(format!(
+                    "> {label} ({})",
+                    tr("not available for this server")
+                ));
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Ambiente e cor do servidor da janela de consulta `id` (o dela ou,
@@ -2343,6 +2400,15 @@ impl ShellApp {
         let Some(provider) = self.explorer.provider() else {
             return;
         };
+        if let Some((label, feature)) = explorer_event_feature(&event)
+            && self.refuse_feature(
+                &label,
+                self.connection.as_ref().map(|c| c.settings.engine),
+                feature,
+            )
+        {
+            return;
+        }
         let (node, action, run, read_only) = match event {
             Event::AskClaude(node) => {
                 let database = provider.database_of(&node);
@@ -3861,4 +3927,43 @@ pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
+}
+
+/// Recurso do servidor de que um comando precisa.
+fn command_feature(cmd: CommandId) -> Option<Feature> {
+    Some(match cmd {
+        CommandId::EstimatedPlan | CommandId::ActualPlan => Feature::ExecutionPlan,
+        CommandId::ObjectInfo => Feature::ObjectInfo,
+        CommandId::ActivityMonitor => Feature::ActivityMonitor,
+        CommandId::SchemaCompare => Feature::SchemaCompare,
+        CommandId::DesignQuery => Feature::QueryDesigner,
+        CommandId::ClaudeExplain | CommandId::ClaudeOptimize | CommandId::ClaudeFix => {
+            Feature::Claude
+        }
+        _ => return None,
+    })
+}
+
+/// Nome da ação e recurso do servidor de que uma ação do Object Explorer
+/// precisa. Scripts, Select Top e propriedades dependem só do provedor.
+fn explorer_event_feature(event: &pgstudio_object_explorer::Event) -> Option<(String, Feature)> {
+    use pgstudio_object_explorer::{EDIT_TOP_ROWS, Event};
+    let (label, feature) = match event {
+        Event::EditTop(_) => {
+            return Some((
+                trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS),
+                Feature::EditRows,
+            ));
+        }
+        Event::NewTable(_) => (tr("New Table"), Feature::Designers),
+        Event::Design(_) => (tr("Design"), Feature::Designers),
+        Event::NewDiagram(_) => (tr("New Database Diagram"), Feature::Designers),
+        Event::ActivityMonitor(_) => (tr("Activity Monitor"), Feature::ActivityMonitor),
+        Event::BackUp(_) => (tr("Back Up..."), Feature::Backup),
+        Event::Restore(_) => (tr("Restore Database..."), Feature::Backup),
+        Event::CompareSchema(_) => (tr("Compare Schema..."), Feature::SchemaCompare),
+        Event::AskClaude(_) => (tr("Ask Claude"), Feature::Claude),
+        _ => return None,
+    };
+    Some((label.to_string(), feature))
 }

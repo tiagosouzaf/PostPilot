@@ -122,6 +122,7 @@ impl Side {
                     return Err(trf!("Enter the {what} database.", what = what));
                 }
                 let settings = ConnectionSettings {
+                    engine: Default::default(),
                     host,
                     port,
                     database: self.database.trim().into(),

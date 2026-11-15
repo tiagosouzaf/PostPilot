@@ -26,6 +26,7 @@ fn server() -> Option<Server> {
     };
     let var = |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.into());
     let settings = ConnectionSettings {
+        engine: Default::default(),
         host,
         port: var("PGSTUDIO_TEST_PORT", "5432").parse().unwrap(),
         database: "postgres".into(),

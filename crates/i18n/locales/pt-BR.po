@@ -3934,3 +3934,9 @@ msgstr "Confirmar alterações"
 
 msgid "Ask before running SQL that can change the database (INSERT, UPDATE, DELETE, DDL) in a query window."
 msgstr "Perguntar antes de rodar, numa janela de consulta, SQL que pode alterar o banco (INSERT, UPDATE, DELETE, DDL)."
+
+msgid "\"{command}\" is not available for {engine} yet."
+msgstr "\"{command}\" ainda não está disponível para {engine}."
+
+msgid "not available for this server"
+msgstr "não disponível neste servidor"

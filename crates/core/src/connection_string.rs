@@ -31,6 +31,7 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
     }
     let mut parsed = Parsed {
         settings: ConnectionSettings {
+            engine: Default::default(),
             host: "localhost".into(),
             port: DEFAULT_PORT,
             database: String::new(),
