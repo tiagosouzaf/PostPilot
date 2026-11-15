@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use eframe::egui;
 use pgstudio_automation::agent::{self, Agent, AgentEvent};
+use pgstudio_automation::chat_agent::{self, ChatAgent};
 use pgstudio_automation::endpoint::{self, Listener};
+use pgstudio_automation::llm::Backend;
 use pgstudio_automation::{EditMode, Origin};
 use pgstudio_core::CommandId;
 use pgstudio_i18n::{tr, tr_noop, trf};
@@ -53,6 +55,32 @@ pub enum PanelAction {
     NewChat,
     /// Inserir este SQL na janela de consulta ativa.
     InsertSql(String),
+    /// Abrir Tools > Options na página dos provedores de IA.
+    Settings,
+}
+
+/// Quem responde no painel: o Claude Code instalado ou um provedor por
+/// chave de API. Os dois falam por [`AgentEvent`].
+#[derive(Debug)]
+pub(crate) enum PanelAgent {
+    Code(Agent),
+    Api(ChatAgent),
+}
+
+impl PanelAgent {
+    fn try_recv(&self) -> Option<AgentEvent> {
+        match self {
+            PanelAgent::Code(a) => a.try_recv(),
+            PanelAgent::Api(a) => a.try_recv(),
+        }
+    }
+
+    fn send(&mut self, text: &str) -> std::io::Result<()> {
+        match self {
+            PanelAgent::Code(a) => a.send(text),
+            PanelAgent::Api(a) => a.send(text),
+        }
+    }
 }
 
 /// Estado do painel.
@@ -60,7 +88,11 @@ pub enum PanelAction {
 pub struct ClaudePanel {
     pub(crate) items: Vec<Item>,
     pub input: String,
-    pub(crate) agent: Option<Agent>,
+    pub(crate) agent: Option<PanelAgent>,
+    /// Nome do provedor em uso; vazio com o Claude Code.
+    pub(crate) provider: String,
+    /// Para onde vai o que o assistente lê (o servidor do provedor).
+    pub(crate) provider_host: String,
     /// Sessão do Claude Code, para continuar depois de Parar.
     pub(crate) session: Option<String>,
     pub(crate) model: String,
@@ -105,7 +137,7 @@ impl ClaudePanel {
     /// Recebe os eventos do processo. Devolve `true` se algo mudou.
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = false;
-        while let Some(event) = self.agent.as_ref().and_then(Agent::try_recv) {
+        while let Some(event) = self.agent.as_ref().and_then(PanelAgent::try_recv) {
             changed = true;
             self.apply(event);
         }
@@ -115,7 +147,9 @@ impl ClaudePanel {
     pub(crate) fn apply(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::Started { session_id, model } => {
-                self.session = Some(session_id);
+                if !session_id.is_empty() {
+                    self.session = Some(session_id);
+                }
                 self.model = model;
             }
             AgentEvent::TextDelta(t) => match self.items.last_mut() {
@@ -164,8 +198,14 @@ impl ClaudePanel {
                 if !session_id.is_empty() {
                     self.session = Some(session_id);
                 }
-                if is_error {
+                if is_error && self.provider.is_empty() {
                     self.note(trf!("Claude Code reported an error: {text}", text = text));
+                } else if is_error {
+                    self.note(trf!(
+                        "{provider} reported an error: {text}",
+                        provider = self.provider,
+                        text = text
+                    ));
                 }
             }
             AgentEvent::Stderr(line) => {
@@ -201,8 +241,13 @@ impl ClaudePanel {
         let width = ui.available_width();
         ui.set_max_width(width);
         ui.horizontal(|ui| {
+            let name = if self.provider.is_empty() {
+                "Claude"
+            } else {
+                self.provider.as_str()
+            };
             // i18n-ignore
-            let title = ui.strong(format!("{} Claude", egui_phosphor::regular::SPARKLE));
+            let title = ui.strong(format!("{} {name}", egui_phosphor::regular::SPARKLE));
             if !self.model.is_empty() {
                 title.on_hover_text(trf!("Model: {model}", model = self.model));
             }
@@ -217,6 +262,15 @@ impl ClaudePanel {
                     .clicked()
                 {
                     actions.push(PanelAction::NewChat);
+                }
+                if ui
+                    .button(egui_phosphor::regular::GEAR)
+                    .on_hover_text(tr(
+                        "Choose the AI provider (Tools > Options > AI Providers)",
+                    ))
+                    .clicked()
+                {
+                    actions.push(PanelAction::Settings);
                 }
                 if self.busy
                     && ui
@@ -250,14 +304,22 @@ impl ClaudePanel {
                 if self.busy {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.weak(tr("Claude is working…"));
+                        if self.provider.is_empty() {
+                            ui.weak(tr("Claude is working…"));
+                        } else {
+                            ui.weak(trf!("{provider} is working…", provider = self.provider));
+                        }
                     });
                 }
             });
         ui.separator();
         let edit = egui::TextEdit::multiline(&mut self.input)
             .id(egui::Id::new("claude_input"))
-            .hint_text(tr("Message Claude"))
+            .hint_text(if self.provider.is_empty() {
+                tr("Message Claude").to_string()
+            } else {
+                trf!("Message {provider}", provider = self.provider)
+            })
             .desired_rows(3)
             .desired_width(f32::INFINITY);
         let response = ui
@@ -284,16 +346,17 @@ impl ClaudePanel {
                 response.request_focus();
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(tr(
-                            "Uses your Claude Code sign-in. What Claude reads is sent to Anthropic.",
-                        ))
-                        .small()
-                        .weak(),
+                let notice = if self.provider.is_empty() {
+                    tr("Uses your Claude Code sign-in. What Claude reads is sent to Anthropic.")
+                        .to_string()
+                } else {
+                    trf!(
+                        "Uses your {provider} API key. What the assistant reads is sent to {host}.",
+                        provider = self.provider,
+                        host = self.provider_host
                     )
-                    .wrap(),
-                );
+                };
+                ui.add(egui::Label::new(egui::RichText::new(notice).small().weak()).wrap());
             });
         });
         actions
@@ -518,7 +581,7 @@ fn show_code(ui: &mut egui::Ui, lang: &str, body: &str, actions: &mut Vec<PanelA
 
 /// O que dizer quando o `claude` não é encontrado.
 pub const NOT_INSTALLED: &str = tr_noop(
-    "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path.",
+    "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path. Or connect another AI (OpenAI, OpenRouter, GLM) in Tools > Options > AI Providers.",
 );
 
 /// Quanto da seleção vai na linha de contexto.
@@ -533,6 +596,7 @@ impl crate::ShellApp {
         exe: Option<PathBuf>,
         dir: Option<PathBuf>,
     ) -> Self {
+        self.ai.set_program(program.clone());
         self.claude_panel.program = program;
         self.claude_panel.exe = exe;
         self.claude_panel.dir = dir;
@@ -551,16 +615,23 @@ impl crate::ShellApp {
             match action {
                 PanelAction::Send(text) => self.claude_panel_send(ctx, &text),
                 PanelAction::Stop => {
-                    if let Some(mut agent) = self.claude_panel.agent.take() {
-                        agent.stop();
+                    match self.claude_panel.agent.take() {
+                        // O processo morre; a próxima mensagem retoma a
+                        // sessão.
+                        Some(PanelAgent::Code(mut agent)) => agent.stop(),
+                        // A conversa fica; só a resposta é interrompida.
+                        Some(PanelAgent::Api(mut agent)) => {
+                            agent.stop();
+                            self.claude_panel.agent = Some(PanelAgent::Api(agent));
+                        }
+                        None => {}
                     }
                     self.claude_panel.busy = false;
                     self.claude_panel.note(tr("Stopped."));
                 }
+                PanelAction::Settings => self.open_ai_options(),
                 PanelAction::NewChat => {
-                    if let Some(mut agent) = self.claude_panel.agent.take() {
-                        agent.stop();
-                    }
+                    self.claude_panel.agent = None;
                     let panel = &mut self.claude_panel;
                     panel.items.clear();
                     panel.session = None;
@@ -616,8 +687,12 @@ impl crate::ShellApp {
             Ok(()) => self.claude_panel.busy = true,
             Err(e) => {
                 self.claude_panel.agent = None;
-                self.claude_panel
-                    .note(trf!("Could not talk to Claude Code: {error}", error = e));
+                let who = self.ai.active_label();
+                self.claude_panel.note(trf!(
+                    "Could not talk to {who}: {error}",
+                    who = who,
+                    error = e
+                ));
             }
         }
     }
@@ -737,12 +812,32 @@ impl crate::ShellApp {
     }
 
     fn claude_panel_start(&mut self, ctx: &egui::Context) -> Result<(), String> {
-        let program = self
-            .claude_panel
-            .program
-            .clone()
-            .or_else(agent::find_program)
-            .ok_or_else(|| tr(NOT_INSTALLED).to_string())?;
+        let program = match self.ai.backend() {
+            Some(Backend::Api { name, conn }) => {
+                let client = self.automation(ctx);
+                let repaint = ctx.clone();
+                self.claude_panel.provider = name;
+                self.claude_panel.provider_host = conn.host().to_string();
+                self.claude_panel.agent = Some(PanelAgent::Api(ChatAgent::start(
+                    conn,
+                    chat_agent::PANEL_PROMPT,
+                    &pgstudio_automation::tools::all(),
+                    Arc::new(move |tool, args| client.call(tool, args, Origin::Assistant)),
+                    Arc::new(move || repaint.request_repaint()),
+                )));
+                return Ok(());
+            }
+            Some(Backend::ClaudeCode { program }) => program,
+            None if self.ai.settings().active_provider().is_some() => {
+                return Err(trf!(
+                    "{provider} has no API key yet. Add it in Tools > Options > AI Providers.",
+                    provider = self.ai.active_label()
+                ));
+            }
+            None => return Err(tr(NOT_INSTALLED).to_string()),
+        };
+        self.claude_panel.provider.clear();
+        self.claude_panel.provider_host.clear();
         let dir = self
             .claude_panel
             .dir
@@ -782,7 +877,7 @@ impl crate::ShellApp {
         );
         match started {
             Ok(a) => {
-                self.claude_panel.agent = Some(a);
+                self.claude_panel.agent = Some(PanelAgent::Code(a));
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

@@ -16,6 +16,8 @@ pub enum Origin {
     Mcp,
     /// O painel do Claude dentro do app.
     Panel,
+    /// O mesmo painel com outro provedor de IA (OpenAI, OpenRouter, GLM...).
+    Assistant,
 }
 
 impl Origin {
@@ -23,6 +25,7 @@ impl Origin {
         match self {
             Origin::Mcp => "Claude Code",
             Origin::Panel => "Claude",
+            Origin::Assistant => "AI",
         }
     }
 }

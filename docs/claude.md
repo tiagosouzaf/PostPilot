@@ -115,6 +115,44 @@ O painel e as ações rápidas funcionam igual (o PostPilot procura
 O `.msi` não instala o plugin. Nada disso foi testado num Windows de
 verdade.
 
+## Outras IAs: OpenAI, OpenRouter, GLM
+
+O Claude Code é o padrão, mas o painel, o botão **Gerar com IA** do Commit e
+o nome de arquivo sugerido ao salvar funcionam com qualquer serviço que fale
+a API da OpenAI. Em **Ferramentas > Provedores de IA…**:
+
+1. **Adicionar** e escolha o provedor: OpenAI (ChatGPT), OpenRouter, GLM
+   (Z.ai) ou "Outro (compatível com OpenAI)" para Ollama, LM Studio etc.
+2. Confira a **URL base** e o **Modelo** e cole a **Chave de API**.
+   O GLM já vem com o endereço da assinatura GLM Coding Plan
+   (`https://api.z.ai/api/coding/paas/v4`); a chave paga por uso usa
+   `https://api.z.ai/api/paas/v4`. A OpenAI pede uma chave de
+   platform.openai.com: a assinatura do ChatGPT sozinha não inclui uma.
+3. **Testar conexão** faz uma pergunta curta ao modelo e lista os modelos
+   que a chave enxerga.
+4. Em cima, escolha qual assistente o PostPilot usa e dê OK.
+
+As chaves ficam no cofre do sistema (Secret Service, por exemplo o GNOME
+Keyring); sem cofre, em `~/.config/PostPilot/ai-keys.json`, que só você lê
+(0600). A lista de provedores fica em `~/.config/PostPilot/ai.json`, sem
+chave nenhuma. Nada disso vai para a pasta do workspace nem para o Git.
+
+Com um provedor escolhido, o painel usa as mesmas ferramentas e a mesma
+regra: ler é livre, alterar pede confirmação. O que o assistente lê vai para
+o servidor do provedor.
+
+**Com uma IA conectada** (Claude Code instalado ou um provedor com chave):
+
+- o diálogo de **Commit** do workspace ganha **Gerar com IA**, que escreve a
+  mensagem a partir da lista de arquivos e do diff (o `secrets.json` entra
+  só pelo nome) e deixa você editar antes de confirmar;
+- ao **salvar uma consulta nova**, o nome sugerido deixa de ser
+  `SQLQuery1.sql` e passa a descrever o SQL (`clientes_inativos.sql`). Um
+  aviso com **Pular** aparece enquanto a IA pensa; se ela demorar mais de
+  12 segundos ou falhar, o diálogo abre com o nome padrão.
+
+Sem IA conectada, o botão fica desligado e o nome é o padrão.
+
 ## Quando algo não funciona
 
 | Sintoma | O que fazer |

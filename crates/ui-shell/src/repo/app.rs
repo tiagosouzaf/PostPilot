@@ -443,9 +443,16 @@ impl ShellApp {
                 }
             }
         }
-        if let Some(status) = self
+        // Só procura a IA quando o diálogo de Commit está aberto.
+        let ai = self
             .workspace_panel
-            .show_windows(ctx, self.secrets.as_ref())
+            .source_control()
+            .is_some_and(|g| g.has_dialog())
+            .then(|| self.ai.backend())
+            .flatten();
+        if let Some(status) =
+            self.workspace_panel
+                .show_windows(ctx, self.secrets.as_ref(), ai.as_ref())
         {
             self.status = status;
         }

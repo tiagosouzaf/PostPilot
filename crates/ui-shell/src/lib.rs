@@ -6,6 +6,8 @@
 //! docking com o Object Explorer, as tool windows e as janelas de consulta.
 
 pub mod activity;
+pub mod ai;
+pub mod ai_names;
 pub mod applog;
 pub mod backup;
 pub mod bench;
@@ -211,6 +213,10 @@ pub struct ShellApp {
     /// Ponte com o Claude (MCP e painel): pedidos e confirmações.
     claude: claude::Bridge,
     claude_panel: claude_panel::ClaudePanel,
+    /// O assistente escolhido e as chaves dos provedores de IA.
+    ai: ai::Ai,
+    /// Nome de arquivo sugerido pela IA ao salvar uma consulta nova.
+    name_suggestions: ai_names::NameSuggestions,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -387,6 +393,8 @@ impl Default for ShellApp {
             new_query_on_connect: None,
             claude: Default::default(),
             claude_panel: Default::default(),
+            ai: Default::default(),
+            name_suggestions: Default::default(),
         }
     }
 }
@@ -755,10 +763,75 @@ impl ShellApp {
             options::Action::None => {}
             options::Action::Cancel => self.options = None,
             options::Action::Apply(prefs) => {
-                self.options = None;
+                if let Some(dialog) = self.options.take() {
+                    self.apply_ai_options(dialog.ai);
+                }
                 prefs.apply();
                 self.save_preferences(prefs);
                 self.apply_theme_preference(ctx, false);
+            }
+        }
+    }
+
+    fn open_options(&mut self, page: Option<options::Page>) {
+        let mut dialog = options::OptionsDialog::new(&self.preferences);
+        dialog.system_theme = self.system_theme.current();
+        dialog.ai =
+            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code());
+        if let Some(page) = page {
+            dialog.page = page;
+        }
+        self.options = Some(dialog);
+    }
+
+    /// Tools > AI Providers: as opções, na página dos provedores de IA.
+    pub(crate) fn open_ai_options(&mut self) {
+        self.open_options(Some(options::Page::AiProviders));
+    }
+
+    /// O diálogo de opções aberto (testes).
+    pub fn options_mut(&mut self) -> Option<&mut options::OptionsDialog> {
+        self.options.as_mut()
+    }
+
+    /// A IA em uso e os provedores configurados.
+    pub fn ai(&self) -> &ai::Ai {
+        &self.ai
+    }
+
+    /// Usa esta configuração de IA (o aplicativo lê a da pasta de
+    /// configuração; os testes montam a deles).
+    pub fn with_ai(mut self, ai: ai::Ai) -> Self {
+        self.claude_panel.provider = ai
+            .settings()
+            .active_provider()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        self.ai = ai;
+        self
+    }
+
+    /// O OK das opções, na parte da IA: grava e, se o assistente mudou,
+    /// a conversa do painel recomeça com o novo.
+    fn apply_ai_options(&mut self, draft: options::AiDraft) {
+        let before = self.ai.backend();
+        if let Some(problem) = self.ai.apply(draft.settings, draft.new_keys) {
+            self.status = trf!("Could not save the AI providers: {error}", error = problem);
+        }
+        if self.ai.backend() != before {
+            let panel = &mut self.claude_panel;
+            panel.agent = None;
+            panel.session = None;
+            panel.busy = false;
+            panel.provider = match self.ai.settings().active_provider() {
+                Some(p) => p.name.clone(),
+                None => String::new(),
+            };
+            if !panel.items.is_empty() {
+                panel.note(trf!(
+                    "Now using {provider}. The conversation starts over.",
+                    provider = self.ai.active_label()
+                ));
             }
         }
     }
@@ -1492,6 +1565,7 @@ impl ShellApp {
             Exit | ThemeSystem
                 | ThemeLight
                 | ClaudeCodeAccess
+                | AiProviders
                 | ThemeDark
                 | FullScreen
                 | About
@@ -1596,11 +1670,8 @@ impl ShellApp {
             }
             CommandId::About => self.about_open = true,
             CommandId::JsonGuide => self.json_guide.open = true,
-            CommandId::Options => {
-                let mut dialog = options::OptionsDialog::new(&self.preferences);
-                dialog.system_theme = self.system_theme.current();
-                self.options = Some(dialog);
-            }
+            CommandId::Options => self.open_options(None),
+            CommandId::AiProviders => self.open_ai_options(),
             CommandId::CheckForUpdates => self.updater.check_now(ctx),
             CommandId::ObjectExplorer => self.workspace.open(Panel::ObjectExplorer),
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
@@ -2852,17 +2923,29 @@ impl ShellApp {
                 }
             }
             current => {
-                let question = file_dialogs::Question::Save {
-                    name: doc.name().to_string(),
-                    current: current.map(Path::to_path_buf),
+                let default_name = doc.name().to_string();
+                let current = current.map(Path::to_path_buf);
+                let is_new = current.is_none();
+                let save = move |app: &mut ShellApp, suggested: Option<String>| {
+                    let question = file_dialogs::Question::Save {
+                        name: suggested.unwrap_or(default_name),
+                        current,
+                    };
+                    app.ask_path(question, move |app, _, path| {
+                        if let Some(path) = path
+                            && app.save_to(id, &path)
+                        {
+                            app.save_each(ids, ask, done);
+                        }
+                    });
                 };
-                self.ask_path(question, move |app, _, path| {
-                    if let Some(path) = path
-                        && app.save_to(id, &path)
-                    {
-                        app.save_each(ids, ask, done);
-                    }
-                });
+                if is_new {
+                    // Consulta nova: com uma IA conectada, ela sugere o
+                    // nome no lugar de `SQLQuery1.sql`.
+                    self.suggest_file_name(id, save);
+                } else {
+                    save(self, None);
+                }
             }
         }
     }
@@ -3179,6 +3262,7 @@ impl ShellApp {
         self.connect_window(&ctx);
         self.follow_system_theme(&ctx);
         self.options_window(&ctx);
+        self.name_suggestion_step(&ctx);
 
         if self.about_open {
             let mut open = true;

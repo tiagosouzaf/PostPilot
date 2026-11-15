@@ -41,3 +41,9 @@ pgstudio-mssql.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# `cargo test -p pgstudio-ui-shell --features screenshots --test ai_screenshots`
+# desenha a interface sem janela (wgpu) e grava PNGs: capturas de tela onde
+# não há como dirigir o app de verdade.
+screenshots = ["egui_kittest/wgpu"]

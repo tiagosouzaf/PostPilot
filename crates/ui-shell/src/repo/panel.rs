@@ -468,6 +468,7 @@ impl WorkspacePanel {
         &mut self,
         ctx: &egui::Context,
         store: Option<&Arc<dyn SecretStore>>,
+        ai: Option<&pgstudio_automation::llm::Backend>,
     ) -> Option<String> {
         let mut status = self.message.take();
         if let Some(o) = &mut self.opened
@@ -476,7 +477,7 @@ impl WorkspacePanel {
             status = Some(s);
         }
         if let Some(o) = &mut self.opened {
-            if let Some(s) = o.git.show_windows(ctx) {
+            if let Some(s) = o.git.show_windows(ctx, ai) {
                 status = Some(s);
             }
             if let Some(s) = o.passwords.show_windows(ctx, store) {

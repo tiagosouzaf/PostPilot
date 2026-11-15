@@ -4,6 +4,9 @@
 use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::mpsc;
+
+use pgstudio_automation::llm::Backend;
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
@@ -14,6 +17,16 @@ use super::git::{self, Done, Git, GitError, Job, Status};
 struct CommitDialog {
     message: String,
     error: Option<String>,
+    /// A IA escrevendo a mensagem; a resposta chega aqui.
+    generating: Option<mpsc::Receiver<Result<String, String>>>,
+}
+
+/// Idioma da interface, como a IA deve escrever a mensagem.
+fn language_for_ai() -> &'static str {
+    match pgstudio_i18n::language() {
+        pgstudio_i18n::Language::PortugueseBrazil => "Brazilian Portuguese",
+        _ => "English",
+    }
 }
 
 /// "Remote..." esperando a URL.
@@ -176,7 +189,80 @@ impl SourceControl {
         self.commit = Some(CommitDialog {
             message: String::new(),
             error: None,
+            generating: None,
         });
+    }
+
+    /// O botão "Generate with AI" do Commit: pede a `backend` uma mensagem
+    /// para o que mudou. Roda numa thread; a resposta preenche o campo.
+    pub fn generate_commit_message(&mut self, ctx: &egui::Context, backend: &Backend) {
+        let Some(dialog) = &mut self.commit else {
+            return;
+        };
+        let (tx, rx) = mpsc::channel();
+        let (git, backend, ctx) = (self.git.clone(), backend.clone(), ctx.clone());
+        let language = language_for_ai();
+        std::thread::spawn(move || {
+            let result = git
+                .commit_context()
+                .map_err(|e| e.to_string())
+                .and_then(|(changes, diff)| {
+                    backend.ask(
+                        &pgstudio_automation::commit::system_prompt(language),
+                        &pgstudio_automation::commit::user_prompt(&changes, &diff),
+                        &std::env::temp_dir().join("postpilot-ai"),
+                    )
+                })
+                .map(|answer| pgstudio_automation::commit::clean(&answer));
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+        dialog.error = None;
+        dialog.generating = Some(rx);
+    }
+
+    /// A mensagem no diálogo de Commit aberto (testes).
+    pub fn commit_message(&self) -> Option<&str> {
+        self.commit.as_ref().map(|d| d.message.as_str())
+    }
+
+    /// O erro mostrado no diálogo de Commit (testes).
+    pub fn commit_error(&self) -> Option<&str> {
+        self.commit.as_ref().and_then(|d| d.error.as_deref())
+    }
+
+    /// Se a IA ainda está escrevendo a mensagem.
+    pub fn is_generating(&self) -> bool {
+        self.commit.as_ref().is_some_and(|d| d.generating.is_some())
+    }
+
+    /// Recebe a mensagem da IA, se chegou.
+    fn poll_generated(&mut self) {
+        let Some(dialog) = &mut self.commit else {
+            return;
+        };
+        let Some(rx) = &dialog.generating else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(message)) if !message.is_empty() => {
+                dialog.message = message;
+                dialog.generating = None;
+            }
+            Ok(Ok(_)) => {
+                dialog.error = Some(tr("The AI answered with an empty message.").into());
+                dialog.generating = None;
+            }
+            Ok(Err(e)) => {
+                dialog.error = Some(trf!(
+                    "The AI could not write the message: {error}",
+                    error = e
+                ));
+                dialog.generating = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => dialog.generating = None,
+        }
     }
 
     /// Abre "Remote..." (testes e o menu).
@@ -363,11 +449,14 @@ impl SourceControl {
     }
 
     /// Desenha "Commit" e "Remote...". Devolve uma mensagem para a status
-    /// bar quando há.
-    pub fn show_windows(&mut self, ctx: &egui::Context) -> Option<String> {
+    /// bar quando há. `ai` é a IA conectada, se houver: com ela o Commit
+    /// oferece escrever a mensagem.
+    pub fn show_windows(&mut self, ctx: &egui::Context, ai: Option<&Backend>) -> Option<String> {
         if self.poll() {
             ctx.request_repaint();
         }
+        self.poll_generated();
+        let mut generate = false;
         let changes = self.status().map(|s| s.changes.clone()).unwrap_or_default();
         let conflicts = self
             .status()
@@ -393,10 +482,41 @@ impl SourceControl {
                             }
                         });
                 });
-                ui.label(tr("Message:"));
-                ui.add(
+                let generating = dialog.generating.is_some();
+                ui.horizontal(|ui| {
+                    ui.label(tr("Message:"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let button = ui.add_enabled(
+                            ai.is_some() && !generating,
+                            egui::Button::new(format!(
+                                "{} {}",
+                                egui_phosphor::regular::SPARKLE,
+                                tr("Generate with AI")
+                            ))
+                            .small(),
+                        );
+                        let button = match ai {
+                            Some(backend) => button.on_hover_text(trf!(
+                                "{name} writes the message from the changes. The list of files and the diff are sent to it.",
+                                name = backend.label()
+                            )),
+                            None => button.on_disabled_hover_text(tr(
+                                "No AI is connected. Install Claude Code or add a provider in Tools > AI Providers.",
+                            )),
+                        };
+                        if button.clicked() {
+                            generate = true;
+                        }
+                        if generating {
+                            ui.weak(tr("Writing the message…"));
+                            ui.spinner();
+                        }
+                    });
+                });
+                ui.add_enabled(
+                    !generating,
                     egui::TextEdit::multiline(&mut dialog.message)
-                        .desired_rows(3)
+                        .desired_rows(4)
                         .desired_width(f32::INFINITY),
                 );
                 if let Some(e) = &dialog.error {
@@ -416,8 +536,13 @@ impl SourceControl {
                 });
             });
         }
+        if generate && let Some(backend) = ai {
+            self.generate_commit_message(ctx, backend);
+        }
         if cancel {
             self.commit = None;
+        } else if self.is_generating() {
+            // Commit só depois que a mensagem chegar.
         } else if let Some(push) = commit
             && let Some(dialog) = &mut self.commit
         {
