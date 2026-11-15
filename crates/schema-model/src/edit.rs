@@ -10,10 +10,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::{
-    Check, Column, ForeignKey, Id, Index, Key, Model, Table, default_constraint_name,
-    rename_in_expr,
-};
+use crate::{Check, Column, ForeignKey, Id, Index, Key, Model, Table, default_constraint_name};
 
 /// Pedido de edição recusado.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -240,6 +237,7 @@ impl Document {
             }
             let id = m.new_id();
             let column = m.new_id();
+            let integer = m.dialect.integer();
             m.push(Table {
                 id,
                 schema: schema.into(),
@@ -247,7 +245,7 @@ impl Document {
                 columns: vec![Column {
                     id: column,
                     name: "id".into(),
-                    ty: "integer".into(),
+                    ty: integer.into(),
                     nullable: false,
                     identity: Some(crate::Identity::Always),
                     ..Default::default()
@@ -367,6 +365,7 @@ impl Document {
                         }
                     }
                 }
+                let dialect = m.dialect;
                 let t = get_mut(m, table)?;
                 for key in t.primary_key.iter_mut().chain(t.uniques.iter_mut()) {
                     rename(&mut key.columns);
@@ -374,14 +373,10 @@ impl Document {
                 for fk in &mut t.foreign_keys {
                     rename(&mut fk.columns);
                 }
-                let expr = |e: &mut String| *e = rename_in_expr(e, &old, name);
+                let expr = |e: &mut String| *e = dialect.rename_in_expr(e, &old, name);
                 for index in &mut t.indexes {
                     for c in &mut index.columns {
-                        if *c == old {
-                            *c = name.to_string();
-                        } else if c.contains(['(', ' ', '"']) {
-                            expr(c);
-                        }
+                        dialect.rename_index_column(c, &old, name);
                     }
                     index.predicate.iter_mut().for_each(expr);
                 }

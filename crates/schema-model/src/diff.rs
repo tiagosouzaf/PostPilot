@@ -19,13 +19,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{
-    Column, ForeignKey, Id, Key, Model, Table, idents, qualified, quote_ident, rename_in_expr,
-};
+use crate::{Column, Dialect, ForeignKey, Id, Key, Model, Table, idents, qualified, quote_ident};
 
 /// Comandos SQL, cada um terminado em `;`, que levam o banco de `old` a
 /// `new`. Vazio se não há diferença.
 pub fn diff(old: &Model, new: &Model) -> Vec<String> {
+    if new.dialect == Dialect::Tsql {
+        return crate::tsql::diff(old, new);
+    }
     let mut out = Plan::default();
     let new_arcs: HashMap<Id, &Arc<Table>> = new.tables.iter().map(|t| (t.id, t)).collect();
     let new_by_id: HashMap<Id, &Table> = new.tables.iter().map(|t| (t.id, &**t)).collect();
@@ -206,6 +207,15 @@ pub fn diff(old: &Model, new: &Model) -> Vec<String> {
     out.into_statements()
 }
 
+/// Mudanças que o banco não faz no lugar; o designer mostra em vez de
+/// salvar. Hoje só o SQL Server tem ([`crate::tsql::unsupported`]).
+pub fn unsupported(old: &Model, new: &Model) -> Vec<String> {
+    match new.dialect {
+        Dialect::Postgres => Vec::new(),
+        Dialect::Tsql => crate::tsql::unsupported(old, new),
+    }
+}
+
 /// Avisos de perda de dados ao ir de `old` a `new`: tabelas e colunas
 /// apagadas e tipos que mudam para algo que pode não caber (o SSMS mostra
 /// isso antes de salvar).
@@ -226,7 +236,7 @@ pub fn data_loss_warnings(old: &Model, new: &Model) -> Vec<String> {
                     column = oc.name,
                     table = n.qualified()
                 )),
-                Some(nc) if nc.generated.is_none() && !widens(&oc.ty, &nc.ty) => {
+                Some(nc) if nc.generated.is_none() && !fits(new.dialect, &oc.ty, &nc.ty) => {
                     out.push(pgstudio_i18n::trf!("Data might be lost converting column {column} of {table} from {from} to {to}.", column = nc.name, table = n.qualified(), from = oc.ty, to = nc.ty));
                 }
                 _ => {}
@@ -283,6 +293,64 @@ fn widens(from: &str, to: &str) -> bool {
     }
 }
 
+/// [`widens`] no SQL do banco.
+fn fits(dialect: Dialect, from: &str, to: &str) -> bool {
+    match dialect {
+        Dialect::Postgres => widens(from, to),
+        Dialect::Tsql => {
+            from.trim().eq_ignore_ascii_case(to.trim())
+                || tsql_widens(split_type(from.trim()), split_type(to.trim())) == Some(true)
+        }
+    }
+}
+
+/// O mesmo para os tipos do SQL Server (None se não sabe comparar os
+/// dois): inteiros, `decimal` e textos, onde `max` cabe tudo e um texto
+/// Unicode só cabe noutro Unicode.
+fn tsql_widens((fb, fa): (&str, &str), (tb, ta): (&str, &str)) -> Option<bool> {
+    let (fb, tb) = (fb.to_lowercase(), tb.to_lowercase());
+    let rank = |t: &str| match t {
+        "bit" => Some(0),
+        "tinyint" => Some(1),
+        "smallint" => Some(2),
+        "int" => Some(3),
+        "bigint" => Some(4),
+        _ => None,
+    };
+    let text = |t: &str| match t {
+        "char" | "varchar" => Some(false),
+        "nchar" | "nvarchar" => Some(true),
+        _ => None,
+    };
+    if let (Some(f), Some(t)) = (rank(&fb), rank(&tb)) {
+        return Some(f <= t);
+    }
+    if let (Some(from_unicode), Some(to_unicode)) = (text(&fb), text(&tb)) {
+        let len = |a: &str| match a.to_lowercase().as_str() {
+            "" => Some(1),
+            "max" => None,
+            n => n.parse::<u32>().ok(),
+        };
+        let fits = match (len(fa), len(ta)) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(a), Some(b)) => b >= a,
+        };
+        // `char` completa com espaços: só um `varchar` do mesmo tamanho ou
+        // maior guarda igual.
+        let variable = tb.ends_with("varchar") || fb == tb;
+        return Some(fits && variable && (to_unicode || !from_unicode));
+    }
+    if matches!(fb.as_str(), "decimal" | "numeric") && matches!(tb.as_str(), "decimal" | "numeric")
+    {
+        // No SQL Server, sem argumentos é (18,0).
+        let (fp, fs) = numeric_args(fa).unwrap_or((18, 0));
+        let (tp, ts) = numeric_args(ta).unwrap_or((18, 0));
+        return Some(ts >= fs && tp - ts >= fp - fs);
+    }
+    None
+}
+
 /// `numeric(10,2)` → (`numeric`, `10,2`).
 fn split_type(ty: &str) -> (&str, &str) {
     match ty.split_once('(') {
@@ -302,7 +370,7 @@ fn numeric_args(args: &str) -> Option<(i64, i64)> {
 }
 
 /// Nomes novos das colunas renomeadas de `o` (que virou `n`).
-fn renames(o: &Table, n: &Table) -> HashMap<String, String> {
+pub(crate) fn renames(o: &Table, n: &Table) -> HashMap<String, String> {
     o.columns
         .iter()
         .filter_map(|oc| {
@@ -315,7 +383,7 @@ fn renames(o: &Table, n: &Table) -> HashMap<String, String> {
 /// `o` com as colunas renomeadas como em `n` dentro das chaves, checks,
 /// índices e FKs (as próprias e as colunas de destino delas). Os nomes
 /// das colunas não mudam aqui: o diff das colunas é feito antes.
-fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
+pub(crate) fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
     let own = renames(o, n);
     let mut t = o.clone();
     let names = |cols: &mut Vec<String>, map: &HashMap<String, String>| {
@@ -327,7 +395,7 @@ fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
     };
     let exprs = |e: &mut String, map: &HashMap<String, String>| {
         for (from, to) in map {
-            *e = rename_in_expr(e, from, to);
+            *e = new.dialect.rename_in_expr(e, from, to);
         }
     };
     if !own.is_empty() {
@@ -339,10 +407,8 @@ fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
         }
         for i in &mut t.indexes {
             for c in &mut i.columns {
-                if let Some(new) = own.get(c) {
-                    c.clone_from(new);
-                } else if c.contains(['(', ' ', '"']) {
-                    exprs(c, &own);
+                for (from, to) in &own {
+                    new.dialect.rename_index_column(c, from, to);
                 }
             }
             if let Some(p) = &mut i.predicate {
@@ -364,19 +430,19 @@ fn with_renames(o: &Table, n: &Table, old: &Model, new: &Model) -> Table {
 
 /// Os comandos agrupados na ordem em que rodam.
 #[derive(Default)]
-struct Plan {
-    drop_fks: Vec<String>,
-    drop_constraints: Vec<String>,
-    drop_tables: Vec<String>,
-    alter: Vec<String>,
-    create_tables: Vec<String>,
-    add_constraints: Vec<String>,
-    indexes: Vec<String>,
-    add_fks: Vec<String>,
+pub(crate) struct Plan {
+    pub(crate) drop_fks: Vec<String>,
+    pub(crate) drop_constraints: Vec<String>,
+    pub(crate) drop_tables: Vec<String>,
+    pub(crate) alter: Vec<String>,
+    pub(crate) create_tables: Vec<String>,
+    pub(crate) add_constraints: Vec<String>,
+    pub(crate) indexes: Vec<String>,
+    pub(crate) add_fks: Vec<String>,
 }
 
 impl Plan {
-    fn into_statements(self) -> Vec<String> {
+    pub(crate) fn into_statements(self) -> Vec<String> {
         [
             self.drop_fks,
             self.drop_constraints,

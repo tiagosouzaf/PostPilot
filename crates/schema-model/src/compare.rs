@@ -163,6 +163,7 @@ impl Comparison {
         Model {
             tables,
             next_id: self.source.next_id.max(self.target.next_id),
+            dialect: self.target.dialect,
         }
     }
 }
