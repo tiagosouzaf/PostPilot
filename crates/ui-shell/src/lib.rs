@@ -28,6 +28,7 @@ pub mod json_viewer;
 pub mod keys;
 pub mod layout;
 pub mod menus;
+pub mod multi;
 pub mod object_info;
 pub mod options;
 pub mod panels;
@@ -156,6 +157,8 @@ pub struct ShellApp {
     /// Pergunta do plano real de comandos que alteram dados.
     actual_confirm: Option<PendingActual>,
     environment_confirm: Option<PendingEnvironment>,
+    /// "Run on Multiple Servers" aberto.
+    multi_dialog: Option<multi::Dialog>,
     /// Bancos de cada servidor, para o seletor da toolbar.
     databases: databases::DatabaseLists,
     /// Troca de banco de uma janela esperando a checagem de transação ou
@@ -289,6 +292,9 @@ struct PendingEnvironment {
     color: registered::Rgb,
     /// O que o lote faz, como "UPDATE" ou "DROP".
     reason: String,
+    /// Numa janela de vários servidores, os que estão no ambiente que
+    /// pede confirmação.
+    servers: Vec<String>,
 }
 
 /// O que o usuário fez no seletor de banco da toolbar.
@@ -375,6 +381,7 @@ impl Default for ShellApp {
             confirm: None,
             actual_confirm: None,
             environment_confirm: None,
+            multi_dialog: None,
             databases: Default::default(),
             db_switch: None,
             open_database_list: false,
@@ -1712,6 +1719,7 @@ impl ShellApp {
                 | CompleteWord
                 | RefreshLocalCache
                 | Execute
+                | MultiServer
                 | EstimatedPlan
                 | ActualPlan
                 | CancelQuery
@@ -1934,6 +1942,7 @@ impl ShellApp {
             },
             CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx, Ask::Run),
+            CommandId::MultiServer => self.open_multi_dialog(),
             CommandId::EstimatedPlan => self.execute_query(ctx, Ask::Plan),
             CommandId::ObjectInfo => self.execute_query(ctx, Ask::Info),
             CommandId::ActualPlan => {
@@ -2028,6 +2037,9 @@ impl ShellApp {
             self.status = tr("No query window is open.").to_string();
             return;
         };
+        if self.execute_multi(ctx, id, ask == Ask::Run) {
+            return;
+        }
         self.activate_server_of(id);
         let queries = match &self.connection {
             Some(c) => (c.queries.clone(), c.settings.database.clone()),
@@ -2189,6 +2201,7 @@ impl ShellApp {
                     environment: tag.environment.unwrap_or_default(),
                     color: tag.color,
                     reason,
+                    servers: Vec::new(),
                 });
                 return;
             }
@@ -2255,7 +2268,11 @@ impl ShellApp {
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
-        let Some(session) = doc.session.as_ref().map(|s| s.0.clone()) else {
+        let session = match &doc.multi {
+            Some(multi) => multi.session(),
+            None => doc.session.as_ref().map(|s| s.0.clone()),
+        };
+        let Some(session) = session else {
             return;
         };
         let exec = match kind {
@@ -2288,6 +2305,7 @@ impl ShellApp {
             return;
         };
         exec.mode = doc.results_mode;
+        exec.multi = doc.multi.is_some();
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
@@ -2399,11 +2417,26 @@ impl ShellApp {
                 registered::environment_badge(ui, &pending.environment, pending.color);
             });
             ui.add_space(4.0);
-            ui.label(trf!(
-                "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
-                environment = pending.environment,
-                reason = pending.reason
-            ));
+            if pending.servers.is_empty() {
+                ui.label(trf!(
+                    "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
+                    environment = pending.environment,
+                    reason = pending.reason
+                ));
+            } else {
+                ui.label(trf!(
+                    "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:",
+                    reason = pending.reason
+                ));
+                egui::ScrollArea::vertical()
+                    .id_salt("environment_confirm_servers")
+                    .max_height(140.0)
+                    .show(ui, |ui| {
+                        for name in &pending.servers {
+                            ui.label(format!("• {name}")); // i18n-ignore
+                        }
+                    });
+            }
             ui.label(tr("Do you want to execute it?"));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2424,6 +2457,10 @@ impl ShellApp {
         };
         if yes {
             let run = pending.run;
+            if !pending.servers.is_empty() {
+                self.dispatch_multi(ctx, run.doc, run.sql, run.offset, true);
+                return;
+            }
             self.dispatch_query(ctx, run.doc, run.sql, run.offset, Ask::Run, true);
         } else {
             self.status = tr("The query was not executed.").to_string();
@@ -3333,8 +3370,17 @@ impl ShellApp {
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
         let default_db = self.default_database();
-        let doc_servers = self.document_servers();
-        let doc_tags = self.document_tags();
+        let mut doc_servers = self.document_servers();
+        let mut doc_tags = self.document_tags();
+        // Uma janela de vários servidores mostra quantos são e, se algum
+        // pede confirmação, o ambiente dele.
+        for (id, label, tag) in self.multi_labels() {
+            doc_servers.insert(id, label);
+            match tag {
+                Some(tag) => doc_tags.insert(id, tag),
+                None => doc_tags.remove(&id),
+            };
+        }
         let active_key = self
             .connection
             .as_ref()
@@ -3427,6 +3473,7 @@ impl ShellApp {
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
         self.environment_confirm_window(&ctx);
+        self.multi_dialog_window(&ctx);
         self.database_switch_window(&ctx);
         self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
@@ -4221,7 +4268,11 @@ impl ShellApp {
                         .active_doc
                         .and_then(|id| self.documents.get(id))
                         .is_some_and(|d| d.actual_plan);
+                    let multi = self
+                        .active_doc
+                        .is_some_and(|id| !self.multi_selection(id).is_empty());
                     let selected = (cmd == CommandId::ActualPlan && actual)
+                        || (cmd == CommandId::MultiServer && multi)
                         || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.preferences.theme),
@@ -4302,11 +4353,11 @@ impl ShellApp {
                             Some(s) => format!("{} ({s})", command.label()),
                             None => command.label().to_string(),
                         };
-                        let pressed = command == CommandId::ActualPlan
-                            && self
-                                .active_doc
-                                .and_then(|id| self.documents.get(id))
-                                .is_some_and(|d| d.actual_plan);
+                        let doc = self.active_doc.and_then(|id| self.documents.get(id));
+                        let pressed = (command == CommandId::ActualPlan
+                            && doc.is_some_and(|d| d.actual_plan))
+                            || (command == CommandId::MultiServer
+                                && doc.is_some_and(|d| d.multi.is_some()));
                         let button = egui::Button::new(caption).selected(pressed);
                         let response = ui
                             .add_enabled(Self::is_available(command), button)

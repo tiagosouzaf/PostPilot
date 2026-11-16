@@ -4599,6 +4599,96 @@ msgstr "Filtrar por este valor"
 msgid "Clear Filter"
 msgstr "Limpar filtro"
 
+msgid "Run on Multiple Servers…"
+msgstr "Executar em Vários Servidores…"
+
+msgid "Run on Multiple Servers"
+msgstr "Executar em Vários Servidores"
+
+msgid "Choose the servers where this query window runs. The results come together, with the server in the first column."
+msgstr "Escolha os servidores em que esta janela de consulta roda. Os resultados vêm juntos, com o servidor na primeira coluna."
+
+msgid "There are no saved connections. Register servers in the workspace or in Registered Servers."
+msgstr "Não há conexões guardadas. Registre servidores no workspace ou nos Servidores Registrados."
+
+msgid "1 server selected"
+msgstr "1 servidor selecionado"
+
+msgid "{n} servers selected"
+msgstr "{n} servidores selecionados"
+
+msgid "Search servers"
+msgstr "Pesquisar servidores"
+
+msgid "No server matches the search."
+msgstr "Nenhum servidor corresponde à pesquisa."
+
+msgid "Runs on multiple servers."
+msgstr "Roda em vários servidores."
+
+msgid "1 server"
+msgstr "1 servidor"
+
+msgid "{n} servers"
+msgstr "{n} servidores"
+
+msgid "This query window runs on its own connection."
+msgstr "Esta janela de consulta roda na conexão dela."
+
+msgid "This query window runs on 1 server."
+msgstr "Esta janela de consulta roda em 1 servidor."
+
+msgid "This query window runs on {n} servers."
+msgstr "Esta janela de consulta roda em {n} servidores."
+
+msgid "Plans and Object Information are not available on multiple servers."
+msgstr "Planos e Informações do Objeto não estão disponíveis em vários servidores."
+
+msgid "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:"
+msgstr "Esta janela de consulta roda em vários servidores, e este SQL pode alterar o banco ({reason}). Estes servidores pedem confirmação:"
+
+msgid "The results are read-only: they come from multiple servers."
+msgstr "Os resultados são somente leitura: eles vêm de vários servidores."
+
+msgid "This server is no longer in the saved connections."
+msgstr "Este servidor não está mais nas conexões guardadas."
+
+msgid "No saved password. Connect to this server once with \"Remember password\", or save its password in the workspace."
+msgstr "Sem senha guardada. Conecte neste servidor uma vez com \"Lembrar senha\", ou guarde a senha dele no workspace."
+
+msgid "No answer."
+msgstr "Sem resposta."
+
+msgid "(multiple databases)"
+msgstr "(vários bancos)"
+
+msgid "ERROR"
+msgstr "ERRO"
+
+msgid "Canceled."
+msgstr "Cancelado."
+
+msgid "Canceled"
+msgstr "Cancelado"
+
+msgid "Failed"
+msgstr "Falhou"
+
+msgid "Time"
+msgstr "Tempo"
+
+msgid "Message"
+msgstr "Mensagem"
+
+msgid "The query failed on every server."
+msgstr "A consulta falhou em todos os servidores."
+
+msgid "{ok} of {n} servers answered; {failed} failed."
+msgstr "{ok} de {n} servidores responderam; {failed} falharam."
+
+msgid "{n} servers answered."
+msgstr "{n} servidores responderam."
+
 msgid "Zoom In"
 msgstr "Ampliar"
 
