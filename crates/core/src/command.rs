@@ -92,6 +92,9 @@ commands! {
     ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";
     ThemeDark => "View.ThemeDark", "Dark";
+    ZoomIn => "View.ZoomIn", "Zoom In";
+    ZoomOut => "View.ZoomOut", "Zoom Out";
+    ZoomReset => "View.ZoomReset", "Reset Zoom";
     FullScreen => "View.FullScreen", "Full Screen";
     // Query
     Connect => "Query.Connect", "Connect…";
