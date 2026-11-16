@@ -206,6 +206,17 @@ Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
 (Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
 trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
+O editor tem vários cursores e seleção em coluna. Alt+arrastar (ou
+Alt+Shift+setas) seleciona um bloco retangular, uma seleção por linha;
+Ctrl+Alt+↑/↓ põe um cursor na linha de cima ou de baixo; Ctrl+clique põe um
+cursor onde você clicar (e tira, se já houver um ali); Shift+Alt+. seleciona
+também a próxima ocorrência do texto selecionado. Digitar, apagar, Enter, Tab,
+recortar, colar e o IntelliSense valem para todos os cursores, e Ctrl+Z desfaz
+em todos de uma vez. Copiar junta as seleções, uma por linha, e colar de volta
+num bloco com o mesmo número de linhas devolve uma linha a cada cursor. Esc (ou
+um clique simples) volta a um cursor só. Executar, comentar e formatar usam a
+seleção principal, a do último cursor.
+
 Format Document (Shift+Alt+F ou Ctrl+Shift+I, como no VS Code, ou Ctrl+K, Ctrl+D,
 como no Visual Studio; também em Edit > Advanced e no menu de contexto do editor)
 formata o SQL: cada cláusula numa linha, colunas do `SELECT` e condições do
