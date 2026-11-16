@@ -188,6 +188,22 @@ pub fn parse(text: &str) -> Result<Vec<Statement>, ParseError> {
     }
 }
 
+/// Lê um valor só, na sintaxe do shell (`42`, `"texto"`, `ISODate("...")`,
+/// `{ a: 1 }`).
+pub fn parse_value(text: &str) -> Result<Bson, ParseError> {
+    let mut p = Parser {
+        text,
+        bytes: text.as_bytes(),
+        pos: 0,
+    };
+    let value = p.value()?;
+    p.skip_space(true);
+    if p.pos < p.bytes.len() {
+        return p.error(tr("Expected a value."));
+    }
+    Ok(value)
+}
+
 struct Parser<'a> {
     text: &'a str,
     bytes: &'a [u8],
@@ -1202,7 +1218,7 @@ fn index_direction(v: &Bson) -> String {
 
 /// Uma data como o `ISODate` aceita: `2024-05-01`, `2024-05-01T10:00:00Z`,
 /// com ou sem fuso (sem, vale UTC).
-fn parse_date(text: &str) -> Option<bson::DateTime> {
+pub(crate) fn parse_date(text: &str) -> Option<bson::DateTime> {
     let text = text.trim();
     let full = match text.len() {
         10 => format!("{text}T00:00:00Z"),

@@ -79,6 +79,28 @@ comando do servidor.
 - Num servidor de um ambiente que pede confirmação (Produção), um texto com
   qualquer comando que escreve pede o "Execute" antes de rodar.
 
+## Editar documentos na grade
+
+O resultado de um `find` (ou `findOne`) numa coleção é editável, como o de
+um `SELECT` numa tabela com chave primária:
+
+- Dois cliques (ou F2) numa célula editam ali mesmo; Enter grava só aquele
+  campo (`$set` pelo `_id`), Esc desiste. Documentos e listas de dentro
+  abrem no editor de JSON.
+- O valor novo fica do tipo que o campo já tinha: `42` num campo de texto
+  continua texto, num campo numérico vira número; datas aceitam
+  `2026-05-01` ou `2026-05-01T10:00:00Z`. Um texto solto num campo de
+  número, data ou booleano é recusado; para trocar o tipo, escreva como no
+  shell (`"texto"` entre aspas, `true`, `ISODate("...")`, `{ a: 1 }`).
+- Num campo vazio (NULL) ou que o documento não tinha, vale a sintaxe do
+  shell e, se não for nada disso, o texto como foi digitado.
+- Delete nas linhas selecionadas mostra os `_id`, pede confirmação e exclui
+  os documentos.
+- O `_id` não muda. `aggregate`, um `find` com projeção `{ _id: 0 }` e um
+  lote com mais de um comando ficam só leitura, com o motivo.
+- Se o documento mudou de `_id` ou foi excluído por outra pessoa, a
+  gravação avisa e nada é alterado.
+
 ## Sugestões no editor
 
 A lista abre enquanto você escreve (ou com Ctrl+Espaço):
@@ -114,7 +136,8 @@ coleção (com as chaves). No menu de uma coleção:
 ## O que não existe para o MongoDB
 
 Table Designer, diagramas, Schema Compare, Data Compare, Query Designer,
-edição na grade, importação de CSV, plano de execução gráfico, Activity
+Editar as 200 Primeiras Linhas (edite pelo resultado de um `find`),
+importação de CSV, plano de execução gráfico, Activity
 Monitor, backup e as ferramentas do Claude avisam na status bar que não
 estão disponíveis para o MongoDB.
 

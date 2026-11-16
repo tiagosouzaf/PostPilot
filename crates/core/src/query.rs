@@ -51,6 +51,45 @@ pub trait QuerySession: Send + Sync {
         let _ = sql;
         done(Err("The session cannot describe queries.".to_string()));
     }
+
+    /// Para os motores de documentos: como editar, na grade, o resultado
+    /// de `text` (o que foi executado). `None` quando o motor edita por
+    /// SQL ([`QuerySession::describe`]); `Err` com o motivo quando este
+    /// resultado é só leitura.
+    fn document_edits(&self, text: &str) -> Option<Result<Arc<dyn DocumentEdits>, String>> {
+        let _ = text;
+        None
+    }
+}
+
+/// Recebe o fim de uma gravação de [`DocumentEdits`]. É chamado de outra
+/// thread.
+pub type EditDone<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
+
+/// Grava na coleção o que o usuário muda na grade de um resultado de
+/// documentos. Cada linha é um documento, achado pelo valor da coluna da
+/// chave como a grade mostra (`None` é NULL).
+pub trait DocumentEdits: Send + Sync {
+    /// De onde são os documentos, para mostrar (`banco.coleção`).
+    fn display(&self) -> String;
+
+    /// A coluna com a chave dos documentos (`_id`). Não é editável.
+    fn key(&self) -> &str;
+
+    /// Grava `value` (o texto digitado; `None` é NULL) no campo `field`
+    /// do documento de chave `key`. Devolve o valor gravado como a grade
+    /// mostra.
+    fn update(
+        &self,
+        key: Option<String>,
+        field: String,
+        value: Option<String>,
+        done: EditDone<Option<String>>,
+    );
+
+    /// Exclui os documentos com essas chaves. Devolve as chaves dos que
+    /// foram excluídos.
+    fn delete(&self, keys: Vec<Option<String>>, done: EditDone<Vec<Option<String>>>);
 }
 
 /// Recebe a resposta de [`QuerySession::describe`]. É chamado de outra

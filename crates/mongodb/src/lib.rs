@@ -15,6 +15,7 @@ use pgstudio_core::connection::{
 use pgstudio_i18n::tr;
 use pgstudio_pg_client::DbRuntime;
 
+pub mod edit;
 pub mod explorer;
 pub mod query;
 pub mod render;
