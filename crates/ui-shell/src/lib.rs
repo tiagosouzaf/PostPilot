@@ -22,6 +22,7 @@ pub mod documents;
 pub mod edit_rows;
 pub mod execution;
 pub mod file_dialogs;
+pub mod history;
 pub mod intellisense;
 pub mod json_guide;
 pub mod json_viewer;
@@ -224,6 +225,8 @@ pub struct ShellApp {
     name_suggestions: ai_names::NameSuggestions,
     /// A sessão salva enquanto o usuário trabalha (veja [`session`]).
     session: session::Session,
+    /// Histórico de consultas executadas e a janela dele.
+    history: history::History,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -405,6 +408,7 @@ impl Default for ShellApp {
             ai: Default::default(),
             name_suggestions: Default::default(),
             session: Default::default(),
+            history: Default::default(),
         }
     }
 }
@@ -627,6 +631,7 @@ impl ShellApp {
                         | Panel::TableDesigner(_)
                         | Panel::Diagram(_)
                         | Panel::ActivityMonitor
+                        | Panel::QueryHistory
                         | Panel::EditRows(_)
                 )
             }),
@@ -1590,6 +1595,7 @@ impl ShellApp {
                 | ObjectExplorer
                 | PropertiesWindow
                 | Output
+                | QueryHistory
                 | ResetWindowLayout
                 | ConnectObjectExplorer
                 | DisconnectObjectExplorer
@@ -1700,6 +1706,7 @@ impl ShellApp {
                 self.set_claude_code_access(ctx, on);
             }
             CommandId::Output => self.workspace.open(Panel::Output),
+            CommandId::QueryHistory => self.workspace.open(Panel::QueryHistory),
             CommandId::ResetWindowLayout => {
                 self.workspace = panels::default_layout();
                 for id in self.documents.ids() {
@@ -1732,6 +1739,7 @@ impl ShellApp {
                                 | Panel::TableDesigner(_)
                                 | Panel::Diagram(_)
                                 | Panel::ActivityMonitor
+                                | Panel::QueryHistory
                                 | Panel::EditRows(_)
                         ) =>
                     {
@@ -2538,6 +2546,7 @@ impl ShellApp {
             self.execute_query(ctx, Ask::Run);
         }
         let active = self.active_doc;
+        let mut finished_runs = Vec::new();
         for id in self.documents.ids() {
             let Some(doc) = self.documents.get_mut(id) else {
                 continue;
@@ -2566,7 +2575,24 @@ impl ShellApp {
                 if active == Some(id) {
                     self.status = outcome.label().to_string();
                 }
+                // O SQL montado pelo app (Alt+F1) e o plano estimado, que
+                // não roda nada, ficam fora do histórico.
+                if !exec.sql().trim().is_empty() && !exec.is_estimated_plan() {
+                    finished_runs.push(history::Finished {
+                        doc: id,
+                        window: name,
+                        sql: exec.sql().to_string(),
+                        database: exec.database.clone(),
+                        elapsed: exec.elapsed(),
+                        outcome,
+                        rows: exec.rows_done().max(exec.total_rows()),
+                        error: exec.first_error().map(str::to_string),
+                    });
+                }
             }
+        }
+        for run in finished_runs {
+            self.record_history(run);
         }
     }
 
@@ -3207,6 +3233,7 @@ impl ShellApp {
         let mut registered_actions = Vec::new();
         let mut workspace_actions = Vec::new();
         let mut claude_actions = Vec::new();
+        let mut history_open = Vec::new();
         let mut activate = None;
         let mut open_json = Vec::new();
         self.phase("panels");
@@ -3244,8 +3271,11 @@ impl ShellApp {
                     workspace_actions: Vec::new(),
                     claude_panel: &mut self.claude_panel,
                     claude_actions: Vec::new(),
+                    history: &mut self.history,
+                    history_open: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
+                history_open = viewer.history_open;
                 activate = viewer.activate_server;
                 registered_actions = viewer.registered_actions;
                 workspace_actions = viewer.workspace_actions;
@@ -3268,6 +3298,9 @@ impl ShellApp {
         }
         if let Some(i) = activate {
             self.activate_parked(i);
+        }
+        for entry in history_open {
+            self.open_history_entry(&entry);
         }
         self.sync_documents();
         self.servers_step(&ctx, registered_actions);

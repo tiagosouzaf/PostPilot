@@ -347,6 +347,12 @@ pub struct Execution {
     /// Results to File: os resultados vão para este arquivo, não para a
     /// grade.
     file: Option<PathBuf>,
+    /// Ctrl+L: plano estimado (os comandos não rodam).
+    estimated: bool,
+    /// Soma das linhas dos comandos que terminaram, para o histórico.
+    rows_done: u64,
+    /// Texto do primeiro erro, para o histórico.
+    first_error: Option<String>,
     ctx: egui::Context,
 }
 
@@ -387,6 +393,7 @@ impl Execution {
         };
         let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
         exec.plan_mode = true;
+        exec.estimated = true;
         exec.tab = Tab::Plan;
         Some(exec)
     }
@@ -458,6 +465,9 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: None,
+            estimated: false,
+            rows_done: 0,
+            first_error: None,
             ctx: ui_ctx,
         }
     }
@@ -574,6 +584,9 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: Some(path.to_path_buf()),
+            estimated: false,
+            rows_done: 0,
+            first_error: None,
             ctx: ui_ctx,
         })
     }
@@ -655,6 +668,27 @@ impl Execution {
         self.results.iter().map(ResultSet::len).sum()
     }
 
+    /// O texto que o usuário mandou executar (a seleção ou o documento).
+    /// Vazio no SQL montado pelo app (Alt+F1).
+    pub fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// Linhas devolvidas ou alteradas pelos comandos que terminaram.
+    pub fn rows_done(&self) -> u64 {
+        self.rows_done
+    }
+
+    /// Ctrl+L: só pediu o plano estimado, sem rodar os comandos.
+    pub fn is_estimated_plan(&self) -> bool {
+        self.estimated
+    }
+
+    /// O texto do primeiro erro, sem o cabeçalho "Msg ...".
+    pub fn first_error(&self) -> Option<&str> {
+        self.first_error.as_deref()
+    }
+
     /// Posição (no documento) e mensagem do erro a mostrar no editor, uma
     /// vez só.
     pub fn take_error_position(&mut self) -> Option<(usize, String)> {
@@ -690,6 +724,7 @@ impl Execution {
                 }
             }
             QueryEvent::CommandComplete { rows } => {
+                self.rows_done += rows;
                 let had_result = std::mem::take(&mut self.open_result);
                 if had_result || rows > 0 {
                     self.info(rows_affected(rows));
@@ -719,6 +754,9 @@ impl Execution {
             }),
             QueryEvent::Error(e) => {
                 self.open_result = false;
+                if self.first_error.is_none() {
+                    self.first_error = Some(describe(&e));
+                }
                 let original = e
                     .position
                     .filter(|_| !self.batch.segments.is_empty())

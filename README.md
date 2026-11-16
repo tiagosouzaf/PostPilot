@@ -313,6 +313,15 @@ verdade, e um nó que errou a estimativa em 10 vezes ou mais ganha um aviso.
 Um lote com INSERT, UPDATE ou DELETE pergunta antes e, por padrão, roda dentro
 de `BEGIN ... ROLLBACK`.
 
+O **Query History** (Ctrl+Alt+H, menu View) guarda cada execução: o texto, o
+servidor, o banco, a hora, a duração, as linhas e se deu certo, errou ou foi
+cancelada. A pesquisa olha dentro do texto, do servidor, do banco e do erro,
+e um duplo clique reabre a consulta numa janela nova, no mesmo servidor e
+banco. O histórico fica só neste computador
+(`<config>/PostPilot/history.jsonl`, fora do workspace do Git), continua lá ao
+reabrir o app, e o que parece senha (`PASSWORD 'x'`, `password=x` numa
+connection string) é gravado como `***`.
+
 O **Activity Monitor** (Ctrl+Alt+A, ou no menu do servidor) mostra gráficos,
 as sessões (com filtro, Cancel Query e Kill Process, que pedem confirmação),
 esperas, E/S por banco, as consultas mais caras (com `pg_stat_statements`) e
