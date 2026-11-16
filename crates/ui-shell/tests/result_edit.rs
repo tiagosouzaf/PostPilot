@@ -306,3 +306,93 @@ fn queries_that_cannot_be_edited_say_why() {
         "DROP VIEW grid_ro_v; DROP TABLE grid_ro_a, grid_ro_b, grid_ro_nokey",
     );
 }
+
+/// Com a grade ordenada e filtrada, a edição e a exclusão valem para as
+/// linhas que estão à mostra, e a ordem pedida no meio de uma gravação só
+/// entra depois dela.
+#[test]
+fn edits_and_deletes_follow_the_sorted_and_filtered_rows() {
+    use pgstudio_result_grid::{Sort, ViewSpec};
+    let Some(service) = service() else {
+        return;
+    };
+    let session = service.open("postgres");
+    let ctx = egui::Context::default();
+    value(
+        &session,
+        "DROP TABLE IF EXISTS grid_edit_view; \
+         CREATE TABLE grid_edit_view (id int PRIMARY KEY, nome text); \
+         INSERT INTO grid_edit_view VALUES (1, 'Ana'), (2, 'Bruno'), (3, 'Carla'), \
+             (4, 'Davi'), (5, 'Bia')",
+    );
+    let mut exec = execute(
+        &session,
+        "SELECT id, nome FROM grid_edit_view ORDER BY id;",
+        &ctx,
+    );
+    assert_eq!(status(&exec), Status::Editable);
+    let store = exec.results[0].shared_store();
+    // Só os nomes com "b", do maior id para o menor: Bia (5), Bruno (2).
+    let spec = ViewSpec {
+        sort: Some(Sort {
+            col: 0,
+            descending: true,
+        }),
+        filter: "nome:b".into(),
+    };
+    let apply = |spec: &ViewSpec| {
+        let mut s = store.lock().unwrap();
+        while s.sync_view(spec, Duration::from_secs(1)).working {}
+    };
+    apply(&spec);
+    assert_eq!(store.lock().unwrap().len(), 2);
+    {
+        let set = &mut exec.results[0];
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.update(&mut s, Cell { row: 0, col: 1 }, Some("Bianca".into()));
+        // Gravando: a grade não troca a ordem até a resposta chegar.
+        editor.step(&mut s, &mut set.grid);
+        assert!(set.grid.view_locked);
+    }
+    settle(&mut exec);
+    assert!(!exec.results[0].grid.view_locked);
+    assert_eq!(
+        value(&session, "SELECT nome FROM grid_edit_view WHERE id = 5").as_deref(),
+        Some("Bianca")
+    );
+    assert_eq!(store.lock().unwrap().cell(0, 1), Some("Bianca"));
+
+    // Exclui a segunda linha à mostra (Bruno, id 2).
+    {
+        let set = &mut exec.results[0];
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.request_delete(&mut s, 1..2);
+        assert_eq!(editor.confirm_preview().unwrap().1, ["id = 2"]);
+        editor.step(&mut s, &mut set.grid);
+        assert!(set.grid.view_locked, "esperando o Yes");
+        editor.answer_delete(true, &mut s);
+    }
+    settle(&mut exec);
+    assert_eq!(
+        value(
+            &session,
+            "SELECT string_agg(id::text, ',' ORDER BY id) FROM grid_edit_view"
+        )
+        .as_deref(),
+        Some("1,3,4,5")
+    );
+    assert_eq!(store.lock().unwrap().len(), 1);
+    // Sem ordem e sem filtro: o resto do resultado, na ordem original.
+    apply(&ViewSpec::default());
+    let mut s = store.lock().unwrap();
+    let ids: Vec<_> = (0..s.len())
+        .map(|r| s.cell(r, 0).map(str::to_string))
+        .collect();
+    assert_eq!(s.len(), 4);
+    assert_eq!(ids[3].as_deref(), Some("5"));
+    assert_eq!(s.cell(3, 1), Some("Bianca"));
+    drop(s);
+    value(&session, "DROP TABLE grid_edit_view");
+}

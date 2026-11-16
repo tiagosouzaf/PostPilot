@@ -180,7 +180,8 @@ impl Workspace {
         for entry in entries.flatten() {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || same(&p) {
+            // Os trechos do Template Explorer não são consultas.
+            if name.starts_with('.') || same(&p) || name == crate::templates::SNIPPETS {
                 continue;
             }
             if p.is_dir() {
@@ -222,7 +223,7 @@ pub struct Folder {
 }
 
 impl Folder {
-    fn read(path: &Path, name: String) -> Folder {
+    pub(crate) fn read(path: &Path, name: String) -> Folder {
         let mut folder = Folder {
             name,
             path: path.to_path_buf(),

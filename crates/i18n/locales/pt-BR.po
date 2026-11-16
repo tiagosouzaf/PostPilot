@@ -538,6 +538,9 @@ msgstr "Texto (separado por tabulações)"
 msgid "SQL INSERT statements"
 msgstr "Instruções SQL INSERT"
 
+msgid "Excel Workbook"
+msgstr "Pasta de Trabalho do Excel"
+
 # Nomes que não mudam
 
 msgid "IntelliSense"
@@ -2129,6 +2132,12 @@ msgstr "Linhas"
 
 msgid "Save Results As..."
 msgstr "Salvar Resultados Como..."
+
+msgid "Export to Excel..."
+msgstr "Exportar para o Excel..."
+
+msgid "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut."
+msgstr "{n} célula(s) com mais de 32.767 caracteres, o limite de uma célula do Excel, foram cortadas."
 
 msgid "Saving..."
 msgstr "Salvando..."
@@ -4274,8 +4283,8 @@ msgstr "Modelo:"
 msgid "Name:"
 msgstr "Nome:"
 
-msgid "Needs an API key from platform.openai.com; a ChatGPT subscription alone does not include one."
-msgstr "Precisa de uma chave de API de platform.openai.com; a assinatura do ChatGPT sozinha não inclui uma."
+msgid "Needs an API key from platform.openai.com; a ChatGPT subscription alone does not include one. To use the subscription, choose ChatGPT (your account) above."
+msgstr "Precisa de uma chave de API de platform.openai.com; a assinatura do ChatGPT sozinha não inclui uma. Para usar a assinatura, escolha ChatGPT (sua conta) acima."
 
 msgid "No AI is connected. Install Claude Code or add a provider in Tools > AI Providers."
 msgstr "Nenhuma IA conectada. Instale o Claude Code ou adicione um provedor em Ferramentas > Provedores de IA."
@@ -4674,3 +4683,456 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "Filter rows: text or column:text"
+msgstr "Filtrar linhas: texto ou coluna:texto"
+
+msgid "Clear the filter"
+msgstr "Limpar o filtro"
+
+msgid "{shown} of {total} rows"
+msgstr "{shown} de {total} linhas"
+
+msgid "Sort Ascending"
+msgstr "Ordenar crescente"
+
+msgid "Sort Descending"
+msgstr "Ordenar decrescente"
+
+msgid "Clear Sort"
+msgstr "Limpar ordenação"
+
+msgid "Filter by This Value"
+msgstr "Filtrar por este valor"
+
+msgid "Clear Filter"
+msgstr "Limpar filtro"
+
+msgid "Save as Snippet..."
+msgstr "Salvar como Trecho..."
+
+msgid "1 template found."
+msgstr "1 modelo encontrado."
+
+msgid "{n} templates found."
+msgstr "{n} modelos encontrados."
+
+msgid "No templates found."
+msgstr "Nenhum modelo encontrado."
+
+msgid "Search templates by name or content"
+msgstr "Pesquisar modelos pelo nome ou conteúdo"
+
+msgid "My Snippets"
+msgstr "Meus Trechos"
+
+msgid "My Snippets (this computer)"
+msgstr "Meus Trechos (este computador)"
+
+msgid "Workspace Snippets"
+msgstr "Trechos do Workspace"
+
+msgid "New Snippet"
+msgstr "Novo Trecho"
+
+msgid "New Snippet..."
+msgstr "Novo Trecho..."
+
+msgid "New Window"
+msgstr "Nova Janela"
+
+msgid "Open in a new query window"
+msgstr "Abrir em uma nova janela de consulta"
+
+msgid "Query History"
+msgstr "Histórico de Consultas"
+
+msgid "Succeeded"
+msgstr "Sucesso"
+
+msgid "Failed"
+msgstr "Erro"
+
+msgid "Canceled"
+msgstr "Cancelada"
+
+msgid "Clear History…"
+msgstr "Limpar Histórico…"
+
+msgid "Delete every execution kept in the history."
+msgstr "Apaga todas as execuções guardadas no histórico."
+
+msgid "{n} executions"
+msgstr "{n} execuções"
+
+msgid "{found} of {n} executions"
+msgstr "{found} de {n} execuções"
+
+msgid "Search the history by text, server, database or error"
+msgstr "Pesquisar no histórico por texto, servidor, banco ou erro"
+
+msgid "Delete all {n} executions of the history? This cannot be undone."
+msgstr "Apagar as {n} execuções do histórico? Isso não pode ser desfeito."
+
+msgid "Delete All"
+msgstr "Apagar Tudo"
+
+msgid "The history could not be saved: {error}"
+msgstr "Não foi possível salvar o histórico: {error}"
+
+msgid "No query has been executed yet. Every execution is kept here, on this computer only."
+msgstr "Nenhuma consulta foi executada ainda. Cada execução fica guardada aqui, só neste computador."
+
+msgid "No execution found."
+msgstr "Nenhuma execução encontrada."
+
+msgid "Executed at"
+msgstr "Executada em"
+
+msgid "Result"
+msgstr "Resultado"
+
+msgid "Double-click to open it in a new query window."
+msgstr "Dê um duplo clique para abrir numa nova janela de consulta."
+
+msgid "Open in New Query Window"
+msgstr "Abrir em Nova Janela de Consulta"
+
+msgid "Save a Copy in My Snippets..."
+msgstr "Salvar uma Cópia nos Meus Trechos..."
+
+msgid "Save your own snippet. It starts with the text selected in the editor."
+msgstr "Salve um trecho seu. Ele começa com o texto selecionado no editor."
+
+msgid "No snippets yet. Use New Snippet to save one."
+msgstr "Nenhum trecho ainda. Use Novo Trecho para salvar um."
+
+msgid "Open a workspace to keep snippets in Git and take them to your other computers."
+msgstr "Abra um workspace para guardar os trechos no Git e levá-los para os seus outros computadores."
+
+msgid "Open a workspace to keep your own snippets and take them to your other computers through Git."
+msgstr "Abra um workspace para guardar os seus trechos e levá-los pelo Git para os seus outros computadores."
+
+msgid "Open a workspace to save snippets."
+msgstr "Abra um workspace para salvar trechos."
+
+msgid "Enter a valid name."
+msgstr "Informe um nome válido."
+
+msgid "The snippet is empty."
+msgstr "O trecho está vazio."
+
+msgid "Could not save the snippet: {e}"
+msgstr "Não foi possível salvar o trecho: {e}"
+
+msgid "Could not rename: {e}"
+msgstr "Não foi possível renomear: {e}"
+
+msgid "Could not delete: {e}"
+msgstr "Não foi possível excluir: {e}"
+
+msgid "Snippet saved in {path}."
+msgstr "Trecho salvo em {path}."
+
+msgid "Saved in {folder}."
+msgstr "Salvo em {folder}."
+
+msgid "Renamed to {path}."
+msgstr "Renomeado para {path}."
+
+msgid "Deleted {path}."
+msgstr "{path} excluído."
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Rename..."
+msgstr "Renomear..."
+
+msgid "Delete..."
+msgstr "Excluir..."
+
+msgid "Delete the snippet \"{name}\"?"
+msgstr "Excluir o trecho \"{name}\"?"
+
+msgid "Delete the folder \"{name}\" and every snippet in it?"
+msgstr "Excluir a pasta \"{name}\" e todos os trechos dela?"
+
+msgid "SQL:"
+msgstr "SQL:"
+
+msgid "Monitoring"
+msgstr "Monitoramento"
+
+msgid "Backup and Restore"
+msgstr "Backup e Restauração"
+
+msgid "Create Table"
+msgstr "Criar Tabela"
+
+msgid "Add Foreign Key"
+msgstr "Adicionar Chave Estrangeira"
+
+msgid "Create Partitioned Table"
+msgstr "Criar Tabela Particionada"
+
+msgid "Create Index"
+msgstr "Criar Índice"
+
+msgid "Unused Indexes"
+msgstr "Índices Não Usados"
+
+msgid "Missing Indexes"
+msgstr "Índices Ausentes"
+
+msgid "Index Fragmentation"
+msgstr "Fragmentação dos Índices"
+
+msgid "Create View"
+msgstr "Criar Exibição"
+
+msgid "Create Materialized View"
+msgstr "Criar Exibição Materializada"
+
+msgid "Create Function"
+msgstr "Criar Função"
+
+msgid "Create Procedure"
+msgstr "Criar Procedure"
+
+msgid "Create Trigger"
+msgstr "Criar Trigger"
+
+msgid "Create Login and User"
+msgstr "Criar Login e Usuário"
+
+msgid "Grant Read-Only Access"
+msgstr "Dar Acesso Somente Leitura"
+
+msgid "Common Table Expression (CTE)"
+msgstr "Expressão de Tabela Comum (CTE)"
+
+msgid "Insert or Update (Upsert)"
+msgstr "Inserir ou Atualizar (Upsert)"
+
+msgid "Find Duplicate Rows"
+msgstr "Achar Linhas Duplicadas"
+
+msgid "Paging"
+msgstr "Paginação"
+
+msgid "Update From Another Table"
+msgstr "Atualizar a Partir de Outra Tabela"
+
+msgid "Delete in Batches"
+msgstr "Excluir em Lotes"
+
+msgid "Change Inside a Transaction"
+msgstr "Alterar Dentro de uma Transação"
+
+msgid "Running Queries"
+msgstr "Consultas em Execução"
+
+msgid "Blocked Sessions"
+msgstr "Sessões Bloqueadas"
+
+msgid "End a Session"
+msgstr "Encerrar uma Sessão"
+
+msgid "Table Sizes"
+msgstr "Tamanho das Tabelas"
+
+msgid "Database Sizes"
+msgstr "Tamanho dos Bancos"
+
+msgid "Vacuum and Dead Rows"
+msgstr "Vacuum e Linhas Mortas"
+
+msgid "Back Up Database"
+msgstr "Fazer Backup do Banco"
+
+msgid "Last Backups"
+msgstr "Últimos Backups"
+
+msgid "Remove this execution from the history."
+msgstr "Remove esta execução do histórico."
+
+msgid "Showing the beginning of the text; open it to see everything."
+msgstr "Mostrando o começo do texto; abra para ver tudo."
+
+msgid "The script was too long: only its beginning was kept in the history."
+msgstr "O script era longo demais: só o começo dele ficou no histórico."
+
+msgid "Query from the history opened on {server}."
+msgstr "Consulta do histórico aberta em {server}."
+
+msgid "Query from the history opened; {server} is not connected, so it will run on the active server."
+msgstr "Consulta do histórico aberta; {server} não está conectado, então ela roda no servidor ativo."
+
+msgid "{n} rows"
+msgstr "{n} linhas"
+
+msgid "Run on Multiple Servers…"
+msgstr "Executar em Vários Servidores…"
+
+msgid "Run on Multiple Servers"
+msgstr "Executar em Vários Servidores"
+
+msgid "Choose the servers where this query window runs. The results come together, with the server in the first column."
+msgstr "Escolha os servidores em que esta janela de consulta roda. Os resultados vêm juntos, com o servidor na primeira coluna."
+
+msgid "There are no saved connections. Register servers in the workspace or in Registered Servers."
+msgstr "Não há conexões guardadas. Registre servidores no workspace ou nos Servidores Registrados."
+
+msgid "1 server selected"
+msgstr "1 servidor selecionado"
+
+msgid "{n} servers selected"
+msgstr "{n} servidores selecionados"
+
+msgid "Search servers"
+msgstr "Pesquisar servidores"
+
+msgid "No server matches the search."
+msgstr "Nenhum servidor corresponde à pesquisa."
+
+msgid "Runs on multiple servers."
+msgstr "Roda em vários servidores."
+
+msgid "1 server"
+msgstr "1 servidor"
+
+msgid "{n} servers"
+msgstr "{n} servidores"
+
+msgid "This query window runs on its own connection."
+msgstr "Esta janela de consulta roda na conexão dela."
+
+msgid "This query window runs on 1 server."
+msgstr "Esta janela de consulta roda em 1 servidor."
+
+msgid "This query window runs on {n} servers."
+msgstr "Esta janela de consulta roda em {n} servidores."
+
+msgid "Plans and Object Information are not available on multiple servers."
+msgstr "Planos e Informações do Objeto não estão disponíveis em vários servidores."
+
+msgid "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:"
+msgstr "Esta janela de consulta roda em vários servidores, e este SQL pode alterar o banco ({reason}). Estes servidores pedem confirmação:"
+
+msgid "The results are read-only: they come from multiple servers."
+msgstr "Os resultados são somente leitura: eles vêm de vários servidores."
+
+msgid "This server is no longer in the saved connections."
+msgstr "Este servidor não está mais nas conexões guardadas."
+
+msgid "No saved password. Connect to this server once with \"Remember password\", or save its password in the workspace."
+msgstr "Sem senha guardada. Conecte neste servidor uma vez com \"Lembrar senha\", ou guarde a senha dele no workspace."
+
+msgid "No answer."
+msgstr "Sem resposta."
+
+msgid "(multiple databases)"
+msgstr "(vários bancos)"
+
+msgid "ERROR"
+msgstr "ERRO"
+
+msgid "Canceled."
+msgstr "Cancelado."
+
+msgid "Time"
+msgstr "Tempo"
+
+msgid "Message"
+msgstr "Mensagem"
+
+msgid "The query failed on every server."
+msgstr "A consulta falhou em todos os servidores."
+
+msgid "{ok} of {n} servers answered; {failed} failed."
+msgstr "{ok} de {n} servidores responderam; {failed} falharam."
+
+msgid "{n} servers answered."
+msgstr "{n} servidores responderam."
+
+msgid "Zoom In"
+msgstr "Ampliar"
+
+msgid "Zoom Out"
+msgstr "Reduzir"
+
+msgid "Reset Zoom"
+msgstr "Tamanho Normal"
+
+msgid "Interface size: {percent}%"
+msgstr "Tamanho da interface: {percent}%"
+
+msgid "Interface size:"
+msgstr "Tamanho da interface:"
+
+msgid "Reset"
+msgstr "Restaurar"
+
+msgid "Makes text, icons and spacing larger or smaller in the whole application. Ctrl++ and Ctrl+- change it at any time; Ctrl+0 goes back to 100%."
+msgstr "Aumenta ou diminui letras, ícones e espaços no aplicativo inteiro. Ctrl++ e Ctrl+- mudam a qualquer momento; Ctrl+0 volta para 100%."
+
+msgid "Interface size: {percent}% (this window is too small for it; make the window larger to see it all)"
+msgstr "Tamanho da interface: {percent}% (a janela é pequena para esse tamanho; aumente a janela para ver tudo)"
+
+msgid "This window fits up to {percent}% now. A larger size is saved and applies when the window is larger."
+msgstr "Esta janela comporta até {percent}% agora. Um tamanho maior fica salvo e vale quando a janela estiver maior."
+
+msgid "The sign-in did not finish."
+msgstr "O login não terminou."
+
+msgid "To sign in with your ChatGPT account, PostPilot uses Codex, OpenAI's official program. It is not installed on this computer. Install it with the command below, then press Check again."
+msgstr "Para entrar com a sua conta do ChatGPT, o PostPilot usa o Codex, o programa oficial da OpenAI. Ele não está instalado neste computador. Instale com o comando abaixo e depois clique em Verificar de novo."
+
+msgid "Check again"
+msgstr "Verificar de novo"
+
+msgid "Finish signing in to ChatGPT in the browser that just opened…"
+msgstr "Termine de entrar no ChatGPT no navegador que acabou de abrir…"
+
+msgid "The browser did not open?"
+msgstr "O navegador não abriu?"
+
+msgid "Copy the sign-in link"
+msgstr "Copiar o link de login"
+
+msgid "Checking the ChatGPT sign-in…"
+msgstr "Verificando o login do ChatGPT…"
+
+msgid "Signed in with your ChatGPT account, through Codex ({path}). No API key needed; it uses your ChatGPT plan."
+msgstr "Conectado com a sua conta do ChatGPT, pelo Codex ({path}). Não precisa de chave de API; usa o seu plano do ChatGPT."
+
+msgid "Codex is signed in with an API key, not with the ChatGPT account. It works, but is charged per use."
+msgstr "O Codex está conectado com uma chave de API, não com a conta do ChatGPT. Funciona, mas é cobrado por uso."
+
+msgid "Sign in with ChatGPT instead"
+msgstr "Entrar com a conta do ChatGPT"
+
+msgid "You have not signed in to ChatGPT yet."
+msgstr "Você ainda não entrou no ChatGPT."
+
+msgid "Sign in with ChatGPT"
+msgstr "Entrar com o ChatGPT"
+
+msgid "Could not check the sign-in ({detail}). Update Codex if it is old."
+msgstr "Não foi possível verificar o login ({detail}). Atualize o Codex se ele for antigo."
+
+msgid "The sign-in did not work: {error}"
+msgstr "O login não deu certo: {error}"
+
+msgid "The sign-in is kept by Codex, not by PostPilot. In the panel, ChatGPT works on your databases through PostPilot, which asks before changing anything."
+msgstr "O login fica guardado pelo Codex, não pelo PostPilot. No painel, o ChatGPT trabalha nos seus bancos pelo PostPilot, que pergunta antes de alterar qualquer coisa."
+
+msgid "ChatGPT (your account)"
+msgstr "ChatGPT (sua conta)"
+
+msgid "Uses your ChatGPT account, through Codex. What the assistant reads is sent to OpenAI."
+msgstr "Usa a sua conta do ChatGPT, pelo Codex. O que o assistente lê é enviado para a OpenAI."
+
+msgid "ChatGPT by account needs Codex, OpenAI's official program, and it was not found. Open Tools > Options > AI Providers to install it and sign in. If it is installed somewhere else, set PGSTUDIO_CODEX to its path."
+msgstr "O ChatGPT pela conta precisa do Codex, o programa oficial da OpenAI, e ele não foi encontrado. Abra Ferramentas > Opções > Provedores de IA para instalar e entrar. Se estiver instalado em outro lugar, aponte PGSTUDIO_CODEX para o caminho dele."
