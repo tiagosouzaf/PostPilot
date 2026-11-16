@@ -4565,3 +4565,198 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "Save as Snippet..."
+msgstr "Salvar como Trecho..."
+
+msgid "1 template found."
+msgstr "1 modelo encontrado."
+
+msgid "{n} templates found."
+msgstr "{n} modelos encontrados."
+
+msgid "No templates found."
+msgstr "Nenhum modelo encontrado."
+
+msgid "Search templates by name or content"
+msgstr "Pesquisar modelos pelo nome ou conteúdo"
+
+msgid "My Snippets"
+msgstr "Meus Trechos"
+
+msgid "My Snippets (this computer)"
+msgstr "Meus Trechos (este computador)"
+
+msgid "Workspace Snippets"
+msgstr "Trechos do Workspace"
+
+msgid "New Snippet"
+msgstr "Novo Trecho"
+
+msgid "New Snippet..."
+msgstr "Novo Trecho..."
+
+msgid "New Window"
+msgstr "Nova Janela"
+
+msgid "Open in a new query window"
+msgstr "Abrir em uma nova janela de consulta"
+
+msgid "Open in New Query Window"
+msgstr "Abrir em Nova Janela de Consulta"
+
+msgid "Save a Copy in My Snippets..."
+msgstr "Salvar uma Cópia nos Meus Trechos..."
+
+msgid "Save your own snippet. It starts with the text selected in the editor."
+msgstr "Salve um trecho seu. Ele começa com o texto selecionado no editor."
+
+msgid "No snippets yet. Use New Snippet to save one."
+msgstr "Nenhum trecho ainda. Use Novo Trecho para salvar um."
+
+msgid "Open a workspace to keep snippets in Git and take them to your other computers."
+msgstr "Abra um workspace para guardar os trechos no Git e levá-los para os seus outros computadores."
+
+msgid "Open a workspace to keep your own snippets and take them to your other computers through Git."
+msgstr "Abra um workspace para guardar os seus trechos e levá-los pelo Git para os seus outros computadores."
+
+msgid "Open a workspace to save snippets."
+msgstr "Abra um workspace para salvar trechos."
+
+msgid "Enter a valid name."
+msgstr "Informe um nome válido."
+
+msgid "The snippet is empty."
+msgstr "O trecho está vazio."
+
+msgid "Could not save the snippet: {e}"
+msgstr "Não foi possível salvar o trecho: {e}"
+
+msgid "Could not rename: {e}"
+msgstr "Não foi possível renomear: {e}"
+
+msgid "Could not delete: {e}"
+msgstr "Não foi possível excluir: {e}"
+
+msgid "Snippet saved in {path}."
+msgstr "Trecho salvo em {path}."
+
+msgid "Saved in {folder}."
+msgstr "Salvo em {folder}."
+
+msgid "Renamed to {path}."
+msgstr "Renomeado para {path}."
+
+msgid "Deleted {path}."
+msgstr "{path} excluído."
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Rename..."
+msgstr "Renomear..."
+
+msgid "Delete..."
+msgstr "Excluir..."
+
+msgid "Delete the snippet \"{name}\"?"
+msgstr "Excluir o trecho \"{name}\"?"
+
+msgid "Delete the folder \"{name}\" and every snippet in it?"
+msgstr "Excluir a pasta \"{name}\" e todos os trechos dela?"
+
+msgid "SQL:"
+msgstr "SQL:"
+
+msgid "Monitoring"
+msgstr "Monitoramento"
+
+msgid "Backup and Restore"
+msgstr "Backup e Restauração"
+
+msgid "Create Table"
+msgstr "Criar Tabela"
+
+msgid "Add Foreign Key"
+msgstr "Adicionar Chave Estrangeira"
+
+msgid "Create Partitioned Table"
+msgstr "Criar Tabela Particionada"
+
+msgid "Create Index"
+msgstr "Criar Índice"
+
+msgid "Unused Indexes"
+msgstr "Índices Não Usados"
+
+msgid "Missing Indexes"
+msgstr "Índices Ausentes"
+
+msgid "Index Fragmentation"
+msgstr "Fragmentação dos Índices"
+
+msgid "Create View"
+msgstr "Criar Exibição"
+
+msgid "Create Materialized View"
+msgstr "Criar Exibição Materializada"
+
+msgid "Create Function"
+msgstr "Criar Função"
+
+msgid "Create Procedure"
+msgstr "Criar Procedure"
+
+msgid "Create Trigger"
+msgstr "Criar Trigger"
+
+msgid "Create Login and User"
+msgstr "Criar Login e Usuário"
+
+msgid "Grant Read-Only Access"
+msgstr "Dar Acesso Somente Leitura"
+
+msgid "Common Table Expression (CTE)"
+msgstr "Expressão de Tabela Comum (CTE)"
+
+msgid "Insert or Update (Upsert)"
+msgstr "Inserir ou Atualizar (Upsert)"
+
+msgid "Find Duplicate Rows"
+msgstr "Achar Linhas Duplicadas"
+
+msgid "Paging"
+msgstr "Paginação"
+
+msgid "Update From Another Table"
+msgstr "Atualizar a Partir de Outra Tabela"
+
+msgid "Delete in Batches"
+msgstr "Excluir em Lotes"
+
+msgid "Change Inside a Transaction"
+msgstr "Alterar Dentro de uma Transação"
+
+msgid "Running Queries"
+msgstr "Consultas em Execução"
+
+msgid "Blocked Sessions"
+msgstr "Sessões Bloqueadas"
+
+msgid "End a Session"
+msgstr "Encerrar uma Sessão"
+
+msgid "Table Sizes"
+msgstr "Tamanho das Tabelas"
+
+msgid "Database Sizes"
+msgstr "Tamanho dos Bancos"
+
+msgid "Vacuum and Dead Rows"
+msgstr "Vacuum e Linhas Mortas"
+
+msgid "Back Up Database"
+msgstr "Fazer Backup do Banco"
+
+msgid "Last Backups"
+msgstr "Últimos Backups"

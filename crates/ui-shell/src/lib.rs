@@ -47,6 +47,7 @@ pub mod security_mssql;
 pub mod servers;
 pub mod session;
 pub mod system_theme;
+pub mod templates;
 pub mod theme;
 pub mod update;
 
@@ -224,6 +225,8 @@ pub struct ShellApp {
     name_suggestions: ai_names::NameSuggestions,
     /// A sessão salva enquanto o usuário trabalha (veja [`session`]).
     session: session::Session,
+    /// Template Explorer: modelos embutidos e trechos do usuário.
+    templates: templates::TemplatesPanel,
 }
 
 /// Um script do Object Explorer sendo gerado fora da thread da interface.
@@ -405,6 +408,7 @@ impl Default for ShellApp {
             ai: Default::default(),
             name_suggestions: Default::default(),
             session: Default::default(),
+            templates: Default::default(),
         }
     }
 }
@@ -1596,6 +1600,8 @@ impl ShellApp {
                 | RegisteredServers
                 | WorkspaceExplorer
                 | ClaudePanel
+                | TemplateExplorer
+                | SaveAsSnippet
                 | ClaudeExplain
                 | ClaudeOptimize
                 | ClaudeFix
@@ -1887,6 +1893,9 @@ impl ShellApp {
             }
             CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
             CommandId::WorkspaceExplorer => self.workspace.open(Panel::WorkspaceExplorer),
+            CommandId::TemplateExplorer | CommandId::SaveAsSnippet => {
+                self.template_command(ctx, cmd);
+            }
             CommandId::ClaudePanel => {
                 self.workspace.open(Panel::Claude);
                 self.claude_panel.focus();
@@ -3207,6 +3216,7 @@ impl ShellApp {
         let mut registered_actions = Vec::new();
         let mut workspace_actions = Vec::new();
         let mut claude_actions = Vec::new();
+        let mut template_actions = Vec::new();
         let mut activate = None;
         let mut open_json = Vec::new();
         self.phase("panels");
@@ -3244,12 +3254,15 @@ impl ShellApp {
                     workspace_actions: Vec::new(),
                     claude_panel: &mut self.claude_panel,
                     claude_actions: Vec::new(),
+                    templates: &mut self.templates,
+                    template_actions: Vec::new(),
                 };
                 self.workspace.show(ui, &mut viewer);
                 activate = viewer.activate_server;
                 registered_actions = viewer.registered_actions;
                 workspace_actions = viewer.workspace_actions;
                 claude_actions = viewer.claude_actions;
+                template_actions = viewer.template_actions;
                 commands.extend(viewer.commands);
                 explorer_events.extend(viewer.explorer_events);
                 let save_results = viewer.save_results;
@@ -3275,6 +3288,7 @@ impl ShellApp {
         self.phase("workspace");
         self.workspace_step(&ctx, workspace_actions);
         self.claude_panel_step(&ctx, claude_actions);
+        self.templates_step(&ctx, template_actions);
         self.export_step();
         self.designer_step();
         self.diagram_step();

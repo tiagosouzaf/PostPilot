@@ -9,7 +9,8 @@
 //! - os servidores conectados no Object Explorer, na ordem, qual é o ativo
 //!   e os nós expandidos de cada um;
 //! - as janelas de consulta: arquivo, nome, texto não salvo, banco,
-//!   servidor e qual estava na frente.
+//!   servidor e qual estava na frente;
+//! - o Template Explorer: a pesquisa e as pastas abertas.
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -105,6 +106,8 @@ pub struct SessionState {
     pub documents: Vec<SessionDocument>,
     /// Número da última `SQLQueryN.sql`, para a numeração continuar.
     pub query_counter: u32,
+    /// Template Explorer: pesquisa e pastas abertas.
+    pub templates: Option<crate::templates::TemplatesSession>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -310,6 +313,9 @@ impl ShellApp {
     /// Reabre as janelas e põe os servidores na fila para reconectar.
     fn restore_session(&mut self, store: &SessionStore, state: SessionState) {
         self.documents.set_query_counter(state.query_counter);
+        if let Some(templates) = state.templates.clone() {
+            self.templates.restore(templates);
+        }
         let mut front = None;
         for d in &state.documents {
             let on_disk = d
@@ -449,6 +455,7 @@ impl ShellApp {
             servers,
             documents,
             query_counter: self.documents.query_counter(),
+            templates: Some(self.templates.session()),
         }
     }
 

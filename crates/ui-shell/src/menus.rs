@@ -42,6 +42,8 @@ pub const EDITOR_CONTEXT: &[Entry] = &[
     I(DesignQuery),
     I(Execute),
     SEP,
+    I(SaveAsSnippet),
+    SEP,
     I(ClaudeExplain),
     I(ClaudeOptimize),
     I(ClaudeFix),
