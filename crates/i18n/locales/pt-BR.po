@@ -4565,3 +4565,30 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "Restore Unsaved Changes"
+msgstr "Restaurar alterações não salvas"
+
+msgid "The unsaved changes from the last session were restored."
+msgstr "As alterações não salvas da última sessão foram restauradas."
+
+msgid "less than a minute"
+msgstr "menos de um minuto"
+
+msgid "{n} min"
+msgstr "{n} min"
+
+msgid "{n} h"
+msgstr "{n} h"
+
+msgid "{n} days"
+msgstr "{n} dias"
+
+msgid "Results from the previous session ({age} ago), not run again. Press F5 to refresh."
+msgstr "Resultado da sessão anterior (há {age}), sem executar de novo. F5 atualiza."
+
+msgid "Showing the first {kept} of {total} rows."
+msgstr "Mostrando as primeiras {kept} de {total} linhas."
+
+msgid "The results are read-only: they came from the previous session. Run the query again to edit them."
+msgstr "O resultado é somente leitura: veio da sessão anterior. Execute a consulta de novo para editá-lo."

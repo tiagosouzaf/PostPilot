@@ -18,6 +18,9 @@ use pgstudio_result_grid::{GridState, ResultStore};
 
 use crate::result_edit::ResultEditor;
 
+mod saved;
+pub use saved::{Restored, SavedExecution, SavedResult};
+
 /// Linhas recebidas entre um pedido de frame e outro, para a contagem na
 /// tela andar sem pedir um frame por linha.
 const REPAINT_EVERY_ROWS: u64 = 5000;
@@ -348,6 +351,8 @@ pub struct Execution {
     /// grade.
     file: Option<PathBuf>,
     ctx: egui::Context,
+    /// O resultado veio da sessão anterior (não foi rodado agora).
+    restored: Option<Restored>,
 }
 
 impl std::fmt::Debug for Execution {
@@ -459,6 +464,7 @@ impl Execution {
             finished: false,
             file: None,
             ctx: ui_ctx,
+            restored: None,
         }
     }
 
@@ -575,6 +581,7 @@ impl Execution {
             finished: false,
             file: Some(path.to_path_buf()),
             ctx: ui_ctx,
+            restored: None,
         })
     }
 
