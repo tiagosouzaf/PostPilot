@@ -249,6 +249,11 @@ entre aspas, `$$` e comentários sem fim e parênteses sem par ficam sublinhados
 em vermelho, assim como o trecho do erro que o servidor apontou na última
 execução; o mouse em cima mostra a mensagem.
 
+Parar o mouse no `*` de um `SELECT` mostra as colunas que ele representa, com
+os tipos, tabela por tabela (as do `FROM` e dos `JOIN` daquele `SELECT`);
+`alias.*` mostra só as daquela tabela. A lista se divide em blocos lado a lado
+para caber na janela.
+
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira
 execução, no banco de onde a janela veio ou no da conexão do Object Explorer). Vários comandos separados

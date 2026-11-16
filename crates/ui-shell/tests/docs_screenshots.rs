@@ -41,6 +41,24 @@ fn catalog() -> Catalog {
                     &[("id", "integer"), ("nome", "text"), ("email", "text")],
                 ),
                 rel(
+                    "lotes",
+                    &[
+                        ("status_lote", "integer"),
+                        ("tipo_documental_metadado", "text"),
+                        (
+                            "tipo_documento_identificador_classificacao_cliente",
+                            "character varying(200)",
+                        ),
+                        ("titulo_metadado", "text"),
+                        ("usuario_id_registro_confirmacao_download", "bigint"),
+                        ("versao_software_captura_metadado", "character varying(200)"),
+                        (
+                            "observacao_do_responsavel_pela_conferencia_do_lote_antes_do_envio_ao_cliente_final",
+                            "timestamp without time zone",
+                        ),
+                    ],
+                ),
+                rel(
                     "pedidos",
                     &[
                         ("id", "integer"),
@@ -65,6 +83,10 @@ fn out(name: &str) -> PathBuf {
 
 /// Digita `text` num editor do dialeto, desce `down` sugestões e salva.
 fn shot(dialect: Dialect, text: &str, down: usize, name: &str) {
+    shot_at([760.0, 380.0], dialect, text, down, name);
+}
+
+fn shot_at(size: [f32; 2], dialect: Dialect, text: &str, down: usize, name: &str) {
     pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
     let mut state = EditorState::default();
     state.set_dialect(dialect);
@@ -79,7 +101,7 @@ fn shot(dialect: Dialect, text: &str, down: usize, name: &str) {
         state,
     };
     let mut h = Harness::builder()
-        .with_size([760.0, 380.0])
+        .with_size(size)
         .with_pixels_per_point(2.0)
         .build_ui_state(
             |ui, doc: &mut Doc| {
@@ -150,5 +172,32 @@ fn explanations() {
         "select top 10 * from pedidos with (nol",
         0,
         "sqlserver.png",
+    );
+}
+
+/// Nomes compridos: a lista alarga e, sem espaço, encurta com reticências.
+#[test]
+fn long_names() {
+    let sql = "select * from lotes l where l.";
+    shot_at(
+        [900.0, 380.0],
+        Dialect::Postgres,
+        sql,
+        5,
+        "nomes-longos.png",
+    );
+    shot_at(
+        [900.0, 380.0],
+        Dialect::Postgres,
+        sql,
+        0,
+        "nomes-longos-cortado.png",
+    );
+    shot_at(
+        [460.0, 380.0],
+        Dialect::Postgres,
+        sql,
+        5,
+        "nomes-longos-estreito.png",
     );
 }
