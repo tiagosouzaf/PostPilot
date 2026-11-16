@@ -78,6 +78,24 @@ Como as respostas aparecem:
 Os modelos (Ctrl+Alt+T) têm buscas, agregações, documentos, índices,
 cluster e análise de texto prontos para adaptar.
 
+## Sugestões no editor
+
+A lista abre enquanto você escreve (ou com Ctrl+Espaço):
+
+- o método no começo de uma requisição;
+- no caminho, os índices, aliases e data streams e as APIs que cabem em
+  cada pedaço (`_search`, `_count`, `_mapping`... depois de um índice;
+  `indices`, `shards`... depois de `_cat`), e os parâmetros comuns depois
+  do `?`;
+- no corpo, ao abrir uma aspa, as chaves que cabem ali: as de uma busca
+  (`query`, `sort`, `aggs`, `_source`...), os tipos de consulta dentro de
+  `query` e das listas de um `bool`, os tipos de agregação, as chaves de
+  um mapeamento e os tipos de campo;
+- onde vai um campo (dentro de `match`, `term`, `range`, em `"field":`,
+  `sort`, `_source`), os campos do índice do caminho, com o tipo.
+
+Os campos vêm do mapeamento, lido uma vez. Ctrl+Shift+R lê de novo.
+
 ## Pesquisador de Objetos
 
 - **Índices**: cada índice com os campos do mapeamento e o tipo
@@ -102,7 +120,7 @@ No menu de um índice (ou alias, ou data stream):
 Table Designer, diagramas, Schema Compare, Data Compare, Query Designer,
 edição na grade, importação de CSV, plano de execução gráfico, Activity
 Monitor, backup e as ferramentas do Claude avisam na status bar que não
-estão disponíveis para o Elasticsearch. Sugestões no editor ainda não há.
+estão disponíveis para o Elasticsearch.
 
 ## Testes
 

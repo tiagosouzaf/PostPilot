@@ -250,8 +250,7 @@ impl Editing<'_> {
         if self.buf.popup.is_none() && !open {
             return;
         }
-        // Sem lista de palavras do SQL numa requisição do Elasticsearch.
-        if !self.range().is_empty() || self.buf.dialect == Dialect::Elasticsearch {
+        if !self.range().is_empty() {
             self.buf.popup = None;
             return;
         }
@@ -260,6 +259,9 @@ impl Editing<'_> {
             Dialect::Redis => crate::redis::complete(self.text, &self.buf.tokens, at, self.catalog),
             Dialect::MongoDb => {
                 crate::mongodb::complete(self.text, &self.buf.tokens, at, self.catalog)
+            }
+            Dialect::Elasticsearch => {
+                crate::elasticsearch::complete(self.text, &self.buf.tokens, at, self.catalog)
             }
             _ => complete(self.text, &self.buf.tokens, at, self.catalog),
         };
@@ -1047,6 +1049,18 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
                     // depois do comando já mostra as chaves.
                     (Some(':' | ' '), None)
                         if ed.buf.dialect == Dialect::Redis && ed.line_has_text() =>
+                    {
+                        ed.refresh_popup(true)
+                    }
+                    // Elasticsearch: a aspa abre uma chave ou um valor, a
+                    // barra um pedaço do caminho.
+                    (Some('"' | '/' | ',' | '?' | '&'), None)
+                        if ed.buf.dialect == Dialect::Elasticsearch =>
+                    {
+                        ed.refresh_popup(true)
+                    }
+                    (Some(' '), None)
+                        if ed.buf.dialect == Dialect::Elasticsearch && ed.line_has_text() =>
                     {
                         ed.refresh_popup(true)
                     }

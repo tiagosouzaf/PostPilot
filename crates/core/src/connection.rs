@@ -221,7 +221,7 @@ impl Engine {
             // O Redis ganha os seus marco a marco (Fase N do plano).
             Engine::Redis => matches!(feature, Feature::Query | Feature::IntelliSense),
             Engine::MongoDb => matches!(feature, Feature::Query | Feature::IntelliSense),
-            Engine::Elasticsearch => matches!(feature, Feature::Query),
+            Engine::Elasticsearch => matches!(feature, Feature::Query | Feature::IntelliSense),
         }
     }
 
