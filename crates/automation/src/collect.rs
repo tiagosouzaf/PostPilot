@@ -223,7 +223,10 @@ fn cut(mut v: String) -> String {
 
 /// Mensagem do servidor com código, detalhe e dica.
 pub fn message(m: &ServerMessage) -> String {
-    let mut text = if m.code.is_empty() {
+    // Os motores sem SQL respondem em texto simples, sem severidade.
+    let mut text = if m.severity.is_empty() && m.code.is_empty() {
+        m.message.clone()
+    } else if m.code.is_empty() {
         format!("{}: {}", m.severity, m.message)
     } else {
         format!("{} {}: {}", m.severity, m.code, m.message)

@@ -369,3 +369,161 @@ mod tests {
         assert!(classify(&describe_function("f")).is_read_only());
     }
 }
+
+/// O catálogo dos motores sem SQL, na linguagem de cada um: o que as
+/// ferramentas `list_databases`, `list_objects` e `describe_table` rodam.
+pub mod nosql {
+    use pgstudio_core::connection::{Engine, REDIS_LIST_DATABASES};
+
+    /// Um argumento do Redis entre aspas.
+    fn redis_arg(s: &str) -> String {
+        let mut out = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    /// Um texto do shell do MongoDB entre aspas.
+    fn mongo_string(s: &str) -> String {
+        serde_json::Value::String(s.to_string()).to_string()
+    }
+
+    /// Os bancos do servidor (no Elasticsearch, que não tem bancos, a
+    /// saúde do cluster).
+    pub fn list_databases(engine: Engine) -> String {
+        match engine {
+            Engine::Redis => REDIS_LIST_DATABASES.to_string(),
+            Engine::MongoDb => "show dbs".to_string(),
+            _ => "GET /_cluster/health".to_string(),
+        }
+    }
+
+    /// Chaves (Redis), coleções (MongoDB) ou índices e aliases
+    /// (Elasticsearch). `pattern` filtra: um padrão de `SCAN` no Redis, um
+    /// padrão de nome de índice no Elasticsearch.
+    pub fn list_objects(
+        engine: Engine,
+        pattern: Option<&str>,
+    ) -> Result<(String, &'static [&'static str]), String> {
+        let pattern = pattern.map(str::trim).filter(|p| !p.is_empty());
+        Ok(match engine {
+            Engine::Redis => (
+                format!(
+                    "DBSIZE\nSCAN 0 MATCH {} COUNT 1000",
+                    redis_arg(pattern.unwrap_or("*"))
+                ),
+                &["key_count", "keys"],
+            ),
+            Engine::MongoDb => ("show collections".to_string(), &["collections"]),
+            _ => {
+                let pattern = pattern.unwrap_or("*");
+                path_part(pattern)?;
+                (
+                    format!(
+                        "GET /_cat/indices/{pattern}?h=index,health,status,docs.count,store.size&s=index\n\
+                         GET /_cat/aliases/{pattern}?h=alias,index&s=alias"
+                    ),
+                    &["indices", "aliases"],
+                )
+            }
+        })
+    }
+
+    /// Um nome que vai no caminho de uma requisição do Elasticsearch.
+    fn path_part(name: &str) -> Result<(), String> {
+        if name.is_empty() || name.contains(|c: char| c.is_whitespace() || "/?#".contains(c)) {
+            return Err(format!("\"{name}\" is not a valid index name."));
+        }
+        Ok(())
+    }
+
+    /// Uma chave (validade, tamanho, tipo), uma coleção (documentos de
+    /// exemplo, índices, contagem) ou um índice (mapeamento, contagem).
+    pub fn describe(
+        engine: Engine,
+        name: &str,
+    ) -> Result<(String, &'static [&'static str]), String> {
+        let name = name.trim();
+        Ok(match engine {
+            Engine::Redis => {
+                let key = redis_arg(name);
+                (
+                    // O tipo vem como texto simples, nas mensagens.
+                    format!("TTL {key}\nMEMORY USAGE {key}\nTYPE {key}"),
+                    &["ttl_seconds", "memory_bytes"],
+                )
+            }
+            Engine::MongoDb => {
+                let coll = format!("db.getCollection({})", mongo_string(name));
+                (
+                    format!(
+                        "{coll}.find().limit(5)\n{coll}.getIndexes()\n{coll}.estimatedDocumentCount()"
+                    ),
+                    &["sample_documents", "indexes", "document_count"],
+                )
+            }
+            _ => {
+                path_part(name)?;
+                (
+                    format!("GET /{name}/_mapping\nGET /{name}/_count"),
+                    &["mapping", "document_count"],
+                )
+            }
+        })
+    }
+
+    /// O nome do motor numa mensagem.
+    pub fn engine_name(engine: Engine) -> &'static str {
+        match engine {
+            Engine::Redis => "Redis",
+            Engine::MongoDb => "MongoDB",
+            Engine::Elasticsearch => "Elasticsearch",
+            Engine::PostgreSql => "PostgreSQL",
+            Engine::SqlServer => "SQL Server",
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn catalog_texts_are_in_the_language_of_each_engine() {
+            assert_eq!(
+                list_objects(Engine::Redis, Some("user:*")).unwrap().0,
+                "DBSIZE\nSCAN 0 MATCH \"user:*\" COUNT 1000"
+            );
+            assert_eq!(
+                describe(Engine::Redis, "a \"b\"\nc")
+                    .unwrap()
+                    .0
+                    .lines()
+                    .next(),
+                Some(r#"TTL "a \"b\"\nc""#)
+            );
+            assert_eq!(
+                describe(Engine::MongoDb, "meus \"pedidos\"")
+                    .unwrap()
+                    .0
+                    .lines()
+                    .next(),
+                Some(r#"db.getCollection("meus \"pedidos\"").find().limit(5)"#)
+            );
+            assert_eq!(
+                describe(Engine::Elasticsearch, "pedidos").unwrap().0,
+                "GET /pedidos/_mapping\nGET /pedidos/_count"
+            );
+            assert!(describe(Engine::Elasticsearch, "a/_search\nDELETE /a").is_err());
+            assert!(list_objects(Engine::Elasticsearch, Some("a b")).is_err());
+            assert_eq!(list_databases(Engine::MongoDb), "show dbs");
+        }
+    }
+}
