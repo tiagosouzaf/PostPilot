@@ -797,7 +797,8 @@ impl ShellApp {
         let mut dialog = options::OptionsDialog::new(&self.preferences);
         dialog.system_theme = self.system_theme.current();
         dialog.ai =
-            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code());
+            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code())
+                .with_codex(self.ai.codex());
         if let Some(page) = page {
             dialog.page = page;
         }
@@ -807,6 +808,11 @@ impl ShellApp {
     /// Tools > AI Providers: as opções, na página dos provedores de IA.
     pub(crate) fn open_ai_options(&mut self) {
         self.open_options(Some(options::Page::AiProviders));
+    }
+
+    /// O diálogo de opções aberto.
+    pub fn options(&self) -> Option<&options::OptionsDialog> {
+        self.options.as_ref()
     }
 
     /// O diálogo de opções aberto (testes).
@@ -822,11 +828,8 @@ impl ShellApp {
     /// Usa esta configuração de IA (o aplicativo lê a da pasta de
     /// configuração; os testes montam a deles).
     pub fn with_ai(mut self, ai: ai::Ai) -> Self {
-        self.claude_panel.provider = ai
-            .settings()
-            .active_provider()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+        self.claude_panel.provider = ai.settings().panel_name();
+        self.claude_panel.by_account = ai.settings().uses_chatgpt();
         self.ai = ai;
         self
     }
@@ -843,10 +846,8 @@ impl ShellApp {
             panel.agent = None;
             panel.session = None;
             panel.busy = false;
-            panel.provider = match self.ai.settings().active_provider() {
-                Some(p) => p.name.clone(),
-                None => String::new(),
-            };
+            panel.provider = self.ai.settings().panel_name();
+            panel.by_account = self.ai.settings().uses_chatgpt();
             if !panel.items.is_empty() {
                 panel.note(trf!(
                     "Now using {provider}. The conversation starts over.",
@@ -2209,9 +2210,10 @@ impl ShellApp {
         self.workspace.open(Panel::Query(id));
     }
 
-    /// "Save Results As...": pergunta o arquivo e exporta o resultado `i`
-    /// da janela `doc` numa thread, no formato da extensão.
-    fn save_results_as(&mut self, doc: u32, i: usize) {
+    /// "Save Results As..." e "Export to Excel...": pergunta o arquivo
+    /// (sugerindo a extensão `extension`) e exporta o resultado `i` da
+    /// janela `doc` numa thread, no formato da extensão escolhida.
+    fn save_results_as(&mut self, doc: u32, i: usize, extension: &str) {
         let Some(set) = self
             .documents
             .get(doc)
@@ -2223,7 +2225,7 @@ impl ShellApp {
         let store = set.shared_store();
         let rows = set.len();
         let question = file_dialogs::Question::SaveResults {
-            name: format!("{}.csv", tr("Results")),
+            name: format!("{}.{extension}", tr("Results")),
         };
         self.ask_path(question, move |app, ctx, path| {
             if let Some(path) = path {
@@ -2254,8 +2256,17 @@ impl ShellApp {
                 )
             });
             let text = match result {
-                Ok(1) => trf!("Saved 1 row to {path}.", path = path.display()),
-                Ok(n) => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                Ok(saved) => {
+                    let mut text = match saved.rows {
+                        1 => trf!("Saved 1 row to {path}.", path = path.display()),
+                        n => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                    };
+                    if saved.truncated > 0 {
+                        text.push(' ');
+                        text.push_str(&execution::truncated_text(saved.truncated));
+                    }
+                    text
+                }
                 Err(e) => trf!(
                     "Could not save the results to {path}: {error}",
                     path = path.display(),
@@ -3272,8 +3283,8 @@ impl ShellApp {
                     self.active_doc = Some(id);
                     self.request_close(vec![id], false);
                 }
-                for (doc, i) in save_results {
-                    self.save_results_as(doc, i);
+                for (doc, i, extension) in save_results {
+                    self.save_results_as(doc, i, extension);
                 }
             });
         for (doc, i, cell) in open_json {
