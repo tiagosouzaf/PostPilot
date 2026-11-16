@@ -662,7 +662,8 @@ impl Execution {
 
     /// Linhas recebidas em todos os resultados.
     pub fn total_rows(&self) -> u64 {
-        self.results.iter().map(ResultSet::len).sum()
+        // Todas as linhas recebidas, mesmo com um filtro na grade.
+        self.results.iter().map(|r| r.store().total_len()).sum()
     }
 
     /// O texto que o usuário mandou executar (a seleção ou o documento).
