@@ -10,7 +10,9 @@
 //! - números de linha;
 //! - comentar e descomentar linhas ([`comment_selection`]);
 //! - formatar o SQL ([`format_selection`], módulo [`format`](mod@format));
-//! - barra de busca (Ctrl+F) e "Go To Line" (Ctrl+G).
+//! - barra de busca (Ctrl+F) e "Go To Line" (Ctrl+G);
+//! - vários cursores e seleção em coluna (Ctrl+clique, Alt+arrastar,
+//!   Alt+Shift+setas, Shift+Alt+. para a próxima ocorrência).
 //!
 //! O texto continua sendo uma `String` do documento.
 
@@ -169,14 +171,26 @@ pub fn set_selection(ctx: &egui::Context, id: Id, (anchor, cursor): (usize, usiz
     let mut view = widget::load(ctx, id);
     view.anchor = anchor;
     view.cursor = cursor;
+    view.collapse();
     widget::store(ctx, id, view);
+}
+
+/// Todas as seleções do editor `id`, em ordem: com vários cursores ou uma
+/// seleção em coluna há mais de uma. [`selection`] devolve só a principal.
+pub fn selections(ctx: &egui::Context, id: Id) -> Vec<(usize, usize)> {
+    ctx.data(|d| d.get_temp::<widget::View>(id))
+        .map_or(Vec::new(), |view| view.sels().0)
 }
 
 /// Texto selecionado no editor `id`.
 pub fn selected_text(ctx: &egui::Context, id: Id, text: &str) -> Option<String> {
-    let (a, b) = selection(ctx, id)?;
-    let (a, b) = (a.min(b), a.max(b));
-    (a != b).then(|| text.chars().skip(a).take(b - a).collect())
+    let parts: Vec<String> = selections(ctx, id)
+        .into_iter()
+        .filter(|(a, b)| a != b)
+        .map(|(a, b)| text.chars().skip(a.min(b)).take(a.abs_diff(b)).collect())
+        .collect();
+    // Com vários cursores, uma seleção por linha.
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 /// Comenta (ou descomenta) as linhas da seleção, como Ctrl+K, Ctrl+C e
