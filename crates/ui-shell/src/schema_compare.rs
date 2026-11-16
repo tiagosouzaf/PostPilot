@@ -129,6 +129,7 @@ impl Side {
                     database: self.database.trim().into(),
                     user: self.user.trim().into(),
                     ssl: self.ssl,
+                    ssh: None,
                 };
                 Ok(Endpoint::There(settings, self.password.clone()))
             }

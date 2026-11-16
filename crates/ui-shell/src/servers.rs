@@ -274,7 +274,49 @@ use crate::panels::Panel;
 use crate::registered::{Action, RegisteredPanel, RegisteredServers, TreeMenu, TreeRow};
 use crate::secrets::SecretStore;
 
+/// Um dos diálogos com os campos do túnel SSH.
+#[derive(Clone, Copy)]
+enum SshDialog {
+    Connect,
+    Registered,
+    Workspace,
+}
+
 impl ShellApp {
+    fn ssh_fields_mut(&mut self, which: SshDialog) -> Option<&mut crate::ssh_fields::SshFields> {
+        match which {
+            SshDialog::Connect => self.connect_dialog.as_mut().map(|d| &mut d.ssh),
+            SshDialog::Registered => self.registered.server_dialog_mut().map(|d| &mut d.ssh),
+            SshDialog::Workspace => self
+                .workspace_panel
+                .servers_mut()
+                .and_then(RegisteredPanel::server_dialog_mut)
+                .map(|d| &mut d.ssh),
+        }
+    }
+
+    /// Uma vez por frame: o botão de procurar a chave do túnel SSH, em
+    /// qualquer dos diálogos, abre o diálogo de arquivo (fora da thread da
+    /// interface) e põe a resposta no campo.
+    pub(crate) fn ssh_browse_step(&mut self) {
+        for which in [
+            SshDialog::Connect,
+            SshDialog::Registered,
+            SshDialog::Workspace,
+        ] {
+            if self
+                .ssh_fields_mut(which)
+                .is_some_and(crate::ssh_fields::SshFields::take_browse)
+            {
+                self.ask_path(crate::file_dialogs::Question::Open, move |app, _, path| {
+                    if let (Some(path), Some(fields)) = (path, app.ssh_fields_mut(which)) {
+                        fields.set_key_file(&path);
+                    }
+                });
+            }
+        }
+    }
+
     /// Usa este cofre para "Remember password" (o aplicativo usa o do
     /// sistema; sem cofre, a senha é sempre pedida).
     pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
@@ -284,6 +326,11 @@ impl ShellApp {
             Some(store),
             self.workspace_panel.vault_slot(),
         )));
+        // O túnel SSH busca no mesmo cofre a senha ou a frase secreta que
+        // o usuário não digitou.
+        if let Some(secrets) = self.secrets.clone() {
+            pgstudio_ssh::set_secret_source(Arc::new(move |key| secrets.get(key).ok().flatten()));
+        }
         if let Some(dialog) = self.connect_dialog.take() {
             let settings = dialog.settings().unwrap_or_default();
             self.connect_dialog =

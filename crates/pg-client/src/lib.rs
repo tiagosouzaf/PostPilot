@@ -40,6 +40,9 @@ pub struct Session {
     server_version: String,
     /// Avisos do servidor (`NOTICE`, `WARNING`), na ordem em que chegaram.
     notices: Mutex<mpsc::Receiver<DbError>>,
+    /// O túnel SSH por onde a conexão passa: fica aberto enquanto ela
+    /// existir.
+    _tunnel: Option<Arc<pgstudio_ssh::Tunnel>>,
 }
 
 /// Cancela o comando em andamento de uma sessão, mesmo com a sessão
@@ -68,10 +71,19 @@ impl Session {
         settings: &ConnectionSettings,
         password: &str,
     ) -> Result<Session, ConnectError> {
+        // Com túnel SSH, o socket vai para a porta local dele; o nome do
+        // servidor continua valendo para o certificado.
+        let tunnel = pgstudio_ssh::open(settings).await?;
         let mut config = tokio_postgres::Config::new();
+        match &tunnel {
+            Some(tunnel) => {
+                let local = tunnel.local_addr();
+                config.hostaddr(local.ip()).port(local.port())
+            }
+            None => config.port(settings.port),
+        };
         config
             .host(&settings.host)
-            .port(settings.port)
             .dbname(&settings.database)
             .user(&settings.user)
             .application_name(APPLICATION_NAME)
@@ -112,6 +124,7 @@ impl Session {
             settings: settings.clone(),
             server_version,
             notices: Mutex::new(notices),
+            _tunnel: tunnel,
         })
     }
 

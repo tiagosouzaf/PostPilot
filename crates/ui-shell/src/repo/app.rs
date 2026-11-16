@@ -14,6 +14,25 @@ use crate::panels::Panel;
 use crate::registered;
 use crate::servers::server_key;
 
+/// As chaves, no cofre, dos segredos dos túneis SSH dos servidores de
+/// `group` (e das subpastas), sem repetir.
+fn ssh_secret_keys(group: &registered::ServerGroup) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut pending = vec![group];
+    while let Some(g) = pending.pop() {
+        pending.extend(&g.groups);
+        for s in &g.servers {
+            if let Some(ssh) = &s.settings.ssh {
+                let key = ssh.secret_key();
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    keys
+}
+
 impl ShellApp {
     /// Lembra o último workspace aberto neste arquivo e reabre o que
     /// estiver lá.
@@ -449,7 +468,8 @@ impl ShellApp {
         if self.workspace_panel.workspace().is_none() {
             return Err(tr("No workspace is open.").into());
         }
-        let (local, keys) = self.local_connections();
+        let (local, mut keys) = self.local_connections();
+        let ssh_keys = ssh_secret_keys(&local);
         let environments = self
             .registered
             .servers()
@@ -470,6 +490,8 @@ impl ShellApp {
             panel.servers_mut().merge_environments(envs);
         }
         let n = panel.servers_mut().import_tree(&[], local)?;
+        // Os segredos dos túneis SSH vão junto com as senhas.
+        keys.extend(ssh_keys);
         let imported = if n == 1 {
             tr("Imported 1 server into the workspace.").to_string()
         } else {
@@ -484,6 +506,7 @@ impl ShellApp {
             return Err(tr("Not connected.").into());
         };
         let key = server_key(&settings);
+        let ssh_key = settings.ssh.as_ref().map(|ssh| ssh.secret_key());
         let known = self.current_password().into_iter().collect();
         let Some(panel) = self.workspace_panel.servers_mut() else {
             return Err(tr("No workspace is open.").into());
@@ -517,7 +540,7 @@ impl ShellApp {
         Ok(self.bring_passwords(
             added,
             super::panel::PendingCopy {
-                keys: vec![key],
+                keys: std::iter::once(key).chain(ssh_key).collect(),
                 known,
             },
         ))

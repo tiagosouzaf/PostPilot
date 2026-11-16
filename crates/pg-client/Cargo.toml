@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 pgstudio-core.workspace = true
+pgstudio-ssh.workspace = true
 tokio = { workspace = true }
 tokio-postgres = { workspace = true }
 futures-util = { workspace = true }

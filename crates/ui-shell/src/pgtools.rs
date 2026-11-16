@@ -190,14 +190,24 @@ pub fn connection_env(settings: &ConnectionSettings, password: &str) -> Vec<(Str
     if !password.is_empty() {
         env.push(("PGPASSWORD".to_string(), password.to_string()));
     }
+    // Pelo túnel SSH: o socket vai para a porta local dele, e o `--host`
+    // continua sendo o nome do servidor (para o certificado).
+    if let Some(local) = pgstudio_ssh::local_addr(settings) {
+        env.push(("PGHOSTADDR".to_string(), local.ip().to_string()));
+    }
     env
 }
 
 /// `--host`, `--port`, `--username` e `--no-password`.
+///
+/// Numa conexão por túnel SSH a porta é a local do túnel (o
+/// [`connection_env`] manda o `PGHOSTADDR` de `127.0.0.1`); o túnel é o
+/// da conexão aberta no Object Explorer.
 pub fn connection_args(settings: &ConnectionSettings) -> Vec<String> {
+    let port = pgstudio_ssh::local_addr(settings).map_or(settings.port, |a| a.port());
     vec![
         format!("--host={}", settings.host),
-        format!("--port={}", settings.port),
+        format!("--port={port}"),
         format!("--username={}", settings.user),
         "--no-password".to_string(),
     ]

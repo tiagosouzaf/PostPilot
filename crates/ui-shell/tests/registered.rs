@@ -400,6 +400,7 @@ fn real_servers() -> Option<(ConnectionSettings, ConnectionSettings, String)> {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: pgstudio_core::connection::SslMode::Disable,
+        ssh: None,
     };
     let other = if a.host == "127.0.0.1" {
         "localhost"
