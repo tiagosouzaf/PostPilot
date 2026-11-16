@@ -6501,3 +6501,21 @@ msgstr "Ver as Consultas no Gerenciador de Modelos"
 
 msgid "Diagnostic queries: what weighs on the server, who blocks whom, time and cost of the queries. One click runs it."
 msgstr "Consultas de diagnóstico: o que está pesando no servidor, quem bloqueia quem, tempo e custo das consultas. Um clique executa."
+
+msgid "1 column"
+msgstr "1 coluna"
+
+msgid "{n} columns"
+msgstr "{n} colunas"
+
+msgid "… and 1 more column"
+msgstr "… e mais 1 coluna"
+
+msgid "… and {n} more columns"
+msgstr "… e mais {n} colunas"
+
+msgid "The catalog of this database is not loaded yet."
+msgstr "O catálogo deste banco ainda não foi lido."
+
+msgid "Not a table or view of the catalog."
+msgstr "Não é uma tabela nem uma view do catálogo."

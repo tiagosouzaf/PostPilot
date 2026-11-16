@@ -21,6 +21,7 @@ use crate::diagnostics::{Diagnostic, server_range};
 use crate::highlight::{Colors, layout_job_in, line_job};
 use crate::hints::{HintAction, HintKind, HintState, HintStatus};
 use crate::lexer::{Dialect, Token, tokenize_in};
+use crate::star::{Star, star_at};
 use pgstudio_core::catalog::Catalog;
 use pgstudio_i18n::{tr, trf};
 
@@ -155,6 +156,10 @@ pub struct Buffer {
     /// Onde a lista foi desenhada no último frame: um clique nela tira o
     /// foco do editor, mas não pode fechá-la.
     popup_rect: Option<Rect>,
+    /// O `*` com o ponteiro em cima (byte) e desde quando.
+    star_hover: Option<(usize, f64)>,
+    /// A lista das colunas do `*` desenhada neste frame, e onde.
+    star_tip: Option<(Star, Rect)>,
     /// Sugestões da IA para o comando do cursor.
     pub(crate) ai: HintState,
     /// Sobe a cada mudança do texto: quem observa o editor (a IA) compara
@@ -230,6 +235,12 @@ const DOC_FONT: f32 = 12.0;
 const DOC_MARGIN: f32 = 6.0;
 
 impl Buffer {
+    /// As colunas do `*` sob o ponteiro, se a lista está na tela, e o
+    /// retângulo dela.
+    pub(crate) fn star_tip(&self) -> Option<(&Star, Rect)> {
+        self.star_tip.as_ref().map(|(s, r)| (s, *r))
+    }
+
     /// Devolve `true` se o texto mudou por fora do editor.
     fn sync(&mut self, text: &str, view: &View) -> bool {
         if self.synced && self.shadow == text {
@@ -1351,6 +1362,7 @@ pub(crate) fn show(
 
     paint(ui, &ed, &f, gutter, focused);
     squiggles(ui, &response, &ed, &f);
+    star_tip(ui, id, &response, &mut ed, &f);
     ed.buf.popup_rect = None;
     if (focused || over_popup) && popup(ui, id, &mut ed, &f) {
         ui.memory_mut(|m| m.request_focus(id));
@@ -2805,6 +2817,335 @@ fn squiggles(ui: &Ui, response: &egui::Response, ed: &Editing<'_>, f: &Frame) {
     {
         response.show_tooltip_text(message);
     }
+}
+
+/// Quanto o ponteiro fica parado no `*` até a lista aparecer (segundos).
+const STAR_DELAY: f64 = 0.3;
+/// Margem da lista das colunas, espaço entre o nome e o tipo e entre os
+/// blocos.
+const STAR_PAD: f32 = 8.0;
+const STAR_GAP: f32 = 14.0;
+const STAR_BLOCK_GAP: f32 = 22.0;
+/// Até onde um nome e um tipo vão antes das reticências.
+const STAR_NAME_MAX: f32 = 360.0;
+const STAR_TYPE_MAX: f32 = 180.0;
+
+/// Uma linha da lista das colunas do `*`.
+#[derive(Clone)]
+enum StarLine {
+    /// Nome da tabela, alias e quantas colunas.
+    Table(String, Option<String>, Option<usize>),
+    Column(String, String),
+    /// Por que não há colunas, ou quantas ficaram de fora.
+    Note(String),
+    Blank,
+}
+
+fn columns_text(n: usize) -> String {
+    if n == 1 {
+        tr("1 column").to_string()
+    } else {
+        trf!("{n} columns", n = n)
+    }
+}
+
+/// Uma linha só, com reticências se passar de `max`.
+fn elided(ui: &Ui, text: &str, font: FontId, color: Color32, max: f32) -> Arc<Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: max.max(1.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
+}
+
+type StarRow = (Option<Arc<Galley>>, Option<Arc<Galley>>, bool);
+
+/// Um bloco (uma "coluna de jornal") da lista, já medido.
+struct StarBlock {
+    /// Esquerda e direita de cada linha, e se é o nome de uma tabela.
+    rows: Vec<StarRow>,
+    /// Onde começam os tipos.
+    type_x: f32,
+    width: f32,
+}
+
+fn star_block(ui: &Ui, lines: &[StarLine], f: &Frame, max_w: f32) -> StarBlock {
+    let v = ui.visuals();
+    let small = FontId::proportional(11.0);
+    let name_max = STAR_NAME_MAX.min(max_w * 0.62);
+    let type_max = STAR_TYPE_MAX.min((max_w - name_max - STAR_GAP).max(1.0));
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut name_w = 0.0f32;
+    let mut type_w = 0.0f32;
+    let mut wide = 0.0f32;
+    for line in lines {
+        let row = match line {
+            StarLine::Table(name, alias, count) => {
+                let right = count.map(|n| {
+                    elided(
+                        ui,
+                        &columns_text(n),
+                        small.clone(),
+                        v.weak_text_color(),
+                        max_w * 0.4,
+                    )
+                });
+                let right_w = right.as_ref().map_or(0.0, |g| g.size().x + STAR_GAP);
+                let mut job = egui::text::LayoutJob::default();
+                let format = |color| egui::TextFormat {
+                    font_id: f.font.clone(),
+                    color,
+                    ..Default::default()
+                };
+                job.append(name, 0.0, format(v.strong_text_color()));
+                if let Some(a) = alias {
+                    job.append(a, f.char_w, format(v.weak_text_color()));
+                }
+                job.wrap = egui::text::TextWrapping {
+                    max_width: (max_w - right_w).max(1.0),
+                    max_rows: 1,
+                    break_anywhere: true,
+                    overflow_character: Some('…'),
+                };
+                let left = ui.painter().layout_job(job);
+                wide = wide.max(left.size().x + right_w);
+                (Some(left), right, true)
+            }
+            StarLine::Column(name, ty) => {
+                let left = elided(ui, name, f.font.clone(), f.colors.text, name_max);
+                let right = elided(ui, ty, small.clone(), v.weak_text_color(), type_max);
+                name_w = name_w.max(left.size().x);
+                type_w = type_w.max(right.size().x);
+                (Some(left), Some(right), false)
+            }
+            StarLine::Note(text) => {
+                let left = elided(
+                    ui,
+                    text,
+                    FontId::proportional(12.0),
+                    v.weak_text_color(),
+                    max_w,
+                );
+                wide = wide.max(left.size().x);
+                (Some(left), None, false)
+            }
+            StarLine::Blank => (None, None, false),
+        };
+        rows.push(row);
+    }
+    let columns = if type_w > 0.0 || name_w > 0.0 {
+        name_w + STAR_GAP + type_w
+    } else {
+        0.0
+    };
+    StarBlock {
+        rows,
+        type_x: name_w + STAR_GAP,
+        width: wide.max(columns).min(max_w),
+    }
+}
+
+/// O `*` de um `SELECT` sob o ponteiro, e o retângulo dele na tela.
+fn hovered_star(
+    ui: &Ui,
+    response: &egui::Response,
+    ed: &Editing<'_>,
+    f: &Frame,
+) -> Option<(Star, Rect)> {
+    if !matches!(ed.buf.dialect, Dialect::Postgres | Dialect::TSql)
+        || ed.buf.popup.is_some()
+        || ed.buf.ai.open.is_some()
+        || ui.input(|i| i.pointer.any_down())
+    {
+        return None;
+    }
+    let pos = response.hover_pos().filter(|p| f.text_rect.contains(*p))?;
+    let y = pos.y - f.text_rect.top() + ed.view.scroll.y;
+    let line = (y / f.line_h).floor().max(0.0) as usize;
+    if line >= ed.index().line_count() {
+        return None;
+    }
+    let x = (pos.x - f.text_rect.left() + ed.view.scroll.x).max(0.0);
+    let galley = line_galley(ui, ed.text, ed.buf, line, f);
+    // O cursor mais perto fica antes ou depois do caractere do ponteiro.
+    let near = x_col(&galley, x);
+    let col = if col_x(&galley, near) <= x {
+        near
+    } else {
+        near.checked_sub(1)?
+    };
+    if col >= ed.index().line_len(line) {
+        return None;
+    }
+    let byte = ed.index().byte_of(ed.text, ed.index().char_at(line, col));
+    if ed.text.as_bytes().get(byte) != Some(&b'*') {
+        return None;
+    }
+    let star = star_at(ed.text, &ed.buf.tokens, byte, ed.catalog)?;
+    let left = f.text_rect.left() + col_x(&galley, col) - ed.view.scroll.x;
+    let top = f.text_rect.top() + line as f32 * f.line_h - ed.view.scroll.y;
+    let rect = Rect::from_min_size(pos2(left, top), vec2(f.char_w, f.line_h));
+    Some((star, rect))
+}
+
+/// Com o ponteiro parado no `*` de um `SELECT`, mostra as colunas que ele
+/// representa, com os tipos, tabela por tabela. A lista se divide em
+/// blocos lado a lado para caber na altura da janela; se nem assim
+/// couber, diz quantas colunas ficaram de fora.
+fn star_tip(ui: &Ui, id: Id, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
+    ed.buf.star_tip = None;
+    let Some((star, anchor)) = hovered_star(ui, response, ed, f) else {
+        ed.buf.star_hover = None;
+        return;
+    };
+    let now = ui.input(|i| i.time);
+    let since = match ed.buf.star_hover {
+        Some((at, since)) if at == star.range.start => since,
+        _ => {
+            ed.buf.star_hover = Some((star.range.start, now));
+            now
+        }
+    };
+    let wait = STAR_DELAY - (now - since);
+    if wait > 0.0 {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        return;
+    }
+
+    let mut lines = Vec::new();
+    for t in &star.tables {
+        let count = t.columns.as_ref().map(Vec::len);
+        if !lines.is_empty() {
+            lines.push(StarLine::Blank);
+        }
+        lines.push(StarLine::Table(t.name.clone(), t.alias.clone(), count));
+        match &t.columns {
+            Some(columns) => lines.extend(
+                columns
+                    .iter()
+                    .map(|c| StarLine::Column(c.name.clone(), c.ty.clone())),
+            ),
+            None if ed.catalog.is_none() => lines.push(StarLine::Note(
+                tr("The catalog of this database is not loaded yet.").to_string(),
+            )),
+            None => lines.push(StarLine::Note(
+                tr("Not a table or view of the catalog.").to_string(),
+            )),
+        }
+    }
+
+    // O espaço: embaixo da linha ou, se for maior, em cima.
+    let screen = ui.ctx().content_rect().shrink(6.0);
+    let row_h = f.line_h + 2.0;
+    let frame = 2.0 * STAR_PAD + 2.0;
+    let below = screen.bottom() - anchor.bottom() - 2.0;
+    let above = anchor.top() - screen.top() - 2.0;
+    let max_rows = (((below.max(above) - frame) / row_h).floor() as usize).max(2);
+    let max_w = (screen.width() - frame).max(40.0);
+
+    // Blocos do mesmo tamanho; o nome de uma tabela não fica sozinho no
+    // fim de um bloco.
+    let blocks_n = lines.len().div_ceil(max_rows);
+    let rows = lines.len().div_ceil(blocks_n).max(2);
+    let mut blocks: Vec<Vec<StarLine>> = vec![Vec::new()];
+    for line in lines {
+        if blocks.last().is_some_and(|b| b.len() >= rows) {
+            blocks.push(Vec::new());
+        }
+        let last = blocks.last_mut().expect("um bloco");
+        // O espaço entre duas tabelas não abre um bloco.
+        if matches!(line, StarLine::Blank) && last.is_empty() {
+            continue;
+        }
+        if matches!(line, StarLine::Table(..)) && last.len() + 1 == rows && rows <= max_rows {
+            last.push(StarLine::Blank);
+            blocks.push(Vec::new());
+        }
+        blocks.last_mut().expect("um bloco").push(line);
+    }
+    let mut laid: Vec<StarBlock> = blocks.iter().map(|b| star_block(ui, b, f, max_w)).collect();
+    // Os blocos que não cabem na largura saem, e a última linha conta
+    // quantas colunas ficaram de fora.
+    let total = |laid: &[StarBlock]| {
+        laid.iter().map(|b| b.width).sum::<f32>()
+            + STAR_BLOCK_GAP * laid.len().saturating_sub(1) as f32
+    };
+    let is_column = |l: &StarLine| matches!(l, StarLine::Column(..));
+    let mut hidden = 0;
+    while laid.len() > 1 && total(&laid) > max_w {
+        laid.pop();
+        let gone = blocks.pop().expect("um bloco");
+        hidden += gone.iter().filter(|l| is_column(l)).count();
+    }
+    if hidden > 0 {
+        let last = blocks.last_mut().expect("um bloco");
+        if let Some(gone) = last.pop() {
+            hidden += usize::from(is_column(&gone));
+        }
+        last.push(StarLine::Note(if hidden == 1 {
+            tr("… and 1 more column").to_string()
+        } else {
+            trf!("… and {n} more columns", n = hidden)
+        }));
+        let block = star_block(ui, last, f, max_w);
+        *laid.last_mut().expect("um bloco") = block;
+    }
+
+    let size = vec2(
+        total(&laid),
+        laid.iter().map(|b| b.rows.len()).max().unwrap_or(0) as f32 * row_h,
+    );
+    let outer = size + Vec2::splat(frame);
+    let y = if outer.y <= below || below >= above {
+        anchor.bottom() + 2.0
+    } else {
+        anchor.top() - 2.0 - outer.y
+    };
+    let x = anchor
+        .left()
+        .min(screen.right() - outer.x)
+        .max(screen.left());
+    let area = egui::Area::new(id.with("star_tip"))
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fade_in(false)
+        .constrain(false)
+        .fixed_pos(pos2(x, y.max(screen.top())))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(STAR_PAD)
+                .show(ui, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                    let painter = ui.painter();
+                    let color = ui.visuals().text_color();
+                    let mut left = rect.left();
+                    for block in &laid {
+                        for (i, (a, b, header)) in block.rows.iter().enumerate() {
+                            let top = rect.top() + i as f32 * row_h;
+                            let mid = |g: &Arc<Galley>| top + (row_h - g.size().y) / 2.0;
+                            if let Some(g) = a {
+                                painter.galley(pos2(left, mid(g)), g.clone(), color);
+                            }
+                            if let Some(g) = b {
+                                // O tipo fica ao lado do nome; a contagem
+                                // da tabela, na ponta do bloco.
+                                let x = if *header {
+                                    left + block.width - g.size().x
+                                } else {
+                                    left + block.type_x
+                                };
+                                painter.galley(pos2(x, mid(g)), g.clone(), color);
+                            }
+                        }
+                        left += block.width + STAR_BLOCK_GAP;
+                    }
+                });
+        });
+    ed.buf.star_tip = Some((star, area.response.rect));
 }
 
 #[cfg(test)]
