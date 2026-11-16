@@ -32,6 +32,9 @@ pub enum Panel {
     WorkspaceExplorer,
     /// Conversa com o Claude (marco 7.4).
     Claude,
+    /// Histórico de consultas executadas (Ctrl+Alt+H), uma aba entre os
+    /// documentos.
+    QueryHistory,
 }
 
 impl Panel {
@@ -54,6 +57,7 @@ impl Panel {
             Panel::RegisteredServers => "Registered Servers",
             Panel::WorkspaceExplorer => "Workspace Explorer",
             Panel::Claude => "Claude",
+            Panel::QueryHistory => "Query History",
         }
     }
 }
@@ -70,6 +74,7 @@ impl Pane for Panel {
             | Panel::TableDesigner(_)
             | Panel::Diagram(_)
             | Panel::ActivityMonitor
+            | Panel::QueryHistory
             | Panel::EditRows(_) => Area::Document,
         }
     }
@@ -149,6 +154,10 @@ pub struct Viewer<'a> {
     pub claude_panel: &'a mut crate::claude_panel::ClaudePanel,
     /// Pedidos do painel do Claude.
     pub claude_actions: Vec<crate::claude_panel::PanelAction>,
+    /// Histórico de consultas executadas.
+    pub history: &'a mut crate::history::History,
+    /// Execuções do histórico a reabrir numa janela de consulta.
+    pub history_open: Vec<crate::history::Entry>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -295,6 +304,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let actions = self.claude_panel.show(ui);
                 self.claude_actions.extend(actions);
             }
+            Panel::QueryHistory => self.history_open.extend(self.history.show(ui)),
             Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
                     let props = self.explorer.properties(&node.id).cloned();

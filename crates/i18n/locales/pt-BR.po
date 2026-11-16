@@ -4575,6 +4575,77 @@ msgstr "(sem pasta)"
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
 
+msgid "Query History"
+msgstr "Histórico de Consultas"
+
+msgid "Succeeded"
+msgstr "Sucesso"
+
+msgid "Failed"
+msgstr "Erro"
+
+msgid "Canceled"
+msgstr "Cancelada"
+
+msgid "Clear History…"
+msgstr "Limpar Histórico…"
+
+msgid "Delete every execution kept in the history."
+msgstr "Apaga todas as execuções guardadas no histórico."
+
+msgid "{n} executions"
+msgstr "{n} execuções"
+
+msgid "{found} of {n} executions"
+msgstr "{found} de {n} execuções"
+
+msgid "Search the history by text, server, database or error"
+msgstr "Pesquisar no histórico por texto, servidor, banco ou erro"
+
+msgid "Delete all {n} executions of the history? This cannot be undone."
+msgstr "Apagar as {n} execuções do histórico? Isso não pode ser desfeito."
+
+msgid "Delete All"
+msgstr "Apagar Tudo"
+
+msgid "The history could not be saved: {error}"
+msgstr "Não foi possível salvar o histórico: {error}"
+
+msgid "No query has been executed yet. Every execution is kept here, on this computer only."
+msgstr "Nenhuma consulta foi executada ainda. Cada execução fica guardada aqui, só neste computador."
+
+msgid "No execution found."
+msgstr "Nenhuma execução encontrada."
+
+msgid "Executed at"
+msgstr "Executada em"
+
+msgid "Result"
+msgstr "Resultado"
+
+msgid "Double-click to open it in a new query window."
+msgstr "Dê um duplo clique para abrir numa nova janela de consulta."
+
+msgid "Open in New Query Window"
+msgstr "Abrir em Nova Janela de Consulta"
+
+msgid "Remove this execution from the history."
+msgstr "Remove esta execução do histórico."
+
+msgid "Showing the beginning of the text; open it to see everything."
+msgstr "Mostrando o começo do texto; abra para ver tudo."
+
+msgid "The script was too long: only its beginning was kept in the history."
+msgstr "O script era longo demais: só o começo dele ficou no histórico."
+
+msgid "Query from the history opened on {server}."
+msgstr "Consulta do histórico aberta em {server}."
+
+msgid "Query from the history opened; {server} is not connected, so it will run on the active server."
+msgstr "Consulta do histórico aberta; {server} não está conectado, então ela roda no servidor ativo."
+
+msgid "{n} rows"
+msgstr "{n} linhas"
 msgid "Run on Multiple Servers…"
 msgstr "Executar em Vários Servidores…"
 
@@ -4643,12 +4714,6 @@ msgstr "ERRO"
 
 msgid "Canceled."
 msgstr "Cancelado."
-
-msgid "Canceled"
-msgstr "Cancelado"
-
-msgid "Failed"
-msgstr "Falhou"
 
 msgid "Time"
 msgstr "Tempo"
