@@ -17,6 +17,7 @@ use std::sync::Arc;
 use eframe::egui;
 use pgstudio_automation::agent::{self, Agent, AgentEvent};
 use pgstudio_automation::chat_agent::{self, ChatAgent};
+use pgstudio_automation::codex::{self, CodexAgent};
 use pgstudio_automation::endpoint::{self, Listener};
 use pgstudio_automation::llm::Backend;
 use pgstudio_automation::{EditMode, Origin};
@@ -65,6 +66,8 @@ pub enum PanelAction {
 pub(crate) enum PanelAgent {
     Code(Agent),
     Api(ChatAgent),
+    /// O ChatGPT pela conta, pelo Codex instalado.
+    Codex(CodexAgent),
 }
 
 impl PanelAgent {
@@ -72,6 +75,7 @@ impl PanelAgent {
         match self {
             PanelAgent::Code(a) => a.try_recv(),
             PanelAgent::Api(a) => a.try_recv(),
+            PanelAgent::Codex(a) => a.try_recv(),
         }
     }
 
@@ -79,6 +83,7 @@ impl PanelAgent {
         match self {
             PanelAgent::Code(a) => a.send(text),
             PanelAgent::Api(a) => a.send(text),
+            PanelAgent::Codex(a) => a.send(text),
         }
     }
 }
@@ -93,6 +98,8 @@ pub struct ClaudePanel {
     pub(crate) provider: String,
     /// Para onde vai o que o assistente lê (o servidor do provedor).
     pub(crate) provider_host: String,
+    /// O provedor é o ChatGPT pela conta (Codex), sem chave de API.
+    pub(crate) by_account: bool,
     /// Sessão do Claude Code, para continuar depois de Parar.
     pub(crate) session: Option<String>,
     pub(crate) model: String,
@@ -349,6 +356,9 @@ impl ClaudePanel {
                 let notice = if self.provider.is_empty() {
                     tr("Uses your Claude Code sign-in. What Claude reads is sent to Anthropic.")
                         .to_string()
+                } else if self.by_account {
+                    tr("Uses your ChatGPT account, through Codex. What the assistant reads is sent to OpenAI.")
+                        .to_string()
                 } else {
                     trf!(
                         "Uses your {provider} API key. What the assistant reads is sent to {host}.",
@@ -584,6 +594,12 @@ pub const NOT_INSTALLED: &str = tr_noop(
     "Claude Code was not found. Install it (https://claude.com/claude-code), run `claude` once in a terminal to sign in, then try again. If it is installed somewhere else, set PGSTUDIO_CLAUDE to its path. Or connect another AI (OpenAI, OpenRouter, GLM) in Tools > Options > AI Providers.",
 );
 
+/// O que dizer quando o ChatGPT pela conta está escolhido e o `codex` não
+/// é encontrado.
+pub const CODEX_NOT_INSTALLED: &str = tr_noop(
+    "ChatGPT by account needs Codex, OpenAI's official program, and it was not found. Open Tools > Options > AI Providers to install it and sign in. If it is installed somewhere else, set PGSTUDIO_CODEX to its path.",
+);
+
 /// Quanto da seleção vai na linha de contexto.
 const CONTEXT_SELECTION: usize = 600;
 
@@ -623,6 +639,10 @@ impl crate::ShellApp {
                         Some(PanelAgent::Api(mut agent)) => {
                             agent.stop();
                             self.claude_panel.agent = Some(PanelAgent::Api(agent));
+                        }
+                        Some(PanelAgent::Codex(mut agent)) => {
+                            agent.stop();
+                            self.claude_panel.agent = Some(PanelAgent::Codex(agent));
                         }
                         None => {}
                     }
@@ -818,11 +838,27 @@ impl crate::ShellApp {
                 let repaint = ctx.clone();
                 self.claude_panel.provider = name;
                 self.claude_panel.provider_host = conn.host().to_string();
+                self.claude_panel.by_account = false;
                 self.claude_panel.agent = Some(PanelAgent::Api(ChatAgent::start(
                     conn,
                     chat_agent::PANEL_PROMPT,
                     &pgstudio_automation::tools::all(),
                     Arc::new(move |tool, args| client.call(tool, args, Origin::Assistant)),
+                    Arc::new(move || repaint.request_repaint()),
+                )));
+                return Ok(());
+            }
+            Some(Backend::Codex { program }) => {
+                let (dir, exe, endpoint_path) = self.claude_panel_channel(ctx)?;
+                self.claude_panel.provider = pgstudio_automation::llm::CHATGPT_LABEL.to_string();
+                self.claude_panel.provider_host.clear();
+                self.claude_panel.by_account = true;
+                let repaint = ctx.clone();
+                self.claude_panel.agent = Some(PanelAgent::Codex(CodexAgent::start(
+                    program,
+                    codex::mcp_overrides(&exe, &endpoint_path),
+                    chat_agent::PANEL_PROMPT,
+                    dir.join("codex-panel"),
                     Arc::new(move || repaint.request_repaint()),
                 )));
                 return Ok(());
@@ -834,10 +870,46 @@ impl crate::ShellApp {
                     provider = self.ai.active_label()
                 ));
             }
+            None if self.ai.settings().uses_chatgpt() => {
+                return Err(tr(CODEX_NOT_INSTALLED).to_string());
+            }
             None => return Err(tr(NOT_INSTALLED).to_string()),
         };
         self.claude_panel.provider.clear();
         self.claude_panel.provider_host.clear();
+        let (dir, exe, endpoint_path) = self.claude_panel_channel(ctx)?;
+        let config = agent::mcp_config(&exe, &endpoint_path);
+        let args = agent::panel_args(&config, self.claude_panel.session.as_deref(), None);
+        let repaint = ctx.clone();
+        let started = Agent::start(
+            &program,
+            &args,
+            &dir.join("claude-panel"),
+            Arc::new(move || repaint.request_repaint()),
+        );
+        match started {
+            Ok(a) => {
+                self.claude_panel.agent = Some(PanelAgent::Code(a));
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(tr(NOT_INSTALLED).to_string())
+            }
+            Err(e) => Err(trf!(
+                "Could not start Claude Code ({program}): {error}",
+                program = program.display(),
+                error = e
+            )),
+        }
+    }
+
+    /// Abre (uma vez) o canal local do painel, por onde o `postpilot mcp`
+    /// do Claude Code ou do Codex fala com a interface. Devolve a pasta do
+    /// painel, o executável do PostPilot e o arquivo do canal.
+    fn claude_panel_channel(
+        &mut self,
+        ctx: &egui::Context,
+    ) -> Result<(PathBuf, PathBuf, PathBuf), String> {
         let dir = self
             .claude_panel
             .dir
@@ -866,29 +938,7 @@ impl crate::ShellApp {
             None => std::env::current_exe()
                 .map_err(|e| trf!("Could not find the PostPilot program: {error}", error = e))?,
         };
-        let config = agent::mcp_config(&exe, &endpoint_path);
-        let args = agent::panel_args(&config, self.claude_panel.session.as_deref(), None);
-        let repaint = ctx.clone();
-        let started = Agent::start(
-            &program,
-            &args,
-            &dir.join("claude-panel"),
-            Arc::new(move || repaint.request_repaint()),
-        );
-        match started {
-            Ok(a) => {
-                self.claude_panel.agent = Some(PanelAgent::Code(a));
-                Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err(tr(NOT_INSTALLED).to_string())
-            }
-            Err(e) => Err(trf!(
-                "Could not start Claude Code ({program}): {error}",
-                program = program.display(),
-                error = e
-            )),
-        }
+        Ok((dir, exe, endpoint_path))
     }
 
     /// A linha `[PostPilot context]` de cada mensagem.

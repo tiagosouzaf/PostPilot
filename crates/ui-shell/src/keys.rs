@@ -16,14 +16,19 @@ pub fn chord(event: &egui::Event) -> Option<Chord> {
             repeat: false,
             modifiers,
             ..
-        } => Some(Chord {
-            mods: Modifiers {
-                ctrl: modifiers.ctrl || modifiers.mac_cmd,
-                shift: modifiers.shift,
-                alt: modifiers.alt,
-            },
-            key: key_of(*key)?,
-        }),
+        } => {
+            let key = key_of(*key)?;
+            Some(Chord {
+                mods: Modifiers {
+                    ctrl: modifiers.ctrl || modifiers.mac_cmd,
+                    // Em vários teclados o "+" é Shift+"=": o Shift faz
+                    // parte da tecla, não do acorde.
+                    shift: modifiers.shift && !matches!(key, Key::Plus | Key::Minus),
+                    alt: modifiers.alt,
+                },
+                key,
+            })
+        }
         egui::Event::Copy => Some(Chord::ctrl(Key::Letter('C'))),
         egui::Event::Cut => Some(Chord::ctrl(Key::Letter('X'))),
         egui::Event::Paste(_) => Some(Chord::ctrl(Key::Letter('V'))),
@@ -95,6 +100,8 @@ fn key_of(key: egui::Key) -> Option<Key> {
         E::ArrowRight => Key::Right,
         E::ArrowUp => Key::Up,
         E::ArrowDown => Key::Down,
+        E::Plus | E::Equals => Key::Plus,
+        E::Minus => Key::Minus,
         _ => return None,
     })
 }

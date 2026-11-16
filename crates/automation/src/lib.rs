@@ -15,6 +15,7 @@
 pub mod agent;
 pub mod catalog;
 pub mod chat_agent;
+pub mod codex;
 pub mod collect;
 pub mod commit;
 pub mod endpoint;
