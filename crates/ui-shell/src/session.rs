@@ -92,6 +92,9 @@ pub struct SessionDocument {
     pub server: Option<String>,
     /// "Include Actual Execution Plan" ligado.
     pub actual_plan: bool,
+    /// Os servidores de uma janela de vários servidores.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub multi: Vec<crate::multi::TargetId>,
     /// Se era a janela na frente.
     pub active: bool,
 }
@@ -336,6 +339,9 @@ impl ShellApp {
             if let Some(doc) = self.documents.get_mut(id) {
                 doc.database = d.database.clone();
                 doc.actual_plan = d.actual_plan;
+                if !d.multi.is_empty() {
+                    doc.multi = Some(crate::multi::Selection::new(d.multi.clone()));
+                }
             }
             if let Some(key) = &d.server {
                 self.doc_servers.insert(id, key.clone());
@@ -448,6 +454,11 @@ impl ShellApp {
                     database: d.database.clone(),
                     server: self.doc_servers.get(&id).cloned(),
                     actual_plan: d.actual_plan,
+                    multi: d
+                        .multi
+                        .as_ref()
+                        .map(|m| m.targets.clone())
+                        .unwrap_or_default(),
                     active: self.active_doc == Some(id),
                 })
             })

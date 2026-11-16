@@ -690,6 +690,7 @@ impl FileDialogs for NativeDialogs {
             .add_filter(tr("Text (Tab delimited)"), &["tsv", "txt"])
             .add_filter("JSON", &["json"])
             .add_filter(tr("SQL INSERT statements"), &["sql"])
+            .add_filter(tr("Excel Workbook"), &["xlsx"])
             .save_file();
         self.remember(path)
     }

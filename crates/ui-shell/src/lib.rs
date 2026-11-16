@@ -29,6 +29,7 @@ pub mod json_viewer;
 pub mod keys;
 pub mod layout;
 pub mod menus;
+pub mod multi;
 pub mod object_info;
 pub mod options;
 pub mod panels;
@@ -159,6 +160,8 @@ pub struct ShellApp {
     /// Pergunta do plano real de comandos que alteram dados.
     actual_confirm: Option<PendingActual>,
     environment_confirm: Option<PendingEnvironment>,
+    /// "Run on Multiple Servers" aberto.
+    multi_dialog: Option<multi::Dialog>,
     /// Bancos de cada servidor, para o seletor da toolbar.
     databases: databases::DatabaseLists,
     /// Troca de banco de uma janela esperando a checagem de transação ou
@@ -166,6 +169,8 @@ pub struct ShellApp {
     db_switch: Option<PendingSwitch>,
     /// Ctrl+U: abrir a lista de bancos da toolbar no próximo frame.
     open_database_list: bool,
+    /// A janela é pequena demais para o tamanho de interface escolhido.
+    zoom_limited: bool,
     /// Abrir a lista de bancos assim que houver janela pronta (screenshots).
     database_list_on_load: bool,
     /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
@@ -290,6 +295,9 @@ struct PendingEnvironment {
     color: registered::Rgb,
     /// O que o lote faz, como "UPDATE" ou "DROP".
     reason: String,
+    /// Numa janela de vários servidores, os que estão no ambiente que
+    /// pede confirmação.
+    servers: Vec<String>,
 }
 
 /// O que o usuário fez no seletor de banco da toolbar.
@@ -377,9 +385,11 @@ impl Default for ShellApp {
             confirm: None,
             actual_confirm: None,
             environment_confirm: None,
+            multi_dialog: None,
             databases: Default::default(),
             db_switch: None,
             open_database_list: false,
+            zoom_limited: false,
             database_list_on_load: false,
             allow_close: false,
             layout_store: None,
@@ -417,6 +427,9 @@ impl ShellApp {
     /// Cria o aplicativo, instala a fonte de ícones e aplica o tema padrão.
     pub fn new(ctx: &egui::Context) -> Self {
         install_fonts(ctx);
+        // O zoom é do PostPilot (lembrado nas preferências), não o embutido
+        // do egui, que não é salvo e disputa o Ctrl+0 com a grade.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let mut app = Self::default();
         theme::apply(ctx, app.theme);
         app.connect_demo();
@@ -663,9 +676,12 @@ impl ShellApp {
             return;
         }
         if let Some(inner) = inner {
+            // Em pontos sem o zoom da interface: é assim que a janela é
+            // criada na próxima vez.
+            let zoom = Self::frame_zoom(ctx);
             self.window = Some(WindowGeometry {
-                position: outer.map(|r| [r.min.x, r.min.y]),
-                size: [inner.width(), inner.height()],
+                position: outer.map(|r| [r.min.x * zoom, r.min.y * zoom]),
+                size: [inner.width() * zoom, inner.height() * zoom],
                 maximized: false,
             });
         }
@@ -776,9 +792,12 @@ impl ShellApp {
     }
 
     fn options_window(&mut self, ctx: &egui::Context) {
+        let limit = Self::zoom_limit(ctx);
         let Some(dialog) = &mut self.options else {
             return;
         };
+        dialog.max_scale =
+            preferences::UiScale::from_percent((limit / theme::BASE_ZOOM * 100.0).floor() as u32);
         match dialog.show(ctx) {
             options::Action::None => {}
             options::Action::Cancel => self.options = None,
@@ -797,7 +816,8 @@ impl ShellApp {
         let mut dialog = options::OptionsDialog::new(&self.preferences);
         dialog.system_theme = self.system_theme.current();
         dialog.ai =
-            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code());
+            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code())
+                .with_codex(self.ai.codex());
         if let Some(page) = page {
             dialog.page = page;
         }
@@ -807,6 +827,11 @@ impl ShellApp {
     /// Tools > AI Providers: as opções, na página dos provedores de IA.
     pub(crate) fn open_ai_options(&mut self) {
         self.open_options(Some(options::Page::AiProviders));
+    }
+
+    /// O diálogo de opções aberto.
+    pub fn options(&self) -> Option<&options::OptionsDialog> {
+        self.options.as_ref()
     }
 
     /// O diálogo de opções aberto (testes).
@@ -822,11 +847,8 @@ impl ShellApp {
     /// Usa esta configuração de IA (o aplicativo lê a da pasta de
     /// configuração; os testes montam a deles).
     pub fn with_ai(mut self, ai: ai::Ai) -> Self {
-        self.claude_panel.provider = ai
-            .settings()
-            .active_provider()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+        self.claude_panel.provider = ai.settings().panel_name();
+        self.claude_panel.by_account = ai.settings().uses_chatgpt();
         self.ai = ai;
         self
     }
@@ -843,10 +865,8 @@ impl ShellApp {
             panel.agent = None;
             panel.session = None;
             panel.busy = false;
-            panel.provider = match self.ai.settings().active_provider() {
-                Some(p) => p.name.clone(),
-                None => String::new(),
-            };
+            panel.provider = self.ai.settings().panel_name();
+            panel.by_account = self.ai.settings().uses_chatgpt();
             if !panel.items.is_empty() {
                 panel.note(trf!(
                     "Now using {provider}. The conversation starts over.",
@@ -868,6 +888,80 @@ impl ShellApp {
             );
         }
         self.preferences = prefs;
+    }
+
+    /// Tamanho da interface em uso.
+    pub fn ui_scale(&self) -> preferences::UiScale {
+        self.preferences.ui_scale
+    }
+
+    /// Muda o tamanho da interface, lembra a escolha e avisa na status bar.
+    /// O zoom do egui acompanha no próximo frame ([`Self::zoom_step`]).
+    pub fn set_ui_scale(&mut self, scale: preferences::UiScale) {
+        if scale != self.preferences.ui_scale {
+            let mut prefs = self.preferences.clone();
+            prefs.ui_scale = scale;
+            self.save_preferences(prefs);
+        }
+        let wanted = theme::zoom_factor(scale);
+        let limited = self
+            .frame_ctx
+            .as_ref()
+            .is_some_and(|ctx| wanted > Self::zoom_limit(ctx) + 1e-3);
+        self.status = if limited {
+            trf!(
+                "Interface size: {percent}% (this window is too small for it; make the window larger to see it all)",
+                percent = scale.percent()
+            )
+        } else {
+            trf!("Interface size: {percent}%", percent = scale.percent())
+        };
+    }
+
+    /// Se a janela é pequena demais para o tamanho de interface escolhido
+    /// (o zoom fica no maior que cabe).
+    pub fn zoom_limited(&self) -> bool {
+        self.zoom_limited
+    }
+
+    fn step_ui_scale(&mut self, steps: i32) {
+        let mut from = self.preferences.ui_scale;
+        // Reduzir parte do tamanho que está na tela, não de um maior que a
+        // janela não comporta.
+        if steps < 0
+            && let Some(ctx) = &self.frame_ctx
+        {
+            let fits = (Self::zoom_limit(ctx) / theme::BASE_ZOOM * 100.0).floor() as u32;
+            if from.percent() > fits {
+                from = preferences::UiScale::from_percent(fits);
+            }
+        }
+        self.set_ui_scale(from.stepped(steps));
+    }
+
+    /// O zoom em uso neste frame (o do egui muda só no frame seguinte).
+    fn frame_zoom(ctx: &egui::Context) -> f32 {
+        ctx.pixels_per_point() / ctx.native_pixels_per_point().unwrap_or(1.0)
+    }
+
+    /// O maior zoom que ainda deixa a janela com [`theme::MIN_AREA`] pontos,
+    /// o bastante para os diálogos e as listas caberem inteiros.
+    fn zoom_limit(ctx: &egui::Context) -> f32 {
+        let window = ctx.content_rect().size() * Self::frame_zoom(ctx);
+        (window.x / theme::MIN_AREA.x)
+            .min(window.y / theme::MIN_AREA.y)
+            .max(1.0)
+    }
+
+    /// Mantém o zoom do egui igual ao tamanho de interface das preferências,
+    /// até onde a janela comporta.
+    fn zoom_step(&mut self, ctx: &egui::Context) {
+        let wanted = theme::zoom_factor(self.preferences.ui_scale);
+        let zoom = wanted.min(Self::zoom_limit(ctx));
+        self.zoom_limited = zoom < wanted;
+        if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
+            ctx.set_zoom_factor(zoom);
+        }
     }
 
     /// Troca o tema pelo menu ou pela toolbar e lembra a escolha.
@@ -1587,6 +1681,9 @@ impl ShellApp {
                 | ClaudeCodeAccess
                 | AiProviders
                 | ThemeDark
+                | ZoomIn
+                | ZoomOut
+                | ZoomReset
                 | FullScreen
                 | About
                 | Options
@@ -1626,6 +1723,7 @@ impl ShellApp {
                 | CompleteWord
                 | RefreshLocalCache
                 | Execute
+                | MultiServer
                 | EstimatedPlan
                 | ActualPlan
                 | CancelQuery
@@ -1687,6 +1785,9 @@ impl ShellApp {
             }
             CommandId::ThemeLight => self.choose_theme(ctx, Theme::Light),
             CommandId::ThemeDark => self.choose_theme(ctx, Theme::Dark),
+            CommandId::ZoomIn => self.step_ui_scale(1),
+            CommandId::ZoomOut => self.step_ui_scale(-1),
+            CommandId::ZoomReset => self.set_ui_scale(preferences::UiScale::default()),
             CommandId::FullScreen => {
                 let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
@@ -1847,6 +1948,7 @@ impl ShellApp {
             },
             CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx, Ask::Run),
+            CommandId::MultiServer => self.open_multi_dialog(),
             CommandId::EstimatedPlan => self.execute_query(ctx, Ask::Plan),
             CommandId::ObjectInfo => self.execute_query(ctx, Ask::Info),
             CommandId::ActualPlan => {
@@ -1941,6 +2043,9 @@ impl ShellApp {
             self.status = tr("No query window is open.").to_string();
             return;
         };
+        if self.execute_multi(ctx, id, ask == Ask::Run) {
+            return;
+        }
         self.activate_server_of(id);
         let queries = match &self.connection {
             Some(c) => (c.queries.clone(), c.settings.database.clone()),
@@ -2102,6 +2207,7 @@ impl ShellApp {
                     environment: tag.environment.unwrap_or_default(),
                     color: tag.color,
                     reason,
+                    servers: Vec::new(),
                 });
                 return;
             }
@@ -2168,7 +2274,11 @@ impl ShellApp {
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
-        let Some(session) = doc.session.as_ref().map(|s| s.0.clone()) else {
+        let session = match &doc.multi {
+            Some(multi) => multi.session(),
+            None => doc.session.as_ref().map(|s| s.0.clone()),
+        };
+        let Some(session) = session else {
             return;
         };
         let exec = match kind {
@@ -2201,14 +2311,16 @@ impl ShellApp {
             return;
         };
         exec.mode = doc.results_mode;
+        exec.multi = doc.multi.is_some();
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
     }
 
-    /// "Save Results As...": pergunta o arquivo e exporta o resultado `i`
-    /// da janela `doc` numa thread, no formato da extensão.
-    fn save_results_as(&mut self, doc: u32, i: usize) {
+    /// "Save Results As..." e "Export to Excel...": pergunta o arquivo
+    /// (sugerindo a extensão `extension`) e exporta o resultado `i` da
+    /// janela `doc` numa thread, no formato da extensão escolhida.
+    fn save_results_as(&mut self, doc: u32, i: usize, extension: &str) {
         let Some(set) = self
             .documents
             .get(doc)
@@ -2220,7 +2332,7 @@ impl ShellApp {
         let store = set.shared_store();
         let rows = set.len();
         let question = file_dialogs::Question::SaveResults {
-            name: format!("{}.csv", tr("Results")),
+            name: format!("{}.{extension}", tr("Results")),
         };
         self.ask_path(question, move |app, ctx, path| {
             if let Some(path) = path {
@@ -2251,8 +2363,17 @@ impl ShellApp {
                 )
             });
             let text = match result {
-                Ok(1) => trf!("Saved 1 row to {path}.", path = path.display()),
-                Ok(n) => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                Ok(saved) => {
+                    let mut text = match saved.rows {
+                        1 => trf!("Saved 1 row to {path}.", path = path.display()),
+                        n => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                    };
+                    if saved.truncated > 0 {
+                        text.push(' ');
+                        text.push_str(&execution::truncated_text(saved.truncated));
+                    }
+                    text
+                }
                 Err(e) => trf!(
                     "Could not save the results to {path}: {error}",
                     path = path.display(),
@@ -2302,11 +2423,26 @@ impl ShellApp {
                 registered::environment_badge(ui, &pending.environment, pending.color);
             });
             ui.add_space(4.0);
-            ui.label(trf!(
-                "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
-                environment = pending.environment,
-                reason = pending.reason
-            ));
+            if pending.servers.is_empty() {
+                ui.label(trf!(
+                    "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
+                    environment = pending.environment,
+                    reason = pending.reason
+                ));
+            } else {
+                ui.label(trf!(
+                    "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:",
+                    reason = pending.reason
+                ));
+                egui::ScrollArea::vertical()
+                    .id_salt("environment_confirm_servers")
+                    .max_height(140.0)
+                    .show(ui, |ui| {
+                        for name in &pending.servers {
+                            ui.label(format!("• {name}")); // i18n-ignore
+                        }
+                    });
+            }
             ui.label(tr("Do you want to execute it?"));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2327,6 +2463,10 @@ impl ShellApp {
         };
         if yes {
             let run = pending.run;
+            if !pending.servers.is_empty() {
+                self.dispatch_multi(ctx, run.doc, run.sql, run.offset, true);
+                return;
+            }
             self.dispatch_query(ctx, run.doc, run.sql, run.offset, Ask::Run, true);
         } else {
             self.status = tr("The query was not executed.").to_string();
@@ -3104,6 +3244,7 @@ impl ShellApp {
         let ctx = ui.ctx().clone();
         self.frame_ctx = Some(ctx.clone());
         self.phase("steps");
+        self.zoom_step(&ctx);
         self.file_dialog_step(&ctx);
         if self.pending_dialog.is_some() {
             // A resposta chega por outra thread; ela pede um frame, e este
@@ -3133,10 +3274,31 @@ impl ShellApp {
             || self.restore_mssql.is_some()
             || self.compare.is_some()
         {
-            Vec::new()
+            // Com um diálogo aberto só o tamanho da interface responde ao
+            // teclado: é a saída se o diálogo ficou grande demais.
+            self.zoom_keys(&ctx)
         } else {
             self.keyboard(&ctx)
         };
+        // O Ctrl+0 também é "NULL" numa célula em edição: o Reset Zoom do
+        // teclado espera o fim do frame e só vale se ninguém usou a tecla.
+        let zoom_reset_key = commands.contains(&CommandId::ZoomReset);
+        commands.retain(|c| *c != CommandId::ZoomReset);
+        let ctrl_zero = |ctx: &egui::Context| {
+            ctx.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::Num0,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                })
+            })
+        };
+        let had_ctrl_zero = zoom_reset_key && ctrl_zero(&ctx);
         self.track_window(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             let dirty = self.documents.dirty();
@@ -3203,8 +3365,17 @@ impl ShellApp {
             .show(ui, |ui| self.status_bar(ui));
         let server = self.connection_label();
         let default_db = self.default_database();
-        let doc_servers = self.document_servers();
-        let doc_tags = self.document_tags();
+        let mut doc_servers = self.document_servers();
+        let mut doc_tags = self.document_tags();
+        // Uma janela de vários servidores mostra quantos são e, se algum
+        // pede confirmação, o ambiente dele.
+        for (id, label, tag) in self.multi_labels() {
+            doc_servers.insert(id, label);
+            match tag {
+                Some(tag) => doc_tags.insert(id, tag),
+                None => doc_tags.remove(&id),
+            };
+        }
         let active_key = self
             .connection
             .as_ref()
@@ -3265,8 +3436,8 @@ impl ShellApp {
                     self.active_doc = Some(id);
                     self.request_close(vec![id], false);
                 }
-                for (doc, i) in save_results {
-                    self.save_results_as(doc, i);
+                for (doc, i, extension) in save_results {
+                    self.save_results_as(doc, i, extension);
                 }
             });
         for (doc, i, cell) in open_json {
@@ -3297,6 +3468,7 @@ impl ShellApp {
         self.confirm_window(&ctx);
         self.actual_confirm_window(&ctx);
         self.environment_confirm_window(&ctx);
+        self.multi_dialog_window(&ctx);
         self.database_switch_window(&ctx);
         self.claude_confirm_window(&ctx);
         self.security_window(&ctx);
@@ -3332,6 +3504,9 @@ impl ShellApp {
         }
         commands.extend(self.updater.window(&ctx));
 
+        if zoom_reset_key && (!had_ctrl_zero || ctrl_zero(&ctx)) {
+            commands.push(CommandId::ZoomReset);
+        }
         self.phase("commands");
         for cmd in commands {
             self.execute(&ctx, cmd);
@@ -4055,6 +4230,27 @@ impl ShellApp {
         commands
     }
 
+    /// As teclas de tamanho da interface (Ctrl++, Ctrl+- e Ctrl+0), para
+    /// quando um diálogo segura o resto do teclado.
+    fn zoom_keys(&self, ctx: &egui::Context) -> Vec<CommandId> {
+        ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(keys::chord)
+                .filter_map(|chord| {
+                    self.keymap
+                        .command_for(&pgstudio_core::keymap::Shortcut::single(chord))
+                })
+                .filter(|cmd| {
+                    matches!(
+                        cmd,
+                        CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomReset
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// Desenha as entradas de um menu e guarda o comando clicado.
     fn menu_entries(&self, ui: &mut egui::Ui, entries: &[Entry], clicked: &mut Vec<CommandId>) {
         for entry in entries {
@@ -4068,7 +4264,11 @@ impl ShellApp {
                         .active_doc
                         .and_then(|id| self.documents.get(id))
                         .is_some_and(|d| d.actual_plan);
+                    let multi = self
+                        .active_doc
+                        .is_some_and(|id| !self.multi_selection(id).is_empty());
                     let selected = (cmd == CommandId::ActualPlan && actual)
+                        || (cmd == CommandId::MultiServer && multi)
                         || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.preferences.theme),
@@ -4149,11 +4349,11 @@ impl ShellApp {
                             Some(s) => format!("{} ({s})", command.label()),
                             None => command.label().to_string(),
                         };
-                        let pressed = command == CommandId::ActualPlan
-                            && self
-                                .active_doc
-                                .and_then(|id| self.documents.get(id))
-                                .is_some_and(|d| d.actual_plan);
+                        let doc = self.active_doc.and_then(|id| self.documents.get(id));
+                        let pressed = (command == CommandId::ActualPlan
+                            && doc.is_some_and(|d| d.actual_plan))
+                            || (command == CommandId::MultiServer
+                                && doc.is_some_and(|d| d.multi.is_some()));
                         let button = egui::Button::new(caption).selected(pressed);
                         let response = ui
                             .add_enabled(Self::is_available(command), button)

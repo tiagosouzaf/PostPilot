@@ -91,6 +91,9 @@ commands! {
     ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";
     ThemeDark => "View.ThemeDark", "Dark";
+    ZoomIn => "View.ZoomIn", "Zoom In";
+    ZoomOut => "View.ZoomOut", "Zoom Out";
+    ZoomReset => "View.ZoomReset", "Reset Zoom";
     FullScreen => "View.FullScreen", "Full Screen";
     // Query
     Connect => "Query.Connect", "Connect…";
@@ -98,6 +101,7 @@ commands! {
     ChangeConnection => "Query.ChangeConnection", "Change Connection…";
     ChangeDatabase => "Query.ChangeDatabase", "Change Database";
     Execute => "Query.Execute", "Execute";
+    MultiServer => "Query.MultiServer", "Run on Multiple Servers…";
     Parse => "Query.Parse", "Parse";
     DesignQuery => "Query.DesignQuery", "Design Query in Editor…";
     CancelQuery => "Query.Cancel", "Cancel Executing Query";
