@@ -118,7 +118,7 @@ fn redis_catalog_reads_and_confirmed_writes() {
     let Some((mut s, password)) = settings(Engine::Redis, "REDIS", "6379") else {
         return;
     };
-    s.database = "12".into();
+    s.database = "9".into();
     let connector = Arc::new(pgstudio_redis::RedisConnector::new(
         pgstudio_pg_client::DbRuntime::new().unwrap(),
     ));
