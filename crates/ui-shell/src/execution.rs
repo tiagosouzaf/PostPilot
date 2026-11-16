@@ -347,6 +347,9 @@ pub struct Execution {
     /// Results to File: os resultados vão para este arquivo, não para a
     /// grade.
     file: Option<PathBuf>,
+    /// O lote rodou em vários servidores (veja [`crate::multi`]): a grade
+    /// é só leitura.
+    pub multi: bool,
     ctx: egui::Context,
 }
 
@@ -458,6 +461,7 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: None,
+            multi: false,
             ctx: ui_ctx,
         }
     }
@@ -574,6 +578,7 @@ impl Execution {
             rolled_back: false,
             finished: false,
             file: Some(path.to_path_buf()),
+            multi: false,
             ctx: ui_ctx,
         })
     }
@@ -806,7 +811,11 @@ impl Execution {
             return;
         }
         let statements = pgstudio_sql_editor::lexer::statements(&self.sql);
-        let reason = if self.batch.segments.is_empty() {
+        let reason = if self.multi {
+            Some(tr(
+                "The results are read-only: they come from multiple servers.",
+            ))
+        } else if self.batch.segments.is_empty() {
             Some(tr(
                 "The results are read-only: they were produced by PostPilot, not by a query.",
             ))

@@ -388,12 +388,16 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .resizable(false)
                         .frame(crate::results::strip_frame(ui, tag))
                         .show(ui, |ui| {
-                            crate::results::connected_strip(
-                                ui,
-                                db.as_deref().unwrap_or(""),
-                                server,
-                                tag,
-                            )
+                            if doc.multi.is_some() {
+                                crate::multi::strip(ui, server, tag);
+                            } else {
+                                crate::results::connected_strip(
+                                    ui,
+                                    db.as_deref().unwrap_or(""),
+                                    server,
+                                    tag,
+                                )
+                            }
                         });
                 }
                 let catalog = db.and_then(|db| self.catalogs.get(&db));
