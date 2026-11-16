@@ -33,7 +33,7 @@ Without the plugin, you can add only the MCP server: `claude mcp add postpilot -
 | `/postpilot:optimize` | rewrite the active query using its estimated plan |
 | `/postpilot:fix` | fix the error from the last execution |
 
-Tools: `list_servers`, `list_databases`, `list_objects`, `describe_table`, `describe_function`, `run_query`, `list_query_windows`, `get_query_window`, `edit_query_window`, `open_query_window`, `execute_query_window`, `get_query_results`.
+Tools: `list_servers`, `list_databases`, `list_objects`, `describe_table`, `describe_function`, `run_query`, `explain_query`, `get_activity`, `list_query_windows`, `get_query_window`, `edit_query_window`, `open_query_window`, `execute_query_window`, `get_query_results`.
 
 ## Privacy
 

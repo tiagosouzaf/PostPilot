@@ -2192,6 +2192,7 @@ impl ShellApp {
         confirmed: bool,
     ) {
         if !confirmed
+            && !self.claude.confirmed_run()
             && ask == Ask::Run
             && let Some(tag) = self.document_tag(id).filter(|t| t.confirm_changes)
         {
