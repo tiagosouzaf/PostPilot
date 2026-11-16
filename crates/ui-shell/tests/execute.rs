@@ -641,7 +641,7 @@ fn executing_without_a_connection_opens_the_connect_dialog() {
 }
 
 #[test]
-fn ctrl_t_shows_the_next_results_as_text_and_ctrl_d_goes_back() {
+fn ctrl_t_shows_the_next_results_as_text_and_results_to_grid_goes_back() {
     let (mut harness, _) = harness_with(true);
     let id = query_with(&mut harness, "select 1");
     harness.key_press_modifiers(Modifiers::CTRL, Key::T);
@@ -655,8 +655,25 @@ fn ctrl_t_shows_the_next_results_as_text_and_ctrl_d_goes_back() {
     harness.get_by_label("select 1 NULL");
     harness.get_by_label("(1 row affected)");
 
+    // Com o editor em foco, Ctrl+D é do editor (próxima ocorrência, como no
+    // VS Code): Results to Grid vem do menu.
     harness.key_press_modifiers(Modifiers::CTRL, Key::D);
     harness.run();
+    let ctx = harness.ctx.clone();
+    assert_eq!(
+        pgstudio_sql_editor::selected_text(
+            &ctx,
+            pgstudio_ui_shell::panels::editor_id(id),
+            "select 1"
+        )
+        .as_deref(),
+        Some("1")
+    );
+    harness
+        .state_mut()
+        .execute(&ctx, pgstudio_core::CommandId::ResultsToGrid);
+    harness.run();
+    pgstudio_sql_editor::set_selection(&ctx, pgstudio_ui_shell::panels::editor_id(id), (0, 0));
     harness.key_press(Key::F5);
     wait(&mut harness, id);
     assert_eq!(

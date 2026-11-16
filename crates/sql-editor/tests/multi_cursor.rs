@@ -177,12 +177,13 @@ fn undo_takes_back_all_cursors_in_one_step() {
 fn alt_shift_arrows_select_a_column_block() {
     let mut h = harness("abcdef\nab\nabcdef\nabcdef");
     place(&mut h, (1, 1));
+    // Com o bloco começado, ←/→ mudam a largura dele.
     for k in [
-        Key::ArrowRight,
-        Key::ArrowRight,
-        Key::ArrowRight,
         Key::ArrowDown,
         Key::ArrowDown,
+        Key::ArrowRight,
+        Key::ArrowRight,
+        Key::ArrowRight,
     ] {
         key(&mut h, ALT_SHIFT, k);
     }
@@ -218,9 +219,9 @@ fn alt_shift_arrows_select_a_column_block() {
 fn a_block_skips_lines_that_do_not_reach_it() {
     let mut h = harness("abcdef\n\nabcdef");
     place(&mut h, (3, 3));
+    key(&mut h, ALT_SHIFT, Key::ArrowDown);
+    key(&mut h, ALT_SHIFT, Key::ArrowDown);
     key(&mut h, ALT_SHIFT, Key::ArrowRight);
-    key(&mut h, ALT_SHIFT, Key::ArrowDown);
-    key(&mut h, ALT_SHIFT, Key::ArrowDown);
     assert_eq!(sels(&h), [(3, 4), (11, 12)]);
 }
 
@@ -362,4 +363,148 @@ fn a_change_from_outside_leaves_one_cursor() {
     assert_eq!(sels(&h).len(), 1);
     typed(&mut h, "!");
     assert_eq!(h.state().text.matches('!').count(), 1);
+}
+
+const CTRL_ALT_SHIFT: Modifiers = Modifiers {
+    alt: true,
+    shift: true,
+    ctrl: true,
+    command: true,
+    ..Modifiers::NONE
+};
+
+#[test]
+fn shift_alt_click_selects_a_column_from_the_cursor() {
+    // Como no VS Code: clica num lugar, segura Shift+Alt (ou Ctrl+Shift) e
+    // clica em outro; o bloco vai do cursor até o clique.
+    for chord in [ALT_SHIFT, Modifiers::CTRL | Modifiers::SHIFT] {
+        let mut h = harness("abcdef\nabcdef\nabcdef");
+        let (from, to) = (char_pos(&mut h, 0, 1), char_pos(&mut h, 2, 4));
+        drag(&mut h, from, from, Modifiers::NONE);
+        drag(&mut h, to, to, chord);
+        assert_eq!(sels(&h), [(1, 4), (8, 11), (15, 18)], "{chord:?}");
+        // Outro clique com as teclas seguras muda o canto, do mesmo começo.
+        let to = char_pos(&mut h, 1, 3);
+        drag(&mut h, to, to, chord);
+        assert_eq!(sels(&h), [(1, 3), (8, 10)], "{chord:?}");
+        typed(&mut h, "-");
+        assert_eq!(h.state().text, "a-def\na-def\nabcdef");
+    }
+}
+
+#[test]
+fn ctrl_shift_alt_arrows_select_a_column_block() {
+    let mut h = harness("abcdef\nabcdef");
+    place(&mut h, (1, 1));
+    key(&mut h, CTRL_ALT_SHIFT, Key::ArrowRight);
+    key(&mut h, CTRL_ALT_SHIFT, Key::ArrowRight);
+    key(&mut h, CTRL_ALT_SHIFT, Key::ArrowDown);
+    assert_eq!(sels(&h), [(1, 3), (8, 10)]);
+}
+
+#[test]
+fn alt_click_adds_a_cursor() {
+    let mut h = harness("select a\nselect b");
+    let p = char_pos(&mut h, 0, 6);
+    drag(&mut h, p, p, Modifiers::NONE);
+    let p = char_pos(&mut h, 1, 6);
+    drag(&mut h, p, p, Modifiers::ALT);
+    assert_eq!(sels(&h), [(6, 6), (15, 15)]);
+    typed(&mut h, "!");
+    assert_eq!(h.state().text, "select! a\nselect! b");
+}
+
+#[test]
+fn ctrl_d_adds_the_next_match_and_ctrl_f2_all_of_them() {
+    let mut h = harness("total, x, total, total");
+    place(&mut h, (5, 5));
+    key(&mut h, Modifiers::CTRL, Key::D);
+    assert_eq!(sels(&h), [(0, 5)], "no fim da palavra, pega a palavra");
+    key(&mut h, Modifiers::CTRL, Key::D);
+    assert_eq!(sels(&h), [(0, 5), (10, 15)]);
+    // Ctrl+K, Ctrl+D é Format Document: não mexe nos cursores.
+    key(&mut h, Modifiers::CTRL, Key::K);
+    key(&mut h, Modifiers::CTRL, Key::D);
+    assert_eq!(sels(&h), [(0, 5), (10, 15)]);
+
+    place(&mut h, (12, 12));
+    key(&mut h, Modifiers::CTRL, Key::F2);
+    assert_eq!(sels(&h), [(0, 5), (10, 15), (17, 22)]);
+    assert_eq!(
+        selection(&h.ctx, id()),
+        Some((10, 15)),
+        "a do cursor é a principal"
+    );
+    typed(&mut h, "n");
+    assert_eq!(h.state().text, "n, x, n, n");
+}
+
+#[test]
+fn shift_alt_right_expands_the_selection_and_left_shrinks_it() {
+    let text = "select 1;\nselect a from t where x in (1, 'ab cd');\n";
+    let mut h = harness(text);
+    let at = text.find("ab").unwrap() + 1;
+    place(&mut h, (at, at));
+    let picked = |h: &Harness<'static, Doc>| {
+        selected_text(&h.ctx, id(), &h.state().text).unwrap_or_default()
+    };
+    let steps = [
+        "ab",
+        "ab cd",
+        "'ab cd'",
+        "1, 'ab cd'",
+        "(1, 'ab cd')",
+        "select a from t where x in (1, 'ab cd')",
+        "select a from t where x in (1, 'ab cd');",
+        text,
+    ];
+    for step in steps {
+        key(&mut h, ALT_SHIFT, Key::ArrowRight);
+        assert_eq!(picked(&h), step);
+    }
+    for step in steps.iter().rev().skip(1) {
+        key(&mut h, ALT_SHIFT, Key::ArrowLeft);
+        assert_eq!(picked(&h), *step);
+    }
+    key(&mut h, ALT_SHIFT, Key::ArrowLeft);
+    assert_eq!(sels(&h), [(at, at)], "volta ao cursor");
+}
+
+#[test]
+fn dragging_after_a_triple_click_selects_whole_lines() {
+    let mut h = harness("aaa\nbbb\nccc\nddd");
+    let (from, to) = (char_pos(&mut h, 1, 1), char_pos(&mut h, 2, 1));
+    h.run_steps(40);
+    h.event(Event::PointerMoved(from));
+    h.run();
+    for pressed in [true, false, true, false, true] {
+        h.event(Event::PointerButton {
+            pos: from,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.event(Event::PointerMoved(to));
+    h.run();
+    button(&mut h, to, false, Modifiers::NONE);
+    assert_eq!(sels(&h), [(4, 12)]);
+}
+
+#[test]
+fn tab_and_shift_tab_indent_the_lines_of_every_cursor() {
+    let mut h = harness("    a\n  b\nc\n    d");
+    place(&mut h, (5, 5));
+    let p = char_pos(&mut h, 1, 3);
+    drag(&mut h, p, p, Modifiers::CTRL);
+    let p = char_pos(&mut h, 3, 2);
+    drag(&mut h, p, p, Modifiers::CTRL);
+    assert_eq!(sels(&h), [(5, 5), (9, 9), (14, 14)]);
+    key(&mut h, Modifiers::SHIFT, Key::Tab);
+    assert_eq!(h.state().text, "a\nb\nc\nd");
+    assert_eq!(sels(&h), [(1, 1), (3, 3), (6, 6)], "os cursores acompanham");
+    key(&mut h, Modifiers::CTRL, Key::Z);
+    assert_eq!(h.state().text, "    a\n  b\nc\n    d");
+    assert_eq!(sels(&h), [(5, 5), (9, 9), (14, 14)]);
 }

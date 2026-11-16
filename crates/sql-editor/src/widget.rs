@@ -46,6 +46,19 @@ pub(crate) struct View {
     block: Option<Block>,
     /// O arrasto do mouse está fazendo a seleção em coluna.
     drag_block: bool,
+    /// Onde o Alt+clique caiu: arrastar dali vira seleção em coluna.
+    block_origin: Option<(usize, usize)>,
+    /// O arrasto depois do triplo clique seleciona por linha.
+    drag_lines: bool,
+    /// Seleções anteriores de "expandir seleção", para encolher de volta, e
+    /// a seleção que a última expansão deixou (se mudou, a pilha não vale).
+    shrink: Vec<Sel>,
+    grown: Option<Sel>,
+    /// A tecla anterior foi Ctrl+K: a próxima é o fim de um acorde do app.
+    after_ctrl_k: bool,
+    /// O último aperto do botão (hora, lugar e quantos seguidos): o duplo e
+    /// o triplo clique valem já no aperto, para dar para arrastar.
+    last_press: Option<(f64, Pos2, u8)>,
 }
 
 /// Os dois cantos de uma seleção em coluna: (linha, coluna). A coluna pode
@@ -62,6 +75,7 @@ impl View {
         self.extra.clear();
         self.block = None;
         self.drag_block = false;
+        self.block_origin = None;
     }
 
     /// Todas as seleções em ordem, e qual delas é a principal.
@@ -482,6 +496,41 @@ impl Editing<'_> {
         !self.view.extra.is_empty()
     }
 
+    /// Aplica `edits` (em ordem, sem se sobrepor) ao texto de uma vez.
+    /// Devolve a mudança, do começo da primeira ao fim da última, e onde
+    /// termina o que cada uma inseriu. `None` se nada mudou.
+    fn splice(&mut self, edits: &[(Range<usize>, String)]) -> Option<(Change, Vec<usize>)> {
+        let start = edits.first()?.0.start;
+        let end = edits.last()?.0.end;
+        let a = self.buf.index.byte_of(self.text, start);
+        let b = self.buf.index.byte_of(self.text, end);
+        let mut inserted = String::new();
+        let mut chars = 0;
+        let mut copied = a;
+        let mut ends = Vec::with_capacity(edits.len());
+        for (r, s) in edits {
+            let from = self.buf.index.byte_of(self.text, r.start);
+            let gap = &self.text[copied..from];
+            chars += gap.chars().count() + s.chars().count();
+            inserted.push_str(gap);
+            inserted.push_str(s);
+            copied = self.buf.index.byte_of(self.text, r.end);
+            ends.push(start + chars);
+        }
+        let removed = self.text[a..b].to_string();
+        if removed == inserted {
+            return None;
+        }
+        self.text.replace_range(a..b, &inserted);
+        self.buf.apply(self.text, a, removed.len(), inserted.len());
+        let change = Change {
+            at: start,
+            removed,
+            inserted,
+        };
+        Some((change, ends))
+    }
+
     /// Faz uma troca por cursor, todas num passo só do desfazer. `edits`
     /// segue a ordem de [`View::sels`]; cada cursor fica depois do que foi
     /// inserido nele. Trocas que se sobrepõem são aparadas.
@@ -497,48 +546,93 @@ impl Editing<'_> {
             r.end = r.end.max(r.start);
             end = r.end;
         }
-        let Some(first) = edits.first() else {
+        let Some((change, ends)) = self.splice(&edits) else {
             return;
         };
-        let start = first.0.start;
-        let a = self.buf.index.byte_of(self.text, start);
-        let b = self.buf.index.byte_of(self.text, end);
-        let mut inserted = String::new();
-        let mut chars = 0;
-        let mut copied = a;
-        let mut sels = Vec::with_capacity(edits.len());
-        for (r, s) in &edits {
-            let from = self.buf.index.byte_of(self.text, r.start);
-            let gap = &self.text[copied..from];
-            chars += gap.chars().count() + s.chars().count();
-            inserted.push_str(gap);
-            inserted.push_str(s);
-            copied = self.buf.index.byte_of(self.text, r.end);
-            sels.push((start + chars, start + chars));
-        }
-        let removed = self.text[a..b].to_string();
-        if removed == inserted {
+        self.view
+            .set_sels(ends.into_iter().map(|c| (c, c)).collect(), primary);
+        self.view.block = None;
+        let after = (
+            (self.view.anchor, self.view.cursor),
+            self.view.extra.clone(),
+        );
+        self.buf.history.record_multi(change, kind, before, after);
+        self.moved = true;
+    }
+
+    /// Faz `edits` (em ordem, sem se sobrepor) num passo só do desfazer e
+    /// mantém as seleções, deslocadas junto com o texto.
+    fn edit_keep(&mut self, edits: Vec<(Range<usize>, String)>) {
+        let (sels, primary) = self.view.sels();
+        let before = (
+            (self.view.anchor, self.view.cursor),
+            self.view.extra.clone(),
+        );
+        let map = |p: usize| {
+            let mut delta = 0isize;
+            for (r, s) in &edits {
+                let len = s.chars().count();
+                if p >= r.end {
+                    delta += len as isize - r.len() as isize;
+                } else if p > r.start {
+                    return (r.start as isize + delta) as usize + len;
+                } else {
+                    break;
+                }
+            }
+            (p as isize + delta) as usize
+        };
+        let sels = sels.iter().map(|&(a, c)| (map(a), map(c))).collect();
+        let Some((change, _)) = self.splice(&edits) else {
             return;
-        }
-        self.text.replace_range(a..b, &inserted);
-        self.buf.apply(self.text, a, removed.len(), inserted.len());
+        };
         self.view.set_sels(sels, primary);
         self.view.block = None;
         let after = (
             (self.view.anchor, self.view.cursor),
             self.view.extra.clone(),
         );
-        self.buf.history.record_multi(
-            Change {
-                at: start,
-                removed,
-                inserted,
-            },
-            kind,
-            before,
-            after,
-        );
+        self.buf
+            .history
+            .record_multi(change, EditKind::Other, before, after);
+        self.buf.history.seal();
         self.moved = true;
+    }
+
+    /// Tab e Shift+Tab com vários cursores: indenta (ou tira a indentação
+    /// de) todas as linhas tocadas por alguma seleção.
+    fn indent_each(&mut self, outdent: bool) {
+        let (sels, _) = self.view.sels();
+        let mut lines: Vec<usize> = Vec::new();
+        for &(a, c) in &sels {
+            for line in crate::edit::selected_lines(self.text, a, c) {
+                if lines.last().is_none_or(|l| *l < line) {
+                    lines.push(line);
+                }
+            }
+        }
+        let edits = lines
+            .into_iter()
+            .filter_map(|line| {
+                let start = self.index().line_start(line);
+                let chars = self.line_chars(line);
+                if outdent {
+                    let n = if chars.first() == Some(&'\t') {
+                        1
+                    } else {
+                        chars
+                            .iter()
+                            .take(TAB_SIZE)
+                            .take_while(|c| **c == ' ')
+                            .count()
+                    };
+                    (n > 0).then(|| (start..start + n, String::new()))
+                } else {
+                    (!chars.is_empty()).then(|| (start..start, " ".repeat(TAB_SIZE)))
+                }
+            })
+            .collect();
+        self.edit_keep(edits);
     }
 
     /// Insere `s` em todos os cursores (trocando o que estiver selecionado).
@@ -665,12 +759,28 @@ impl Editing<'_> {
         self.set_block(block);
     }
 
-    /// Shift+Alt+.: seleciona também a próxima ocorrência do texto
-    /// selecionado. Sem seleção, seleciona a palavra do cursor.
+    /// A palavra do cursor, se ele está numa palavra (ou logo depois).
+    fn word_under_cursor(&self) -> Option<Range<usize>> {
+        let c = self.view.cursor;
+        [c, c.saturating_sub(1)]
+            .into_iter()
+            .map(|at| self.word_at(at))
+            .find(|w| {
+                !w.is_empty()
+                    && w.start <= c
+                    && c <= w.end
+                    && self
+                        .line_chars(self.index().line_of(w.start))
+                        .get(w.start - self.index().line_start(self.index().line_of(w.start)))
+                        .is_some_and(|ch| is_word(*ch))
+            })
+    }
+
+    /// Ctrl+D: seleciona também a próxima ocorrência do texto selecionado.
+    /// Sem seleção, seleciona a palavra do cursor.
     fn add_next_match(&mut self) {
         if self.range().is_empty() {
-            let word = self.word_at(self.view.cursor);
-            if !word.is_empty() {
+            if let Some(word) = self.word_under_cursor() {
                 self.select(word);
             }
             return;
@@ -691,6 +801,137 @@ impl Editing<'_> {
         self.view.set_sels(sels, primary);
         self.view.block = None;
         self.moved = true;
+    }
+
+    /// Ctrl+F2: seleciona todas as ocorrências do texto selecionado (ou
+    /// da palavra do cursor).
+    fn select_all_matches(&mut self) {
+        let range = if self.range().is_empty() {
+            match self.word_under_cursor() {
+                Some(w) => w,
+                None => return,
+            }
+        } else {
+            self.range()
+        };
+        let a = self.buf.index.byte_of(self.text, range.start);
+        let b = self.buf.index.byte_of(self.text, range.end);
+        let needle = self.text[a..b].to_string();
+        let mut sels = Vec::new();
+        let mut primary = 0;
+        let mut from = 0;
+        let mut chars = 0;
+        while let Some(at) = self.text[from..].find(&needle) {
+            let start = chars + self.text[from..from + at].chars().count();
+            let end = start + needle.chars().count();
+            if start == range.start {
+                primary = sels.len();
+            }
+            sels.push((start, end));
+            from += at + needle.len();
+            chars = end;
+        }
+        if sels.is_empty() {
+            return;
+        }
+        self.view.collapse();
+        self.view.set_sels(sels, primary);
+        self.moved = true;
+    }
+
+    /// O menor trecho com sentido que contém `range` e é maior que ele:
+    /// a palavra, o texto entre aspas, o que está entre parênteses, o
+    /// comando (até o `;`) e, por fim, o texto todo. Em bytes.
+    fn wider(&self, range: Range<usize>) -> Option<Range<usize>> {
+        use crate::lexer::TokenKind;
+        let text: &str = self.text;
+        let mut found: Vec<Range<usize>> = Vec::new();
+        found.push(0..text.len());
+        // A palavra em volta (dentro de um texto entre aspas não há tokens).
+        let word = |c: char| is_word(c);
+        let before = text[..range.start].trim_end_matches(word).len();
+        let after =
+            range.end + text[range.end..].len() - text[range.end..].trim_start_matches(word).len();
+        if text[range.clone()].chars().all(word) {
+            found.push(before..after);
+        }
+        let mut open: Vec<usize> = Vec::new();
+        let mut statement = None;
+        let mut last = 0;
+        for t in &self.buf.tokens {
+            let piece = &text[t.range.clone()];
+            match t.kind {
+                TokenKind::Whitespace => continue,
+                TokenKind::Punctuation if matches!(piece, "(" | "[") => open.push(t.range.start),
+                TokenKind::Punctuation if matches!(piece, ")" | "]") => {
+                    if let Some(from) = open.pop() {
+                        found.push(from + 1..t.range.start);
+                        found.push(from..t.range.end);
+                    }
+                }
+                TokenKind::Punctuation if piece == ";" => {
+                    if let Some(from) = statement.take() {
+                        found.push(from..last);
+                        found.push(from..t.range.end);
+                    }
+                    continue;
+                }
+                TokenKind::String | TokenKind::QuotedIdentifier => {
+                    let quote = piece.chars().next().filter(|q| matches!(q, '\'' | '"'));
+                    if let Some(q) = quote
+                        && piece.len() >= 2
+                        && piece.ends_with(q)
+                    {
+                        found.push(t.range.start + 1..t.range.end - 1);
+                    }
+                    found.push(t.range.clone());
+                }
+                TokenKind::Punctuation | TokenKind::Operator => {}
+                _ => found.push(t.range.clone()),
+            }
+            statement.get_or_insert(t.range.start);
+            last = t.range.end;
+        }
+        if let Some(from) = statement {
+            found.push(from..last);
+        }
+        found
+            .into_iter()
+            .filter(|r| r.start <= range.start && range.end <= r.end && r.len() > range.len())
+            .min_by_key(|r| r.len())
+    }
+
+    /// Shift+Alt+→: expande a seleção para o próximo trecho com sentido.
+    fn expand_selection(&mut self) {
+        let now = (self.view.anchor, self.view.cursor);
+        let r = self.range();
+        let bytes =
+            self.buf.index.byte_of(self.text, r.start)..self.buf.index.byte_of(self.text, r.end);
+        let Some(next) = self.wider(bytes) else {
+            return;
+        };
+        let next =
+            crate::edit::char_of(self.text, next.start)..crate::edit::char_of(self.text, next.end);
+        if self.view.grown != Some(now) {
+            self.view.shrink.clear();
+        }
+        self.view.shrink.push(now);
+        self.view.collapse();
+        self.view.grown = Some((next.start, next.end));
+        self.select(next);
+    }
+
+    /// Shift+Alt+←: volta à seleção de antes da última expansão.
+    fn shrink_selection(&mut self) {
+        if self.view.grown != Some((self.view.anchor, self.view.cursor)) {
+            self.view.shrink.clear();
+            return;
+        }
+        if let Some(prev) = self.view.shrink.pop() {
+            (self.view.anchor, self.view.cursor) = prev;
+            self.view.grown = Some(prev);
+            self.moved = true;
+        }
     }
 
     fn move_to(&mut self, c: usize, extend: bool) {
@@ -1093,11 +1334,23 @@ pub(crate) fn show(
 
 /// Teclas da seleção em coluna: Alt+Shift+setas e, para pôr um cursor na
 /// linha de cima ou de baixo, Ctrl+Alt+↑/↓.
-fn is_block_key(key: Key, m: Modifiers) -> bool {
+///
+/// Como no VS Code, Shift+Alt+←/→ encolhe e expande a seleção; com um bloco
+/// já começado (`block`), elas mudam a largura dele. Ctrl+Shift+Alt+setas é
+/// sempre seleção em coluna.
+fn is_block_key(key: Key, m: Modifiers, block: bool) -> bool {
     let ctrl = m.ctrl || m.command || m.mac_cmd;
     let vertical = matches!(key, Key::ArrowUp | Key::ArrowDown);
     let horizontal = matches!(key, Key::ArrowLeft | Key::ArrowRight);
-    m.alt && ((m.shift && !ctrl && (vertical || horizontal)) || (ctrl && !m.shift && vertical))
+    if !m.alt || !(vertical || horizontal) {
+        return false;
+    }
+    match (m.shift, ctrl) {
+        (true, true) => true,
+        (true, false) => vertical || block,
+        (false, true) => vertical,
+        (false, false) => false,
+    }
 }
 
 fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
@@ -1109,7 +1362,7 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
             pressed: true,
             modifiers,
             ..
-        } if is_block_key(*key, *modifiers) => {}
+        } if is_block_key(*key, *modifiers, ed.view.block.is_some()) => {}
         Event::Key { pressed: true, .. }
         | Event::Text(_)
         | Event::Ime(_)
@@ -1226,7 +1479,12 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
             pressed: true,
             modifiers,
             ..
-        } => key_pressed(ui, ed, f, key, modifiers),
+        } => {
+            key_pressed(ui, ed, f, key, modifiers);
+            ed.view.after_ctrl_k = key == Key::K
+                && (modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
+                && !modifiers.alt;
+        }
         _ => {}
     }
 }
@@ -1235,11 +1493,31 @@ fn key_pressed(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifiers)
     let ctrl = m.ctrl || m.command || m.mac_cmd;
     let shift = m.shift;
     if m.alt {
-        if is_block_key(key, m) {
+        if is_block_key(key, m, ed.view.block.is_some()) {
             ed.move_block(key);
-        } else if shift && !ctrl && key == Key::Period {
+        } else if shift && !ctrl {
             ed.buf.popup = None;
-            ed.add_next_match();
+            match key {
+                Key::Period => ed.add_next_match(),
+                Key::ArrowRight => ed.expand_selection(),
+                Key::ArrowLeft => ed.shrink_selection(),
+                _ => {}
+            }
+        }
+        return;
+    }
+    // Ctrl+D e Ctrl+F2, como no VS Code. Depois de Ctrl+K a tecla é o fim de
+    // um acorde do app (Ctrl+K, Ctrl+D formata).
+    let chord = ed.view.after_ctrl_k;
+    if ctrl && !shift && matches!(key, Key::D | Key::F2) {
+        if !chord {
+            ed.buf.popup = None;
+            ed.buf.ai.open = None;
+            if key == Key::D {
+                ed.add_next_match();
+            } else {
+                ed.select_all_matches();
+            }
         }
         return;
     }
@@ -1374,7 +1652,15 @@ fn key_action_each(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifi
             ed.edit_each(edits, EditKind::Other);
             ed.buf.history.seal();
         }
-        Key::Tab if !m.shift => {
+        Key::Tab if m.shift => ed.indent_each(true),
+        Key::Tab
+            if sels
+                .iter()
+                .any(|&(a, c)| ed.index().line_of(a) != ed.index().line_of(c)) =>
+        {
+            ed.indent_each(false);
+        }
+        Key::Tab => {
             let edits = ranges
                 .map(|r| {
                     let (_, col) = ed.index().line_col(r.start);
@@ -1384,7 +1670,6 @@ fn key_action_each(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifi
             ed.edit_each(edits, EditKind::Other);
             ed.buf.history.seal();
         }
-        Key::Tab => {}
         _ => return false,
     }
     if !matches!(
@@ -1579,18 +1864,33 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
             m.ctrl || m.command || m.mac_cmd,
         )
     });
-    // Com Ctrl, o clique acrescenta: os outros cursores ficam.
-    let adding = ctrl && !alt;
-    if response.triple_clicked() || response.double_clicked() {
-        let (mut sels, primary) = ed.view.sels();
-        let range = if response.triple_clicked() {
-            ed.view.drag_words = None;
-            ed.line_at(c)
-        } else {
-            let word = ed.word_at(c);
-            ed.view.drag_words = Some((word.start, word.end));
-            word
+    // Com Ctrl (ou Alt, como no VS Code), o clique acrescenta um cursor: os
+    // outros ficam. Com Shift junto (Shift+Alt ou Ctrl+Shift), o clique faz a
+    // seleção em coluna do cursor até ali.
+    let column = shift && (alt || ctrl);
+    let adding = (ctrl || alt) && !shift;
+    // Quantos apertos seguidos no mesmo lugar: o egui só avisa do duplo e do
+    // triplo clique quando o botão solta, tarde demais para arrastar.
+    let mut presses = 0;
+    if pressed {
+        let now = ui.input(|i| i.time);
+        presses = match ed.view.last_press {
+            Some((at, p, n)) if now - at < 0.4 && p.distance(pos) < 6.0 => n % 3 + 1,
+            _ => 1,
         };
+        ed.view.last_press = Some((now, pos, presses));
+    }
+    if column {
+        presses = presses.min(1);
+    }
+    let triple = response.triple_clicked() || presses == 3;
+    if triple || response.double_clicked() || presses == 2 {
+        let (mut sels, primary) = ed.view.sels();
+        let range = if triple { ed.line_at(c) } else { ed.word_at(c) };
+        // Arrastar depois continua por palavra, ou por linha.
+        ed.view.drag_lines = triple;
+        ed.view.drag_words = Some((range.start, range.end));
+        ed.view.drag_block = false;
         if adding {
             sels[primary] = (range.start, range.end);
             ed.view.set_sels(sels, primary);
@@ -1601,14 +1901,19 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         }
         return;
     }
-    if pressed && alt && !ctrl {
-        // Alt+arrastar (ou Shift+Alt+arrastar): seleção em coluna.
-        let corner = block_corner(ed, f, pos);
+    if pressed && column {
+        // Do cursor (ou do começo do bloco que já existe) até o clique;
+        // arrastar continua mudando o canto.
+        let anchor = match ed.view.block {
+            Some(block) => block.anchor,
+            None => ed.corner(ed.view.anchor),
+        };
         ed.view.drag_words = None;
         ed.view.drag_block = true;
+        ed.view.block_origin = Some(anchor);
         ed.set_block(Block {
-            anchor: corner,
-            cursor: corner,
+            anchor,
+            cursor: block_corner(ed, f, pos),
         });
         ed.buf.history.seal();
     } else if pressed {
@@ -1617,7 +1922,9 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         ed.view.drag_words = None;
         ed.view.preferred_x = None;
         ed.view.block = None;
-        ed.view.drag_block = false;
+        // Alt+arrastar faz a seleção em coluna a partir daqui.
+        ed.view.drag_block = alt && !ctrl && !shift;
+        ed.view.block_origin = ed.view.drag_block.then(|| block_corner(ed, f, pos));
         if adding {
             let (mut sels, primary) = ed.view.sels();
             if let Some(hit) = sels
@@ -1643,11 +1950,11 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         }
         ed.buf.history.seal();
     } else if response.dragged() && ed.view.drag_block {
-        if let Some(block) = ed.view.block {
-            let cursor = block_corner(ed, f, pos);
-            if cursor != block.cursor {
-                ed.set_block(Block { cursor, ..block });
-            }
+        let cursor = block_corner(ed, f, pos);
+        match (ed.view.block, ed.view.block_origin) {
+            (Some(block), _) if cursor != block.cursor => ed.set_block(Block { cursor, ..block }),
+            (None, Some(anchor)) if cursor != anchor => ed.set_block(Block { anchor, cursor }),
+            _ => {}
         }
     } else if response.dragged() {
         if ed.multi() {
@@ -1660,7 +1967,11 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         }
         match ed.view.drag_words {
             Some((a, b)) => {
-                let w = ed.word_at(c);
+                let w = if ed.view.drag_lines {
+                    ed.line_at(c)
+                } else {
+                    ed.word_at(c)
+                };
                 if c < a {
                     ed.view.anchor = b;
                     ed.view.cursor = w.start;

@@ -46,6 +46,10 @@ pub fn is_text_editing(chord: Chord) -> bool {
     if !chord.mods.ctrl {
         return true;
     }
+    // Ctrl+D no editor é do VS Code: seleciona a próxima ocorrência.
+    if chord.key == Key::Letter('D') && !chord.mods.shift {
+        return true;
+    }
     matches!(
         chord.key,
         Key::Letter('A' | 'C' | 'V' | 'X' | 'Y' | 'Z')
