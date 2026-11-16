@@ -29,6 +29,8 @@ pub enum Question {
     },
     /// Um arquivo para abrir.
     Open,
+    /// Um arquivo de dados para importar (CSV).
+    OpenData,
     /// Onde salvar resultados; nome sugerido.
     SaveResults { name: String },
     /// Uma pasta; título do diálogo.
@@ -48,6 +50,7 @@ impl Question {
         match self {
             Question::Save { name, current } => dialogs.save_path(name, current.as_deref()),
             Question::Open => dialogs.open_path(),
+            Question::OpenData => dialogs.open_data_path(),
             Question::SaveResults { name } => dialogs.save_results_path(name),
             Question::Folder { title } => dialogs.folder_path(title),
         }
