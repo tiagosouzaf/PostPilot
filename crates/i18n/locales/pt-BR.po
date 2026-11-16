@@ -4575,6 +4575,270 @@ msgstr "(sem pasta)"
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
 
+msgid "Save as Snippet..."
+msgstr "Salvar como Trecho..."
+
+msgid "1 template found."
+msgstr "1 modelo encontrado."
+
+msgid "{n} templates found."
+msgstr "{n} modelos encontrados."
+
+msgid "No templates found."
+msgstr "Nenhum modelo encontrado."
+
+msgid "Search templates by name or content"
+msgstr "Pesquisar modelos pelo nome ou conteúdo"
+
+msgid "My Snippets"
+msgstr "Meus Trechos"
+
+msgid "My Snippets (this computer)"
+msgstr "Meus Trechos (este computador)"
+
+msgid "Workspace Snippets"
+msgstr "Trechos do Workspace"
+
+msgid "New Snippet"
+msgstr "Novo Trecho"
+
+msgid "New Snippet..."
+msgstr "Novo Trecho..."
+
+msgid "New Window"
+msgstr "Nova Janela"
+
+msgid "Open in a new query window"
+msgstr "Abrir em uma nova janela de consulta"
+
+msgid "Query History"
+msgstr "Histórico de Consultas"
+
+msgid "Succeeded"
+msgstr "Sucesso"
+
+msgid "Failed"
+msgstr "Erro"
+
+msgid "Canceled"
+msgstr "Cancelada"
+
+msgid "Clear History…"
+msgstr "Limpar Histórico…"
+
+msgid "Delete every execution kept in the history."
+msgstr "Apaga todas as execuções guardadas no histórico."
+
+msgid "{n} executions"
+msgstr "{n} execuções"
+
+msgid "{found} of {n} executions"
+msgstr "{found} de {n} execuções"
+
+msgid "Search the history by text, server, database or error"
+msgstr "Pesquisar no histórico por texto, servidor, banco ou erro"
+
+msgid "Delete all {n} executions of the history? This cannot be undone."
+msgstr "Apagar as {n} execuções do histórico? Isso não pode ser desfeito."
+
+msgid "Delete All"
+msgstr "Apagar Tudo"
+
+msgid "The history could not be saved: {error}"
+msgstr "Não foi possível salvar o histórico: {error}"
+
+msgid "No query has been executed yet. Every execution is kept here, on this computer only."
+msgstr "Nenhuma consulta foi executada ainda. Cada execução fica guardada aqui, só neste computador."
+
+msgid "No execution found."
+msgstr "Nenhuma execução encontrada."
+
+msgid "Executed at"
+msgstr "Executada em"
+
+msgid "Result"
+msgstr "Resultado"
+
+msgid "Double-click to open it in a new query window."
+msgstr "Dê um duplo clique para abrir numa nova janela de consulta."
+
+msgid "Open in New Query Window"
+msgstr "Abrir em Nova Janela de Consulta"
+
+msgid "Save a Copy in My Snippets..."
+msgstr "Salvar uma Cópia nos Meus Trechos..."
+
+msgid "Save your own snippet. It starts with the text selected in the editor."
+msgstr "Salve um trecho seu. Ele começa com o texto selecionado no editor."
+
+msgid "No snippets yet. Use New Snippet to save one."
+msgstr "Nenhum trecho ainda. Use Novo Trecho para salvar um."
+
+msgid "Open a workspace to keep snippets in Git and take them to your other computers."
+msgstr "Abra um workspace para guardar os trechos no Git e levá-los para os seus outros computadores."
+
+msgid "Open a workspace to keep your own snippets and take them to your other computers through Git."
+msgstr "Abra um workspace para guardar os seus trechos e levá-los pelo Git para os seus outros computadores."
+
+msgid "Open a workspace to save snippets."
+msgstr "Abra um workspace para salvar trechos."
+
+msgid "Enter a valid name."
+msgstr "Informe um nome válido."
+
+msgid "The snippet is empty."
+msgstr "O trecho está vazio."
+
+msgid "Could not save the snippet: {e}"
+msgstr "Não foi possível salvar o trecho: {e}"
+
+msgid "Could not rename: {e}"
+msgstr "Não foi possível renomear: {e}"
+
+msgid "Could not delete: {e}"
+msgstr "Não foi possível excluir: {e}"
+
+msgid "Snippet saved in {path}."
+msgstr "Trecho salvo em {path}."
+
+msgid "Saved in {folder}."
+msgstr "Salvo em {folder}."
+
+msgid "Renamed to {path}."
+msgstr "Renomeado para {path}."
+
+msgid "Deleted {path}."
+msgstr "{path} excluído."
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Rename..."
+msgstr "Renomear..."
+
+msgid "Delete..."
+msgstr "Excluir..."
+
+msgid "Delete the snippet \"{name}\"?"
+msgstr "Excluir o trecho \"{name}\"?"
+
+msgid "Delete the folder \"{name}\" and every snippet in it?"
+msgstr "Excluir a pasta \"{name}\" e todos os trechos dela?"
+
+msgid "SQL:"
+msgstr "SQL:"
+
+msgid "Monitoring"
+msgstr "Monitoramento"
+
+msgid "Backup and Restore"
+msgstr "Backup e Restauração"
+
+msgid "Create Table"
+msgstr "Criar Tabela"
+
+msgid "Add Foreign Key"
+msgstr "Adicionar Chave Estrangeira"
+
+msgid "Create Partitioned Table"
+msgstr "Criar Tabela Particionada"
+
+msgid "Create Index"
+msgstr "Criar Índice"
+
+msgid "Unused Indexes"
+msgstr "Índices Não Usados"
+
+msgid "Missing Indexes"
+msgstr "Índices Ausentes"
+
+msgid "Index Fragmentation"
+msgstr "Fragmentação dos Índices"
+
+msgid "Create View"
+msgstr "Criar Exibição"
+
+msgid "Create Materialized View"
+msgstr "Criar Exibição Materializada"
+
+msgid "Create Function"
+msgstr "Criar Função"
+
+msgid "Create Procedure"
+msgstr "Criar Procedure"
+
+msgid "Create Trigger"
+msgstr "Criar Trigger"
+
+msgid "Create Login and User"
+msgstr "Criar Login e Usuário"
+
+msgid "Grant Read-Only Access"
+msgstr "Dar Acesso Somente Leitura"
+
+msgid "Common Table Expression (CTE)"
+msgstr "Expressão de Tabela Comum (CTE)"
+
+msgid "Insert or Update (Upsert)"
+msgstr "Inserir ou Atualizar (Upsert)"
+
+msgid "Find Duplicate Rows"
+msgstr "Achar Linhas Duplicadas"
+
+msgid "Paging"
+msgstr "Paginação"
+
+msgid "Update From Another Table"
+msgstr "Atualizar a Partir de Outra Tabela"
+
+msgid "Delete in Batches"
+msgstr "Excluir em Lotes"
+
+msgid "Change Inside a Transaction"
+msgstr "Alterar Dentro de uma Transação"
+
+msgid "Running Queries"
+msgstr "Consultas em Execução"
+
+msgid "Blocked Sessions"
+msgstr "Sessões Bloqueadas"
+
+msgid "End a Session"
+msgstr "Encerrar uma Sessão"
+
+msgid "Table Sizes"
+msgstr "Tamanho das Tabelas"
+
+msgid "Database Sizes"
+msgstr "Tamanho dos Bancos"
+
+msgid "Vacuum and Dead Rows"
+msgstr "Vacuum e Linhas Mortas"
+
+msgid "Back Up Database"
+msgstr "Fazer Backup do Banco"
+
+msgid "Last Backups"
+msgstr "Últimos Backups"
+
+msgid "Remove this execution from the history."
+msgstr "Remove esta execução do histórico."
+
+msgid "Showing the beginning of the text; open it to see everything."
+msgstr "Mostrando o começo do texto; abra para ver tudo."
+
+msgid "The script was too long: only its beginning was kept in the history."
+msgstr "O script era longo demais: só o começo dele ficou no histórico."
+
+msgid "Query from the history opened on {server}."
+msgstr "Consulta do histórico aberta em {server}."
+
+msgid "Query from the history opened; {server} is not connected, so it will run on the active server."
+msgstr "Consulta do histórico aberta; {server} não está conectado, então ela roda no servidor ativo."
+
+msgid "{n} rows"
+msgstr "{n} linhas"
+
 msgid "Run on Multiple Servers…"
 msgstr "Executar em Vários Servidores…"
 
@@ -4643,12 +4907,6 @@ msgstr "ERRO"
 
 msgid "Canceled."
 msgstr "Cancelado."
-
-msgid "Canceled"
-msgstr "Cancelado"
-
-msgid "Failed"
-msgstr "Falhou"
 
 msgid "Time"
 msgstr "Tempo"
@@ -4773,3 +5031,57 @@ msgstr "Aspas sem fechar no comando."
 
 msgid "optional (ACL user)"
 msgstr "opcional (usuário de ACL)"
+
+msgid "Find Keys by Pattern"
+msgstr "Procurar Chaves por Padrão"
+
+msgid "Inspect Key"
+msgstr "Inspecionar Chave"
+
+msgid "Set Expiration"
+msgstr "Definir Expiração"
+
+msgid "Delete Keys"
+msgstr "Excluir Chaves"
+
+msgid "Strings"
+msgstr "Strings"
+
+msgid "Set with Expiration"
+msgstr "Gravar com Expiração"
+
+msgid "Counter"
+msgstr "Contador"
+
+msgid "Hashes"
+msgstr "Hashes"
+
+msgid "Create Hash"
+msgstr "Criar Hash"
+
+msgid "Read Fields"
+msgstr "Ler Campos"
+
+msgid "Lists and Sets"
+msgstr "Listas e Conjuntos"
+
+msgid "Queue"
+msgstr "Fila"
+
+msgid "Set Members"
+msgstr "Membros do Conjunto"
+
+msgid "Sorted Sets"
+msgstr "Conjuntos Ordenados"
+
+msgid "Ranking"
+msgstr "Ranking"
+
+msgid "Server Information"
+msgstr "Informações do Servidor"
+
+msgid "Clients and Slow Commands"
+msgstr "Clientes e Comandos Lentos"
+
+msgid "Listen to a Channel"
+msgstr "Escutar um Canal"
