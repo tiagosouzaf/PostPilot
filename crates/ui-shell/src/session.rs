@@ -78,6 +78,8 @@ pub struct SessionServer {
     pub active: bool,
     /// Nós expandidos da árvore, o pai antes dos filhos.
     pub expanded: Vec<String>,
+    /// Filtros da árvore (as chaves de um banco do Redis): nó e texto.
+    pub filters: Vec<(String, String)>,
 }
 
 /// Texto de uma janela que ainda não está no arquivo dela.
@@ -524,6 +526,9 @@ impl ShellApp {
             return;
         };
         let server = self.session.restoring.remove(i);
+        // Os filtros antes: os nós já abrem filtrados.
+        self.explorer
+            .restore_filters(server.filters.into_iter().map(|(id, f)| (NodeId(id), f)));
         self.explorer
             .restore_expanded(server.expanded.into_iter().map(NodeId));
         // As janelas deste servidor abrem no próximo frame, lendo dele.
@@ -672,6 +677,9 @@ impl ShellApp {
         let expanded = |e: &pgstudio_object_explorer::ObjectExplorer| {
             e.expanded().into_iter().map(|id| id.0).collect()
         };
+        let filters = |e: &pgstudio_object_explorer::ObjectExplorer| {
+            e.filters().into_iter().map(|(id, f)| (id.0, f)).collect()
+        };
         for p in &self.servers.parked {
             if let Some(c) = &p.connection {
                 servers.push((
@@ -680,6 +688,7 @@ impl ShellApp {
                         settings: c.settings.clone(),
                         active: false,
                         expanded: expanded(&p.explorer),
+                        filters: filters(&p.explorer),
                     },
                 ));
             }
@@ -691,6 +700,7 @@ impl ShellApp {
                     settings: c.settings.clone(),
                     active: true,
                     expanded: expanded(&self.explorer),
+                    filters: filters(&self.explorer),
                 },
             ));
         }

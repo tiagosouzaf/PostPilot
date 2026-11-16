@@ -94,6 +94,13 @@ pub enum NodeKind {
     Type,
     Extension,
     Role,
+    /// Grupo de chaves com o mesmo prefixo (`user:*` no Redis).
+    KeyGroup,
+    /// Uma chave de um banco chave-valor (Redis).
+    Key,
+    /// Linha de aviso do provedor (filtro ativo, lista cortada): não tem
+    /// filhos, menu nem propriedades.
+    Note,
 }
 
 impl NodeKind {
@@ -122,6 +129,9 @@ impl NodeKind {
             NodeKind::Type => "Type",
             NodeKind::Extension => "Extension",
             NodeKind::Role => "Role",
+            NodeKind::KeyGroup => "Key Group",
+            NodeKind::Key => "Key",
+            NodeKind::Note => "Note",
         }
     }
 }
@@ -201,7 +211,10 @@ impl NodeKind {
     /// Se o nó é um objeto com propriedades (tudo menos o servidor e as
     /// pastas).
     pub fn has_properties(self) -> bool {
-        !matches!(self, NodeKind::Server | NodeKind::Folder(_))
+        !matches!(
+            self,
+            NodeKind::Server | NodeKind::Folder(_) | NodeKind::KeyGroup | NodeKind::Note
+        )
     }
 }
 
@@ -215,6 +228,27 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Filhos de um nó.
     fn children(&self, parent: &NodeId) -> Result<Vec<ObjectNode>, MetadataError>;
+
+    /// Se o servidor é um banco relacional. Os outros (Redis...) não
+    /// mostram no menu o que só vale para tabelas: Tasks, Design, Script
+    /// as CREATE, Activity Monitor.
+    fn relational(&self) -> bool {
+        true
+    }
+
+    /// O filtro dos filhos de um nó (as chaves de um banco do Redis):
+    /// `Some("")` quando o nó aceita filtro e não tem nenhum, None quando
+    /// não filtra.
+    fn filter(&self, node: &NodeId) -> Option<String> {
+        let _ = node;
+        None
+    }
+
+    /// Troca o filtro dos filhos de um nó (vazio tira o filtro). Vale na
+    /// próxima leitura dos filhos.
+    fn set_filter(&self, node: &NodeId, filter: &str) {
+        let _ = (node, filter);
+    }
 
     /// Banco a que o nó pertence (None para o servidor e o que fica fora
     /// dos bancos, como roles).
