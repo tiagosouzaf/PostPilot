@@ -6447,3 +6447,57 @@ msgstr "Conectar os servidores salvos em segundo plano ao abrir o PostPilot"
 
 msgid "Servers with a remembered password connect by themselves, a few at a time, without opening any dialog. Nothing is executed on them. Servers without a saved password wait for a double-click."
 msgstr "Os servidores com a senha lembrada conectam sozinhos, poucos de cada vez, sem abrir nenhum diálogo. Nada é executado neles. Os servidores sem senha salva esperam um duplo clique."
+
+msgid "Diagnostic Queries"
+msgstr "Consultas de Diagnóstico"
+
+msgid "Diagnostics"
+msgstr "Diagnóstico"
+
+msgid "Full Diagnosis"
+msgstr "Diagnóstico Completo"
+
+msgid "Who Blocks Whom"
+msgstr "Quem Bloqueia Quem"
+
+msgid "Heaviest Queries Running Now"
+msgstr "Consultas Mais Pesadas Rodando Agora"
+
+msgid "Most Expensive Queries (History)"
+msgstr "Consultas Mais Caras (Histórico)"
+
+msgid "Slowest Queries on Average"
+msgstr "Consultas Mais Lentas em Média"
+
+msgid "Long or Forgotten Transactions"
+msgstr "Transações Longas ou Esquecidas"
+
+msgid "Tables Read Without an Index"
+msgstr "Tabelas Lidas sem Índice"
+
+msgid "What the Server Waits On"
+msgstr "O Que o Servidor Mais Espera"
+
+msgid "Connections by Application"
+msgstr "Conexões por Aplicação"
+
+msgid "Run in a new query window: the result comes right away"
+msgstr "Executar numa janela de consulta nova: o resultado já vem"
+
+msgid "Double-click to run and see the result"
+msgstr "Clique duas vezes para executar e ver o resultado"
+
+msgid "\"{name}\" is for {engine}: connect to a {engine} server and run it (F5)."
+msgstr "\"{name}\" é para {engine}: conecte a um servidor {engine} e execute (F5)."
+
+msgid "{relation} is not installed in this database: the query history part was left out."
+msgstr "{relation} não está instalada neste banco: a parte do histórico de consultas ficou de fora."
+
+msgid "Connect to a server to run the diagnostic queries."
+msgstr "Conecte a um servidor para executar as consultas de diagnóstico."
+
+msgid "See the Queries in the Template Explorer"
+msgstr "Ver as Consultas no Gerenciador de Modelos"
+
+msgid "Diagnostic queries: what weighs on the server, who blocks whom, time and cost of the queries. One click runs it."
+msgstr "Consultas de diagnóstico: o que está pesando no servidor, quem bloqueia quem, tempo e custo das consultas. Um clique executa."

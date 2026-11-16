@@ -16,7 +16,87 @@ pub struct Builtin {
     /// Nome, em inglês (a chave da tradução).
     pub name: &'static str,
     pub sql: &'static str,
+    /// Pronto para rodar: só lê e não tem nome para trocar. O painel
+    /// oferece "Run" e o duplo clique já traz o resultado.
+    pub ready: bool,
+    /// Para o modelo que depende de algo que pode não existir no banco.
+    pub fallback: Option<Fallback>,
 }
+
+/// O que rodar no lugar quando o banco não tem uma relação.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fallback {
+    /// Relação de que o SQL do modelo depende, como `pg_stat_statements`.
+    pub relation: &'static str,
+    /// O SQL que roda quando ela não existe.
+    pub sql: &'static str,
+}
+
+impl Builtin {
+    /// Marca o modelo como pronto para rodar.
+    const fn ready(mut self) -> Builtin {
+        self.ready = true;
+        self
+    }
+
+    /// Sem `relation` no banco, roda `sql` no lugar.
+    const fn unless(mut self, relation: &'static str, sql: &'static str) -> Builtin {
+        self.fallback = Some(Fallback { relation, sql });
+        self
+    }
+}
+
+/// Pasta das consultas de diagnóstico, a primeira de cada servidor.
+pub const DIAGNOSTICS: &str = tr_noop("Diagnostics");
+
+macro_rules! diag {
+    ($file:literal) => {
+        include_str!(concat!("diagnostics/", $file, ".sql"))
+    };
+}
+
+/// Cabeçalho do diagnóstico completo.
+macro_rules! full_head {
+    () => {
+        "-- Full diagnosis, one result per part: (1) overview, (2) what is running\n\
+-- now, (3) who blocks whom, (4) the most expensive queries.\n\n"
+    };
+}
+
+const PG_FULL: &str = concat!(
+    full_head!(),
+    diag!("pg_overview"),
+    "\n",
+    diag!("pg_running"),
+    "\n",
+    diag!("pg_blocking"),
+    "\n",
+    diag!("pg_top_total"),
+);
+
+const PG_FULL_NO_STATEMENTS: &str = concat!(
+    full_head!(),
+    diag!("pg_overview"),
+    "\n",
+    diag!("pg_running"),
+    "\n",
+    diag!("pg_blocking"),
+    "\n",
+    diag!("pg_no_statements"),
+);
+
+const MS_FULL: &str = concat!(
+    full_head!(),
+    diag!("ms_overview"),
+    "\n",
+    diag!("ms_running"),
+    "\n",
+    diag!("ms_blocking"),
+    "\n",
+    diag!("ms_top_cpu"),
+);
+
+const STATEMENTS: &str = "pg_stat_statements";
 
 const fn pg(folder: &'static str, name: &'static str, sql: &'static str) -> Builtin {
     Builtin {
@@ -24,6 +104,8 @@ const fn pg(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
         folder,
         name,
         sql,
+        ready: false,
+        fallback: None,
     }
 }
 
@@ -33,6 +115,8 @@ const fn ms(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
         folder,
         name,
         sql,
+        ready: false,
+        fallback: None,
     }
 }
 
@@ -42,6 +126,8 @@ const fn rd(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
         folder,
         name,
         sql,
+        ready: false,
+        fallback: None,
     }
 }
 
@@ -51,6 +137,8 @@ const fn mg(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
         folder,
         name,
         sql,
+        ready: false,
+        fallback: None,
     }
 }
 
@@ -60,6 +148,8 @@ const fn es(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
         folder,
         name,
         sql,
+        ready: false,
+        fallback: None,
     }
 }
 
@@ -68,6 +158,53 @@ pub const ALL: &[Builtin] = &[
     // ---------------------------------------------------------------
     // PostgreSQL
     // ---------------------------------------------------------------
+    pg(DIAGNOSTICS, tr_noop("Full Diagnosis"), PG_FULL)
+        .ready()
+        .unless(STATEMENTS, PG_FULL_NO_STATEMENTS),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Who Blocks Whom"),
+        diag!("pg_blocking"),
+    )
+    .ready(),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Heaviest Queries Running Now"),
+        diag!("pg_running"),
+    )
+    .ready(),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Most Expensive Queries (History)"),
+        diag!("pg_top_total"),
+    )
+    .ready()
+    .unless(STATEMENTS, diag!("pg_no_statements")),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Slowest Queries on Average"),
+        diag!("pg_top_avg"),
+    )
+    .ready()
+    .unless(STATEMENTS, diag!("pg_no_statements")),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Long or Forgotten Transactions"),
+        diag!("pg_transactions"),
+    )
+    .ready(),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Tables Read Without an Index"),
+        diag!("pg_seq_scans"),
+    )
+    .ready(),
+    pg(
+        DIAGNOSTICS,
+        tr_noop("Connections by Application"),
+        diag!("pg_connections"),
+    )
+    .ready(),
     pg(
         tr_noop("Tables"),
         tr_noop("Create Table"),
@@ -129,7 +266,8 @@ create index concurrently if not exists ix_table_name_column_name
    and not i.indisunique
  order by pg_relation_size(s.indexrelid) desc;
 ",
-    ),
+    )
+    .ready(),
     pg(
         tr_noop("Views"),
         tr_noop("Create View"),
@@ -309,30 +447,6 @@ returning *;
     ),
     pg(
         tr_noop("Monitoring"),
-        tr_noop("Running Queries"),
-        "select pid, usename, datname, state, wait_event_type, wait_event,
-       now() - query_start as running_for, query
-  from pg_stat_activity
- where state <> 'idle'
-   and pid <> pg_backend_pid()
- order by query_start;
-",
-    ),
-    pg(
-        tr_noop("Monitoring"),
-        tr_noop("Blocked Sessions"),
-        "select blocked.pid as blocked_pid, blocked.usename as blocked_user,
-       blocking.pid as blocking_pid, blocking.usename as blocking_user,
-       now() - blocked.query_start as waiting_for,
-       blocked.query as blocked_query, blocking.query as blocking_query
-  from pg_stat_activity blocked
-  join pg_stat_activity blocking
-    on blocking.pid = any (pg_blocking_pids(blocked.pid))
- order by waiting_for desc;
-",
-    ),
-    pg(
-        tr_noop("Monitoring"),
         tr_noop("End a Session"),
         "-- cancel only the running query
 select pg_cancel_backend(0 /* pid */);
@@ -356,7 +470,8 @@ select pg_terminate_backend(0 /* pid */);
  order by pg_total_relation_size(c.oid) desc
  limit 50;
 ",
-    ),
+    )
+    .ready(),
     pg(
         tr_noop("Monitoring"),
         tr_noop("Database Sizes"),
@@ -365,7 +480,8 @@ select pg_terminate_backend(0 /* pid */);
  where not datistemplate
  order by pg_database_size(datname) desc;
 ",
-    ),
+    )
+    .ready(),
     pg(
         tr_noop("Monitoring"),
         tr_noop("Vacuum and Dead Rows"),
@@ -375,10 +491,54 @@ select pg_terminate_backend(0 /* pid */);
  order by n_dead_tup desc
  limit 50;
 ",
-    ),
+    )
+    .ready(),
     // ---------------------------------------------------------------
     // SQL Server
     // ---------------------------------------------------------------
+    ms(DIAGNOSTICS, tr_noop("Full Diagnosis"), MS_FULL).ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Who Blocks Whom"),
+        diag!("ms_blocking"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Heaviest Queries Running Now"),
+        diag!("ms_running"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Most Expensive Queries (History)"),
+        diag!("ms_top_cpu"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Slowest Queries on Average"),
+        diag!("ms_top_avg"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Long or Forgotten Transactions"),
+        diag!("ms_transactions"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("What the Server Waits On"),
+        diag!("ms_waits"),
+    )
+    .ready(),
+    ms(
+        DIAGNOSTICS,
+        tr_noop("Connections by Application"),
+        diag!("ms_connections"),
+    )
+    .ready(),
     ms(
         tr_noop("Tables"),
         tr_noop("Create Table"),
@@ -432,7 +592,8 @@ GO
  WHERE d.database_id = DB_ID()
  ORDER BY score DESC;
 ",
-    ),
+    )
+    .ready(),
     ms(
         tr_noop("Indexes"),
         tr_noop("Index Fragmentation"),
@@ -622,33 +783,6 @@ END CATCH;
     ),
     ms(
         tr_noop("Monitoring"),
-        tr_noop("Running Queries"),
-        "SELECT r.session_id, s.login_name, DB_NAME(r.database_id) AS database_name,
-       r.status, r.wait_type, r.blocking_session_id,
-       r.total_elapsed_time / 1000 AS seconds, t.text AS query
-  FROM sys.dm_exec_requests AS r
-  JOIN sys.dm_exec_sessions AS s ON s.session_id = r.session_id
- CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) AS t
- WHERE r.session_id <> @@SPID
- ORDER BY r.total_elapsed_time DESC;
-",
-    ),
-    ms(
-        tr_noop("Monitoring"),
-        tr_noop("Blocked Sessions"),
-        "SELECT r.session_id AS blocked_session, r.blocking_session_id AS blocking_session,
-       r.wait_type, r.wait_time / 1000 AS waiting_seconds,
-       blocked.text AS blocked_query, blocking.text AS blocking_query
-  FROM sys.dm_exec_requests AS r
-  LEFT JOIN sys.dm_exec_connections AS c ON c.session_id = r.blocking_session_id
- CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) AS blocked
- OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) AS blocking
- WHERE r.blocking_session_id <> 0
- ORDER BY r.wait_time DESC;
-",
-    ),
-    ms(
-        tr_noop("Monitoring"),
         tr_noop("End a Session"),
         "KILL 0 /* session_id */;
 ",
@@ -667,7 +801,8 @@ END CATCH;
  GROUP BY s.name, t.name
  ORDER BY reserved_mb DESC;
 ",
-    ),
+    )
+    .ready(),
     ms(
         tr_noop("Monitoring"),
         tr_noop("Database Sizes"),
@@ -678,7 +813,8 @@ END CATCH;
  GROUP BY database_id
  ORDER BY data_mb DESC;
 ",
-    ),
+    )
+    .ready(),
     ms(
         tr_noop("Backup and Restore"),
         tr_noop("Back Up Database"),
@@ -710,7 +846,8 @@ RESTORE DATABASE database_name
  GROUP BY d.name
  ORDER BY d.name;
 ",
-    ),
+    )
+    .ready(),
     // ---------------------------------------------------------------
     // Redis
     // ---------------------------------------------------------------
@@ -808,14 +945,16 @@ INFO memory
 INFO keyspace
 DBSIZE
 ",
-    ),
+    )
+    .ready(),
     rd(
         tr_noop("Server"),
         tr_noop("Clients and Slow Commands"),
         "CLIENT LIST
 SLOWLOG GET 20
 ",
-    ),
+    )
+    .ready(),
     rd(
         tr_noop("Server"),
         tr_noop("Listen to a Channel"),
@@ -934,19 +1073,22 @@ SUBSCRIBE channel_name
         "show dbs
 show collections
 ",
-    ),
+    )
+    .ready(),
     mg(
         tr_noop("Server"),
         tr_noop("Server Status"),
         "db.serverStatus()
 ",
-    ),
+    )
+    .ready(),
     mg(
         tr_noop("Server"),
         tr_noop("Current Operations"),
         "db.adminCommand({ currentOp: 1, active: true })
 ",
-    ),
+    )
+    .ready(),
     // ---------------------------------------------------------------
     // Elasticsearch
     // ---------------------------------------------------------------
@@ -1165,31 +1307,36 @@ show collections
         tr_noop("Cluster Health"),
         "GET /_cluster/health
 ",
-    ),
+    )
+    .ready(),
     es(
         tr_noop("Cluster"),
         tr_noop("List Indices"),
         "GET /_cat/indices?s=index
 ",
-    ),
+    )
+    .ready(),
     es(
         tr_noop("Cluster"),
         tr_noop("Nodes"),
         "GET /_cat/nodes?h=name,ip,node.role,heap.percent,ram.percent,cpu,load_1m
 ",
-    ),
+    )
+    .ready(),
     es(
         tr_noop("Cluster"),
         tr_noop("Shards"),
         "GET /_cat/shards?s=index
 ",
-    ),
+    )
+    .ready(),
     es(
         tr_noop("Cluster"),
         tr_noop("Running Tasks"),
         "GET /_tasks?detailed=true&actions=*search*,*byquery*,*reindex*
 ",
-    ),
+    )
+    .ready(),
     es(
         tr_noop("Text Analysis"),
         tr_noop("Analyze Text"),
@@ -1279,6 +1426,43 @@ mod tests {
                 assert_eq!(unique.len(), names.len(), "{engine:?}/{folder}");
             }
         }
+    }
+
+    #[test]
+    fn diagnostics_come_first_for_the_sql_servers() {
+        for engine in [Engine::PostgreSql, Engine::SqlServer] {
+            assert_eq!(folders(engine)[0], DIAGNOSTICS, "{engine:?}");
+            let names: Vec<_> = in_folder(engine, DIAGNOSTICS).map(|t| t.name).collect();
+            assert_eq!(names[0], "Full Diagnosis");
+            assert!(names.contains(&"Who Blocks Whom"));
+            assert!(in_folder(engine, DIAGNOSTICS).all(|t| t.ready));
+        }
+    }
+
+    /// Um modelo pronto roda com um clique, até em Produção: tem de ser só
+    /// leitura (o SQL dele e a alternativa).
+    #[test]
+    fn ready_templates_only_read() {
+        use pgstudio_automation::safety::{Safety, classify_for};
+        let mut count = 0;
+        for t in ALL.iter().filter(|t| t.ready) {
+            count += 1;
+            for sql in [Some(t.sql), t.fallback.map(|f| f.sql)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(
+                    matches!(classify_for(t.engine, sql), Safety::ReadOnly),
+                    "{:?} {}: {:?}",
+                    t.engine,
+                    t.name,
+                    classify_for(t.engine, sql)
+                );
+            }
+        }
+        assert!(count >= 20, "{count}");
+        // A alternativa só existe em modelo pronto.
+        assert!(ALL.iter().all(|t| t.ready || t.fallback.is_none()));
     }
 
     #[test]

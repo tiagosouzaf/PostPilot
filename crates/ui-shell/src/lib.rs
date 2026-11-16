@@ -208,6 +208,8 @@ pub struct ShellApp {
     run_on_connect: bool,
     /// Catálogos para o IntelliSense, por banco.
     catalogs: intellisense::Catalogs,
+    /// Consulta pronta esperando o catálogo para rodar.
+    pending_template: Option<templates::PendingTemplate>,
     /// Abrir o IntelliSense no fim da janela ativa quando o catálogo chegar
     /// (screenshots).
     list_members_on_load: bool,
@@ -330,6 +332,8 @@ struct Picked {
     workspace: Option<usize>,
     /// "Add Workspace..." no menu da toolbar.
     add_workspace: bool,
+    /// Escolheu uma consulta pronta no menu de diagnóstico da toolbar.
+    diagnostic: Option<usize>,
 }
 
 /// Troca do banco de uma janela de consulta, esperando resposta.
@@ -426,6 +430,7 @@ impl Default for ShellApp {
             recent: RecentConnections::default(),
             run_on_connect: false,
             catalogs: Default::default(),
+            pending_template: None,
             list_members_on_load: false,
             scripts: Vec::new(),
             selected_action: None,
@@ -1734,6 +1739,7 @@ impl ShellApp {
                 | WorkspaceExplorer
                 | ClaudePanel
                 | TemplateExplorer
+                | DiagnosticQueries
                 | SaveAsSnippet
                 | ClaudeExplain
                 | ClaudeOptimize
@@ -2040,7 +2046,9 @@ impl ShellApp {
             }
             CommandId::RegisteredServers => self.workspace.open(Panel::RegisteredServers),
             CommandId::WorkspaceExplorer => self.workspace.open(Panel::WorkspaceExplorer),
-            CommandId::TemplateExplorer | CommandId::SaveAsSnippet => {
+            CommandId::TemplateExplorer
+            | CommandId::SaveAsSnippet
+            | CommandId::DiagnosticQueries => {
                 self.template_command(ctx, cmd);
             }
             CommandId::ClaudePanel => {
@@ -3476,6 +3484,9 @@ impl ShellApp {
         if let Some(index) = picked.workspace {
             self.activate_workspace(index);
         }
+        if let Some(index) = picked.diagnostic {
+            self.run_ready_template(&ctx, index);
+        }
         if picked.add_workspace {
             self.workspace_panel.open_add();
             self.workspace.open(Panel::WorkspaceExplorer);
@@ -4618,6 +4629,7 @@ impl ShellApp {
                             picked.opened = true;
                         }
                     }
+                    Tool::Diagnostics => self.diagnostics_menu(ui, clicked, picked),
                     Tool::Separator => {
                         ui.separator();
                     }
@@ -4626,6 +4638,67 @@ impl ShellApp {
             ui.separator();
             self.workspace_menu(ui, clicked, picked);
         });
+    }
+
+    /// O menu das consultas de diagnóstico na toolbar: as prontas para o
+    /// servidor ativo; um clique abre a janela e já traz o resultado.
+    fn diagnostics_menu(
+        &self,
+        ui: &mut egui::Ui,
+        clicked: &mut Vec<CommandId>,
+        picked: &mut Picked,
+    ) {
+        use crate::templates::builtin;
+        use egui_phosphor::regular as icon;
+        let engine = self.connection.as_ref().map(|c| c.settings.engine);
+        let caption = format!(
+            "{} {} {}",
+            icon::STETHOSCOPE,
+            tr(builtin::DIAGNOSTICS),
+            icon::CARET_DOWN
+        );
+        let menu = egui::containers::menu::MenuButton::new(caption).ui(ui, |ui| {
+            let Some(engine) = engine else {
+                ui.weak(tr("Connect to a server to run the diagnostic queries."));
+                ui.separator();
+                if ui.button(CommandId::DiagnosticQueries.label()).clicked() {
+                    clicked.push(CommandId::DiagnosticQueries);
+                    ui.close();
+                }
+                return;
+            };
+            let mut folder = "";
+            for (i, t) in builtin::ALL.iter().enumerate() {
+                if t.engine != engine || !t.ready {
+                    continue;
+                }
+                if t.folder != folder {
+                    if !folder.is_empty() {
+                        ui.separator();
+                    }
+                    folder = t.folder;
+                    ui.weak(tr(folder));
+                }
+                if ui
+                    .button(format!("{} {}", icon::PLAY, tr(t.name)))
+                    .clicked()
+                {
+                    picked.diagnostic = Some(i);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui
+                .button(tr("See the Queries in the Template Explorer"))
+                .clicked()
+            {
+                clicked.push(CommandId::DiagnosticQueries);
+                ui.close();
+            }
+        });
+        menu.0.on_hover_text(tr(
+            "Diagnostic queries: what weighs on the server, who blocks whom, time and cost of the queries. One click runs it.",
+        ));
     }
 
     /// O menu dos workspaces na toolbar: sempre à vista, diz qual é o

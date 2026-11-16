@@ -130,6 +130,7 @@ pub const MENUS: &[Menu] = &[
             I(QueryHistory),
             SEP,
             I(ActivityMonitor),
+            I(DiagnosticQueries),
             SEP,
             sub(
                 "Color Theme",
@@ -218,6 +219,8 @@ pub enum Tool {
     },
     /// Seletor de banco de dados.
     Database,
+    /// Menu das consultas de diagnóstico prontas: um clique e o resultado vem.
+    Diagnostics,
     Separator,
 }
 
@@ -249,6 +252,7 @@ pub const TOOLBAR: &[Tool] = {
         b(icon::TREE_STRUCTURE, "", ActualPlan),
         Tool::Separator,
         b(icon::PULSE, "", ActivityMonitor),
+        Tool::Diagnostics,
     ]
 };
 

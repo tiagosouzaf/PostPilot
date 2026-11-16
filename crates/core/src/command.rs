@@ -91,6 +91,7 @@ commands! {
     Output => "View.Output", "Output";
     QueryHistory => "View.QueryHistory", "Query History";
     ActivityMonitor => "View.ActivityMonitor", "Activity Monitor";
+    DiagnosticQueries => "View.DiagnosticQueries", "Diagnostic Queries";
     ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";
     ThemeDark => "View.ThemeDark", "Dark";
