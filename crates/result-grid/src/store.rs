@@ -12,6 +12,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
+
+use crate::view::{Filter, ViewProgress, ViewSpec, sort_rows};
 
 /// Linhas por página.
 pub const PAGE_ROWS: usize = 1024;
@@ -21,6 +25,9 @@ pub const DEFAULT_BUDGET: usize = 64 * 1024 * 1024;
 
 /// Páginas lidas do disco mantidas em memória.
 const CACHE_PAGES: usize = 8;
+
+/// Até tantas linhas, a ordenação roda na hora; acima, numa thread.
+const SORT_INLINE_ROWS: usize = 20_000;
 
 /// Linhas de um resultado, como texto (`None` é NULL).
 pub struct ResultStore {
@@ -43,6 +50,35 @@ pub struct ResultStore {
     /// Linhas guardadas que saíram do resultado (excluídas na grade), em
     /// ordem.
     removed: Vec<u64>,
+    /// Ordem e filtro em uso: as linhas guardadas que aparecem, na ordem
+    /// em que aparecem. `None`: todas, como chegaram.
+    view: Option<View>,
+    /// Visão sendo montada (a anterior continua valendo até terminar).
+    job: Option<ViewJob>,
+    /// Muda quando as linhas mostradas trocam de posição.
+    view_generation: u64,
+}
+
+struct View {
+    spec: ViewSpec,
+    rows: Vec<u64>,
+    /// Linhas guardadas já vistas (as que chegaram depois ainda não).
+    covered: u64,
+}
+
+struct ViewJob {
+    spec: ViewSpec,
+    filter: Filter,
+    /// Só as linhas que chegaram depois da visão atual (mesmo filtro, sem
+    /// ordem): o que achar é acrescentado no fim.
+    extend: bool,
+    /// Próxima linha guardada a ler.
+    next: u64,
+    rows: Vec<u64>,
+    /// Valor da coluna da ordenação em cada linha de `rows`.
+    keys: Vec<Option<String>>,
+    /// A ordenação, rodando numa thread.
+    sorting: Option<Receiver<Vec<u64>>>,
 }
 
 enum Page {
@@ -203,6 +239,9 @@ impl ResultStore {
             spill_error: None,
             edits: HashMap::new(),
             removed: Vec::new(),
+            view: None,
+            job: None,
+            view_generation: 0,
         }
     }
 
@@ -210,8 +249,17 @@ impl ResultStore {
         &self.columns
     }
 
-    /// Linhas do resultado (as guardadas menos as removidas).
+    /// Linhas à mostra: as do resultado que passam no filtro em uso.
     pub fn len(&self) -> u64 {
+        match &self.view {
+            Some(v) => v.rows.len() as u64,
+            None => self.total_len(),
+        }
+    }
+
+    /// Linhas do resultado (as guardadas menos as removidas), com ou sem
+    /// filtro.
+    pub fn total_len(&self) -> u64 {
         self.rows - self.removed.len() as u64
     }
 
@@ -221,6 +269,9 @@ impl ResultStore {
 
     /// Linha guardada que aparece como a linha `row` do resultado.
     fn stored_row(&self, row: u64) -> u64 {
+        if let Some(v) = &self.view {
+            return v.rows.get(row as usize).copied().unwrap_or(u64::MAX);
+        }
         let mut stored = row;
         for &r in &self.removed {
             if r <= stored {
@@ -250,6 +301,9 @@ impl ResultStore {
         let stored = self.stored_row(row);
         let at = self.removed.partition_point(|&r| r < stored);
         self.removed.insert(at, stored);
+        if let Some(v) = &mut self.view {
+            v.rows.remove(row as usize);
+        }
     }
 
     /// Bytes de linhas em memória agora (páginas, página aberta e cache).
@@ -310,12 +364,17 @@ impl ResultStore {
         if col >= self.columns.len() || row >= self.len() {
             return None;
         }
-        let row = if self.removed.is_empty() {
+        let row = if self.removed.is_empty() && self.view.is_none() {
             row
         } else {
             self.stored_row(row)
         };
-        if self.edits.contains_key(&(row, col)) {
+        self.stored_cell(row, col)
+    }
+
+    /// Valor da célula pela linha guardada (sem filtro, ordem e remoções).
+    fn stored_cell(&mut self, row: u64, col: usize) -> Option<&str> {
+        if !self.edits.is_empty() && self.edits.contains_key(&(row, col)) {
             return self.edits.get(&(row, col)).and_then(|v| v.as_deref());
         }
         let page = (row / PAGE_ROWS as u64) as usize;
@@ -361,6 +420,159 @@ impl ResultStore {
         spill.file.seek(SeekFrom::Start(offset)).ok()?;
         spill.file.read_exact(&mut bytes).ok()?;
         PageData::decode(&bytes)
+    }
+
+    /// A ordem e o filtro em uso (os da última visão que ficou pronta).
+    pub fn view_spec(&self) -> Option<&ViewSpec> {
+        self.view.as_ref().map(|v| &v.spec)
+    }
+
+    /// Muda sempre que as linhas à mostra trocam de posição (uma seleção
+    /// feita antes deixa de valer).
+    pub fn view_generation(&self) -> u64 {
+        self.view_generation
+    }
+
+    /// Leva a visão para `spec`, trabalhando no máximo `budget` nesta
+    /// chamada; chame a cada frame enquanto devolver `working`. Até
+    /// terminar, o resultado continua à mostra como estava. As linhas que
+    /// chegam depois entram na visão nas chamadas seguintes.
+    pub fn sync_view(&mut self, spec: &ViewSpec, budget: Duration) -> ViewProgress {
+        if spec.is_plain() {
+            self.job = None;
+            if self.view.take().is_some() {
+                self.view_generation += 1;
+            }
+            return ViewProgress::IDLE;
+        }
+        if self.job.as_ref().is_some_and(|j| j.spec != *spec) {
+            self.job = None;
+        }
+        let mut job = match self.job.take() {
+            Some(job) => job,
+            None => {
+                let current = self.view.as_ref().filter(|v| v.spec == *spec);
+                if current.is_some_and(|v| v.covered == self.rows) {
+                    return ViewProgress::IDLE;
+                }
+                let extend = current.filter(|_| spec.sort.is_none());
+                ViewJob {
+                    spec: spec.clone(),
+                    filter: Filter::parse(&spec.filter, &self.columns),
+                    extend: extend.is_some(),
+                    next: extend.map_or(0, |v| v.covered),
+                    rows: Vec::new(),
+                    keys: Vec::new(),
+                    sorting: None,
+                }
+            }
+        };
+        let started = Instant::now();
+        let columns = self.columns.len();
+        let sort_col = job.spec.sort.map(|s| s.col).filter(|&c| c < columns);
+        let mut buf = String::new();
+        while job.sorting.is_none() && job.next < self.rows {
+            let stored = job.next;
+            job.next += 1;
+            if self.removed.binary_search(&stored).is_err() {
+                // Uma linha por vez: as células são lidas e comparadas na
+                // hora, sem copiar.
+                let hit = job.filter.is_empty() || self.row_matches(&job.filter, stored, &mut buf);
+                if hit {
+                    job.rows.push(stored);
+                    if let Some(c) = sort_col {
+                        let key = self.stored_cell(stored, c).map(str::to_string);
+                        job.keys.push(key);
+                    }
+                }
+            }
+            if job.next.is_multiple_of(128) && started.elapsed() >= budget {
+                break;
+            }
+        }
+        if job.next < self.rows {
+            let fraction = job.next as f32 / self.rows.max(1) as f32;
+            self.job = Some(job);
+            return ViewProgress {
+                working: true,
+                fraction,
+            };
+        }
+        if let (Some(sort), None) = (job.spec.sort, &job.sorting)
+            && sort_col.is_some()
+        {
+            let rows = std::mem::take(&mut job.rows);
+            let keys = std::mem::take(&mut job.keys);
+            let (tx, rx) = mpsc::channel();
+            if rows.len() <= SORT_INLINE_ROWS {
+                // Pouca coisa: ordena aqui mesmo, sem esperar uma thread.
+                let _ = tx.send(sort_rows(rows, keys, sort.descending));
+            } else {
+                std::thread::spawn(move || {
+                    let _ = tx.send(sort_rows(rows, keys, sort.descending));
+                });
+            }
+            job.sorting = Some(rx);
+        }
+        if let Some(rx) = &job.sorting {
+            match rx.try_recv() {
+                Ok(rows) => job.rows = rows,
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.job = Some(job);
+                    return ViewProgress {
+                        working: true,
+                        fraction: 1.0,
+                    };
+                }
+                // A thread morreu: recomeça na próxima chamada.
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return ViewProgress {
+                        working: true,
+                        fraction: 0.0,
+                    };
+                }
+            }
+        }
+        // Linhas excluídas enquanto a visão era montada.
+        let removed = &self.removed;
+        if !removed.is_empty() {
+            job.rows.retain(|r| removed.binary_search(r).is_err());
+        }
+        match &mut self.view {
+            Some(v) if job.extend => {
+                v.rows.append(&mut job.rows);
+                v.covered = job.next;
+            }
+            _ => {
+                self.view = Some(View {
+                    spec: job.spec,
+                    rows: job.rows,
+                    covered: job.next,
+                });
+                self.view_generation += 1;
+            }
+        }
+        ViewProgress {
+            working: self.rows > job.next,
+            fraction: 1.0,
+        }
+    }
+
+    /// Se a linha guardada passa no filtro.
+    fn row_matches(&mut self, filter: &Filter, stored: u64, buf: &mut String) -> bool {
+        let columns = self.columns.len();
+        if self.edits.is_empty() {
+            // Sem edições, a página é lida uma vez só para a linha toda.
+            let local = (stored % PAGE_ROWS as u64) as usize;
+            let Some(page) = self.page((stored / PAGE_ROWS as u64) as usize) else {
+                return false;
+            };
+            return filter.matches(columns, buf, |c| page.cell(local, c, columns));
+        }
+        let row: Vec<Option<String>> = (0..columns)
+            .map(|c| self.stored_cell(stored, c).map(str::to_string))
+            .collect();
+        filter.matches(columns, buf, |c| row[c].as_deref())
     }
 
     /// Número de linhas de cada página fechada (para testes).
