@@ -427,11 +427,17 @@ pub fn list_models(conn: &Connection) -> Result<Vec<String>, String> {
     Ok(models)
 }
 
-/// A IA em uso: o Claude Code instalado ou um provedor por chave.
+/// Nome do ChatGPT pela conta, na interface.
+pub const CHATGPT_LABEL: &str = "ChatGPT";
+
+/// A IA em uso: o Claude Code instalado, o ChatGPT pela conta (Codex) ou
+/// um provedor por chave.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Backend {
     /// O `claude` da máquina, com o login dele.
     ClaudeCode { program: PathBuf },
+    /// O `codex` da máquina, com a conta do ChatGPT do usuário.
+    Codex { program: PathBuf },
     /// Um provedor compatível com a OpenAI.
     Api { name: String, conn: Connection },
 }
@@ -441,6 +447,7 @@ impl Backend {
     pub fn label(&self) -> &str {
         match self {
             Backend::ClaudeCode { .. } => "Claude Code",
+            Backend::Codex { .. } => CHATGPT_LABEL,
             Backend::Api { name, .. } => name,
         }
     }
@@ -449,6 +456,7 @@ impl Backend {
     pub fn ask(&self, system: &str, user: &str, cwd: &Path) -> Result<String, String> {
         match self {
             Backend::ClaudeCode { program } => crate::agent::ask(program, system, user, cwd),
+            Backend::Codex { program } => crate::codex::ask(program, system, user, cwd),
             Backend::Api { conn, .. } => ask(conn, system, user),
         }
     }

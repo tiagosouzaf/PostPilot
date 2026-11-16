@@ -6,15 +6,16 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use eframe::egui;
+use pgstudio_automation::codex;
 use pgstudio_automation::llm::{self, Provider, ProviderKind};
 use pgstudio_i18n::{Language, tr, trf};
 
-use crate::ai::{AiSettings, CLAUDE_CODE, Keys};
+use crate::ai::{AiSettings, CHATGPT, CLAUDE_CODE, Keys};
 
-use crate::preferences::{LanguageSetting, Preferences, ThemeSetting};
+use crate::preferences::{LanguageSetting, Preferences, ThemeSetting, UiScale};
 use pgstudio_core::Theme;
 
 /// Uma página da árvore.
@@ -74,6 +75,15 @@ pub struct AiDraft {
     pub selected: Option<usize>,
     /// Onde está o Claude Code, se instalado.
     pub claude_code: Option<PathBuf>,
+    /// Onde está o Codex CLI (o ChatGPT pela conta), se instalado.
+    pub codex: Option<PathBuf>,
+    /// Se o Codex já tem login (lido numa thread).
+    pub chatgpt: Option<codex::Login>,
+    chatgpt_check: Option<mpsc::Receiver<(Option<PathBuf>, codex::Login)>>,
+    /// O `codex login` aberto pelo botão de entrar.
+    login: Option<codex::LoginFlow>,
+    /// Por que o último login não deu certo.
+    login_error: Option<String>,
     /// Teste em andamento, com o `id` do provedor.
     check: Option<(String, mpsc::Receiver<Check>)>,
     /// Resultado do último teste.
@@ -105,6 +115,220 @@ impl AiDraft {
             claude_code,
             ..AiDraft::default()
         }
+    }
+
+    /// Com o Codex CLI neste lugar (o ChatGPT pela conta).
+    pub fn with_codex(mut self, codex: Option<PathBuf>) -> Self {
+        self.codex = codex;
+        self
+    }
+
+    /// Pergunta ao Codex, numa thread, se o usuário já entrou. Com
+    /// `detect`, procura o programa de novo antes (o botão de verificar).
+    fn check_chatgpt(&mut self, ctx: &egui::Context, detect: bool) {
+        let known = self.codex.clone();
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let program = match known {
+                Some(p) => Some(p),
+                None if detect => codex::find_program(),
+                None => None,
+            };
+            let login = match &program {
+                Some(p) => codex::login_status(p),
+                None => codex::Login::SignedOut,
+            };
+            let _ = tx.send((program, login));
+            ctx.request_repaint();
+        });
+        self.chatgpt_check = Some(rx);
+    }
+
+    /// Abre o `codex login`: o navegador pede a conta do ChatGPT.
+    pub fn sign_in(&mut self, ctx: &egui::Context) {
+        let Some(program) = self.codex.clone() else {
+            return;
+        };
+        self.login_error = None;
+        let repaint = ctx.clone();
+        match codex::LoginFlow::start(&program, Arc::new(move || repaint.request_repaint())) {
+            Ok(flow) => self.login = Some(flow),
+            Err(e) => self.login_error = Some(e.to_string()),
+        }
+    }
+
+    /// Se o login pelo navegador está em andamento.
+    pub fn is_signing_in(&self) -> bool {
+        self.login.is_some()
+    }
+
+    fn poll_chatgpt(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.chatgpt_check {
+            match rx.try_recv() {
+                Ok((program, login)) => {
+                    self.codex = program;
+                    self.chatgpt = Some(login);
+                    self.chatgpt_check = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => self.chatgpt_check = None,
+            }
+        }
+        if let Some(flow) = &mut self.login {
+            if let Some(ok) = flow.poll() {
+                if !ok {
+                    self.login_error = Some(
+                        flow.lines
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| tr("The sign-in did not finish.").to_string()),
+                    );
+                }
+                self.login = None;
+                self.chatgpt = None;
+                self.check_chatgpt(ctx, false);
+            } else {
+                // O fim do processo não acorda a interface sozinho.
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+
+    /// O estado do ChatGPT pela conta: instalar, entrar ou pronto.
+    fn show_chatgpt(&mut self, ui: &mut egui::Ui) {
+        if self.codex.is_some() && self.chatgpt.is_none() && self.chatgpt_check.is_none() {
+            self.check_chatgpt(ui.ctx(), false);
+        }
+        let warn = ui.visuals().warn_fg_color;
+        let Some(path) = self.codex.clone() else {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tr(
+                        "To sign in with your ChatGPT account, PostPilot uses Codex, OpenAI's official program. It is not installed on this computer. Install it with the command below, then press Check again.",
+                    ))
+                    .color(warn),
+                )
+                .wrap(),
+            );
+            ui.horizontal(|ui| {
+                // i18n-ignore
+                let command = "npm install -g @openai/codex";
+                ui.monospace(command);
+                if ui.small_button(tr("Copy")).clicked() {
+                    ui.ctx().copy_text(command.to_string());
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        self.chatgpt_check.is_none(),
+                        egui::Button::new(tr("Check again")),
+                    )
+                    .clicked()
+                {
+                    self.check_chatgpt(ui.ctx(), true);
+                }
+                if self.chatgpt_check.is_some() {
+                    ui.spinner();
+                }
+            });
+            return;
+        };
+        if let Some(flow) = &self.login {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(tr(
+                    "Finish signing in to ChatGPT in the browser that just opened…",
+                ));
+            });
+            if let Some(url) = flow.url().map(str::to_string) {
+                ui.horizontal(|ui| {
+                    ui.weak(tr("The browser did not open?"));
+                    if ui.small_button(tr("Copy the sign-in link")).clicked() {
+                        ui.ctx().copy_text(url);
+                    }
+                });
+            }
+            if ui.button(tr("Cancel")).clicked() {
+                self.login = None;
+            }
+            return;
+        }
+        let sign_in = match &self.chatgpt {
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.weak(tr("Checking the ChatGPT sign-in…"));
+                });
+                None
+            }
+            Some(codex::Login::ChatGpt) => {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(trf!(
+                            "Signed in with your ChatGPT account, through Codex ({path}). No API key needed; it uses your ChatGPT plan.",
+                            path = path.display()
+                        ))
+                        .weak(),
+                    )
+                    .wrap(),
+                );
+                None
+            }
+            Some(codex::Login::ApiKey) => {
+                ui.add(
+                    egui::Label::new(tr(
+                        "Codex is signed in with an API key, not with the ChatGPT account. It works, but is charged per use.",
+                    ))
+                    .wrap(),
+                );
+                Some(tr("Sign in with ChatGPT instead"))
+            }
+            Some(codex::Login::SignedOut) => {
+                ui.colored_label(warn, tr("You have not signed in to ChatGPT yet."));
+                Some(tr("Sign in with ChatGPT"))
+            }
+            Some(codex::Login::Unknown(detail)) => {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(trf!(
+                            "Could not check the sign-in ({detail}). Update Codex if it is old.",
+                            detail = detail
+                        ))
+                        .color(warn),
+                    )
+                    .wrap(),
+                );
+                Some(tr("Sign in with ChatGPT"))
+            }
+        };
+        if let Some(label) = sign_in
+            && ui
+                .button(format!("{} {}", egui_phosphor::regular::SIGN_IN, label))
+                .clicked()
+        {
+            self.sign_in(ui.ctx());
+        }
+        if let Some(e) = &self.login_error {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(trf!("The sign-in did not work: {error}", error = e))
+                        .color(ui.visuals().error_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "The sign-in is kept by Codex, not by PostPilot. In the panel, ChatGPT works on your databases through PostPilot, which asks before changing anything.",
+                ))
+                .small()
+                .weak(),
+            )
+            .wrap(),
+        );
     }
 
     /// Acrescenta um provedor do tipo `kind` e abre para edição.
@@ -175,10 +399,13 @@ impl AiDraft {
 
     fn show(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        self.poll_chatgpt(ui.ctx());
         let active_label = |settings: &AiSettings| {
-            settings
-                .active_provider()
-                .map_or_else(|| "Claude Code".to_string(), |p| p.name.clone())
+            if settings.uses_chatgpt() {
+                tr("ChatGPT (your account)").to_string()
+            } else {
+                settings.active_label()
+            }
         };
         ui.label(tr(
             "Assistant used by the AI panel, by Commit and to suggest file names:",
@@ -192,11 +419,20 @@ impl AiDraft {
                     CLAUDE_CODE.to_string(),
                     "Claude Code", // i18n-ignore
                 );
+                ui.selectable_value(
+                    &mut self.settings.active,
+                    CHATGPT.to_string(),
+                    tr("ChatGPT (your account)"),
+                );
                 for p in &self.settings.providers {
                     ui.selectable_value(&mut self.settings.active, p.id.clone(), &p.name);
                 }
             });
         match self.settings.active_provider() {
+            None if self.settings.uses_chatgpt() => {
+                self.show_chatgpt(ui);
+                ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
+            }
             None => match &self.claude_code {
                 Some(path) => ui.weak(trf!(
                     "Claude Code is installed ({path}); it uses its own sign-in, no key needed.",
@@ -313,7 +549,7 @@ impl AiDraft {
             }
             if kind == ProviderKind::OpenAi {
                 ui.weak(tr(
-                    "Needs an API key from platform.openai.com; a ChatGPT subscription alone does not include one.",
+                    "Needs an API key from platform.openai.com; a ChatGPT subscription alone does not include one. To use the subscription, choose ChatGPT (your account) above.",
                 ));
             }
             ui.horizontal(|ui| {
@@ -382,6 +618,8 @@ pub struct OptionsDialog {
     pub system_theme: Option<Theme>,
     /// Provedores de IA em edição (a casca aplica junto com o OK).
     pub ai: AiDraft,
+    /// O maior tamanho de interface que a janela comporta agora.
+    pub max_scale: UiScale,
 }
 
 impl OptionsDialog {
@@ -392,6 +630,7 @@ impl OptionsDialog {
             page: Page::International,
             system_theme: None,
             ai: AiDraft::default(),
+            max_scale: UiScale::MAX,
         }
     }
 
@@ -490,6 +729,72 @@ impl OptionsDialog {
                     }
                 });
         });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(tr("Interface size:"));
+            let scale = &mut self.draft.ui_scale;
+            if ui
+                .add_enabled(
+                    *scale != UiScale::MIN,
+                    egui::Button::new(egui_phosphor::regular::MINUS),
+                )
+                .on_hover_text(tr("Zoom Out"))
+                .clicked()
+            {
+                *scale = scale.stepped(-1);
+            }
+            let mut percent = scale.percent();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut percent)
+                        .range(UiScale::MIN.percent()..=UiScale::MAX.percent())
+                        .speed(1.0)
+                        .suffix("%"),
+                )
+                .changed()
+            {
+                *scale = UiScale::from_percent(percent);
+            }
+            if ui
+                .add_enabled(
+                    *scale != UiScale::MAX,
+                    egui::Button::new(egui_phosphor::regular::PLUS),
+                )
+                .on_hover_text(tr("Zoom In"))
+                .clicked()
+            {
+                *scale = scale.stepped(1);
+            }
+            if ui
+                .add_enabled(*scale != UiScale::default(), egui::Button::new(tr("Reset")))
+                .clicked()
+            {
+                *scale = UiScale::default();
+            }
+        });
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "Makes text, icons and spacing larger or smaller in the whole application. Ctrl++ and Ctrl+- change it at any time; Ctrl+0 goes back to 100%.",
+                ))
+                .weak(),
+            )
+            .wrap(),
+        );
+        if self.draft.ui_scale.percent() > self.max_scale.percent() {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(trf!(
+                        "This window fits up to {percent}% now. A larger size is saved and applies when the window is larger.",
+                        percent = self.max_scale.percent()
+                    ))
+                    .color(ui.visuals().warn_fg_color),
+                )
+                .wrap(),
+            );
+        }
     }
 
     fn international(&mut self, ui: &mut egui::Ui) {

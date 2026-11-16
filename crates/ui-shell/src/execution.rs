@@ -14,6 +14,7 @@ use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
 use pgstudio_execution_plan::{Plan, PlanView};
 use pgstudio_result_grid::export::{Format, Writer};
 use pgstudio_result_grid::grid::INSERT_TABLE;
+use pgstudio_result_grid::xlsx::Workbook;
 use pgstudio_result_grid::{GridState, ResultStore};
 
 use crate::result_edit::ResultEditor;
@@ -483,47 +484,41 @@ impl Execution {
         let ui_ctx = ctx.clone();
         let ctx = ctx.clone();
         let shown = path.display().to_string();
-        let mut idle: Option<BufWriter<std::fs::File>> = Some(BufWriter::new(file));
-        let mut writer: Option<Writer<BufWriter<std::fs::File>>> = None;
-        let mut results = 0;
+        let mut sink = if format == Format::Xlsx {
+            FileSink::Book(Some(Workbook::new(BufWriter::new(file), tr("Results"))))
+        } else {
+            FileSink::Text {
+                idle: Some(BufWriter::new(file)),
+                writer: None,
+                format,
+                results: 0,
+            }
+        };
         let mut failed: Option<String> = None;
         session.execute(
             batch.sent.clone(),
             Box::new(move |e| match e {
                 QueryEvent::Columns(columns) => {
-                    let Some(mut out) = idle.take() else {
-                        return;
-                    };
-                    let started = if results > 0 {
-                        writeln!(out).and_then(|_| Writer::new(out, format, columns, INSERT_TABLE))
-                    } else {
-                        Writer::new(out, format, columns, INSERT_TABLE)
-                    };
-                    results += 1;
-                    match started {
-                        Ok(w) => writer = Some(w),
-                        Err(e) => failed = Some(e.to_string()),
+                    if let Err(e) = sink.columns(columns) {
+                        failed = Some(e.to_string());
                     }
                 }
                 QueryEvent::Row(row) => {
-                    if let Some(w) = &mut writer
-                        && let Err(e) = w.row(&row)
-                    {
+                    if let Err(e) = sink.row(&row) {
                         failed = Some(e.to_string());
-                        writer = None;
                     }
                 }
                 QueryEvent::Finished { canceled } => {
-                    if let Some(w) = writer.take() {
-                        match w.finish() {
-                            Ok(out) => idle = Some(out),
-                            Err(e) => failed = Some(e.to_string()),
+                    match sink.finish() {
+                        Ok(0) => {}
+                        Ok(n) => {
+                            let _ = tx.send(Incoming::Event(QueryEvent::Notice(ServerMessage {
+                                severity: "WARNING".into(),
+                                message: truncated_text(n),
+                                ..Default::default()
+                            })));
                         }
-                    }
-                    if let Some(out) = &mut idle
-                        && let Err(e) = out.flush()
-                    {
-                        failed = Some(e.to_string());
+                        Err(e) => failed = Some(e.to_string()),
                     }
                     if let Some(e) = failed.take() {
                         let message = trf!(
@@ -542,12 +537,9 @@ impl Execution {
                     if matches!(
                         other,
                         QueryEvent::CommandComplete { .. } | QueryEvent::Error(_)
-                    ) && let Some(w) = writer.take()
+                    ) && let Err(e) = sink.end_result()
                     {
-                        match w.finish() {
-                            Ok(out) => idle = Some(out),
-                            Err(e) => failed = Some(e.to_string()),
-                        }
+                        failed = Some(e.to_string());
                     }
                     // O fim de um resultado conta como resultado para o
                     // "(n rows affected)".
@@ -942,6 +934,100 @@ pub fn format_elapsed(d: Duration, millis: bool) -> String {
         format!("{base}.{:03}", d.subsec_millis())
     } else {
         base
+    }
+}
+
+/// Aviso de células cortadas num arquivo do Excel.
+pub fn truncated_text(cells: u64) -> String {
+    trf!(
+        "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut.",
+        n = cells
+    )
+}
+
+/// Para onde vai o Results to File.
+enum FileSink {
+    /// CSV, TSV, JSON ou INSERT: um resultado depois do outro, com uma
+    /// linha em branco entre eles.
+    Text {
+        idle: Option<BufWriter<std::fs::File>>,
+        writer: Option<Writer<BufWriter<std::fs::File>>>,
+        format: Format,
+        results: usize,
+    },
+    /// Excel: uma planilha por resultado. `None` depois de um erro.
+    Book(Option<Workbook<BufWriter<std::fs::File>>>),
+}
+
+impl FileSink {
+    /// Começa um resultado.
+    fn columns(&mut self, columns: Vec<String>) -> std::io::Result<()> {
+        match self {
+            FileSink::Text {
+                idle,
+                writer,
+                format,
+                results,
+            } => {
+                let Some(mut out) = idle.take() else {
+                    return Ok(());
+                };
+                if *results > 0 {
+                    writeln!(out)?;
+                }
+                *results += 1;
+                *writer = Some(Writer::new(out, *format, columns, INSERT_TABLE)?);
+                Ok(())
+            }
+            FileSink::Book(book) => match book {
+                Some(b) => b.sheet(&columns).inspect_err(|_| *book = None),
+                None => Ok(()),
+            },
+        }
+    }
+
+    fn row(&mut self, row: &[Option<String>]) -> std::io::Result<()> {
+        match self {
+            FileSink::Text { writer, .. } => match writer {
+                Some(w) => w.row(row).inspect_err(|_| *writer = None),
+                None => Ok(()),
+            },
+            FileSink::Book(book) => match book {
+                Some(b) => b.row(row).inspect_err(|_| *book = None),
+                None => Ok(()),
+            },
+        }
+    }
+
+    /// Fecha o resultado atual.
+    fn end_result(&mut self) -> std::io::Result<()> {
+        if let FileSink::Text { idle, writer, .. } = self
+            && let Some(w) = writer.take()
+        {
+            *idle = Some(w.finish()?);
+        }
+        Ok(())
+    }
+
+    /// Fecha o arquivo. Devolve as células cortadas (Excel).
+    fn finish(&mut self) -> std::io::Result<u64> {
+        self.end_result()?;
+        match self {
+            FileSink::Text { idle, .. } => {
+                if let Some(out) = idle {
+                    out.flush()?;
+                }
+                Ok(0)
+            }
+            FileSink::Book(book) => match book.take() {
+                Some(b) => {
+                    let cut = b.truncated();
+                    b.finish()?.flush()?;
+                    Ok(cut)
+                }
+                None => Ok(0),
+            },
+        }
     }
 }
 
