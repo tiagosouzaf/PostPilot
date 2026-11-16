@@ -118,7 +118,7 @@ fn type_name(value: &Bson) -> String {
     match value {
         Bson::Int32(_) | Bson::Int64(_) | Bson::Double(_) | Bson::Decimal128(_) => tr("number"),
         Bson::Boolean(_) => tr("boolean"),
-        Bson::ObjectId(_) => "ObjectId".into(),
+        Bson::ObjectId(_) => "ObjectId",
         Bson::DateTime(_) => tr("date"),
         Bson::Document(_) => tr("document"),
         Bson::Array(_) => tr("array"),
