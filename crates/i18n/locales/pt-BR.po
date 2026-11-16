@@ -3049,9 +3049,6 @@ msgstr "Comparação de Esquemas: o script foi salvo em {path}."
 msgid "Data Compare…"
 msgstr "Comparação de Dados…"
 
-msgid "Canceled."
-msgstr "Cancelado."
-
 msgid "Choose a connected server as the source."
 msgstr "Escolha um servidor conectado como origem."
 
