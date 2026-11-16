@@ -17,7 +17,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui::{self, Align, Layout, RichText};
 use pgstudio_core::connection::Engine;
-use pgstudio_core::query::{ColumnSource, QuerySession};
+use pgstudio_core::query::{ColumnSource, DocumentEdits, QuerySession};
 use pgstudio_result_grid::ResultStore;
 use pgstudio_result_grid::grid::{Cell, GridOutput, GridState};
 
@@ -396,6 +396,10 @@ pub struct ResultEditor {
     sources: Vec<Option<ColumnSource>>,
     table: u32,
     target: Option<Target>,
+    /// Num motor de documentos, quem grava; a coluna da chave fica em
+    /// `doc_key` depois que o resultado chega.
+    docs: Option<Arc<dyn DocumentEdits>>,
+    doc_key: Option<usize>,
     /// Gravando ou excluindo.
     busy: bool,
     confirm: Option<ConfirmDelete>,
@@ -410,6 +414,18 @@ impl ResultEditor {
     /// Começa a ver se o resultado de `sql` (um comando só, já executado
     /// na `session`) pode ser editado.
     pub fn new(session: Arc<dyn QuerySession>, sql: &str, ctx: &egui::Context) -> Self {
+        // Motor de documentos: a sessão diz como gravar, sem perguntar
+        // nada ao servidor.
+        match session.document_edits(sql) {
+            Some(Ok(docs)) => {
+                let mut e = Self::read_only(session, "", ctx);
+                e.status = Status::Editable;
+                e.docs = Some(docs);
+                return e;
+            }
+            Some(Err(reason)) => return Self::read_only(session, &reason, ctx),
+            None => {}
+        }
         let (tx, rx) = mpsc::channel();
         let e = ResultEditor {
             session,
@@ -420,6 +436,8 @@ impl ResultEditor {
             sources: Vec::new(),
             table: 0,
             target: None,
+            docs: None,
+            doc_key: None,
             busy: false,
             confirm: None,
             message: None,
@@ -449,6 +467,8 @@ impl ResultEditor {
             sources: Vec::new(),
             table: 0,
             target: None,
+            docs: None,
+            doc_key: None,
             busy: false,
             confirm: None,
             message: None,
@@ -462,6 +482,18 @@ impl ResultEditor {
 
     pub fn target(&self) -> Option<&Target> {
         self.target.as_ref()
+    }
+
+    /// O que está sendo editado (`schema.tabela`, `banco.coleção`),
+    /// quando o resultado é editável.
+    pub fn editing(&self) -> Option<String> {
+        if self.status != Status::Editable {
+            return None;
+        }
+        match &self.docs {
+            Some(docs) => Some(docs.display()),
+            None => self.target.as_ref().map(|t| t.display.clone()),
+        }
     }
 
     pub fn is_busy(&self) -> bool {
@@ -596,7 +628,24 @@ impl ResultEditor {
         // As posições de linha guardadas (gravação em andamento, exclusão
         // esperando o "Yes") só valem enquanto a ordem e o filtro não mudam.
         grid.view_locked = self.busy || self.confirm.is_some();
+        if self.status == Status::Editable
+            && let Some(docs) = &self.docs
+        {
+            self.doc_key = store.columns().iter().position(|c| c == docs.key());
+            if self.doc_key.is_none() {
+                self.status = Status::ReadOnly(trf!(
+                    "The results are read-only: they do not have the {key} of the documents.",
+                    key = docs.key()
+                ));
+            }
+        }
         match &self.status {
+            Status::Editable if self.docs.is_some() => {
+                grid.editable = (0..store.columns().len())
+                    .map(|c| Some(c) != self.doc_key)
+                    .collect();
+                grid.read_only_reason = Some(tr("The _id of a document cannot be changed.").into());
+            }
             Status::Editable => {
                 if let Some(t) = &self.target {
                     grid.editable = t.editable();
@@ -636,6 +685,30 @@ impl ResultEditor {
         if self.busy {
             return;
         }
+        if let (Some(docs), Some(key)) = (&self.docs, self.doc_key) {
+            let Some(field) = store.columns().get(cell.col).cloned() else {
+                return;
+            };
+            if cell.col == key {
+                return;
+            }
+            let id = store.row(cell.row).get(key).cloned().flatten();
+            self.busy = true;
+            self.message = Some(tr("Saving...").into());
+            let tx = self.tx.clone();
+            let ctx = self.ctx.clone();
+            let text = value.clone();
+            docs.update(
+                id,
+                field,
+                value,
+                Box::new(move |result| {
+                    let _ = tx.send(Reply::Updated { cell, text, result });
+                    ctx.request_repaint();
+                }),
+            );
+            return;
+        }
         let Some(target) = &self.target else {
             return;
         };
@@ -666,6 +739,27 @@ impl ResultEditor {
     /// Pede para excluir as linhas; só exclui depois do "Yes".
     pub fn request_delete(&mut self, store: &mut ResultStore, rows: Range<u64>) {
         if self.busy || rows.is_empty() {
+            return;
+        }
+        if let (Some(docs), Some(key)) = (&self.docs, self.doc_key) {
+            if rows.end - rows.start > MAX_DELETE_ROWS {
+                self.message = Some(trf!(
+                    "Select at most {max} documents to delete here; use deleteMany for more.",
+                    max = MAX_DELETE_ROWS
+                ));
+                return;
+            }
+            let name = docs.key();
+            let preview = rows
+                .clone()
+                .take(PREVIEW_ROWS)
+                .map(|r| {
+                    let row = store.row(r);
+                    let value = row.get(key).cloned().flatten();
+                    format!("{name} = {}", value.as_deref().unwrap_or("NULL"))
+                })
+                .collect();
+            self.confirm = Some(ConfirmDelete { rows, preview });
             return;
         }
         let Some(target) = &self.target else {
@@ -707,6 +801,31 @@ impl ResultEditor {
         if !yes || self.busy {
             return;
         }
+        if let (Some(docs), Some(key)) = (&self.docs, self.doc_key) {
+            let ids: Vec<Option<String>> = confirm
+                .rows
+                .clone()
+                .map(|r| store.row(r).get(key).cloned().flatten())
+                .collect();
+            let keys = ids.iter().map(|k| vec![k.clone()]).collect();
+            self.busy = true;
+            self.message = Some(tr("Deleting...").into());
+            let tx = self.tx.clone();
+            let ctx = self.ctx.clone();
+            let rows = confirm.rows;
+            docs.delete(
+                ids,
+                Box::new(move |result| {
+                    let _ = tx.send(Reply::Deleted {
+                        rows,
+                        keys,
+                        result: result.map(|d| d.into_iter().map(|k| vec![k]).collect()),
+                    });
+                    ctx.request_repaint();
+                }),
+            );
+            return;
+        }
         let Some(target) = &self.target else {
             return;
         };
@@ -732,7 +851,7 @@ impl ResultEditor {
             return;
         };
         let count = confirm.rows.end - confirm.rows.start;
-        let table = self.target.as_ref().map_or("", |t| t.display.as_str());
+        let table = self.editing().unwrap_or_default();
         let mut answer = None;
         let modal = crate::theme::modal(id.with("delete_rows")).show(ctx, |ui| {
             ui.set_width(420.0);

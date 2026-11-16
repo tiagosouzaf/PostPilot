@@ -851,6 +851,7 @@ impl Execution {
             return;
         }
         let statements = pgstudio_sql_editor::lexer::statements(&self.sql);
+        let documents = self.session.engine() == pgstudio_core::connection::Engine::MongoDb;
         let reason = if self.multi {
             Some(tr(
                 "The results are read-only: they come from multiple servers.",
@@ -863,6 +864,9 @@ impl Execution {
             Some(tr(
                 "The results are read-only: the query did not complete successfully.",
             ))
+        } else if documents && self.results.len() == 1 {
+            // A sessão lê o texto do jeito do motor e diz se dá.
+            None
         } else if statements.len() != 1 || self.results.len() != 1 {
             Some(tr(
                 "The results are read-only: the batch has more than one statement. \
@@ -881,7 +885,10 @@ impl Execution {
                 }
             }
             None => {
-                let sql = self.sql[statements[0].clone()].to_string();
+                let sql = match statements.first() {
+                    Some(range) if !documents => self.sql[range.clone()].to_string(),
+                    _ => self.sql.clone(),
+                };
                 self.results[0].editor = Some(ResultEditor::new(session, &sql, &self.ctx));
             }
         }

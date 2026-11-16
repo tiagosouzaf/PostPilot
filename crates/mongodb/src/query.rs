@@ -121,6 +121,20 @@ impl QuerySession for MongoQuerySession {
     fn engine(&self) -> Engine {
         Engine::MongoDb
     }
+
+    fn document_edits(
+        &self,
+        text: &str,
+    ) -> Option<Result<Arc<dyn pgstudio_core::query::DocumentEdits>, String>> {
+        Some(crate::edit::collection_of(text).map(|collection| {
+            Arc::new(crate::edit::MongoEdits::new(
+                self.client.clone(),
+                self.runtime.clone(),
+                self.shared.database(),
+                collection,
+            )) as Arc<dyn pgstudio_core::query::DocumentEdits>
+        }))
+    }
 }
 
 /// Posição (em caracteres, a partir de 1) do byte `at` de `text`.
@@ -147,7 +161,7 @@ fn notice(message: String) -> QueryEvent {
 }
 
 /// O erro do driver como texto: a mensagem do servidor quando há.
-fn error_text(e: &mongodb::error::Error) -> (String, String) {
+pub(crate) fn error_text(e: &mongodb::error::Error) -> (String, String) {
     use mongodb::error::{ErrorKind, WriteFailure};
     match &*e.kind {
         ErrorKind::Command(c) => (c.message.clone(), c.code_name.clone()),

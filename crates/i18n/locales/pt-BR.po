@@ -6008,3 +6008,51 @@ msgstr "{n} shard(s) falharam: os resultados são parciais."
 
 msgid "{total} document(s) found in {took} ms; showing {shown}."
 msgstr "{total} documento(s) encontrado(s) em {took} ms; mostrando {shown}."
+
+msgid "More than one document has an _id shown as {key} (of different types). Use updateOne or deleteOne with the exact _id."
+msgstr "Mais de um documento tem o _id mostrado como {key} (de tipos diferentes). Use updateOne ou deleteOne com o _id exato."
+
+msgid "Select at most {max} documents to delete here; use deleteMany for more."
+msgstr "Selecione no máximo {max} documentos para excluir aqui; para mais, use deleteMany."
+
+msgid "The _id of a document cannot be changed."
+msgstr "O _id de um documento não pode ser alterado."
+
+msgid "The document was not found: it may have been changed or deleted by another user."
+msgstr "O documento não foi encontrado: pode ter sido alterado ou excluído por outro usuário."
+
+msgid "The field {field} cannot be edited here because of its name. Use updateOne."
+msgstr "O campo {field} não pode ser editado aqui por causa do nome. Use updateOne."
+
+msgid "The results are read-only: only the documents of a find can be edited here."
+msgstr "Os resultados são somente leitura: só os documentos de um find podem ser editados aqui."
+
+msgid "The results are read-only: the batch has more than one command. Run the find by itself to edit its results."
+msgstr "Os resultados são somente leitura: o lote tem mais de um comando. Execute o find sozinho para editar seus resultados."
+
+msgid "The results are read-only: the projection leaves out _id, so the documents cannot be identified."
+msgstr "Os resultados são somente leitura: a projeção deixa o _id de fora, então não dá para identificar os documentos."
+
+msgid "The results are read-only: they do not have the {key} of the documents."
+msgstr "Os resultados são somente leitura: eles não têm o {key} dos documentos."
+
+msgid "{field} holds a {kind} and \"{value}\" is not one. To store a text there, type it in quotes."
+msgstr "{field} guarda um valor do tipo {kind} e \"{value}\" não é desse tipo. Para gravar um texto ali, escreva entre aspas."
+
+msgid "array"
+msgstr "lista"
+
+msgid "boolean"
+msgstr "booleano"
+
+msgid "date"
+msgstr "data"
+
+msgid "document"
+msgstr "documento"
+
+msgid "number"
+msgstr "número"
+
+msgid "value"
+msgstr "valor"

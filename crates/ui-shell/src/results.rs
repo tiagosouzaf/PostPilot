@@ -15,7 +15,7 @@ use crate::execution::{
 };
 use pgstudio_result_grid::{grid, text};
 
-use crate::result_edit::{ResultEditor, Status};
+use crate::result_edit::ResultEditor;
 
 /// Salvar o resultado com este índice, com a extensão sugerida (`csv` em
 /// "Save Results As...", `xlsx` em "Export to Excel...").
@@ -294,20 +294,18 @@ fn grids(
 /// que o usuário tentou editar).
 fn edit_strip(ui: &mut egui::Ui, editor: &ResultEditor) {
     let message = editor.message();
-    let editable = editor
-        .target()
-        .filter(|_| *editor.status() == Status::Editable);
+    let editable = editor.editing();
     if message.is_none() && editable.is_none() {
         return;
     }
     ui.horizontal(|ui| {
-        if let Some(t) = editable {
+        if let Some(t) = &editable {
             ui.label(RichText::new(icons::PENCIL_SIMPLE).weak())
                 .on_hover_text(tr(
                     "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. \
                      Delete removes the selected rows after confirmation.",
                 ));
-            ui.weak(trf!("Editing {table}", table = t.display));
+            ui.weak(trf!("Editing {table}", table = t));
             if message.is_some() {
                 ui.separator();
             }
