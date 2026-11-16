@@ -303,6 +303,7 @@ fn session() -> Option<(Arc<dyn QuerySession>, u32)> {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     let service = pgstudio_pg_client::PgQueryService::new(
         settings,

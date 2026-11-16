@@ -31,6 +31,7 @@ fn server() -> Option<Server> {
             database: "postgres".into(),
             user: var("PGSTUDIO_TEST_USER", "postgres"),
             ssl: SslMode::Disable,
+            ssh: None,
         },
         password: var("PGSTUDIO_TEST_PASSWORD", ""),
     })

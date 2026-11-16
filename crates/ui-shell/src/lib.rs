@@ -51,6 +51,7 @@ pub mod security;
 pub mod security_mssql;
 pub mod servers;
 pub mod session;
+pub mod ssh_fields;
 pub mod system_theme;
 pub mod templates;
 pub mod theme;
@@ -3322,6 +3323,7 @@ impl ShellApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         self.connect_step();
+        self.ssh_browse_step();
         self.expand_step();
         self.execution_step(&ctx);
         self.claude_step(&ctx);

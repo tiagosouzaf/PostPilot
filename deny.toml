@@ -14,6 +14,12 @@ ignore = [
     # entrada externa. Remover quando o egui atualizar o accesskit.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml só lê XML embutido do atspi" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml só lê XML embutido do atspi" },
+    # Marvin Attack na crate rsa: a correção é a série 0.10 (crypto-bigint e
+    # tempo constante), e o russh usa a 0.10.0-rc.18, que já é dessa série mas,
+    # por ser pré-lançamento, fica "abaixo" da 0.10.0 do aviso. No túnel SSH a
+    # chave RSA só assina o login do próprio usuário. Remover quando o russh
+    # passar para a rsa 0.10 final.
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.10.0-rc.18 (via russh) já é da série corrigida" },
 ]
 
 [licenses]

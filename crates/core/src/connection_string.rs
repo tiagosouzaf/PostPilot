@@ -48,6 +48,7 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
             database: String::new(),
             user: String::new(),
             ssl: SslMode::default(),
+            ssh: None,
         },
         password: None,
     };

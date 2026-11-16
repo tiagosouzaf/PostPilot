@@ -444,6 +444,7 @@ fn real_servers_answer_together() {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: pgstudio_core::connection::SslMode::Disable,
+        ssh: None,
     };
     let other = if a.host == "127.0.0.1" {
         "localhost"

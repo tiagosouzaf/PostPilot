@@ -32,6 +32,7 @@ const UI_DIRS: &[&str] = &[
     "crates/schema-model/src",
     "crates/pg-metadata/src",
     "crates/mssql/src",
+    "crates/ssh/src",
 ];
 
 /// Arquivos que não são interface (medição, dados de demonstração).

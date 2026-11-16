@@ -45,6 +45,9 @@ pub struct Session {
     client: TdsClient,
     settings: ConnectionSettings,
     server_version: String,
+    /// O túnel SSH por onde a conexão passa: fica aberto enquanto ela
+    /// existir.
+    _tunnel: Option<Arc<pgstudio_ssh::Tunnel>>,
 }
 
 impl Session {
@@ -67,9 +70,13 @@ impl Session {
         password: &str,
     ) -> Result<Session, ConnectError> {
         let mut config = config(settings, password);
+        // Com túnel SSH, o socket vai para a porta local dele (o `config`
+        // continua com o nome do servidor, para o certificado). Pelo túnel
+        // a instância nomeada não é procurada: vale a porta.
+        let mut tunnel = pgstudio_ssh::open(settings).await?;
         // O Azure SQL pode mandar para outro servidor (gateway).
         for _ in 0..2 {
-            let stream = open_socket(&config, settings).await?;
+            let stream = open_socket(&config, settings, tunnel.as_deref()).await?;
             match Client::connect(config.clone(), stream.compat_write()).await {
                 Ok(mut client) => {
                     let server_version = server_version(&mut client).await.unwrap_or_default();
@@ -77,9 +84,13 @@ impl Session {
                         client,
                         settings: settings.clone(),
                         server_version,
+                        _tunnel: tunnel,
                     });
                 }
                 Err(tiberius::error::Error::Routing { host, port }) => {
+                    if let Some(ssh) = &settings.ssh {
+                        tunnel = Some(pgstudio_ssh::open_to(ssh, &host, port).await?);
+                    }
                     config.host(host);
                     config.port(port);
                 }
@@ -159,8 +170,8 @@ fn config(settings: &ConnectionSettings, password: &str) -> Config {
     let (host, instance) = split_instance(&settings.host);
     config.host(host);
     match instance {
-        Some(instance) => config.instance_name(instance),
-        None => config.port(settings.port),
+        Some(instance) if settings.ssh.is_none() => config.instance_name(instance),
+        _ => config.port(settings.port),
     }
     if !settings.database.is_empty() {
         config.database(&settings.database);
@@ -198,6 +209,7 @@ fn split_instance(host: &str) -> (&str, Option<&str>) {
 async fn open_socket(
     config: &Config,
     settings: &ConnectionSettings,
+    tunnel: Option<&pgstudio_ssh::Tunnel>,
 ) -> Result<TcpStream, ConnectError> {
     let network = |e: &dyn std::fmt::Display| {
         ConnectError::Network(trf!(
@@ -206,7 +218,11 @@ async fn open_socket(
             e = e
         ))
     };
-    let stream = if split_instance(&settings.host).1.is_some() {
+    let stream = if let Some(tunnel) = tunnel {
+        TcpStream::connect(tunnel.local_addr())
+            .await
+            .map_err(|e| network(&e))?
+    } else if split_instance(&settings.host).1.is_some() {
         TcpStream::connect_named(config)
             .await
             .map_err(|e| network(&e))?

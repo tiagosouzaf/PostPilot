@@ -309,6 +309,7 @@ fn the_list_and_the_transaction_check_work_on_postgresql() {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     let connector =
         pgstudio_pg_metadata::PgConnector::new(pgstudio_pg_client::DbRuntime::new().unwrap());

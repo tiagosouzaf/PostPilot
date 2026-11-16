@@ -1,0 +1,20 @@
+[package]
+name = "pgstudio-ssh"
+description = "Túnel SSH das conexões do PostPilot: o banco atrás de um bastion chega por uma porta local."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+pgstudio-i18n.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
+russh = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
+
+[lints]
+workspace = true

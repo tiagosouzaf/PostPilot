@@ -28,6 +28,7 @@ fn settings(database: &str) -> Option<(ConnectionSettings, String)> {
             database: database.into(),
             user: var("PGSTUDIO_TEST_USER", "postgres"),
             ssl: SslMode::Disable,
+            ssh: None,
         },
         var("PGSTUDIO_TEST_PASSWORD", ""),
     ))
