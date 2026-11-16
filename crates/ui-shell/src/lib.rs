@@ -2915,6 +2915,17 @@ impl ShellApp {
                 doc.editor.focus_editor();
             }
             CommandId::QuickFind => {
+                // Com o foco numa grade de resultados, Ctrl+F vai para o
+                // filtro dela.
+                let focused = ctx.memory(|m| m.focused());
+                let results = doc.execution.as_ref().map_or(0, |e| e.results.len());
+                if let Some(grid) = (0..results)
+                    .map(|i| results::grid_id(id, i))
+                    .find(|g| focused == Some(*g))
+                {
+                    pgstudio_result_grid::grid::focus_filter(ctx, grid);
+                    return;
+                }
                 let selected = pgstudio_sql_editor::selected_text(ctx, editor, &doc.text);
                 doc.editor.open_find(selected);
             }

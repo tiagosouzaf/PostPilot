@@ -4565,3 +4565,27 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "Filter rows: text or column:text"
+msgstr "Filtrar linhas: texto ou coluna:texto"
+
+msgid "Clear the filter"
+msgstr "Limpar o filtro"
+
+msgid "{shown} of {total} rows"
+msgstr "{shown} de {total} linhas"
+
+msgid "Sort Ascending"
+msgstr "Ordenar crescente"
+
+msgid "Sort Descending"
+msgstr "Ordenar decrescente"
+
+msgid "Clear Sort"
+msgstr "Limpar ordenação"
+
+msgid "Filter by This Value"
+msgstr "Filtrar por este valor"
+
+msgid "Clear Filter"
+msgstr "Limpar filtro"
