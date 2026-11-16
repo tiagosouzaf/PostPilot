@@ -169,11 +169,62 @@ struct Popup {
     selected: usize,
     /// Primeira linha visível da lista.
     top: usize,
+    /// Largura que a lista quer para mostrar o nome e o detalhe inteiros
+    /// da sugestão mais comprida. Medida uma vez por lista; enquanto ela
+    /// fica aberta só cresce, para não dançar a cada letra.
+    width: Option<f32>,
 }
 
 /// Linhas visíveis da lista de sugestões.
 const POPUP_ROWS: usize = 10;
 const POPUP_WIDTH: f32 = 420.0;
+/// Até onde a lista alarga para caber um nome comprido; depois disso o
+/// texto é encurtado com reticências.
+const POPUP_MAX_WIDTH: f32 = 760.0;
+/// Numa linha da lista: onde o nome começa, a margem direita do detalhe e
+/// o espaço mínimo entre os dois.
+const ROW_LEFT: f32 = 24.0;
+const ROW_RIGHT: f32 = 6.0;
+const ROW_GAP: f32 = 16.0;
+const DETAIL_FONT: f32 = 11.0;
+
+/// A largura da lista: a que o conteúdo pede, entre a largura padrão e o
+/// limite, e nunca mais do que cabe na janela.
+fn popup_width(wanted: f32, screen: f32) -> f32 {
+    wanted
+        .clamp(POPUP_WIDTH, POPUP_MAX_WIDTH)
+        .min((screen - 16.0).max(120.0))
+}
+
+/// Quanto cabe ao nome e ao detalhe numa linha com `avail` de largura
+/// útil. Cabendo os dois, cada um fica com o que pede; senão o detalhe
+/// cede primeiro (até ficar com 30% da linha) e o nome leva o resto. Os
+/// dois nunca se encontram: sobra sempre `ROW_GAP` entre eles.
+fn split_row(avail: f32, label: f32, detail: f32) -> (f32, f32) {
+    if detail <= 0.0 {
+        return (avail.max(0.0), 0.0);
+    }
+    if label + ROW_GAP + detail <= avail {
+        return (label, detail);
+    }
+    let detail = detail
+        .min((avail * 0.3).max(avail - ROW_GAP - label))
+        .max(0.0);
+    ((avail - ROW_GAP - detail).max(0.0), detail)
+}
+
+/// Uma linha só de texto, encurtada com reticências em `max_width`.
+fn one_line(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    painter.layout_job(job)
+}
 /// Letra e margem da explicação embaixo da lista.
 const DOC_FONT: f32 = 12.0;
 const DOC_MARGIN: f32 = 6.0;
@@ -296,10 +347,13 @@ impl Editing<'_> {
         }
         let selected = best(&c);
         self.buf.ai.open = None;
+        // A lista continua aberta enquanto se digita: não encolhe.
+        let keep = self.buf.popup.as_ref().and_then(|p| p.width);
         self.buf.popup = Some(Popup {
             completion: c,
             selected,
             top: selected.saturating_sub(POPUP_ROWS / 2),
+            width: keep,
         });
     }
 
@@ -2157,7 +2211,38 @@ fn paint(ui: &Ui, ed: &Editing<'_>, f: &Frame, gutter: Rect, focused: bool) {
 
 /// Desenha a lista de sugestões embaixo da palavra. Devolve `true` se uma
 /// sugestão foi escolhida com o mouse.
+/// A largura que a lista pede para mostrar inteiros o nome e o detalhe de
+/// todas as sugestões. Fica guardada na lista: mede uma vez só.
+fn wanted_width(ui: &Ui, p: &mut Popup, f: &Frame) -> f32 {
+    let mut details: std::collections::HashMap<&str, f32> = std::collections::HashMap::new();
+    let font = FontId::proportional(DETAIL_FONT);
+    let mut widest = 0.0_f32;
+    for item in &p.completion.items {
+        let label = item.label.chars().count() as f32 * f.char_w;
+        let detail = if item.detail.is_empty() {
+            0.0
+        } else {
+            *details.entry(item.detail.as_str()).or_insert_with(|| {
+                ui.painter()
+                    .layout_no_wrap(item.detail.clone(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+                    + ROW_GAP
+            })
+        };
+        widest = widest.max(label + detail);
+    }
+    let wanted = (ROW_LEFT + widest + ROW_RIGHT).max(p.width.unwrap_or(0.0));
+    p.width = Some(wanted);
+    wanted
+}
+
 fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
+    let Some(p) = &mut ed.buf.popup else {
+        return false;
+    };
+    // A largura que a sugestão mais comprida pede (nome + detalhe).
+    let wanted = wanted_width(ui, p, f);
     let Some(p) = &ed.buf.popup else {
         return false;
     };
@@ -2172,28 +2257,55 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
     let row_h = f.line_h + 4.0;
     let rows = p.completion.items.len().min(POPUP_ROWS);
     let v = ui.visuals().clone();
+    let screen = ui.ctx().content_rect();
+    let width = popup_width(wanted, screen.width());
+    let avail = width - ROW_LEFT - ROW_RIGHT;
+    let detail_font = FontId::proportional(DETAIL_FONT);
     // A explicação da sugestão escolhida, embaixo da lista. O espaço é de
     // pelo menos duas linhas, para a lista não mudar de tamanho a cada
-    // seta.
-    let doc = p
-        .completion
-        .items
-        .get(p.selected)
-        .and_then(|item| crate::docs::explain(ed.buf.dialect, item, ed.catalog))
-        .map(|text| {
-            ui.painter().layout(
-                text,
-                FontId::proportional(DOC_FONT),
-                v.text_color(),
-                POPUP_WIDTH - 2.0 * DOC_MARGIN,
-            )
-        });
+    // seta. Quando o nome escolhido não coube na linha, ele vem inteiro
+    // antes da explicação.
+    let doc = p.completion.items.get(p.selected).and_then(|item| {
+        let text = crate::docs::explain(ed.buf.dialect, item, ed.catalog);
+        let detail_w = if item.detail.is_empty() {
+            0.0
+        } else {
+            ui.painter()
+                .layout_no_wrap(item.detail.clone(), detail_font.clone(), v.text_color())
+                .size()
+                .x
+        };
+        let label_w = item.label.chars().count() as f32 * f.char_w;
+        let cut = split_row(avail, label_w, detail_w).0 < label_w;
+        if text.is_none() && !cut {
+            return None;
+        }
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = width - 2.0 * DOC_MARGIN;
+        if cut {
+            job.append(
+                &item.label,
+                0.0,
+                egui::TextFormat::simple(f.font.clone(), v.strong_text_color()),
+            );
+            if text.is_some() {
+                job.append("\n", 0.0, egui::TextFormat::default());
+            }
+        }
+        if let Some(text) = text {
+            job.append(
+                &text,
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(DOC_FONT), v.text_color()),
+            );
+        }
+        Some(ui.painter().layout_job(job))
+    });
     let doc_h = doc.as_ref().map_or(0.0, |g| {
         g.size().y.max(2.0 * (DOC_FONT + 3.0)) + 2.0 * DOC_MARGIN
     });
     let height = rows as f32 * row_h + doc_h;
     // Embaixo da linha; se não couber, em cima.
-    let screen = ui.ctx().content_rect();
     let pos = if y + height + 8.0 > screen.bottom() {
         pos2(x, y - f.line_h - height - 8.0)
     } else {
@@ -2216,7 +2328,7 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                     let items = &p.completion.items;
                     for (i, item) in items.iter().enumerate().skip(p.top).take(rows) {
                         let (rect, resp) =
-                            ui.allocate_exact_size(vec2(POPUP_WIDTH, row_h), Sense::click());
+                            ui.allocate_exact_size(vec2(width, row_h), Sense::click());
                         let painter = ui.painter();
                         let selected = i == p.selected;
                         if selected {
@@ -2249,33 +2361,71 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                             font.clone(),
                             glyph_color,
                         );
-                        painter.text(
-                            mid + vec2(24.0, 0.0),
-                            egui::Align2::LEFT_CENTER,
-                            &item.label,
-                            font.clone(),
+                        // O nome e o detalhe medidos antes de desenhar:
+                        // cada um fica na sua parte da linha, encurtado
+                        // com reticências se não couber.
+                        let detail_color = if selected {
+                            Color32::WHITE
+                        } else {
+                            v.weak_text_color()
+                        };
+                        let detail_w = if item.detail.is_empty() {
+                            0.0
+                        } else {
+                            painter
+                                .layout_no_wrap(
+                                    item.detail.clone(),
+                                    detail_font.clone(),
+                                    detail_color,
+                                )
+                                .size()
+                                .x
+                        };
+                        let label_w = painter
+                            .layout_no_wrap(item.label.clone(), font.clone(), text_color)
+                            .size()
+                            .x;
+                        let (label_max, detail_max) = split_row(avail, label_w, detail_w);
+                        let label =
+                            one_line(painter, &item.label, font.clone(), text_color, label_max);
+                        let mut cut = label.elided;
+                        painter.galley(
+                            pos2(rect.left() + ROW_LEFT, mid.y - label.size().y / 2.0),
+                            label,
                             text_color,
                         );
-                        if !item.detail.is_empty() {
-                            painter.text(
-                                rect.right_center() - vec2(6.0, 0.0),
-                                egui::Align2::RIGHT_CENTER,
+                        if !item.detail.is_empty() && detail_max > 0.0 {
+                            let detail = one_line(
+                                painter,
                                 &item.detail,
-                                FontId::proportional(11.0),
-                                if selected {
-                                    Color32::WHITE
-                                } else {
-                                    v.weak_text_color()
-                                },
+                                detail_font.clone(),
+                                detail_color,
+                                detail_max,
+                            );
+                            cut |= detail.elided;
+                            painter.galley(
+                                pos2(
+                                    rect.right() - ROW_RIGHT - detail.size().x,
+                                    mid.y - detail.size().y / 2.0,
+                                ),
+                                detail,
+                                detail_color,
                             );
                         }
                         if resp.clicked() {
                             clicked = Some(i);
                         }
+                        // O texto inteiro de uma linha encurtada, no hover.
+                        if cut {
+                            resp.on_hover_text(if item.detail.is_empty() {
+                                item.label.clone()
+                            } else {
+                                format!("{}\n{}", item.label, item.detail)
+                            });
+                        }
                     }
                     if let Some(doc) = doc {
-                        let (rect, _) =
-                            ui.allocate_exact_size(vec2(POPUP_WIDTH, doc_h), Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(vec2(width, doc_h), Sense::hover());
                         ui.painter().hline(
                             rect.x_range(),
                             rect.top(),
@@ -2654,5 +2804,51 @@ fn squiggles(ui: &Ui, response: &egui::Response, ed: &Editing<'_>, f: &Frame) {
         && ed.buf.popup.is_none()
     {
         response.show_tooltip_text(message);
+    }
+}
+
+#[cfg(test)]
+mod popup_layout_tests {
+    use super::*;
+
+    /// O nome e o detalhe nunca se encontram, com qualquer tamanho.
+    #[test]
+    fn the_name_and_the_detail_never_meet() {
+        for avail in [40.0_f32, 104.0, 390.0, 730.0] {
+            for label in [0.0_f32, 30.0, 200.0, 420.0, 5000.0] {
+                for detail in [0.0_f32, 30.0, 180.0, 5000.0] {
+                    let (l, d) = split_row(avail, label, detail);
+                    assert!(l >= 0.0 && d >= 0.0, "{avail} {label} {detail}");
+                    assert!(l <= label.max(avail) && d <= detail);
+                    if detail > 0.0 {
+                        assert!(
+                            l + ROW_GAP + d <= avail + 0.01 || d == 0.0,
+                            "{avail} {label} {detail}: {l} + {d}"
+                        );
+                    } else {
+                        assert!(l <= avail);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn what_fits_is_not_cut_and_the_detail_gives_way_first() {
+        assert_eq!(split_row(390.0, 200.0, 100.0), (200.0, 100.0));
+        // Não cabe: o nome fica inteiro e o detalhe encolhe.
+        assert_eq!(split_row(390.0, 250.0, 180.0), (250.0, 124.0));
+        // Nome enorme: o detalhe ainda fica com 30% da linha.
+        let (l, d) = split_row(400.0, 5000.0, 300.0);
+        assert!((d - 120.0).abs() < 0.01, "{d}");
+        assert!((l + ROW_GAP + d - 400.0).abs() < 0.01, "{l}");
+    }
+
+    #[test]
+    fn the_list_widens_up_to_a_limit_and_never_past_the_window() {
+        assert_eq!(popup_width(100.0, 1600.0), POPUP_WIDTH);
+        assert_eq!(popup_width(600.0, 1600.0), 600.0);
+        assert_eq!(popup_width(3000.0, 1600.0), POPUP_MAX_WIDTH);
+        assert_eq!(popup_width(600.0, 500.0), 484.0);
     }
 }
