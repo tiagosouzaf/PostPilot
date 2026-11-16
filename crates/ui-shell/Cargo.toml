@@ -42,6 +42,7 @@ pgstudio-pg-client.workspace = true
 pgstudio-pg-metadata.workspace = true
 pgstudio-mssql.workspace = true
 pgstudio-redis.workspace = true
+pgstudio-mongodb.workspace = true
 
 [lints]
 workspace = true

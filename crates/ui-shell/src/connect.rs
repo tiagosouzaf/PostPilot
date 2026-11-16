@@ -563,7 +563,9 @@ impl ConnectDialog {
                     egui::TextEdit::singleline(&mut self.server)
                         .desired_width(270.0)
                         .hint_text(match self.engine {
-                            Engine::PostgreSql | Engine::Redis => tr("host or host,port"),
+                            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                                tr("host or host,port")
+                            }
                             Engine::SqlServer => tr("host, host,port or host\\instance"),
                         }),
                 )
@@ -608,10 +610,10 @@ impl ConnectDialog {
         ui.add(
             egui::TextEdit::singleline(&mut self.user)
                 .desired_width(300.0)
-                .hint_text(if self.engine.login_optional() {
-                    tr("optional (ACL user)")
-                } else {
-                    ""
+                .hint_text(match self.engine {
+                    Engine::Redis => tr("optional (ACL user)"),
+                    Engine::MongoDb => tr("optional (server without authentication)"),
+                    _ => "",
                 }),
         )
         .labelled_by(label.id);

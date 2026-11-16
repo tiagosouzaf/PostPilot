@@ -79,7 +79,8 @@ impl Collector {
         match engine {
             pgstudio_core::connection::Engine::PostgreSql => self.wrapped(),
             pgstudio_core::connection::Engine::SqlServer
-            | pgstudio_core::connection::Engine::Redis => self,
+            | pgstudio_core::connection::Engine::Redis
+            | pgstudio_core::connection::Engine::MongoDb => self,
         }
     }
 

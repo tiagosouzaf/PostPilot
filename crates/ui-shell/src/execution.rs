@@ -397,7 +397,9 @@ impl Execution {
         ctx: &egui::Context,
     ) -> Option<Self> {
         let batch = match session.engine() {
-            Engine::PostgreSql | Engine::Redis => Batch::explain(&sql, "FORMAT JSON")?,
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                Batch::explain(&sql, "FORMAT JSON")?
+            }
             Engine::SqlServer => Batch::showplan(&sql, "SHOWPLAN_XML", false)?,
         };
         let mut exec = Self::start_batch(session, batch, sql, offset, ctx);
@@ -914,7 +916,9 @@ impl Execution {
             .cloned()
             .unwrap_or_default();
         let parsed = match self.session.engine() {
-            Engine::PostgreSql | Engine::Redis => pgstudio_execution_plan::parse(&json, &statement),
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                pgstudio_execution_plan::parse(&json, &statement)
+            }
             Engine::SqlServer => pgstudio_execution_plan::parse_showplan(&json),
         };
         match parsed {

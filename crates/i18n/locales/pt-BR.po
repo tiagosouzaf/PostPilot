@@ -5602,3 +5602,226 @@ msgstr "Tamanho"
 
 msgid "Memory (bytes)"
 msgstr "Memória (bytes)"
+
+# MongoDB
+msgid "1 document inserted by the upsert (_id {id})."
+msgstr "1 documento inserido pelo upsert (_id {id})."
+
+msgid "After mongodb+srv:// goes only the cluster name."
+msgstr "Depois de mongodb+srv:// vai só o nome do cluster."
+
+msgid "Aggregate"
+msgstr "Agregar"
+
+msgid "Argument {n} of {name} must be a document."
+msgstr "O argumento {n} de {name} tem de ser um documento."
+
+msgid "Authentication failed: check the login and the password."
+msgstr "Falha na autenticação: confira o login e a senha."
+
+msgid "Average document size"
+msgstr "Tamanho médio do documento"
+
+msgid "Capped"
+msgstr "Tamanho fixo (capped)"
+
+msgid "Collection Statistics"
+msgstr "Estatísticas da Coleção"
+
+msgid "Collections"
+msgstr "Coleções"
+
+msgid "Command completed."
+msgstr "Comando concluído."
+
+msgid "Count Documents"
+msgstr "Contar Documentos"
+
+msgid "Create Collection"
+msgstr "Criar Coleção"
+
+msgid "Current Operations"
+msgstr "Operações em Andamento"
+
+msgid "Data size"
+msgstr "Tamanho dos dados"
+
+msgid "Delete Documents"
+msgstr "Excluir Documentos"
+
+msgid "Distinct Values"
+msgstr "Valores Distintos"
+
+msgid "Documents"
+msgstr "Documentos"
+
+msgid "Drop Collection..."
+msgstr "Excluir Coleção..."
+
+msgid "Drop Index..."
+msgstr "Excluir Índice..."
+
+msgid "Expected '(' after the method name."
+msgstr "Faltou '(' depois do nome do método."
+
+msgid "Expected ',' or ')'."
+msgstr "Faltou ',' ou ')'."
+
+msgid "Expected ',' or ']'."
+msgstr "Faltou ',' ou ']'."
+
+msgid "Expected ',' or '}'."
+msgstr "Faltou ',' ou '}'."
+
+msgid "Expected '{c}'."
+msgstr "Faltou '{c}'."
+
+msgid "Expected a command: db.collection.find(...), show dbs, use database."
+msgstr "Faltou um comando: db.colecao.find(...), show dbs, use banco."
+
+msgid "Expected a field name."
+msgstr "Faltou o nome de um campo."
+
+msgid "Expected a method call, as in db.collection.find()."
+msgstr "Faltou chamar um método, como em db.colecao.find()."
+
+msgid "Expected a name after the dot."
+msgstr "Faltou um nome depois do ponto."
+
+msgid "Expected a text between quotes."
+msgstr "Faltou um texto entre aspas."
+
+msgid "Expected a type name after new."
+msgstr "Faltou o nome de um tipo depois de new."
+
+msgid "Expected a value."
+msgstr "Faltou um valor."
+
+msgid "Expected one name between quotes."
+msgstr "Faltou um nome entre aspas."
+
+msgid "Expected the database name after use."
+msgstr "Faltou o nome do banco depois de use."
+
+msgid "Fields that only appear after the first {n} documents are not in the grid: {fields}. Add a projection to see them."
+msgstr "Campos que só aparecem depois dos primeiros {n} documentos não estão na grade: {fields}. Use uma projeção para vê-los."
+
+msgid "Find"
+msgstr "Buscar"
+
+msgid "Find Documents"
+msgstr "Buscar Documentos"
+
+msgid "Find by Id"
+msgstr "Buscar pelo Id"
+
+msgid "Find with Projection and Sort"
+msgstr "Buscar com Projeção e Ordem"
+
+msgid "Group and Count"
+msgstr "Agrupar e Contar"
+
+msgid "Index size"
+msgstr "Tamanho dos índices"
+
+msgid "Insert Document"
+msgstr "Inserir Documento"
+
+msgid "Invalid \\u escape."
+msgstr "Escape \\u inválido."
+
+msgid "Invalid number."
+msgstr "Número inválido."
+
+msgid "Invalid value for {type_name}."
+msgstr "Valor inválido para {type_name}."
+
+msgid "Join Another Collection"
+msgstr "Juntar Outra Coleção"
+
+msgid "List Databases and Collections"
+msgstr "Listar Bancos e Coleções"
+
+msgid "List Indexes"
+msgstr "Listar Índices"
+
+msgid "Only show dbs and show collections are available."
+msgstr "Só existem show dbs e show collections."
+
+msgid "Open First {n} Documents"
+msgstr "Abrir os Primeiros {n} Documentos"
+
+msgid "Script Collection as CREATE"
+msgstr "Gerar Script de CREATE da Coleção"
+
+msgid "Server Status"
+msgstr "Status do Servidor"
+
+msgid "Storage size"
+msgstr "Tamanho em disco"
+
+msgid "Switched to database {database}."
+msgstr "Banco trocado para {database}."
+
+msgid "The update must use operators, as in {$set: {field: value}}."
+msgstr "A atualização tem de usar operadores, como em {$set: {field: value}}."
+
+msgid "Unclosed quote."
+msgstr "Aspas sem fechar."
+
+msgid "Unclosed regular expression."
+msgstr "Expressão regular sem fechar."
+
+msgid "Unexpected text after the command."
+msgstr "Texto sobrando depois do comando."
+
+msgid "Unknown method '{name}'."
+msgstr "Método '{name}' desconhecido."
+
+msgid "Unknown value '{name}'. Texts go between quotes."
+msgstr "Valor '{name}' desconhecido. Textos vão entre aspas."
+
+msgid "Update Documents"
+msgstr "Atualizar Documentos"
+
+msgid "Write"
+msgstr "Escrever"
+
+msgid "aggregate expects a list of stages, as in aggregate([{$match: {}}])."
+msgstr "aggregate espera uma lista de estágios, como em aggregate([{$match: {}}])."
+
+msgid "distinct expects the field name between quotes."
+msgstr "distinct espera o nome do campo entre aspas."
+
+msgid "dropIndex expects the index name or its keys."
+msgstr "dropIndex espera o nome do índice ou as chaves dele."
+
+msgid "hint expects an index name or its keys."
+msgstr "hint espera o nome de um índice ou as chaves dele."
+
+msgid "insertOne expects a document; insertMany, a list of documents."
+msgstr "insertOne espera um documento; insertMany, uma lista de documentos."
+
+msgid "no login"
+msgstr "sem login"
+
+msgid "optional (server without authentication)"
+msgstr "opcional (servidor sem autenticação)"
+
+msgid "replaceOne expects the new document, without $ operators."
+msgstr "replaceOne espera o documento novo, sem operadores com $."
+
+msgid "runCommand expects a document, as in db.runCommand({ping: 1})."
+msgstr "runCommand espera um documento, como em db.runCommand({ping: 1})."
+
+msgid "{matched} document(s) matched, {modified} modified."
+msgstr "{matched} documento(s) encontrado(s), {modified} modificado(s)."
+
+msgid "{name} expects a number."
+msgstr "{name} espera um número."
+
+msgid "{n} document(s) deleted."
+msgstr "{n} documento(s) excluído(s)."
+
+msgid "{n} document(s) inserted."
+msgstr "{n} documento(s) inserido(s)."

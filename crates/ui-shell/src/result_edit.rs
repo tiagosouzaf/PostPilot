@@ -93,7 +93,7 @@ impl Target {
         let literal = self.engine.literal(value);
         let filter = self.key_filter(row);
         Some(match self.engine {
-            Engine::PostgreSql | Engine::Redis => format!(
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
                 "UPDATE {} SET {name} = {literal} WHERE {filter} RETURNING {name}",
                 self.table
             ),
@@ -128,7 +128,7 @@ impl Target {
                 .join("\n   OR ")
         };
         match self.engine {
-            Engine::PostgreSql | Engine::Redis => format!(
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
                 "DELETE FROM {} WHERE {filter} RETURNING {}",
                 self.table,
                 self.key_columns()
@@ -201,7 +201,7 @@ pub fn source_table(sources: &[Option<ColumnSource>]) -> Result<u32, String> {
 /// relação (as mesmas colunas de [`table_sql`]).
 pub fn table_sql_for(engine: Engine, oid: u32) -> String {
     match engine {
-        Engine::PostgreSql | Engine::Redis => table_sql(oid),
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => table_sql(oid),
         // Colunas binárias e rowversion ficam só leitura: o valor aparece
         // como 0x... e não volta por texto.
         Engine::SqlServer => format!(

@@ -250,7 +250,8 @@ impl Editing<'_> {
         if self.buf.popup.is_none() && !open {
             return;
         }
-        if !self.range().is_empty() {
+        // Sem lista de palavras do SQL numa consulta do MongoDB.
+        if !self.range().is_empty() || self.buf.dialect == Dialect::MongoDb {
             self.buf.popup = None;
             return;
         }

@@ -19,12 +19,13 @@ members = [
     "crates/mssql",
     "crates/ssh",
     "crates/redis",
+    "crates/mongodb",
     "xtask",
 ]
 exclude = ["spikes", "vendor"]
 
 [workspace.package]
-version = "0.2.30"
+version = "0.2.31"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -48,6 +49,7 @@ pgstudio-i18n = { path = "crates/i18n" }
 pgstudio-mssql = { path = "crates/mssql" }
 pgstudio-ssh = { path = "crates/ssh" }
 pgstudio-redis = { path = "crates/redis" }
+pgstudio-mongodb = { path = "crates/mongodb" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"

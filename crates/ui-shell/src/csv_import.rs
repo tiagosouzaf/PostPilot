@@ -32,7 +32,7 @@ use pgstudio_i18n::{tr, trf};
 fn batch_rows(engine: Engine) -> usize {
     match engine {
         // O Redis não tem tabelas: a importação nem é oferecida.
-        Engine::PostgreSql | Engine::Redis => 500,
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => 500,
         Engine::SqlServer => 100,
     }
 }
@@ -405,7 +405,7 @@ impl Target {
 /// (`oid` no PostgreSQL, `object_id` no SQL Server).
 pub fn target_sql(engine: Engine, id: u64) -> String {
     match engine {
-        Engine::PostgreSql | Engine::Redis => format!(
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
             "SELECT n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod), \
                     CASE WHEN a.attgenerated <> '' THEN 'c' WHEN a.attidentity = 'a' THEN 'i' ELSE '' END \
                FROM pg_catalog.pg_class c \
@@ -615,21 +615,21 @@ impl Plan {
 
     fn begin(&self) -> &'static str {
         match self.engine {
-            Engine::PostgreSql | Engine::Redis => "BEGIN",
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => "BEGIN",
             Engine::SqlServer => "SET XACT_ABORT ON; BEGIN TRANSACTION",
         }
     }
 
     fn commit(&self) -> &'static str {
         match self.engine {
-            Engine::PostgreSql | Engine::Redis => "COMMIT",
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => "COMMIT",
             Engine::SqlServer => "COMMIT TRANSACTION",
         }
     }
 
     fn rollback(&self) -> &'static str {
         match self.engine {
-            Engine::PostgreSql | Engine::Redis => "ROLLBACK",
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => "ROLLBACK",
             Engine::SqlServer => "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION",
         }
     }

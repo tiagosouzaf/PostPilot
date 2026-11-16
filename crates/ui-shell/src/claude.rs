@@ -472,7 +472,9 @@ impl ShellApp {
                 None,
                 responder,
                 |t| match t.engine {
-                    Engine::PostgreSql | Engine::Redis => (catalog::list_databases(), &[]),
+                    Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                        (catalog::list_databases(), &[])
+                    }
                     Engine::SqlServer => (catalog::tsql::list_databases(), &[]),
                 },
             ),
@@ -488,7 +490,7 @@ impl ShellApp {
                 database,
                 responder,
                 move |t| match t.engine {
-                    Engine::PostgreSql | Engine::Redis => {
+                    Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
                         (catalog::list_objects(schema.as_deref()), &[])
                     }
                     Engine::SqlServer => (catalog::tsql::list_objects(schema.as_deref()), &[]),
@@ -508,7 +510,9 @@ impl ShellApp {
                 move |t| {
                     (
                         match t.engine {
-                            Engine::PostgreSql | Engine::Redis => catalog::describe_table(&table),
+                            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                                catalog::describe_table(&table)
+                            }
                             Engine::SqlServer => catalog::tsql::describe_table(&table),
                         },
                         catalog::DESCRIBE_TABLE_LABELS,
@@ -527,7 +531,7 @@ impl ShellApp {
                 database,
                 responder,
                 move |t| match t.engine {
-                    Engine::PostgreSql | Engine::Redis => {
+                    Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
                         (catalog::describe_function(&function), &[])
                     }
                     Engine::SqlServer => (catalog::tsql::describe_function(&function), &[]),
@@ -1091,6 +1095,7 @@ impl ShellApp {
                         Engine::PostgreSql => "postgresql",
                         Engine::SqlServer => "sqlserver",
                         Engine::Redis => "redis",
+                        Engine::MongoDb => "mongodb",
                     },
                     "version": c.server_version,
                     "active": active,

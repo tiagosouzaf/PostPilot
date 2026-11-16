@@ -100,6 +100,16 @@ pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Saf
                 Err(reason) => Safety::Unknown { reason },
             }
         }
+        // MongoDB: pelo comando do servidor em que cada consulta vira.
+        pgstudio_core::connection::Engine::MongoDb => {
+            match pgstudio_mongodb::shell::first_write(sql) {
+                None => Safety::ReadOnly,
+                Some(reason) if reason == "?" => Safety::Unknown {
+                    reason: "the query could not be read".into(),
+                },
+                Some(reason) => Safety::Writes { reason },
+            }
+        }
         pgstudio_core::connection::Engine::PostgreSql => classify(sql),
         pgstudio_core::connection::Engine::SqlServer => {
             let without_go: String = sql
@@ -286,7 +296,9 @@ pub fn read_only_batch(sql: &str) -> String {
 pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str) -> String {
     match engine {
         // Sem transação só de leitura no Redis: vale o classificador.
-        pgstudio_core::connection::Engine::Redis => sql.to_string(),
+        pgstudio_core::connection::Engine::Redis | pgstudio_core::connection::Engine::MongoDb => {
+            sql.to_string()
+        }
         pgstudio_core::connection::Engine::PostgreSql => read_only_batch(sql),
         pgstudio_core::connection::Engine::SqlServer => format!(
             "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION; {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;"

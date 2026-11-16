@@ -34,6 +34,10 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
 /// [`check`] com tokens do dialeto `dialect`.
 pub fn check_in(text: &str, tokens: &[Token], dialect: Dialect) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    if dialect == Dialect::MongoDb {
+        // Os erros de uma consulta do MongoDB aparecem ao rodar.
+        return out;
+    }
     if dialect == Dialect::Redis {
         // Num comando do Redis só dá para ver as aspas sem fechar.
         if let Some(last) = tokens.last()
