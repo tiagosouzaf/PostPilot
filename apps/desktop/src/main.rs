@@ -468,6 +468,11 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             if let Some(file) = session_file {
                 app = app.with_session(pgstudio_ui_shell::session::SessionStore::open(file));
             }
+            // Os servidores guardados com a senha lembrada conectam sozinhos,
+            // em segundo plano (Tools > Options desliga).
+            if screenshot.is_none() && !bench && connect.is_none() && !demo {
+                app = app.with_background_connect();
+            }
             // O histórico de consultas executadas, só neste computador.
             let history_file = match std::env::var_os("PGSTUDIO_HISTORY") {
                 Some(file) => Some(PathBuf::from(file)),

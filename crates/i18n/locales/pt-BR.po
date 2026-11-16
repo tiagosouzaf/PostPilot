@@ -6417,3 +6417,33 @@ msgstr "Elasticsearch:         servidor.índice     Redis: servidor.\"usuario:*\
 
 msgid "The outer SQL is SQLite; json_extract reads inside documents. Read-only."
 msgstr "O SQL de fora é SQLite; json_extract lê dentro dos documentos. Só leitura."
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "Waiting to connect in the background…"
+msgstr "Aguardando para conectar em segundo plano…"
+
+msgid "Connecting in the background…"
+msgstr "Conectando em segundo plano…"
+
+msgid "Could not connect: {error}"
+msgstr "Não foi possível conectar: {error}"
+
+msgid "The server did not answer in time."
+msgstr "O servidor não respondeu a tempo."
+
+msgid "Could not connect to {name} in the background: {error}"
+msgstr "Não foi possível conectar a {name} em segundo plano: {error}"
+
+msgid "{server} ({user}): connecting in the background…"
+msgstr "{server} ({user}): conectando em segundo plano…"
+
+msgid "{server} ({user}): could not connect: {error}\nDouble-click to try again."
+msgstr "{server} ({user}): não foi possível conectar: {error}\nClique duas vezes para tentar de novo."
+
+msgid "Connect saved servers in the background when PostPilot opens"
+msgstr "Conectar os servidores salvos em segundo plano ao abrir o PostPilot"
+
+msgid "Servers with a remembered password connect by themselves, a few at a time, without opening any dialog. Nothing is executed on them. Servers without a saved password wait for a double-click."
+msgstr "Os servidores com a senha lembrada conectam sozinhos, poucos de cada vez, sem abrir nenhum diálogo. Nada é executado neles. Os servidores sem senha salva esperam um duplo clique."

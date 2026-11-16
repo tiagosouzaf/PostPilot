@@ -632,6 +632,31 @@ mod tests {
 
     struct FakeSession(usize);
 
+    /// Manda linhas sem parar até ser cancelada.
+    struct Endless(Arc<AtomicBool>);
+
+    impl QuerySession for Endless {
+        fn execute(&self, _sql: String, mut sink: QuerySink) {
+            let stop = self.0.clone();
+            std::thread::spawn(move || {
+                sink(QueryEvent::Columns(vec!["n".into()]));
+                while !stop.load(Ordering::SeqCst) {
+                    sink(QueryEvent::Row(vec![Some("1".into())]));
+                }
+                sink(QueryEvent::Error(ServerMessage::error("canceled")));
+                sink(QueryEvent::Finished { canceled: true });
+            });
+        }
+
+        fn cancel(&self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+
+        fn database(&self) -> String {
+            String::new()
+        }
+    }
+
     type Grid = (Vec<&'static str>, Vec<Vec<Option<&'static str>>>);
 
     fn grid(server: usize, query: &str) -> Result<Vec<Grid>, String> {
@@ -708,6 +733,9 @@ mod tests {
             if server == 3 {
                 return Err("No saved password.".into());
             }
+            if server == 4 {
+                return Ok(Arc::new(Endless(Arc::default())));
+            }
             Ok(Arc::new(FakeSession(server)))
         }
 
@@ -731,6 +759,7 @@ mod tests {
             s("mssql", Engine::SqlServer),
             s("mongo", Engine::MongoDb),
             s("fora", Engine::PostgreSql),
+            s("semfim", Engine::PostgreSql),
         ]
     }
 
@@ -913,6 +942,40 @@ mod tests {
         let events = run("select nada from pg.public.clientes");
         let e = error(&events).unwrap();
         assert!(e.contains("nada"), "{e}");
+    }
+
+    #[test]
+    fn cancel_stops_a_source_that_never_ends() {
+        let session = FederatedSession::new(
+            servers(),
+            Arc::new(Fake { writes: false }),
+            Options::default(),
+        );
+        let (tx, rx) = mpsc::channel();
+        session.execute(
+            "select count(*) from semfim.public.t".into(),
+            Box::new(move |e| {
+                let _ = tx.send(e);
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        session.cancel();
+        let mut last = None;
+        while let Ok(e) = rx.recv_timeout(Duration::from_secs(10)) {
+            assert!(!matches!(e, QueryEvent::Row(_)), "a result came out");
+            last = Some(e);
+        }
+        assert_eq!(last, Some(QueryEvent::Finished { canceled: true }));
+    }
+
+    #[test]
+    fn a_cut_source_stops_reading_the_server() {
+        let events = run_with(
+            "select count(*) from semfim.public.t",
+            Options { max_rows: 1000 },
+        );
+        assert_eq!(error(&events), None);
+        assert_eq!(rows(&events), vec![vec![s("1000")]]);
     }
 
     #[test]

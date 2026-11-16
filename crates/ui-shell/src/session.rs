@@ -349,6 +349,12 @@ pub struct Session {
     /// na sessão até a vez deles passar, para fechar o app no meio da
     /// reconexão não esquecer nenhum.
     restoring: Vec<SessionServer>,
+    /// Servidores da sessão anterior que não conectaram em segundo plano
+    /// (fora do ar, sem VPN): continuam na sessão, com as janelas deles,
+    /// até conectarem.
+    offline: Vec<SessionServer>,
+    /// A reconexão dos servidores da sessão anterior ainda não terminou.
+    reconnecting: bool,
     /// O servidor ativo da sessão anterior, para voltar a ser o ativo.
     active: Option<String>,
     /// Último layout gravado junto com a sessão.
@@ -507,8 +513,10 @@ impl ShellApp {
         // servidores da sessão conectam um depois do outro: com a senha do
         // cofre, direto; sem ela, o diálogo abre preenchido pedindo a senha.
         self.connect_dialog = None;
+        // Em segundo plano, sem diálogo; só quem não tem senha guardada cai
+        // no "Connect to Server" pedindo a senha.
         for s in &state.servers {
-            self.queue_registered_connect(s.settings.clone());
+            self.servers.background.enqueue(s.settings.clone(), true);
         }
         self.session.active = state
             .servers
@@ -516,41 +524,69 @@ impl ShellApp {
             .find(|s| s.active)
             .map(|s| server_key(&s.settings));
         self.session.restoring = state.servers;
+        self.session.reconnecting = true;
         self.session.waiting_windows = state.windows;
     }
 
     /// Um servidor acabou de conectar e é o ativo: se veio da sessão
     /// anterior, a árvore dele abre como estava.
     pub(crate) fn session_connected(&mut self, settings: &ConnectionSettings) {
-        let key = server_key(settings);
-        let Some(i) = self
-            .session
+        debug_assert!(
+            self.connection
+                .as_ref()
+                .is_some_and(|c| server_key(&c.settings) == server_key(settings))
+        );
+        let Some(connection) = self.connection.take() else {
+            return;
+        };
+        let mut explorer = std::mem::take(&mut self.explorer);
+        self.session_restore_tree(&mut explorer, &connection);
+        self.explorer = explorer;
+        self.connection = Some(connection);
+    }
+
+    /// Um servidor acabou de conectar (o ativo ou um em segundo plano): se
+    /// veio da sessão anterior, a árvore dele abre como estava e as janelas
+    /// dele abrem no próximo frame.
+    pub(crate) fn session_restore_tree(
+        &mut self,
+        explorer: &mut pgstudio_object_explorer::ObjectExplorer,
+        connection: &pgstudio_core::connection::Connected,
+    ) {
+        let key = server_key(&connection.settings);
+        let session = &mut self.session;
+        let server = match session
             .restoring
             .iter()
             .position(|s| server_key(&s.settings) == key)
-        else {
-            return;
+        {
+            Some(i) => session.restoring.remove(i),
+            None => match session
+                .offline
+                .iter()
+                .position(|s| server_key(&s.settings) == key)
+            {
+                Some(i) => session.offline.remove(i),
+                None => return,
+            },
         };
-        let server = self.session.restoring.remove(i);
         // Os filtros antes: os nós já abrem filtrados.
-        self.explorer
-            .restore_filters(server.filters.into_iter().map(|(id, f)| (NodeId(id), f)));
-        self.explorer
-            .restore_expanded(server.expanded.into_iter().map(NodeId));
+        explorer.restore_filters(server.filters.into_iter().map(|(id, f)| (NodeId(id), f)));
+        explorer.restore_expanded(server.expanded.into_iter().map(NodeId));
         // As janelas deste servidor abrem no próximo frame, lendo dele.
-        let (Some(metadata), Some(c)) = (self.explorer.provider(), &self.connection) else {
+        let Some(metadata) = explorer.provider() else {
             return;
         };
-        let (mine, others) = std::mem::take(&mut self.session.waiting_windows)
+        let (mine, others) = std::mem::take(&mut session.waiting_windows)
             .into_iter()
             .partition(|w| w.server == key);
-        self.session.waiting_windows = others;
+        session.waiting_windows = others;
         for window in mine {
             let source = WindowSource {
                 metadata: metadata.clone(),
-                queries: c.queries.clone(),
+                queries: connection.queries.clone(),
             };
-            self.session.opening_windows.push((window, source));
+            session.opening_windows.push((window, source));
         }
     }
 
@@ -714,7 +750,7 @@ impl ShellApp {
         let mut servers: Vec<SessionServer> = servers.into_iter().map(|(_, s)| s).collect();
         // Os que ainda vão reconectar continuam na sessão.
         let restoring = !self.session.restoring.is_empty();
-        for s in &self.session.restoring {
+        for s in self.session.restoring.iter().chain(&self.session.offline) {
             let key = server_key(&s.settings);
             if !servers.iter().any(|c| server_key(&c.settings) == key) {
                 servers.push(SessionServer {
@@ -850,12 +886,28 @@ impl ShellApp {
     pub(crate) fn session_step(&mut self, ctx: &egui::Context) {
         self.open_restored(ctx);
         self.track_windows();
-        if !self.session.restoring.is_empty() || self.session.active.is_some() {
-            if self.connect_dialog.is_none() && !self.servers.has_queue() {
-                // Todos tiveram a vez: quem não conectou (o usuário cancelou
-                // a senha) sai da sessão, e o ativo de antes volta a ser.
-                self.session.restoring.clear();
-                self.session.waiting_windows.clear();
+        if self.session.reconnecting {
+            let background = self.servers.background.is_restoring();
+            if self.connect_dialog.is_none() && !self.servers.has_queue() && !background {
+                // Todos tiveram a vez. Quem não conectou porque o usuário
+                // cancelou a senha sai da sessão; quem está fora do ar fica
+                // nela, com as janelas, até conectar. O ativo de antes volta
+                // a ser.
+                self.session.reconnecting = false;
+                let failed = |s: &SessionServer| {
+                    matches!(
+                        self.servers.background.state(&server_key(&s.settings)),
+                        Some(crate::autoconnect::LinkState::Failed(_))
+                    )
+                };
+                let offline: Vec<SessionServer> = std::mem::take(&mut self.session.restoring)
+                    .into_iter()
+                    .filter(failed)
+                    .collect();
+                self.session
+                    .waiting_windows
+                    .retain(|w| offline.iter().any(|s| server_key(&s.settings) == w.server));
+                self.session.offline = offline;
                 if let Some(key) = self.session.active.take() {
                     self.activate_key(&key);
                     if let Some(id) = self.active_doc {
@@ -867,8 +919,7 @@ impl ShellApp {
                 ctx.request_repaint();
             }
         }
-        if self.session.restoring.is_empty()
-            && self.session.active.is_none()
+        if !self.session.reconnecting
             && self.session.opening_windows.is_empty()
             && std::mem::take(&mut self.session.refocus)
         {
