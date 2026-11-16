@@ -658,7 +658,7 @@ impl OptionsDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Action {
         let mut action = Action::None;
         let mut open = true;
-        egui::Window::new(tr("Options"))
+        let shown = egui::Window::new(tr("Options"))
             .id(egui::Id::new("options_dialog"))
             .open(&mut open)
             .collapsible(false)
@@ -691,6 +691,18 @@ impl OptionsDialog {
                     });
                 });
             });
+        // A janela fica centrada pelo tamanho do quadro anterior: quando o
+        // conteúdo muda de altura, mais um quadro a põe no lugar.
+        if let Some(shown) = shown {
+            let size = shown.response.rect.size();
+            let id = egui::Id::new("options_dialog_size");
+            let before: Option<egui::Vec2> = ctx.data(|d| d.get_temp(id));
+            ctx.data_mut(|d| d.insert_temp(id, size));
+            let before = before != Some(size);
+            if before {
+                ctx.request_repaint();
+            }
+        }
         if !open {
             action = Action::Cancel;
         }

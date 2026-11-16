@@ -43,7 +43,7 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 /// eles.
 const MODEL_WAIT: Duration = Duration::from_secs(6);
 /// Um comando menor que isto ainda não diz nada.
-const MIN_CHARS: usize = 6;
+const MIN_CHARS: usize = 8;
 /// Acima disto o texto não é lido a cada pausa (só a pedido).
 const MAX_TEXT: usize = 400_000;
 /// O menor intervalo pedido ao relógio do egui: abaixo de um frame ele
@@ -290,6 +290,10 @@ impl ShellApp {
         let now = Instant::now();
         let stamp = (id, doc.editor.revision(), doc.cursor_byte);
         if self.assist.seen != Some(stamp) {
+            // A primeira vez que a janela é vista (ao abrir o aplicativo,
+            // ao trocar de aba) não pergunta nada: só o que a pessoa fizer
+            // dali em diante.
+            let first = self.assist.seen.is_none_or(|(d, _, _)| d != id);
             let typed = self
                 .assist
                 .seen
@@ -314,6 +318,13 @@ impl ShellApp {
                 self.assist.changed = None;
                 doc.editor.set_hints(None);
                 doc.editor.set_hint_status(HintStatus::Off);
+                return;
+            }
+            if first && !asked {
+                self.assist.changed = None;
+                if doc.editor.hints().is_none() {
+                    doc.editor.set_hint_status(idle);
+                }
                 return;
             }
         }
