@@ -334,7 +334,7 @@ pub fn load(
     let session = queries.open(database);
     let mut objects = Vec::new();
     let parts: &[(&str, Parse)] = match session.engine() {
-        Engine::PostgreSql => &[
+        Engine::PostgreSql | Engine::Redis => &[
             (VIEWS_SQL, views),
             (ROUTINES_SQL, routines),
             (TRIGGERS_SQL, triggers),

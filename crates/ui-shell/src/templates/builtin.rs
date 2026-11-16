@@ -36,6 +36,15 @@ const fn ms(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
     }
 }
 
+const fn rd(folder: &'static str, name: &'static str, sql: &'static str) -> Builtin {
+    Builtin {
+        engine: Engine::Redis,
+        folder,
+        name,
+        sql,
+    }
+}
+
 /// Todos os modelos, na ordem em que aparecem.
 pub const ALL: &[Builtin] = &[
     // ---------------------------------------------------------------
@@ -684,6 +693,118 @@ RESTORE DATABASE database_name
  ORDER BY d.name;
 ",
     ),
+    // ---------------------------------------------------------------
+    // Redis
+    // ---------------------------------------------------------------
+    rd(
+        tr_noop("Keys"),
+        tr_noop("Find Keys by Pattern"),
+        "# Repita com o cursor devolvido até ele voltar a 0.
+SCAN 0 MATCH prefix:* COUNT 1000
+",
+    ),
+    rd(
+        tr_noop("Keys"),
+        tr_noop("Inspect Key"),
+        "TYPE key_name
+TTL key_name
+OBJECT ENCODING key_name
+MEMORY USAGE key_name
+",
+    ),
+    rd(
+        tr_noop("Keys"),
+        tr_noop("Set Expiration"),
+        "EXPIRE key_name 3600
+TTL key_name
+",
+    ),
+    rd(
+        tr_noop("Keys"),
+        tr_noop("Delete Keys"),
+        "# UNLINK libera a memória em segundo plano.
+UNLINK key_name other_key
+",
+    ),
+    rd(
+        tr_noop("Strings"),
+        tr_noop("Set with Expiration"),
+        "SET key_name \"value\" EX 3600
+GET key_name
+",
+    ),
+    rd(
+        tr_noop("Strings"),
+        tr_noop("Counter"),
+        "INCR counter_name
+INCRBY counter_name 10
+GET counter_name
+",
+    ),
+    rd(
+        tr_noop("Hashes"),
+        tr_noop("Create Hash"),
+        "HSET key_name field_name \"value\" other_field \"other value\"
+HGETALL key_name
+",
+    ),
+    rd(
+        tr_noop("Hashes"),
+        tr_noop("Read Fields"),
+        "HGET key_name field_name
+HMGET key_name field_name other_field
+HLEN key_name
+",
+    ),
+    rd(
+        tr_noop("Lists and Sets"),
+        tr_noop("Queue"),
+        "RPUSH queue_name \"item\"
+LRANGE queue_name 0 99
+LPOP queue_name
+LLEN queue_name
+",
+    ),
+    rd(
+        tr_noop("Lists and Sets"),
+        tr_noop("Set Members"),
+        "SADD set_name member_one member_two
+SMEMBERS set_name
+SISMEMBER set_name member_one
+SCARD set_name
+",
+    ),
+    rd(
+        tr_noop("Sorted Sets"),
+        tr_noop("Ranking"),
+        "ZADD ranking_name 100 member_one 80 member_two
+ZRANGE ranking_name 0 9 REV WITHSCORES
+ZRANK ranking_name member_one
+",
+    ),
+    rd(
+        tr_noop("Server"),
+        tr_noop("Server Information"),
+        "INFO server
+INFO memory
+INFO keyspace
+DBSIZE
+",
+    ),
+    rd(
+        tr_noop("Server"),
+        tr_noop("Clients and Slow Commands"),
+        "CLIENT LIST
+SLOWLOG GET 20
+",
+    ),
+    rd(
+        tr_noop("Server"),
+        tr_noop("Listen to a Channel"),
+        "# Cancele a consulta para parar de escutar.
+SUBSCRIBE channel_name
+",
+    ),
 ];
 
 /// As pastas de um servidor, na ordem em que aparecem.
@@ -708,7 +829,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn both_engines_have_templates_with_unique_names_per_folder() {
+    fn every_engine_has_templates_with_unique_names_per_folder() {
         for engine in Engine::ALL {
             let folders = folders(engine);
             assert!(folders.len() >= 5, "{engine:?}");

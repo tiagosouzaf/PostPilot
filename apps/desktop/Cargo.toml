@@ -18,6 +18,7 @@ pgstudio-ui-shell.workspace = true
 pgstudio-automation.workspace = true
 pgstudio-pg-metadata.workspace = true
 pgstudio-mssql.workspace = true
+pgstudio-redis.workspace = true
 # glow (OpenGL) junto com o wgpu padrão: `--renderer glow` e a reserva
 # quando o wgpu não abre (marco 6.6).
 eframe = { workspace = true, features = ["glow"] }

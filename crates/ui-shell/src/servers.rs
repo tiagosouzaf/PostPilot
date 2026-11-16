@@ -548,7 +548,11 @@ impl ShellApp {
         for c in connections {
             labels.insert(
                 server_key(&c.settings),
-                format!("{} ({})", c.settings.server_name(), c.settings.user),
+                format!(
+                    "{} ({})",
+                    c.settings.server_name(),
+                    c.settings.login_label()
+                ),
             );
         }
         self.doc_servers

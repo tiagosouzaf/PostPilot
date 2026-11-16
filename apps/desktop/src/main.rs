@@ -110,11 +110,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pgstudio_core::Theme;
+use pgstudio_core::connection::EngineConnector;
 use pgstudio_core::connection::{ConnectionSettings, Engine};
 use pgstudio_core::keymap::Keymap;
 use pgstudio_i18n::{tr, trf};
-use pgstudio_mssql::{EngineConnector, MssqlConnector};
+use pgstudio_mssql::MssqlConnector;
 use pgstudio_pg_metadata::{PgConnector, Runtime as DbRuntime};
+use pgstudio_redis::RedisConnector;
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::documents::FileDialogs;
@@ -423,10 +425,16 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                 match DbRuntime::new() {
                     Ok(runtime) => {
                         app = app.with_recent_connections(recent).with_connector(Arc::new(
-                            EngineConnector {
-                                postgres: Arc::new(PgConnector::new(runtime.clone())),
-                                sql_server: Arc::new(MssqlConnector::new(runtime)),
-                            },
+                            EngineConnector::default()
+                                .with(
+                                    Engine::PostgreSql,
+                                    Arc::new(PgConnector::new(runtime.clone())),
+                                )
+                                .with(
+                                    Engine::SqlServer,
+                                    Arc::new(MssqlConnector::new(runtime.clone())),
+                                )
+                                .with(Engine::Redis, Arc::new(RedisConnector::new(runtime))),
                         ));
                     }
                     Err(e) => {
@@ -579,13 +587,15 @@ fn connect_from_env(mut app: ShellApp, servers: &str) -> ShellApp {
 
 /// Conexão para um servidor de `PGSTUDIO_CONNECT`, com `PGUSER` e
 /// `PGDATABASE`. O prefixo `sqlserver:` (`sqlserver:db,1433`) conecta num
-/// SQL Server.
+/// SQL Server; `redis:` (`redis:cache,6380`), num Redis.
 fn env_settings(server: &str) -> Option<ConnectionSettings> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-    let (engine, server) = match server.trim().strip_prefix("sqlserver:") {
-        Some(rest) => (Engine::SqlServer, rest),
-        None => (Engine::PostgreSql, server),
-    };
+    let server = server.trim();
+    let (engine, server) = Engine::ALL
+        .into_iter()
+        .filter(|e| !e.key_prefix().is_empty())
+        .find_map(|e| Some((e, server.strip_prefix(e.key_prefix())?)))
+        .unwrap_or((Engine::PostgreSql, server));
     let mut settings = ConnectionSettings::for_engine(engine);
     if let Some(user) = env("PGUSER") {
         settings.user = user;

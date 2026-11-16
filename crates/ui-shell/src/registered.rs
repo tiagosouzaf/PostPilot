@@ -2271,13 +2271,18 @@ impl ServerDialog {
             ..ConnectionSettings::for_engine(self.engine)
         };
         s.set_server_name(&self.server)?;
-        if s.user.is_empty() {
+        if s.user.is_empty() && !self.engine.login_optional() {
             return Err(tr("Enter a login.").into());
         }
         if s.database.is_empty() {
             s.database = self.engine.default_database().into();
         }
-        s.ssh = self.ssh.settings()?;
+        // O túnel SSH vale para os bancos SQL (PostgreSQL e SQL Server).
+        s.ssh = if self.engine.is_sql() {
+            self.ssh.settings()?
+        } else {
+            None
+        };
         Ok(s)
     }
 
@@ -2295,8 +2300,8 @@ impl ServerDialog {
         if self.database.trim() == old.default_database() {
             self.database = engine.default_database().into();
         }
-        if !SslMode::options(engine).contains(&self.ssl) {
-            self.ssl = SslMode::Require;
+        if !SslMode::options(engine).contains(&self.ssl) || self.ssl == old.default_ssl() {
+            self.ssl = engine.default_ssl();
         }
         self.engine = engine;
         if self.saved {
@@ -2423,7 +2428,7 @@ impl ServerDialog {
                         egui::TextEdit::singleline(&mut self.server)
                             .desired_width(300.0)
                             .hint_text(match self.engine {
-                                Engine::PostgreSql => tr("host or host,port"),
+                                Engine::PostgreSql | Engine::Redis => tr("host or host,port"),
                                 Engine::SqlServer => tr("host, host,port or host\\instance"),
                             }),
                     )
@@ -2431,8 +2436,16 @@ impl ServerDialog {
                     ui.end_row();
 
                     let label = ui.label(tr("Login:"));
-                    ui.add(egui::TextEdit::singleline(&mut self.user).desired_width(300.0))
-                        .labelled_by(label.id);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.user)
+                            .desired_width(300.0)
+                            .hint_text(if self.engine.login_optional() {
+                                tr("optional (ACL user)")
+                            } else {
+                                ""
+                            }),
+                    )
+                    .labelled_by(label.id);
                     ui.end_row();
 
                     let label = ui.label(tr("Password:"));
@@ -2474,7 +2487,9 @@ impl ServerDialog {
                         .labelled_by(label.id);
                     ui.end_row();
 
-                    self.ssh.show(ui, "registered");
+                    if self.engine.is_sql() {
+                        self.ssh.show(ui, "registered");
+                    }
 
                     let label = ui.label(tr("Registered server name:"));
                     ui.add(

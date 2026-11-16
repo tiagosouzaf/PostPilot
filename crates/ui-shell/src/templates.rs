@@ -153,6 +153,7 @@ fn engine_key(engine: Engine) -> String {
     match engine {
         Engine::PostgreSql => "builtin:postgresql".into(),
         Engine::SqlServer => "builtin:sqlserver".into(),
+        Engine::Redis => "builtin:redis".into(),
     }
 }
 

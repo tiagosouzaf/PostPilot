@@ -92,6 +92,14 @@ pub fn classify(sql: &str) -> Safety {
 /// separadores `GO` tirados antes.
 pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Safety {
     match engine {
+        // Redis: cada comando do texto é de leitura ou não, pelo nome.
+        pgstudio_core::connection::Engine::Redis => {
+            match pgstudio_redis::command::first_write(sql) {
+                Ok(None) => Safety::ReadOnly,
+                Ok(Some(reason)) => Safety::Writes { reason },
+                Err(reason) => Safety::Unknown { reason },
+            }
+        }
         pgstudio_core::connection::Engine::PostgreSql => classify(sql),
         pgstudio_core::connection::Engine::SqlServer => {
             let without_go: String = sql
@@ -277,6 +285,8 @@ pub fn read_only_batch(sql: &str) -> String {
 /// as linhas das mensagens de erro baterem com as do lote.
 pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str) -> String {
     match engine {
+        // Sem transação só de leitura no Redis: vale o classificador.
+        pgstudio_core::connection::Engine::Redis => sql.to_string(),
         pgstudio_core::connection::Engine::PostgreSql => read_only_batch(sql),
         pgstudio_core::connection::Engine::SqlServer => format!(
             "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION; {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;"
@@ -287,6 +297,31 @@ pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_commands_are_read_or_write_by_name() {
+        use pgstudio_core::connection::Engine::Redis;
+        assert_eq!(
+            classify_for(Redis, "GET a\nHGETALL h\nSCAN 0"),
+            Safety::ReadOnly
+        );
+        assert_eq!(
+            classify_for(Redis, "GET a\nDEL a"),
+            Safety::Writes {
+                reason: "DEL".into()
+            }
+        );
+        assert_eq!(
+            classify_for(Redis, "flushdb"),
+            Safety::Writes {
+                reason: "FLUSHDB".into()
+            }
+        );
+        assert!(matches!(
+            classify_for(Redis, "GET \"a"),
+            Safety::Unknown { .. }
+        ));
+    }
 
     fn ro(sql: &str) {
         assert_eq!(classify(sql), Safety::ReadOnly, "{sql}");

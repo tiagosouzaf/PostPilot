@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 pgstudio-core.workspace = true
+pgstudio-redis.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true

@@ -59,11 +59,9 @@ pub fn password_key(settings: &ConnectionSettings) -> String {
         key.push_str(" via ");
         key.push_str(&ssh.endpoint());
     }
-    match settings.engine {
-        // O PostgreSQL fica como era, para achar as senhas já guardadas.
-        pgstudio_core::connection::Engine::PostgreSql => key,
-        pgstudio_core::connection::Engine::SqlServer => format!("sqlserver:{key}"),
-    }
+    // O PostgreSQL fica como era (sem prefixo), para achar as senhas já
+    // guardadas.
+    format!("{}{key}", settings.engine.key_prefix())
 }
 
 /// O cofre do sistema.

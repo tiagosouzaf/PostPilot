@@ -12,7 +12,7 @@
 
 mod error;
 mod query;
-mod tls;
+pub mod tls;
 
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
