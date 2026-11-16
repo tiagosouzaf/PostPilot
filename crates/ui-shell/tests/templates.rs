@@ -74,21 +74,21 @@ fn search_shows_the_matches_and_double_click_inserts_into_the_editor() {
     let mut h = harness(app());
     execute(&mut h, CommandId::NewQuery);
     execute(&mut h, CommandId::TemplateExplorer);
-    h.state_mut().templates_mut().search = "pg_blocking_pids".into();
+    h.state_mut().templates_mut().search = "pg_terminate_backend".into();
     h.run();
     assert!(h.query_by_label_contains("1 template found.").is_some());
-    let row = h.get_by_label_contains("Blocked Sessions");
+    let row = h.get_by_label_contains("End a Session");
     row.click();
     h.run();
     // A prévia mostra o SQL do item selecionado.
     assert!(
-        h.query_by_label_contains("pg_blocking_pids(blocked.pid)")
+        h.query_by_label_contains("pg_terminate_backend(0 /* pid */)")
             .is_some()
     );
     h.get_by_label("Insert").click();
     h.run();
     assert!(
-        text(&h).contains("pg_blocking_pids(blocked.pid)"),
+        text(&h).contains("pg_terminate_backend(0 /* pid */)"),
         "{}",
         text(&h)
     );
@@ -99,7 +99,7 @@ fn search_shows_the_matches_and_double_click_inserts_into_the_editor() {
     h.run();
     let all = text(&h);
     assert!(
-        all.contains("pg_blocking_pids") && all.trim_end().ends_with("select 42;"),
+        all.contains("pg_terminate_backend") && all.trim_end().ends_with("select 42;"),
         "{all}"
     );
 }

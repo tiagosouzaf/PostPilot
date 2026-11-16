@@ -84,7 +84,7 @@ fn template_explorer() {
 
     h.state_mut().templates_mut().search = "bloque".into();
     h.run();
-    h.query_all_by_label_contains("Sessões Bloqueadas")
+    h.query_all_by_label_contains("Quem Bloqueia Quem")
         .next()
         .expect("found")
         .click();

@@ -48,11 +48,24 @@ pub enum Action {
     Insert(String),
     /// Abrir o SQL numa janela de consulta nova.
     OpenNew(String),
+    /// Rodar numa janela nova o modelo pronto de índice tal em
+    /// [`builtin::ALL`]: o resultado já vem.
+    Run(usize),
     /// Abrir o arquivo do trecho para editar.
     Edit(PathBuf),
     /// "New Snippet" nesta pasta: a casca traz a seleção do editor.
     NewFromEditor(PathBuf),
 }
+
+/// Um modelo pronto esperando o catálogo do banco para rodar.
+pub(crate) struct PendingTemplate {
+    doc: u32,
+    index: usize,
+    since: Instant,
+}
+
+/// Quanto esperar o catálogo antes de rodar o modelo como está.
+const CATALOG_WAIT: Duration = Duration::from_secs(4);
 
 /// O que a sessão guarda do painel.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -468,16 +481,37 @@ impl TemplatesPanel {
         self.expanded = session.expanded.into_iter().collect();
     }
 
-    /// Nome e SQL do item selecionado, para a prévia.
-    fn preview(&self) -> Option<(String, String)> {
+    /// Nome e SQL do item selecionado, para a prévia, e o índice dele se
+    /// for um modelo pronto para rodar.
+    fn preview(&self) -> Option<(String, String, Option<usize>)> {
         match self.selected.as_ref()? {
             Selected::Builtin(i) => {
                 let t = builtin::ALL.get(*i)?;
-                Some((tr(t.name).to_string(), t.sql.to_string()))
+                Some((
+                    tr(t.name).to_string(),
+                    t.sql.to_string(),
+                    t.ready.then_some(*i),
+                ))
             }
-            Selected::File(path) => Some((file_stem(path), self.texts.get(path)?.clone())),
+            Selected::File(path) => Some((file_stem(path), self.texts.get(path)?.clone(), None)),
             Selected::Folder(_) => None,
         }
+    }
+
+    /// Mostra a pasta de diagnóstico de `engine` aberta, sem pesquisa, com
+    /// a primeira consulta selecionada. Sem a pasta (os motores que não são
+    /// SQL), abre só o servidor.
+    pub fn show_diagnostics(&mut self, engine: Engine) {
+        self.search.clear();
+        let key = engine_key(engine);
+        self.expanded
+            .insert(format!("{key}:{}", builtin::DIAGNOSTICS));
+        self.expanded.insert(key);
+        self.engine = Some(engine);
+        self.selected = builtin::ALL
+            .iter()
+            .position(|t| t.engine == engine && t.ready)
+            .map(Selected::Builtin);
     }
 
     /// Desenha o painel.
@@ -522,7 +556,7 @@ impl TemplatesPanel {
         self.search_ui(ui, width);
         ui.separator();
 
-        if let Some((name, sql)) = self.preview() {
+        if let Some((name, sql, ready)) = self.preview() {
             let height = ui.available_height();
             egui::Panel::bottom(egui::Id::new("templates_preview"))
                 .resizable(true)
@@ -532,23 +566,36 @@ impl TemplatesPanel {
                     // O painel costuma ser estreito: o nome numa linha
                     // (cortado se não couber) e os botões na de baixo.
                     ui.add(egui::Label::new(egui::RichText::new(&name).strong()).truncate()); // i18n-ignore
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            if ui
-                                .button(tr("Insert"))
-                                .on_hover_text(tr("Insert into the active query window"))
-                                .clicked()
+                    ui.horizontal_wrapped(|ui| {
+                        ui.with_layout(
+                            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                            |ui| {
+                                if let Some(index) = ready
+                                && ui
+                                    .button(format!("{} {}", icon::PLAY, tr("Run")))
+                                    .on_hover_text(tr(
+                                        "Run in a new query window: the result comes right away",
+                                    ))
+                                    .clicked()
                             {
-                                actions.push(Action::Insert(sql.clone()));
+                                actions.push(Action::Run(index));
                             }
-                            if ui
-                                .button(tr("New Window"))
-                                .on_hover_text(tr("Open in a new query window"))
-                                .clicked()
-                            {
-                                actions.push(Action::OpenNew(sql.clone()));
-                            }
-                        });
+                                if ui
+                                    .button(tr("Insert"))
+                                    .on_hover_text(tr("Insert into the active query window"))
+                                    .clicked()
+                                {
+                                    actions.push(Action::Insert(sql.clone()));
+                                }
+                                if ui
+                                    .button(tr("New Window"))
+                                    .on_hover_text(tr("Open in a new query window"))
+                                    .clicked()
+                                {
+                                    actions.push(Action::OpenNew(sql.clone()));
+                                }
+                            },
+                        );
                     });
                     egui::ScrollArea::both()
                         .id_salt("templates_preview_scroll")
@@ -713,12 +760,22 @@ impl TemplatesPanel {
         depth: usize,
         actions: &mut Vec<Action>,
     ) -> egui::Response {
+        // Um modelo pronto para rodar: o duplo clique já traz o resultado.
+        let ready = match &item {
+            Selected::Builtin(i) => builtin::ALL.get(*i).filter(|t| t.ready).map(|_| *i),
+            _ => None,
+        };
         ui.horizontal(|ui| {
             ui.add_space(depth as f32 * 16.0 + 4.0 + 14.0);
+            let glyph = if ready.is_some() {
+                icon::PLAY
+            } else {
+                icon::FILE_SQL
+            };
             let row = ui.add(
                 egui::Button::selectable(
                     self.selected.as_ref() == Some(&item),
-                    format!("{} {label}", icon::FILE_SQL),
+                    format!("{glyph} {label}"),
                 )
                 .frame_when_inactive(false),
             );
@@ -726,9 +783,15 @@ impl TemplatesPanel {
                 self.selected = Some(item.clone());
             }
             if row.double_clicked() {
-                actions.push(Action::Insert(sql.to_string()));
+                actions.push(match ready {
+                    Some(index) => Action::Run(index),
+                    None => Action::Insert(sql.to_string()),
+                });
             }
-            row
+            match ready {
+                Some(_) => row.on_hover_text(tr("Double-click to run and see the result")),
+                None => row,
+            }
         })
         .inner
     }
@@ -787,6 +850,13 @@ impl TemplatesPanel {
                 let target = self.roots.first().map(|r| r.tree.path.clone());
                 row.context_menu(|ui| {
                     self.selected = Some(Selected::Builtin(i));
+                    if t.ready {
+                        if ui.button(format!("{} {}", icon::PLAY, tr("Run"))).clicked() {
+                            actions.push(Action::Run(i));
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
                     Self::item_menu(ui, t.sql, actions);
                     ui.separator();
                     let copy = egui::Button::new(tr("Save a Copy in My Snippets..."));
@@ -1148,6 +1218,7 @@ impl ShellApp {
             match action {
                 Action::Insert(sql) => self.insert_template(ctx, &sql),
                 Action::OpenNew(sql) => self.open_template(&sql),
+                Action::Run(index) => self.run_ready_template(ctx, index),
                 Action::Edit(path) => {
                     self.open_file(&path);
                 }
@@ -1160,12 +1231,110 @@ impl ShellApp {
         if let Some(status) = self.templates.show_windows(ctx) {
             self.status = status;
         }
+        self.pending_template_step(ctx);
+    }
+
+    /// Roda um modelo pronto (uma consulta de diagnóstico) numa janela de
+    /// consulta nova, no servidor ativo: um clique e o resultado vem. Num
+    /// servidor de outro motor, ou sem conexão, só abre o texto.
+    pub fn run_ready_template(&mut self, ctx: &egui::Context, index: usize) {
+        let Some(t) = builtin::ALL.get(index).filter(|t| t.ready) else {
+            return;
+        };
+        let engine = self.connection.as_ref().map(|c| c.settings.engine);
+        self.open_template(t.sql);
+        let Some(id) = self.active_doc else {
+            return;
+        };
+        if engine != Some(t.engine) {
+            self.status = trf!(
+                "\"{name}\" is for {engine}: connect to a {engine} server and run it (F5).",
+                name = tr(t.name),
+                engine = t.engine.label()
+            );
+            return;
+        }
+        if t.fallback.is_some() && self.catalog_for(id).is_none() {
+            // O catálogo diz se o banco tem o que o modelo pede; a leitura
+            // dele começa com a janela aberta e costuma levar um instante.
+            self.pending_template = Some(PendingTemplate {
+                doc: id,
+                index,
+                since: Instant::now(),
+            });
+            return;
+        }
+        self.run_template_now(ctx, id, t);
+    }
+
+    /// Escolhe o SQL (o do modelo ou a alternativa dele) e executa.
+    fn run_template_now(&mut self, ctx: &egui::Context, id: u32, t: &Builtin) {
+        let missing = t.fallback.filter(|f| {
+            self.catalog_for(id).is_some_and(|c| {
+                !c.schemas
+                    .iter()
+                    .any(|s| s.relations.iter().any(|r| r.name == f.relation))
+            })
+        });
+        if let Some(fallback) = missing
+            && let Some(doc) = self.documents.get_mut(id)
+        {
+            doc.text = fallback.sql.to_string();
+        }
+        self.active_doc = Some(id);
+        self.execute(ctx, CommandId::Execute);
+        // Nas mensagens da janela: a status bar muda quando a consulta acaba.
+        if let Some(fallback) = missing
+            && let Some(execution) = self
+                .documents
+                .get_mut(id)
+                .and_then(|d| d.execution.as_mut())
+        {
+            execution.push_info(trf!(
+                "{relation} is not installed in this database: the query history part was left out.",
+                relation = fallback.relation
+            ));
+        }
+    }
+
+    /// Espera o catálogo (no máximo [`CATALOG_WAIT`]) para rodar o modelo
+    /// que tem alternativa.
+    fn pending_template_step(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_template else {
+            return;
+        };
+        let (id, index) = (pending.doc, pending.index);
+        let waiting = self.catalog_for(id).is_none()
+            && pending.since.elapsed() < CATALOG_WAIT
+            && self.documents.get(id).is_some();
+        if waiting {
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        }
+        self.pending_template = None;
+        if self.documents.get(id).is_some()
+            && let Some(t) = builtin::ALL.get(index)
+        {
+            self.run_template_now(ctx, id, t);
+        }
+    }
+
+    /// "Diagnostic Queries": abre o painel na pasta de diagnóstico do
+    /// servidor ativo.
+    pub(crate) fn open_diagnostics(&mut self) {
+        self.open_template_explorer();
+        let engine = self
+            .connection
+            .as_ref()
+            .map_or(Engine::PostgreSql, |c| c.settings.engine);
+        self.templates.show_diagnostics(engine);
     }
 
     /// Só para os menus: o comando do painel.
     pub(crate) fn template_command(&mut self, ctx: &egui::Context, cmd: CommandId) {
         match cmd {
             CommandId::SaveAsSnippet => self.save_selection_as_snippet(ctx),
+            CommandId::DiagnosticQueries => self.open_diagnostics(),
             _ => self.open_template_explorer(),
         }
     }
@@ -1186,8 +1355,8 @@ mod tests {
     fn search_finds_builtins_by_name_folder_engine_and_sql() {
         let mut panel = TemplatesPanel::default();
         assert_eq!(panel.found().len(), builtin::ALL.len());
-        panel.search = "pg_blocking_pids".into();
-        assert_eq!(panel.found(), vec!["Blocked Sessions"]);
+        panel.search = "pg_terminate_backend".into();
+        assert_eq!(panel.found(), vec!["End a Session"]);
         panel.search = "sql server upsert".into();
         assert_eq!(panel.found(), vec!["Insert or Update (Upsert)"]);
         panel.search = "MONITORING postgresql sizes".into();
