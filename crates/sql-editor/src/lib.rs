@@ -28,6 +28,7 @@ pub mod hints;
 pub mod lexer;
 pub mod mongodb;
 pub mod redis;
+pub mod star;
 mod widget;
 
 use eframe::egui::{self, FontId, Id, Key, TextEdit, Ui};
@@ -223,6 +224,12 @@ impl EditorState {
     /// Se a lista do IntelliSense está aberta.
     pub fn is_completing(&self) -> bool {
         self.buffer.is_completing()
+    }
+
+    /// As colunas do `*` sob o ponteiro, se a lista delas está na tela, e
+    /// o retângulo da lista.
+    pub fn star_tip(&self) -> Option<(&star::Star, eframe::egui::Rect)> {
+        self.buffer.star_tip()
     }
 
     /// Sugestões da lista aberta, na ordem mostrada.

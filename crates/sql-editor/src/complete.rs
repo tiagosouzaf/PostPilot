@@ -120,7 +120,7 @@ fn is_punct(text: &str, t: &Token, p: &str) -> bool {
 }
 
 /// Tokens do comando em volta de `at` (entre `;`).
-fn statement(text: &str, tokens: &[Token], at: usize) -> Range<usize> {
+pub(crate) fn statement(text: &str, tokens: &[Token], at: usize) -> Range<usize> {
     let i = tokens.partition_point(|t| t.range.end <= at);
     let start = tokens[..i.min(tokens.len())]
         .iter()
@@ -135,11 +135,16 @@ fn statement(text: &str, tokens: &[Token], at: usize) -> Range<usize> {
 
 /// Tabelas citadas nos `FROM`, `JOIN`, `UPDATE` e `INTO` do comando.
 pub fn table_refs(text: &str, tokens: &[Token]) -> Vec<TableRef> {
+    refs_after(text, tokens, RELATION_KEYWORDS)
+}
+
+/// Tabelas citadas depois das palavras `keywords` (`FROM`, `JOIN`...).
+pub(crate) fn refs_after(text: &str, tokens: &[Token], keywords: &[&str]) -> Vec<TableRef> {
     let toks: Vec<&Token> = tokens.iter().filter(|t| significant(t)).collect();
     let mut refs = Vec::new();
     let mut i = 0;
     while i < toks.len() {
-        if !is_kw(text, toks[i], RELATION_KEYWORDS) {
+        if !is_kw(text, toks[i], keywords) {
             i += 1;
             continue;
         }
