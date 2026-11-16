@@ -6056,3 +6056,50 @@ msgstr "número"
 
 msgid "value"
 msgstr "valor"
+
+msgid "Key of the database."
+msgstr "Chave do banco."
+
+msgid "Key of type {type}."
+msgstr "Chave do tipo {type}."
+
+msgid "Fields"
+msgstr "Campos"
+msgid "Collection of the database."
+msgstr "Coleção do banco."
+
+msgid "View of the database."
+msgstr "View do banco."
+
+msgid "Field of type {type}, seen in a sample of the documents."
+msgstr "Campo do tipo {type}, visto em uma amostra dos documentos."
+
+msgid "Index of the cluster."
+msgstr "Índice do cluster."
+
+msgid "Alias or data stream: a name that points to indices."
+msgstr "Alias ou data stream: um nome que aponta para índices."
+
+msgid "Field of type {type}."
+msgstr "Campo do tipo {type}."
+
+msgid "Column of {table}, of type {type}."
+msgstr "Coluna de {table}, do tipo {type}."
+
+msgid "Column."
+msgstr "Coluna."
+
+msgid "Alias of {table} in this command."
+msgstr "Apelido de {table} neste comando."
+
+msgid "Table of the schema {schema}."
+msgstr "Tabela do schema {schema}."
+
+msgid "View of the schema {schema}."
+msgstr "View do schema {schema}."
+
+msgid "Schema: groups tables, views and functions."
+msgstr "Schema: agrupa tabelas, views e funções."
+
+msgid "Function of the schema {schema}."
+msgstr "Função do schema {schema}."
