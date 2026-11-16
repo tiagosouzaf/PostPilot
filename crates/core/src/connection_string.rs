@@ -20,7 +20,11 @@ pub struct Parsed {
 /// Se o texto parece uma connection string (e não um nome de servidor).
 pub fn looks_like(text: &str) -> bool {
     let t = text.trim();
-    t.starts_with("postgres://") || t.starts_with("postgresql://") || t.contains('=')
+    t.starts_with("postgres://")
+        || t.starts_with("postgresql://")
+        || t.starts_with("redis://")
+        || t.starts_with("rediss://")
+        || t.contains('=')
 }
 
 /// Lê uma connection string nas duas formas.
@@ -28,6 +32,13 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err(tr("Paste a connection string.").into());
+    }
+    if let Some((rest, tls)) = text
+        .strip_prefix("redis://")
+        .map(|r| (r, false))
+        .or_else(|| text.strip_prefix("rediss://").map(|r| (r, true)))
+    {
+        return parse_redis(rest, tls);
     }
     let mut parsed = Parsed {
         settings: ConnectionSettings {
@@ -66,6 +77,38 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
     }
     if parsed.settings.user.is_empty() {
         parsed.settings.user = "postgres".into();
+    }
+    Ok(parsed)
+}
+
+/// `redis://[usuario][:senha]@host[:porta][/banco]`; `rediss://` é com
+/// TLS.
+fn parse_redis(rest: &str, tls: bool) -> Result<Parsed, String> {
+    use crate::connection::{Engine, redis_database_index};
+    let mut parsed = Parsed {
+        settings: ConnectionSettings::for_engine(Engine::Redis),
+        password: None,
+    };
+    if tls {
+        parsed.settings.ssl = SslMode::Require;
+    }
+    for (key, value) in parse_uri(rest, &mut parsed)? {
+        match key.as_str() {
+            "user" => parsed.settings.user = value,
+            "password" => parsed.password = Some(value),
+            "host" => parsed.settings.host = value,
+            "dbname" => {
+                let n = redis_database_index(&value).ok_or_else(|| {
+                    trf!(
+                        "\"{database}\" is not a Redis database. Use db0, db1...",
+                        database = value
+                    )
+                })?;
+                parsed.settings.database = format!("db{n}");
+            }
+            // Parâmetros de outros clientes: não mudam a conexão.
+            _ => {}
+        }
     }
     Ok(parsed)
 }
@@ -262,6 +305,35 @@ fn parse_pairs(text: &str) -> Result<Vec<(String, String)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_urls() {
+        use crate::connection::Engine;
+        let p = parse("redis://:s3nha@cache.exemplo.com:6380/2").unwrap();
+        assert_eq!(p.settings.engine, Engine::Redis);
+        assert_eq!(
+            (
+                p.settings.host.as_str(),
+                p.settings.port,
+                p.settings.database.as_str()
+            ),
+            ("cache.exemplo.com", 6380, "db2")
+        );
+        assert_eq!(
+            (p.settings.user.as_str(), p.password.as_deref()),
+            ("", Some("s3nha"))
+        );
+        assert_eq!(p.settings.ssl, SslMode::Disable);
+        let p = parse("rediss://app:p%40ss@cache").unwrap();
+        assert_eq!((p.settings.port, p.settings.ssl), (6379, SslMode::Require));
+        assert_eq!(
+            (p.settings.user.as_str(), p.password.as_deref()),
+            ("app", Some("p@ss"))
+        );
+        assert_eq!(p.settings.database, "db0");
+        assert!(parse("redis://cache/vendas").is_err());
+        assert!(looks_like("rediss://cache"));
+    }
 
     #[test]
     fn uri_with_everything() {

@@ -19,6 +19,11 @@ fn provider() -> Arc<CryptoProvider> {
 
 /// Conector TLS para o modo pedido. Em `Disable` ele nunca é usado.
 pub fn connector(mode: SslMode) -> Result<MakeRustlsConnect, String> {
+    client_config(mode).map(MakeRustlsConnect::new)
+}
+
+/// A configuração do rustls para o modo pedido, para os outros motores.
+pub fn client_config(mode: SslMode) -> Result<ClientConfig, String> {
     let provider = provider();
     let builder = ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
@@ -44,7 +49,7 @@ pub fn connector(mode: SslMode) -> Result<MakeRustlsConnect, String> {
             )))
             .with_no_client_auth(),
     };
-    Ok(MakeRustlsConnect::new(config))
+    Ok(config)
 }
 
 /// Aceita qualquer certificado, mas ainda confere as assinaturas do

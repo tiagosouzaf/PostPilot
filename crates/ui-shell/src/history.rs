@@ -226,6 +226,48 @@ pub fn local_time(secs: u64) -> String {
     }
 }
 
+/// Troca por `***` as senhas dos comandos do Redis: tudo depois de `AUTH`
+/// (também no `HELLO ... AUTH usuario senha` e no `MIGRATE`), o valor de
+/// `requirepass` e `masterauth`, e as senhas do `ACL SETUSER` (`>senha`,
+/// `<senha`, `#hash`).
+fn mask_redis_passwords(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let ending = &line[body.len()..];
+        let tokens = tokenize_in(body, Dialect::Redis);
+        let words: Vec<String> = tokens
+            .iter()
+            .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Comment))
+            .map(|t| body[t.range.clone()].to_ascii_lowercase())
+            .collect();
+        let acl = words.first().is_some_and(|w| w == "acl")
+            && words.get(1).is_some_and(|w| w == "setuser");
+        // Depois de AUTH tudo é segredo; depois de requirepass, a próxima
+        // palavra.
+        let mut all = false;
+        let mut next = false;
+        for t in &tokens {
+            let piece = &body[t.range.clone()];
+            if matches!(t.kind, TokenKind::Whitespace | TokenKind::Comment) {
+                out.push_str(piece);
+                continue;
+            }
+            let word = piece.to_ascii_lowercase();
+            if all || next || (acl && piece.starts_with(['>', '<', '#'])) {
+                out.push_str("***");
+                next = false;
+            } else {
+                out.push_str(piece);
+                all = word == "auth";
+                next = matches!(word.as_str(), "requirepass" | "masterauth");
+            }
+        }
+        out.push_str(ending);
+    }
+    out
+}
+
 /// Troca por `***` o que parece senha no SQL:
 ///
 /// - o texto (ou o hash) depois de `PASSWORD`, `OLD_PASSWORD`, `SECRET` e
@@ -240,6 +282,7 @@ pub fn mask_passwords(sql: &str, engine: Engine) -> String {
     let dialect = match engine {
         Engine::PostgreSql => Dialect::Postgres,
         Engine::SqlServer => Dialect::TSql,
+        Engine::Redis => return mask_redis_passwords(sql),
     };
     let mut out = String::with_capacity(sql.len());
     // Depois de PASSWORD (e do `=`), o próximo texto é a senha.
@@ -1038,6 +1081,26 @@ impl crate::ShellApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_passwords_are_masked() {
+        let m = |t: &str| mask_passwords(t, Engine::Redis);
+        assert_eq!(m("AUTH s3nha\nGET a"), "AUTH ***\nGET a");
+        assert_eq!(m("auth app \"minha senha\""), "auth *** ***");
+        assert_eq!(
+            m("HELLO 3 AUTH app s3nha SETNAME x"),
+            "HELLO 3 AUTH *** *** *** ***"
+        );
+        assert_eq!(
+            m("CONFIG SET requirepass s3nha"),
+            "CONFIG SET requirepass ***"
+        );
+        assert_eq!(
+            m("ACL SETUSER app on >s3nha ~* +@all"),
+            "ACL SETUSER app on *** ~* +@all"
+        );
+        assert_eq!(m("SET senha:1 abc\r\n"), "SET senha:1 abc\r\n");
+    }
 
     fn temp_file(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

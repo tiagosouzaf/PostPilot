@@ -51,11 +51,9 @@ pub trait SecretStore: Send + Sync {
 /// usuário no servidor. É também a chave do servidor conectado.
 pub fn password_key(settings: &ConnectionSettings) -> String {
     let key = format!("{}@{}:{}", settings.user, settings.host, settings.port);
-    match settings.engine {
-        // O PostgreSQL fica como era, para achar as senhas já guardadas.
-        pgstudio_core::connection::Engine::PostgreSql => key,
-        pgstudio_core::connection::Engine::SqlServer => format!("sqlserver:{key}"),
-    }
+    // O PostgreSQL fica como era (sem prefixo), para achar as senhas já
+    // guardadas.
+    format!("{}{key}", settings.engine.key_prefix())
 }
 
 /// O cofre do sistema.

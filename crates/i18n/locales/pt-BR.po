@@ -5362,3 +5362,85 @@ msgstr "Mostrando as primeiras {kept} de {total} linhas."
 
 msgid "The results are read-only: they came from the previous session. Run the query again to edit them."
 msgstr "O resultado é somente leitura: veio da sessão anterior. Execute a consulta de novo para editá-lo."
+
+# Redis (Fase N)
+msgid "\"{database}\" is not a Redis database. Use db0, db1..."
+msgstr "\"{database}\" não é um banco do Redis. Use db0, db1..."
+
+msgid "Listening. Cancel the query to stop."
+msgstr "Escutando. Cancele a consulta para parar."
+
+msgid "No encryption"
+msgstr "Sem criptografia"
+
+msgid "TLS, trust server certificate"
+msgstr "TLS, confiar no certificado do servidor"
+
+msgid "TLS, verify certificate"
+msgstr "TLS, conferir o certificado"
+
+msgid "The connection to the server was lost: {error}"
+msgstr "A conexão com o servidor caiu: {error}"
+
+msgid "This build of PostPilot cannot connect to {engine}."
+msgstr "Esta versão do PostPilot não conecta ao {engine}."
+
+msgid "Unclosed quotation mark in the command."
+msgstr "Aspas sem fechar no comando."
+
+msgid "optional (ACL user)"
+msgstr "opcional (usuário de ACL)"
+
+msgid "Find Keys by Pattern"
+msgstr "Procurar Chaves por Padrão"
+
+msgid "Inspect Key"
+msgstr "Inspecionar Chave"
+
+msgid "Set Expiration"
+msgstr "Definir Expiração"
+
+msgid "Delete Keys"
+msgstr "Excluir Chaves"
+
+msgid "Strings"
+msgstr "Strings"
+
+msgid "Set with Expiration"
+msgstr "Gravar com Expiração"
+
+msgid "Counter"
+msgstr "Contador"
+
+msgid "Hashes"
+msgstr "Hashes"
+
+msgid "Create Hash"
+msgstr "Criar Hash"
+
+msgid "Read Fields"
+msgstr "Ler Campos"
+
+msgid "Lists and Sets"
+msgstr "Listas e Conjuntos"
+
+msgid "Queue"
+msgstr "Fila"
+
+msgid "Set Members"
+msgstr "Membros do Conjunto"
+
+msgid "Sorted Sets"
+msgstr "Conjuntos Ordenados"
+
+msgid "Ranking"
+msgstr "Ranking"
+
+msgid "Server Information"
+msgstr "Informações do Servidor"
+
+msgid "Clients and Slow Commands"
+msgstr "Clientes e Comandos Lentos"
+
+msgid "Listen to a Channel"
+msgstr "Escutar um Canal"

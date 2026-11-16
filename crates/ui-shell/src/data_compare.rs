@@ -22,7 +22,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use eframe::egui::{self, Align, Layout};
-use pgstudio_core::connection::Engine;
+use pgstudio_core::connection::{Engine, Feature};
 use pgstudio_core::query::QueryService;
 use pgstudio_i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
@@ -1151,6 +1151,8 @@ impl ShellApp {
                     .iter()
                     .filter_map(|p| p.connection.as_ref()),
             )
+            // Só bancos relacionais têm tabelas para comparar.
+            .filter(|c| c.settings.engine.supports(Feature::SchemaCompare))
             .map(|c| {
                 let key = server_key(&c.settings);
                 let name = self
