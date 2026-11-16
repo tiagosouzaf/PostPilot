@@ -9,7 +9,8 @@
 //! - os servidores conectados no Object Explorer, na ordem, qual é o ativo
 //!   e os nós expandidos de cada um;
 //! - as janelas de consulta: arquivo, nome, texto não salvo, banco,
-//!   servidor e qual estava na frente.
+//!   servidor e qual estava na frente;
+//! - o "Data Compare" aberto: os dois lados e as tabelas desmarcadas.
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -105,6 +106,9 @@ pub struct SessionState {
     pub documents: Vec<SessionDocument>,
     /// Número da última `SQLQueryN.sql`, para a numeração continuar.
     pub query_counter: u32,
+    /// O "Data Compare" aberto: os dois lados e as tabelas desmarcadas (o
+    /// resultado não é guardado; basta comparar de novo).
+    pub data_compare: Option<crate::data_compare::Setup>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -344,6 +348,9 @@ impl ShellApp {
         if let Some(id) = front {
             self.activate_document(id);
         }
+        if let Some(setup) = state.data_compare.clone() {
+            self.restore_data_compare(setup);
+        }
         if self.connector.is_none() || state.servers.is_empty() {
             return;
         }
@@ -449,6 +456,7 @@ impl ShellApp {
             servers,
             documents,
             query_counter: self.documents.query_counter(),
+            data_compare: self.data_compare_setup(),
         }
     }
 
