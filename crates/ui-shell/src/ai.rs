@@ -38,6 +38,8 @@ pub struct AiSettings {
     /// [`CLAUDE_CODE`], [`CHATGPT`] ou o `id` de um provedor.
     pub active: String,
     pub providers: Vec<Provider>,
+    /// Quando a IA sugere melhorias para a consulta em edição.
+    pub assist: AssistMode,
 }
 
 impl Default for AiSettings {
@@ -45,6 +47,34 @@ impl Default for AiSettings {
         AiSettings {
             active: CLAUDE_CODE.into(),
             providers: Vec::new(),
+            assist: AssistMode::default(),
+        }
+    }
+}
+
+/// Quando a IA lê a consulta em edição para sugerir o que fazer (veja
+/// [`crate::ai_assist`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssistMode {
+    /// Sozinha, quando a pessoa para de digitar.
+    #[default]
+    Auto,
+    /// Só com o atalho ou um clique no aviso do editor.
+    OnDemand,
+    /// Nunca.
+    Off,
+}
+
+impl AssistMode {
+    pub const ALL: [AssistMode; 3] = [AssistMode::Auto, AssistMode::OnDemand, AssistMode::Off];
+
+    /// Nome nas opções.
+    pub fn label(self) -> &'static str {
+        match self {
+            AssistMode::Auto => pgstudio_i18n::tr("While I type"),
+            AssistMode::OnDemand => pgstudio_i18n::tr("Only when I ask"),
+            AssistMode::Off => pgstudio_i18n::tr("Never"),
         }
     }
 }

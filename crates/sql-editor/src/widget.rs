@@ -18,9 +18,11 @@ use eframe::egui::{
 use crate::buffer::{Change, EditKind, History, LineIndex, Sel, is_word, line_text};
 use crate::complete::{Completion, Kind, best, complete};
 use crate::diagnostics::{Diagnostic, server_range};
-use crate::highlight::{Colors, line_job};
+use crate::highlight::{Colors, layout_job_in, line_job};
+use crate::hints::{HintAction, HintKind, HintState, HintStatus};
 use crate::lexer::{Dialect, Token, tokenize_in};
 use pgstudio_core::catalog::Catalog;
+use pgstudio_i18n::{tr, trf};
 
 /// Espaços de um Tab.
 pub const TAB_SIZE: usize = 4;
@@ -139,6 +141,11 @@ pub struct Buffer {
     /// Onde a lista foi desenhada no último frame: um clique nela tira o
     /// foco do editor, mas não pode fechá-la.
     popup_rect: Option<Rect>,
+    /// Sugestões da IA para o comando do cursor.
+    pub(crate) ai: HintState,
+    /// Sobe a cada mudança do texto: quem observa o editor (a IA) compara
+    /// o número em vez do texto.
+    pub(crate) revision: u64,
 }
 
 /// A lista de sugestões aberta embaixo do cursor.
@@ -184,6 +191,7 @@ impl Buffer {
     }
 
     fn text_changed(&mut self, text: &str) {
+        self.revision += 1;
         self.diagnostics = crate::diagnostics::check_in(text, &self.tokens, self.dialect);
         self.server_error = None;
     }
@@ -273,11 +281,86 @@ impl Editing<'_> {
             return;
         }
         let selected = best(&c);
+        self.buf.ai.open = None;
         self.buf.popup = Some(Popup {
             completion: c,
             selected,
             top: selected.saturating_sub(POPUP_ROWS / 2),
         });
+    }
+
+    /// Abre a lista das sugestões da IA; sem sugestões, pede à casca que
+    /// pergunte à IA.
+    fn open_hints(&mut self) {
+        self.buf.popup = None;
+        if self.buf.ai.count() == 0 {
+            self.buf.ai.open = None;
+            self.buf.ai.requested = true;
+        } else {
+            self.buf.ai.open = Some(0);
+        }
+    }
+
+    fn move_hint(&mut self, delta: i64) {
+        let last = self.buf.ai.count() as i64 - 1;
+        if let Some(i) = &mut self.buf.ai.open {
+            *i = (*i as i64 + delta).clamp(0, last.max(0)) as usize;
+        }
+    }
+
+    /// Aplica a sugestão escolhida da IA: troca o comando inteiro, ou
+    /// acrescenta outro depois dele. Um passo só do desfazer.
+    fn apply_hint(&mut self) {
+        let Some(i) = self.buf.ai.open.take() else {
+            return;
+        };
+        let Some(hints) = &self.buf.ai.hints else {
+            return;
+        };
+        let Some(item) = hints.items.get(i).cloned() else {
+            return;
+        };
+        let range = hints.range.clone();
+        // O comando mudou desde que a IA leu: a sugestão não vale mais.
+        if self.text.get(range.clone()) != Some(hints.base.as_str()) {
+            self.buf.ai.hints = None;
+            return;
+        }
+        self.view.collapse();
+        self.buf.history.seal();
+        match &item.action {
+            HintAction::Replace(code) => {
+                let a = crate::edit::char_of(self.text, range.start);
+                let b = crate::edit::char_of(self.text, range.end);
+                self.replace(a..b, code, EditKind::Other);
+                self.buf.ai.hints = None;
+            }
+            HintAction::Insert(code) => {
+                // Depois do `;` do comando, se já houver um.
+                let rest = &self.text[range.end..];
+                let blank = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+                let sql = matches!(self.buf.dialect, Dialect::Postgres | Dialect::TSql);
+                let (at, lead) = if sql && rest[blank..].starts_with(';') {
+                    (range.end + blank + 1, "\n\n")
+                } else if sql && self.buf.dialect == Dialect::Postgres {
+                    (range.end, ";\n\n")
+                } else {
+                    (range.end, "\n\n")
+                };
+                let c = crate::edit::char_of(self.text, at);
+                self.replace(c..c, &format!("{lead}{code}"), EditKind::Other);
+                if let Some(hints) = &mut self.buf.ai.hints {
+                    hints.items.remove(i);
+                }
+            }
+            HintAction::None => {
+                // Um conselho: não há o que aplicar; a lista fica.
+                self.buf.ai.open = Some(i);
+                return;
+            }
+        }
+        self.buf.history.seal();
+        self.buf.ai.applied = Some(item);
     }
 
     /// Se a linha do cursor tem algo escrito antes dele.
@@ -817,6 +900,8 @@ pub(crate) struct Output {
     pub response: egui::Response,
     /// Linha e coluna do cursor (a partir de 1).
     pub cursor: (usize, usize),
+    /// Onde o cursor está no texto, em bytes.
+    pub cursor_byte: usize,
 }
 
 /// Desenha o editor e trata teclado e mouse. `select` e `focus` vêm de
@@ -887,7 +972,7 @@ pub(crate) fn show(
     }
     let focused = ui.memory(|m| m.has_focus(id));
 
-    let over_popup = buf.popup.is_some()
+    let over_popup = (buf.popup.is_some() || buf.ai.open.is_some())
         && buf
             .popup_rect
             .is_some_and(|r| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.contains(p))));
@@ -914,12 +999,15 @@ pub(crate) fn show(
                     vertical_arrows: true,
                     // Com a lista aberta, Esc fecha a lista e o foco fica;
                     // com vários cursores, volta a um só.
-                    escape: ed.buf.popup.is_some() || ed.multi(),
+                    escape: ed.buf.popup.is_some() || ed.buf.ai.open.is_some() || ed.multi(),
                 },
             )
         });
         if list_members {
             ed.refresh_popup(true);
+        }
+        if std::mem::take(&mut ed.buf.ai.want_open) {
+            ed.open_hints();
         }
         let events = ui.input(|i| i.events.clone());
         let mut alt_chord = false;
@@ -942,6 +1030,7 @@ pub(crate) fn show(
         }
     } else if !over_popup {
         ed.buf.popup = None;
+        ed.buf.ai.open = None;
     }
     mouse(ui, &response, &mut ed, &f);
 
@@ -972,6 +1061,11 @@ pub(crate) fn show(
         ui.memory_mut(|m| m.request_focus(id));
         ctx.request_repaint();
     }
+    let chip = hint_chip(ui, id, &mut ed, &f);
+    if ((focused || over_popup) && hint_popup(ui, id, &mut ed, &f)) || chip {
+        ui.memory_mut(|m| m.request_focus(id));
+        ctx.request_repaint();
+    }
 
     let (line, col) = ed.index().line_col(ed.view.cursor);
     if focused {
@@ -988,10 +1082,12 @@ pub(crate) fn show(
             });
         });
     }
+    let cursor_byte = ed.buf.index.byte_of(ed.text, ed.view.cursor);
     store(&ctx, id, view);
     Output {
         response,
         cursor: (line + 1, col + 1),
+        cursor_byte,
     }
 }
 
@@ -1020,6 +1116,12 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
         | Event::Cut
         | Event::Paste(_) => ed.view.block = None,
         _ => {}
+    }
+    if matches!(
+        event,
+        Event::Text(_) | Event::Ime(_) | Event::Cut | Event::Paste(_)
+    ) {
+        ed.buf.ai.open = None;
     }
     match event {
         Event::Text(s) => {
@@ -1133,6 +1235,25 @@ fn key_pressed(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, key: Key, m: Modifiers)
             ed.add_next_match();
         }
         return;
+    }
+    if ed.buf.ai.open.is_some() {
+        if ctrl && !shift && key == Key::Period {
+            // O atalho das sugestões: a casca abre e fecha a lista.
+            return;
+        } else if ctrl || shift {
+            ed.buf.ai.open = None;
+        } else {
+            match key {
+                Key::Escape => {
+                    ed.buf.ai.open = None;
+                    return;
+                }
+                Key::ArrowUp => return ed.move_hint(-1),
+                Key::ArrowDown => return ed.move_hint(1),
+                Key::Enter | Key::Tab => return ed.apply_hint(),
+                _ => ed.buf.ai.open = None,
+            }
+        }
     }
     if ed.buf.popup.is_some() && !ctrl && !shift {
         match key {
@@ -1485,6 +1606,7 @@ fn mouse(ui: &Ui, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
         ed.buf.history.seal();
     } else if pressed {
         ed.buf.popup = None;
+        ed.buf.ai.open = None;
         ed.view.drag_words = None;
         ed.view.preferred_x = None;
         ed.view.block = None;
@@ -1872,6 +1994,293 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
         }
         None => false,
     }
+}
+
+/// Largura da lista das sugestões da IA e linhas do código mostrado.
+const HINT_WIDTH: f32 = 560.0;
+const HINT_PREVIEW_ROWS: usize = 12;
+/// O ícone das sugestões da IA (da fonte de ícones da casca).
+const HINT_GLYPH: &str = egui_phosphor::regular::SPARKLE;
+
+/// O aviso das sugestões da IA no canto de baixo do editor: quantas há,
+/// ou que a IA está lendo o comando. Um clique abre a lista. Devolve
+/// `true` se foi clicado.
+fn hint_chip(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
+    let ai = &ed.buf.ai;
+    let n = ai.count();
+    let v = ui.visuals().clone();
+    let mut hover = None;
+    let text = if n == 1 {
+        tr("1 AI suggestion").to_string()
+    } else if n > 1 {
+        trf!("{n} AI suggestions", n = n)
+    } else if ai.hints.is_some() {
+        tr("AI: nothing to suggest here").to_string()
+    } else {
+        match &ai.status {
+            HintStatus::Off | HintStatus::Idle => return false,
+            HintStatus::Ask => tr("Ask the AI for suggestions").to_string(),
+            HintStatus::Thinking => tr("The AI is reading the query…").to_string(),
+            HintStatus::Failed(e) => {
+                hover = Some(e.clone());
+                tr("The AI did not answer").to_string()
+            }
+        }
+    };
+    let ready = n > 0;
+    let asks = ready || ai.status == HintStatus::Ask;
+    let font = FontId::proportional(12.0);
+    let color = if ready {
+        v.strong_text_color()
+    } else {
+        v.weak_text_color()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    };
+    job.append(
+        HINT_GLYPH,
+        0.0,
+        format(if ready { f.colors.keyword } else { color }),
+    );
+    job.append(&text, 6.0, format(color));
+    if asks && !ai.shortcut.is_empty() {
+        job.append(&ai.shortcut, 10.0, format(v.weak_text_color()));
+    }
+    let galley = ui.painter().layout_job(job);
+    let size = galley.size() + vec2(16.0, 8.0);
+    let rect = Rect::from_min_size(f.text_rect.right_bottom() - size - vec2(8.0, 8.0), size);
+    if rect.left() < f.text_rect.left() || rect.top() < f.text_rect.top() {
+        return false;
+    }
+    let resp = ui.interact(rect, id.with("ai_chip"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text));
+    let painter = ui.painter();
+    let fill = if resp.hovered() {
+        v.widgets.hovered.weak_bg_fill
+    } else {
+        v.window_fill
+    };
+    let stroke = if ready {
+        Stroke::new(1.0, f.colors.keyword)
+    } else {
+        v.widgets.noninteractive.bg_stroke
+    };
+    painter.rect(rect, 4.0, fill, stroke, egui::StrokeKind::Inside);
+    painter.galley(rect.min + vec2(8.0, 4.0), galley, color);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    let resp = match hover {
+        Some(e) => resp.on_hover_text(e),
+        None => resp,
+    };
+    if !resp.clicked() {
+        return false;
+    }
+    if ed.buf.ai.open.is_some() {
+        ed.buf.ai.open = None;
+    } else {
+        ed.open_hints();
+    }
+    true
+}
+
+/// Desenha a lista das sugestões da IA embaixo do cursor, com a
+/// explicação e o código da escolhida. Devolve `true` se houve um clique
+/// nela.
+fn hint_popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
+    let Some(selected) = ed.buf.ai.open else {
+        return false;
+    };
+    let Some(hints) = ed.buf.ai.hints.clone().filter(|h| !h.items.is_empty()) else {
+        ed.buf.ai.open = None;
+        return false;
+    };
+    let selected = selected.min(hints.items.len() - 1);
+    let (line, col) = ed.index().line_col(ed.view.cursor);
+    let galley = line_galley(ui, ed.text, ed.buf, line, f);
+    let screen = ui.ctx().content_rect();
+    let x = (f.text_rect.left() + col_x(&galley, col) - ed.view.scroll.x)
+        .min(screen.right() - HINT_WIDTH - 12.0)
+        .max(screen.left() + 4.0);
+    let y = f.text_rect.top() + (line + 1) as f32 * f.line_h - ed.view.scroll.y;
+    // Embaixo da linha; se sobrar pouco, em cima.
+    let below = screen.bottom() - y;
+    let above = y - f.line_h - screen.top();
+    let (pos, pivot) = if below < 340.0 && above > below {
+        (pos2(x, y - f.line_h - 4.0), egui::Align2::LEFT_BOTTOM)
+    } else {
+        (pos2(x, y), egui::Align2::LEFT_TOP)
+    };
+    let v = ui.visuals().clone();
+    let colors = f.colors;
+    let mono = f.font.clone();
+    let dialect = ed.buf.dialect;
+    let row_h = f.line_h + 6.0;
+    let mut choose = None;
+    let mut apply = false;
+    let mut clicked = false;
+    let area = egui::Area::new(id.with("ai_hints"))
+        .order(egui::Order::Foreground)
+        .fade_in(false)
+        .pivot(pivot)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(2.0)
+                .show(ui, |ui| {
+                    ui.set_width(HINT_WIDTH);
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    for (i, item) in hints.items.iter().enumerate() {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(vec2(HINT_WIDTH, row_h), Sense::click());
+                        let painter = ui.painter().with_clip_rect(rect);
+                        let chosen = i == selected;
+                        if chosen {
+                            painter.rect_filled(rect, 2.0, v.selection.bg_fill);
+                        } else if resp.hovered() {
+                            painter.rect_filled(rect, 2.0, v.widgets.hovered.weak_bg_fill);
+                        }
+                        let pick = |c: Color32| if chosen { Color32::WHITE } else { c };
+                        let glyph = match item.kind {
+                            HintKind::Fix | HintKind::Safety => v.warn_fg_color,
+                            HintKind::Performance | HintKind::Index => colors.number,
+                            HintKind::Join | HintKind::Complete => colors.keyword,
+                            _ => colors.identifier_quoted,
+                        };
+                        let mid = rect.left_center();
+                        painter.text(
+                            mid + vec2(6.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            HINT_GLYPH,
+                            FontId::proportional(13.0),
+                            pick(glyph),
+                        );
+                        let kind = painter.text(
+                            rect.right_center() - vec2(6.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            item.kind.label(),
+                            FontId::proportional(11.0),
+                            pick(v.weak_text_color()),
+                        );
+                        painter
+                            .with_clip_rect(rect.with_max_x(kind.left() - 8.0))
+                            .text(
+                                mid + vec2(26.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                &item.title,
+                                FontId::proportional(13.0),
+                                pick(colors.text),
+                            );
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::SelectableLabel,
+                                true,
+                                chosen,
+                                &item.title,
+                            )
+                        });
+                        if resp.double_clicked() {
+                            apply = true;
+                        }
+                        if resp.clicked() {
+                            choose = Some(i);
+                        }
+                    }
+                    let item = &hints.items[selected];
+                    let (sep, _) = ui.allocate_exact_size(vec2(HINT_WIDTH, 1.0), Sense::hover());
+                    ui.painter().hline(
+                        sep.x_range(),
+                        sep.top(),
+                        v.widgets.noninteractive.bg_stroke,
+                    );
+                    egui::Frame::new().inner_margin(DOC_MARGIN).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                        if !item.detail.is_empty() {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&item.detail).size(DOC_FONT + 0.5),
+                                )
+                                .wrap()
+                                .selectable(false),
+                            );
+                        }
+                        if let Some(code) = item.action.code() {
+                            egui::Frame::new()
+                                .fill(v.extreme_bg_color)
+                                .stroke(v.widgets.noninteractive.bg_stroke)
+                                .corner_radius(3.0)
+                                .inner_margin(6.0)
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    let mut job =
+                                        layout_job_in(code, &colors, mono.clone(), dialect);
+                                    job.wrap = egui::text::TextWrapping {
+                                        max_width: ui.available_width(),
+                                        max_rows: HINT_PREVIEW_ROWS,
+                                        break_anywhere: false,
+                                        overflow_character: Some('…'),
+                                    };
+                                    ui.add(egui::Label::new(job).selectable(false));
+                                });
+                        }
+                        ui.horizontal(|ui| {
+                            let button = match item.action {
+                                HintAction::Replace(_) => Some(tr("Apply")),
+                                HintAction::Insert(_) => Some(tr("Add after the query")),
+                                HintAction::None => None,
+                            };
+                            match button {
+                                Some(label) => {
+                                    if ui
+                                        .add(egui::Button::new(label).shortcut_text("Enter")) // i18n-ignore
+                                        .clicked()
+                                    {
+                                        apply = true;
+                                    }
+                                }
+                                None => {
+                                    ui.weak(tr("Advice only: there is nothing to apply."));
+                                }
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(trf!(
+                                                "{source} · arrows choose · Esc closes",
+                                                source = hints.source
+                                            ))
+                                            .size(11.0)
+                                            .weak(),
+                                        )
+                                        .selectable(false),
+                                    );
+                                },
+                            );
+                        });
+                    });
+                });
+        });
+    ed.buf.popup_rect = Some(area.response.rect);
+    if area.response.clicked() || area.response.dragged() {
+        clicked = true;
+    }
+    if let Some(i) = choose {
+        ed.buf.ai.open = Some(i);
+        clicked = true;
+    }
+    if apply {
+        ed.buf.ai.open = Some(choose.unwrap_or(selected));
+        ed.apply_hint();
+        clicked = true;
+    }
+    clicked
 }
 
 /// Sublinha os erros com uma linha ondulada vermelha; parar o mouse em cima

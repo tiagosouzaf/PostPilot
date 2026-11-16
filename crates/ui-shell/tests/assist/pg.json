@@ -1,0 +1,39 @@
+{
+ "suggestions": [
+  {
+   "kind": "columns",
+   "title": "Liste as colunas de pedidos em vez de SELECT *",
+   "detail": "Nomear p.id, p.cliente_id e p.total deixa o resultado estável se a tabela pedidos ganhar colunas e evita trazer dados que você não usa.",
+   "action": "replace",
+   "code": "select p.id, p.cliente_id, p.total from pedidos p where p.total > 100"
+  },
+  {
+   "kind": "join",
+   "title": "Junte clientes pela FK pedidos.cliente_id",
+   "detail": "A chave estrangeira cliente_id → clientes.id traz o nome do cliente junto de cada pedido, e o índice pedidos_cliente_idx ajuda nessa junção.",
+   "action": "replace",
+   "code": "select p.id, p.total, c.nome from pedidos p join clientes c on c.id = p.cliente_id where p.total > 100"
+  },
+  {
+   "kind": "sort",
+   "title": "Ordene por p.total desc e limite com LIMIT",
+   "detail": "Mostra primeiro os pedidos de maior valor e evita trazer a tabela inteira ao editor quando muitos pedidos passam de 100.",
+   "action": "replace",
+   "code": "select * from pedidos p where p.total > 100 order by p.total desc limit 100"
+  },
+  {
+   "kind": "filter",
+   "title": "Mostre só pedidos com itens usando EXISTS em itens",
+   "detail": "EXISTS sobre itens.pedido_id (FK para pedidos.id) mantém uma linha por pedido, sem duplicar como faria um JOIN com DISTINCT.",
+   "action": "replace",
+   "code": "select * from pedidos p where p.total > 100 and exists (select 1 from itens i where i.pedido_id = p.id)"
+  },
+  {
+   "kind": "index",
+   "title": "Crie um índice em pedidos(total)",
+   "detail": "Não há índice em total; com ele, o filtro p.total > 100 e a ordenação por total podem usar um index scan quando o filtro é seletivo.",
+   "action": "insert",
+   "code": "create index pedidos_total_idx on pedidos (total);"
+  }
+ ]
+}

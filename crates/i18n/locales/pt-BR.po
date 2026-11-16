@@ -6103,3 +6103,99 @@ msgstr "Schema: agrupa tabelas, views e funções."
 
 msgid "Function of the schema {schema}."
 msgstr "Função do schema {schema}."
+
+msgid "Join"
+msgstr "Junção"
+
+msgid "Summary"
+msgstr "Resumo"
+
+msgid "Order and limit"
+msgstr "Ordem e limite"
+
+msgid "Performance"
+msgstr "Desempenho"
+
+msgid "Fix"
+msgstr "Conserto"
+
+msgid "Safety"
+msgstr "Segurança"
+
+msgid "Complete"
+msgstr "Completar"
+
+msgid "Better way"
+msgstr "Jeito melhor"
+
+msgid "Idea"
+msgstr "Ideia"
+
+msgid "1 AI suggestion"
+msgstr "1 sugestão da IA"
+
+msgid "{n} AI suggestions"
+msgstr "{n} sugestões da IA"
+
+msgid "AI: nothing to suggest here"
+msgstr "IA: nada a sugerir aqui"
+
+msgid "Ask the AI for suggestions"
+msgstr "Pedir sugestões à IA"
+
+msgid "The AI is reading the query…"
+msgstr "A IA está lendo a consulta…"
+
+msgid "The AI did not answer"
+msgstr "A IA não respondeu"
+
+msgid "Add after the query"
+msgstr "Acrescentar depois da consulta"
+
+msgid "Advice only: there is nothing to apply."
+msgstr "Só um conselho: não há o que aplicar."
+
+msgid "{source} · arrows choose · Esc closes"
+msgstr "{source} · setas escolhem · Esc fecha"
+
+msgid "While I type"
+msgstr "Enquanto eu digito"
+
+msgid "Only when I ask"
+msgstr "Só quando eu pedir"
+
+msgid "Never"
+msgstr "Nunca"
+
+msgid "The AI stopped before answering."
+msgstr "A IA parou antes de responder."
+
+msgid "The AI took too long to answer."
+msgstr "A IA demorou demais para responder."
+
+msgid "AI suggestions: {error}"
+msgstr "Sugestões da IA: {error}"
+
+msgid "AI suggestion applied: {title}"
+msgstr "Sugestão da IA aplicada: {title}"
+
+msgid "The AI is blocked in the environment of this server."
+msgstr "A IA está bloqueada no ambiente deste servidor."
+
+msgid "AI suggestions are turned off in Tools > Options > AI Providers."
+msgstr "As sugestões da IA estão desligadas em Ferramentas > Opções > Provedores de IA."
+
+msgid "Write a query first: the AI reads the one under the cursor."
+msgstr "Escreva uma consulta primeiro: a IA lê a que está no cursor."
+
+msgid "Connect an AI in Tools > AI Providers to get suggestions."
+msgstr "Conecte uma IA em Ferramentas > Provedores de IA para receber sugestões."
+
+msgid "AI Suggestions"
+msgstr "Sugestões da IA"
+
+msgid "Suggest what to do with the query in the editor:"
+msgstr "Sugerir o que fazer com a consulta no editor:"
+
+msgid "The AI reads the query under the cursor and the names in the catalog (tables, columns, keys and indexes) and proposes joins, filters, indexes, fixes and more; the list opens in Edit > IntelliSense > AI Suggestions. The data in the tables is not sent and nothing runs on the server."
+msgstr "A IA lê a consulta que está no cursor e os nomes do catálogo (tabelas, colunas, chaves e índices) e propõe junções, filtros, índices, consertos e mais; a lista abre em Editar > IntelliSense > Sugestões da IA. Os dados das tabelas não são enviados e nada roda no servidor."

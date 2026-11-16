@@ -102,6 +102,7 @@ fn key_of(key: egui::Key) -> Option<Key> {
         E::ArrowDown => Key::Down,
         E::Plus | E::Equals => Key::Plus,
         E::Minus => Key::Minus,
+        E::Period => Key::Period,
         _ => return None,
     })
 }

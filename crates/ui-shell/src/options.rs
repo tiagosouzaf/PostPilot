@@ -452,6 +452,26 @@ impl AiDraft {
         };
         ui.add_space(8.0);
         ui.horizontal(|ui| {
+            ui.label(tr("Suggest what to do with the query in the editor:"));
+            egui::ComboBox::from_id_salt("options_ai_assist")
+                .selected_text(self.settings.assist.label())
+                .show_ui(ui, |ui| {
+                    for mode in crate::ai::AssistMode::ALL {
+                        ui.selectable_value(&mut self.settings.assist, mode, mode.label());
+                    }
+                });
+        });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "The AI reads the query under the cursor and the names in the catalog (tables, columns, keys and indexes) and proposes joins, filters, indexes, fixes and more; the list opens in Edit > IntelliSense > AI Suggestions. The data in the tables is not sent and nothing runs on the server.",
+                ))
+                .weak(),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
             ui.strong(tr("Providers"));
             ui.menu_button(
                 format!("{} {}", egui_phosphor::regular::PLUS, tr("Add")),

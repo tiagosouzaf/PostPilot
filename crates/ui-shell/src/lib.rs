@@ -7,6 +7,7 @@
 
 pub mod activity;
 pub mod ai;
+pub mod ai_assist;
 pub mod ai_names;
 pub mod applog;
 pub mod backup;
@@ -237,6 +238,8 @@ pub struct ShellApp {
     ai: ai::Ai,
     /// Nome de arquivo sugerido pela IA ao salvar uma consulta nova.
     name_suggestions: ai_names::NameSuggestions,
+    /// Sugestões da IA para a consulta em edição.
+    assist: ai_assist::Assist,
     /// A sessão salva enquanto o usuário trabalha (veja [`session`]).
     session: session::Session,
     /// Template Explorer: modelos embutidos e trechos do usuário.
@@ -430,6 +433,7 @@ impl Default for ShellApp {
             claude_panel: Default::default(),
             ai: Default::default(),
             name_suggestions: Default::default(),
+            assist: Default::default(),
             session: Default::default(),
             templates: Default::default(),
             history: Default::default(),
@@ -553,6 +557,7 @@ impl ShellApp {
                 let settings = connected.settings.clone();
                 self.connection = Some(connected);
                 self.catalogs.clear();
+                self.assist.reset();
                 self.session_connected(&settings);
             }
             None if was_connecting => {
@@ -879,6 +884,7 @@ impl ShellApp {
         if let Some(problem) = self.ai.apply(draft.settings, draft.new_keys) {
             self.status = trf!("Could not save the AI providers: {error}", error = problem);
         }
+        self.assist.reset();
         if self.ai.backend() != before {
             let panel = &mut self.claude_panel;
             panel.agent = None;
@@ -1743,6 +1749,7 @@ impl ShellApp {
                 | GoTo
                 | ListMembers
                 | CompleteWord
+                | AiSuggestions
                 | RefreshLocalCache
                 | Execute
                 | MultiServer
@@ -1966,6 +1973,7 @@ impl ShellApp {
             | CommandId::QuickFind
             | CommandId::ListMembers
             | CommandId::CompleteWord
+            | CommandId::AiSuggestions
             | CommandId::GoTo => match self.active_doc {
                 Some(id) => self.editor_command(ctx, id, cmd),
                 None => self.status = tr("No query window is open.").to_string(),
@@ -2014,6 +2022,7 @@ impl ShellApp {
                 }
                 self.explorer.disconnect();
                 self.catalogs.clear();
+                self.assist.reset();
                 self.password.clear();
                 self.promote_next_server();
             }
@@ -2044,6 +2053,7 @@ impl ShellApp {
                 ) {
                     (Some(provider), Some(db)) => {
                         self.catalogs.refresh(&db, &provider, ctx);
+                        self.assist.reset();
                         self.status = tr("Refreshing local cache...").to_string();
                     }
                     _ => self.status = tr("Connect to a server to use IntelliSense.").to_string(),
@@ -3139,6 +3149,7 @@ impl ShellApp {
             }
             CommandId::GoTo => doc.editor.open_goto(),
             CommandId::ListMembers | CommandId::CompleteWord => doc.editor.list_members(),
+            CommandId::AiSuggestions => doc.editor.toggle_hints(),
             _ => {}
         }
         self.workspace.open(Panel::Query(id));
@@ -3569,6 +3580,7 @@ impl ShellApp {
         self.follow_system_theme(&ctx);
         self.options_window(&ctx);
         self.name_suggestion_step(&ctx);
+        self.assist_step(&ctx);
 
         if self.about_open {
             let mut open = true;

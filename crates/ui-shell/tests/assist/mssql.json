@@ -1,0 +1,39 @@
+{
+ "suggestions": [
+  {
+   "kind": "performance",
+   "title": "Trocar YEAR(CriadoEm) por intervalo de datas em CriadoEm",
+   "detail": "YEAR() em volta de CriadoEm impede o uso de índice (não é sargável); um intervalo >= '2026-01-01' AND < '2027-01-01' permite seek no índice.",
+   "action": "replace",
+   "code": "SELECT * FROM Pedidos WHERE CriadoEm >= '2026-01-01' AND CriadoEm < '2027-01-01'"
+  },
+  {
+   "kind": "columns",
+   "title": "Listar Id, ClienteId, Total, CriadoEm em vez de *",
+   "detail": "Nomear as colunas de Pedidos deixa a consulta estável se a tabela mudar e evita trazer dados desnecessários.",
+   "action": "replace",
+   "code": "SELECT Id, ClienteId, Total, CriadoEm FROM Pedidos WHERE YEAR(CriadoEm) = 2026"
+  },
+  {
+   "kind": "index",
+   "title": "Criar índice em Pedidos(CriadoEm) com INCLUDE",
+   "detail": "Um índice em CriadoEm incluindo ClienteId e Total cobre filtros por período sem consultar a tabela base (combine com o filtro por intervalo).",
+   "action": "insert",
+   "code": "CREATE INDEX IX_Pedidos_CriadoEm ON dbo.Pedidos (CriadoEm) INCLUDE (ClienteId, Total)"
+  },
+  {
+   "kind": "sort",
+   "title": "Ordenar por CriadoEm DESC",
+   "detail": "Mostra os pedidos mais recentes de 2026 primeiro, o que costuma ser o mais útil ao analisar o ano.",
+   "action": "replace",
+   "code": "SELECT * FROM Pedidos WHERE YEAR(CriadoEm) = 2026 ORDER BY CriadoEm DESC"
+  },
+  {
+   "kind": "aggregate",
+   "title": "Somar Total por mês com SUM e COUNT",
+   "detail": "Agrupar Pedidos por MONTH(CriadoEm) dá o faturamento e a quantidade de pedidos de cada mês de 2026.",
+   "action": "replace",
+   "code": "SELECT MONTH(CriadoEm) AS Mes, COUNT(*) AS Pedidos, SUM(Total) AS Faturamento FROM Pedidos WHERE CriadoEm >= '2026-01-01' AND CriadoEm < '2027-01-01' GROUP BY MONTH(CriadoEm) ORDER BY Mes"
+  }
+ ]
+}

@@ -70,6 +70,7 @@ fn chatgpt_ai(codex: &Path) -> Ai {
         AiSettings {
             active: CHATGPT.into(),
             providers: Vec::new(),
+            assist: pgstudio_ui_shell::ai::AssistMode::Off,
         },
         &[],
     );

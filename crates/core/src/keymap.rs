@@ -34,6 +34,8 @@ pub enum Key {
     Plus,
     /// A tecla `-`.
     Minus,
+    /// A tecla `.`.
+    Period,
 }
 
 impl Key {
@@ -70,6 +72,7 @@ impl Key {
             "BREAK" | "PAUSE" => Key::Break,
             "+" | "=" | "PLUS" => Key::Plus,
             "-" | "MINUS" => Key::Minus,
+            "." | "PERIOD" => Key::Period,
             _ => return None,
         })
     }
@@ -99,6 +102,7 @@ impl fmt::Display for Key {
             Key::Break => f.write_str("Break"),
             Key::Plus => f.write_str("+"),
             Key::Minus => f.write_str("-"),
+            Key::Period => f.write_str("."),
         }
     }
 }
@@ -287,6 +291,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::QuickInfo, "Ctrl+K, Ctrl+I"),
     (CommandId::CompleteWord, "Alt+Right"),
     (CommandId::RefreshLocalCache, "Ctrl+Shift+R"),
+    (CommandId::AiSuggestions, "Ctrl+."),
     (CommandId::CommentSelection, "Ctrl+K, Ctrl+C"),
     (CommandId::UncommentSelection, "Ctrl+K, Ctrl+U"),
     (CommandId::MakeUppercase, "Ctrl+Shift+U"),

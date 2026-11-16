@@ -13,7 +13,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use pgstudio_automation::llm::{Provider, ProviderKind};
 use pgstudio_ui_shell::ShellApp;
-use pgstudio_ui_shell::ai::{Ai, AiSettings, CLAUDE_CODE};
+use pgstudio_ui_shell::ai::{Ai, AiSettings, AssistMode, CLAUDE_CODE};
 use pgstudio_ui_shell::claude_panel::Item;
 use pgstudio_ui_shell::documents::FileDialogs;
 use pgstudio_ui_shell::repo::QUERIES;
@@ -95,6 +95,9 @@ fn ai_at(url: &str) -> Ai {
         AiSettings {
             active: "glm-1".into(),
             providers: vec![provider],
+            // As sugestões no editor têm o teste delas (ai_assist.rs);
+            // aqui gastariam as respostas do provedor de mentira.
+            assist: AssistMode::Off,
         },
         &[("glm-1", "sk-test")],
     )

@@ -24,6 +24,7 @@ pub mod edit;
 pub mod elasticsearch;
 pub mod format;
 pub mod highlight;
+pub mod hints;
 pub mod lexer;
 pub mod mongodb;
 pub mod redis;
@@ -153,6 +154,72 @@ impl EditorState {
         self.buffer.errors()
     }
 
+    /// Sobe a cada mudança do texto (digitada ou vinda de fora): quem
+    /// observa o editor compara o número em vez do texto.
+    pub fn revision(&self) -> u64 {
+        self.buffer.revision
+    }
+
+    /// As sugestões da IA para o comando do cursor (ou nenhuma). A lista
+    /// aberta continua aberta se ainda houver o que mostrar.
+    pub fn set_hints(&mut self, hints: Option<hints::Hints>) {
+        let ai = &mut self.buffer.ai;
+        let n = hints.as_ref().map_or(0, |h| h.items.len());
+        ai.open = ai.open.filter(|_| n > 0).map(|i| i.min(n - 1));
+        ai.hints = hints;
+    }
+
+    /// As sugestões da IA mostradas agora.
+    pub fn hints(&self) -> Option<&hints::Hints> {
+        self.buffer.ai.hints.as_ref()
+    }
+
+    /// O que o aviso do canto mostra quando não há sugestões.
+    pub fn set_hint_status(&mut self, status: hints::HintStatus) {
+        self.buffer.ai.status = status;
+    }
+
+    pub fn hint_status(&self) -> &hints::HintStatus {
+        &self.buffer.ai.status
+    }
+
+    /// Atalho do comando das sugestões, para o aviso do canto.
+    pub fn set_hint_shortcut(&mut self, shortcut: &str) {
+        if self.buffer.ai.shortcut != shortcut {
+            self.buffer.ai.shortcut = shortcut.to_string();
+        }
+    }
+
+    /// Abre a lista das sugestões da IA no próximo frame; sem sugestões,
+    /// [`EditorState::take_hint_request`] passa a devolver `true`.
+    pub fn open_hints(&mut self) {
+        self.buffer.ai.want_open = true;
+        self.focus = true;
+    }
+
+    /// Abre a lista das sugestões da IA, ou fecha se estiver aberta (o
+    /// atalho).
+    pub fn toggle_hints(&mut self) {
+        if self.buffer.ai.open.take().is_none() {
+            self.open_hints();
+        }
+    }
+
+    /// Se a lista das sugestões da IA está aberta.
+    pub fn hints_open(&self) -> bool {
+        self.buffer.ai.open.is_some()
+    }
+
+    /// A linha escolhida na lista das sugestões da IA.
+    pub fn hint_selected(&self) -> Option<usize> {
+        self.buffer.ai.open
+    }
+
+    /// Se a pessoa pediu sugestões e não havia nenhuma (uma vez só).
+    pub fn take_hint_request(&mut self) -> bool {
+        std::mem::take(&mut self.buffer.ai.requested)
+    }
+
     /// Se a lista do IntelliSense está aberta.
     pub fn is_completing(&self) -> bool {
         self.buffer.is_completing()
@@ -244,6 +311,10 @@ pub struct EditorResponse {
     pub response: egui::Response,
     /// Linha e coluna do cursor (a partir de 1), para a status bar.
     pub cursor: Option<(usize, usize)>,
+    /// Onde o cursor está no texto, em bytes.
+    pub cursor_byte: usize,
+    /// A sugestão da IA aplicada neste frame.
+    pub applied_hint: Option<hints::Hint>,
 }
 
 impl<'a> SqlEditor<'a> {
@@ -305,6 +376,8 @@ impl<'a> SqlEditor<'a> {
         EditorResponse {
             response: out.response,
             cursor: Some(out.cursor),
+            cursor_byte: out.cursor_byte,
+            applied_hint: state.buffer.ai.applied.take(),
         }
     }
 }
