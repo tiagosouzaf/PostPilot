@@ -363,3 +363,82 @@ fn nothing_is_asked_while_the_typing_goes_on() {
         .to_string();
     assert!(user.contains("select * from pedidos p‸"), "{user}");
 }
+
+/// O clique no aviso do canto, como o de um mouse de verdade (o botão
+/// aperta num frame e solta em outro): a lista abre e fica aberta, o
+/// cursor do texto não sai do comando e a IA não é perguntada de novo.
+#[test]
+fn clicking_the_notice_keeps_the_cursor_and_the_list_open() {
+    use eframe::egui::{ImeEvent, PointerButton};
+    use egui_kittest::kittest::Queryable;
+    let (url, _seen) = fake_provider(vec![answer(), answer()]);
+    let app = ShellApp::default().with_ai(ai_at(&url, AssistMode::Auto));
+    let mut h = paused(app, Duration::from_millis(300));
+    h.event(Event::Text(
+        "select * from pedidos p;\n\nselect 1 from outra_tabela".into(),
+    ));
+    h.step();
+    for _ in 0..30 {
+        h.key_press(Key::ArrowLeft);
+    }
+    h.step();
+    wait(&mut h, "no suggestions", |a| {
+        a.ai_hints(a.active_document().unwrap()).is_some()
+    });
+    let cursor = doc(&h).cursor_byte;
+    assert_eq!(
+        doc(&h).editor.hints().unwrap().base,
+        "select * from pedidos p"
+    );
+    let at = h.get_by_label_contains("AI suggestions").rect().center();
+    h.event(Event::PointerMoved(at));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    assert!(doc(&h).editor.hints_open());
+    assert_eq!(doc(&h).cursor_byte, cursor);
+    // Um aviso sem texto do método de entrada (Wayland) não fecha a lista.
+    h.event(Event::Ime(ImeEvent::Preedit {
+        text: String::new(),
+        active_range_chars: None,
+    }));
+    // Passa bem mais que a pausa: nada fecha a lista nem pergunta de novo.
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(100));
+        h.step();
+    }
+    assert!(doc(&h).editor.hints_open());
+    assert_eq!(count(&h), Some(4));
+    assert_eq!(h.state().assist_requests(), 1);
+}
+
+/// Com a lista aberta, levar o cursor para outro comando (um clique no
+/// texto fecha a lista) só então troca as sugestões.
+#[test]
+fn an_open_list_is_not_replaced_under_the_reader() {
+    let (url, _seen) = fake_provider(vec![answer(), answer()]);
+    let app = ShellApp::default().with_ai(ai_at(&url, AssistMode::Auto));
+    let mut h = paused(app, Duration::from_millis(300));
+    h.event(Event::Text("select * from pedidos p".into()));
+    h.step();
+    wait(&mut h, "no suggestions", |a| {
+        a.ai_hints(a.active_document().unwrap()).is_some()
+    });
+    h.key_press_modifiers(Modifiers::CTRL, Key::Period);
+    h.step();
+    h.step();
+    assert!(doc(&h).editor.hints_open());
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(100));
+        h.step();
+    }
+    assert!(doc(&h).editor.hints_open());
+    assert_eq!(h.state().assist_requests(), 1);
+}

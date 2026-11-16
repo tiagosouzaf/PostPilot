@@ -1117,10 +1117,17 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
         | Event::Paste(_) => ed.view.block = None,
         _ => {}
     }
-    if matches!(
-        event,
-        Event::Text(_) | Event::Ime(_) | Event::Cut | Event::Paste(_)
-    ) {
+    // Só o que escreve fecha a lista: no Wayland, o método de entrada manda
+    // avisos sem texto nenhum (ligou, pré-edição vazia) a qualquer hora.
+    let writes = match &event {
+        Event::Text(_) | Event::Cut | Event::Paste(_) => true,
+        Event::Ime(egui::ImeEvent::Commit(s) | egui::ImeEvent::Preedit { text: s, .. }) => {
+            !s.is_empty()
+        }
+        Event::Ime(egui::ImeEvent::DeleteSurrounding { .. }) => true,
+        _ => false,
+    };
+    if writes {
         ed.buf.ai.open = None;
     }
     match event {
@@ -2056,7 +2063,10 @@ fn hint_chip(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
     if rect.left() < f.text_rect.left() || rect.top() < f.text_rect.top() {
         return false;
     }
-    let resp = ui.interact(rect, id.with("ai_chip"), Sense::click());
+    // Clique e arrasto: só com o clique, o botão apertado em cima do aviso
+    // ainda chegava ao editor embaixo dele e levava o cursor do texto para
+    // lá (e as sugestões eram de onde o cursor estava).
+    let resp = ui.interact(rect, id.with("ai_chip"), Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text));
     let painter = ui.painter();
     let fill = if resp.hovered() {

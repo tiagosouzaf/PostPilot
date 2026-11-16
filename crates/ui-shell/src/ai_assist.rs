@@ -287,6 +287,19 @@ impl ShellApp {
             _ => HintStatus::Idle,
         };
 
+        // Com a lista aberta, as sugestões que a pessoa está lendo ficam
+        // (enquanto forem do texto que está lá): nada troca nem fecha a
+        // lista por baixo dela. O que mudou é visto quando ela fechar.
+        if !asked
+            && doc.editor.hints_open()
+            && doc
+                .editor
+                .hints()
+                .is_some_and(|h| doc.text.get(h.range.clone()) == Some(h.base.as_str()))
+        {
+            return;
+        }
+
         let now = Instant::now();
         let stamp = (id, doc.editor.revision(), doc.cursor_byte);
         if self.assist.seen != Some(stamp) {
