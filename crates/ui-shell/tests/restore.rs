@@ -32,6 +32,7 @@ fn server() -> Option<Server> {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     let password = var("PGSTUDIO_TEST_PASSWORD", "");
     Some(Server {

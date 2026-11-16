@@ -36,6 +36,7 @@ fn connection() -> Option<(
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     let connector: Arc<dyn Connector> = Arc::new(pgstudio_pg_metadata::PgConnector::new(
         pgstudio_pg_client::DbRuntime::new().unwrap(),

@@ -91,8 +91,10 @@ impl Handler for Checker {
 mod tests {
     use super::*;
 
-    const A: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
-    const B: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
+    const A: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
+    const B: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
 
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("postpilot-ssh-{name}-{}", std::process::id()));
@@ -118,11 +120,16 @@ mod tests {
         let c = checker();
         assert!(!c.check(&b));
         let why = c.refusal().lock().unwrap().clone().unwrap();
-        assert!(why.contains("bastion.example") && why.contains("known_hosts"), "{why}");
+        assert!(
+            why.contains("bastion.example") && why.contains("known_hosts"),
+            "{why}"
+        );
         // Outro servidor não se confunde com esse.
-        assert!(Checker::new("other.example", 22, Some(ours.clone()))
-            .with_user_file(None)
-            .check(&b));
+        assert!(
+            Checker::new("other.example", 22, Some(ours.clone()))
+                .with_user_file(None)
+                .check(&b)
+        );
         let _ = std::fs::remove_dir_all(d);
     }
 

@@ -67,11 +67,16 @@ fn with_key(e: &Env, file: &str) -> SshSettings {
 /// Manda o `SSLRequest` do PostgreSQL pela porta local e espera o `S` ou o
 /// `N` do servidor: prova que os bytes vão e voltam do banco.
 async fn postgres_answers(addr: std::net::SocketAddr) -> bool {
-    let mut socket = TcpStream::connect(addr).await.expect("local port");
-    socket
+    let Ok(mut socket) = TcpStream::connect(addr).await else {
+        return false;
+    };
+    if socket
         .write_all(&[0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f])
         .await
-        .unwrap();
+        .is_err()
+    {
+        return false;
+    }
     let mut reply = [0u8; 1];
     match tokio::time::timeout(Duration::from_secs(10), socket.read_exact(&mut reply)).await {
         Ok(Ok(_)) => matches!(reply[0], b'S' | b'N'),
@@ -268,4 +273,38 @@ fn agent_keys_open_a_tunnel() {
         .block_on(pgstudio_ssh::open_to(&ssh, &e.target.0, e.target.1))
         .expect("agent");
     assert!(rt.block_on(postgres_answers(tunnel.local_addr())));
+}
+
+/// O servidor SSH reinicia com o túnel aberto: a próxima conexão entra de
+/// novo sozinha. Só com `SSH_TEST_BASTION_CONTAINER` (o nome do contêiner
+/// do servidor SSH, que o teste reinicia com `docker restart`).
+#[test]
+fn tunnel_comes_back_after_the_ssh_server_restarts() {
+    let Some(e) = env() else { return };
+    let Ok(container) = std::env::var("SSH_TEST_BASTION_CONTAINER") else {
+        eprintln!("SSH_TEST_BASTION_CONTAINER not set; skipping");
+        return;
+    };
+    let rt = runtime();
+    let ssh = with_key(&e, "id_plain");
+    let host = e.target.0.clone();
+    let tunnel = rt
+        .block_on(pgstudio_ssh::open_to(&ssh, &host, e.target.1))
+        .unwrap();
+    assert!(rt.block_on(postgres_answers(tunnel.local_addr())));
+    let status = std::process::Command::new("docker")
+        .args(["restart", &container])
+        .status()
+        .expect("docker restart");
+    assert!(status.success());
+    let back = rt.block_on(async {
+        for _ in 0..60 {
+            if postgres_answers(tunnel.local_addr()).await {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        false
+    });
+    assert!(back, "the tunnel never came back");
 }

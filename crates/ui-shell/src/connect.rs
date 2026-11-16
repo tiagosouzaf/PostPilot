@@ -23,6 +23,7 @@ use pgstudio_core::connection::{
 use serde::{Deserialize, Serialize};
 
 use crate::secrets::{self, Lookup, SecretStore};
+use crate::ssh_fields::SshFields;
 
 /// Quantas conexões recentes guardar.
 pub const MAX_RECENT: usize = 10;
@@ -78,7 +79,10 @@ impl RecentConnections {
     /// Põe a conexão no topo (sem repetir servidor e usuário) e grava.
     pub fn remember(&mut self, settings: &ConnectionSettings) {
         self.list.retain(|s| {
-            !(s.host == settings.host && s.port == settings.port && s.user == settings.user)
+            !(s.host == settings.host
+                && s.port == settings.port
+                && s.user == settings.user
+                && s.ssh == settings.ssh)
         });
         self.list.insert(0, settings.clone());
         self.list.truncate(MAX_RECENT);
@@ -122,6 +126,20 @@ pub struct SavedConnection {
     pub settings: ConnectionSettings,
 }
 
+/// "servidor (login)", mais o servidor SSH quando a conexão passa por um
+/// túnel.
+pub fn server_hint(settings: &ConnectionSettings) -> String {
+    let text = format!("{} ({})", settings.server_name(), settings.user);
+    match &settings.ssh {
+        Some(ssh) => trf!(
+            "{server}, through SSH {ssh}",
+            server = text,
+            ssh = format!("{}@{}", ssh.user, ssh.server_name())
+        ),
+        None => text,
+    }
+}
+
 /// O que o usuário fez no diálogo neste frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogAction {
@@ -142,6 +160,8 @@ pub struct ConnectDialog {
     pub password: String,
     pub database: String,
     pub ssl: SslMode,
+    /// Túnel SSH da conexão (desligado, na maioria).
+    pub ssh: SshFields,
     /// "Remember password": guardar a senha no cofre ao conectar.
     pub remember: bool,
     error: Option<String>,
@@ -183,6 +203,7 @@ impl ConnectDialog {
             } else {
                 SslMode::Require
             },
+            ssh: SshFields::new(settings.ssh.as_ref()),
             remember: false,
             error: None,
             pending: None,
@@ -294,6 +315,9 @@ impl ConnectDialog {
         let key = secrets::password_key(settings);
         if self.remember {
             secrets::save_in_background(store, key, Some(password.to_string()));
+            if let Some(ssh) = &settings.ssh {
+                self.ssh.save_secret(store, ssh);
+            }
         } else if self.saved {
             secrets::save_in_background(store, key, None);
         }
@@ -324,6 +348,7 @@ impl ConnectDialog {
         if s.database.is_empty() {
             s.database = self.engine.default_database().into();
         }
+        s.ssh = self.ssh.settings()?;
         Ok(s)
     }
 
@@ -336,6 +361,11 @@ impl ConnectDialog {
     ) {
         let (tx, rx) = mpsc::channel();
         self.error = None;
+        // O segredo do túnel SSH que a pessoa digitou vai para o túnel; com
+        // o campo vazio, ele usa o do cofre.
+        if let Some(ssh) = &settings.ssh {
+            self.ssh.hand_over(ssh);
+        }
         self.pending = Some(Pending {
             rx,
             server: settings.server_name(),
@@ -487,11 +517,7 @@ impl ConnectDialog {
                                 let key = secrets::password_key(&c.settings);
                                 let row = ui
                                     .selectable_label(current.as_ref() == Some(&key), &c.name)
-                                    .on_hover_text(format!(
-                                        "{} ({})",
-                                        c.settings.server_name(),
-                                        c.settings.user
-                                    ));
+                                    .on_hover_text(server_hint(&c.settings));
                                 if row.clicked() {
                                     chosen = Some(c.settings.clone());
                                 }
@@ -621,6 +647,8 @@ impl ConnectDialog {
             .response
             .labelled_by(label.id);
         ui.end_row();
+
+        self.ssh.show(ui, "connect");
     }
 }
 

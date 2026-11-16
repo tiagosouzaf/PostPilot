@@ -167,6 +167,15 @@ fn main() -> std::process::ExitCode {
             Err(e) => eprintln!("postpilot: could not copy the PGStudio settings: {e}"),
         }
     }
+    // Chaves dos servidores SSH que os túneis já viram (além do
+    // `~/.ssh/known_hosts` do usuário).
+    if let Some(config) = config_dir() {
+        pgstudio_ui_shell::ssh_fields::set_known_hosts(
+            config
+                .join(pgstudio_core::CONFIG_DIR_NAME)
+                .join("ssh_known_hosts"),
+        );
+    }
     match run(&launch) {
         Ok(()) => {
             log_line("exit");
@@ -566,7 +575,50 @@ fn env_settings(server: &str) -> Option<ConnectionSettings> {
         eprintln!("PGSTUDIO_CONNECT: {e}");
         return None;
     }
+    settings.ssh = env_ssh();
     Some(settings)
+}
+
+/// Túnel SSH de `PGSTUDIO_SSH` (`usuario@host` ou `usuario@host:porta`),
+/// com a chave de `PGSTUDIO_SSH_KEY` ou a senha de `PGSTUDIO_SSH_PASSWORD`;
+/// sem nenhuma das duas, o agente SSH. `PGSTUDIO_SSH_PASSPHRASE` é a frase
+/// secreta da chave.
+fn env_ssh() -> Option<pgstudio_core::connection::SshSettings> {
+    use pgstudio_core::connection::{SSH_PORT, SshAuth, SshSettings, parse_server_name_for};
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    let spec = env("PGSTUDIO_SSH")?;
+    let Some((user, server)) = spec.split_once('@') else {
+        eprintln!("PGSTUDIO_SSH: expected user@host");
+        return None;
+    };
+    let (host, port) = match parse_server_name_for(server, SSH_PORT) {
+        Ok(hp) => hp,
+        Err(e) => {
+            eprintln!("PGSTUDIO_SSH: {e}");
+            return None;
+        }
+    };
+    let key_file = env("PGSTUDIO_SSH_KEY");
+    let password = env("PGSTUDIO_SSH_PASSWORD");
+    let ssh = SshSettings {
+        host,
+        port,
+        user: user.to_string(),
+        auth: match (&key_file, &password) {
+            (Some(_), _) => SshAuth::KeyFile,
+            (None, Some(_)) => SshAuth::Password,
+            (None, None) => SshAuth::Agent,
+        },
+        key_file: key_file.unwrap_or_default(),
+    };
+    let secret = match ssh.auth {
+        SshAuth::KeyFile => env("PGSTUDIO_SSH_PASSPHRASE"),
+        _ => password,
+    };
+    if let Some(secret) = secret {
+        pgstudio_ui_shell::ssh_fields::set_secret(&ssh, &secret);
+    }
+    Some(ssh)
 }
 
 /// Arquivo de keymap do usuário: `PGSTUDIO_KEYMAP` ou a pasta de configuração.

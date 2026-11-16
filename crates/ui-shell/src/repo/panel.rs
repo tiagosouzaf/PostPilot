@@ -707,7 +707,11 @@ impl WorkspacePanel {
                 .servers()
                 .all_servers()
                 .into_iter()
-                .map(|s| crate::secrets::password_key(&s.settings))
+                .flat_map(|s| {
+                    // Com túnel SSH, o segredo dele também é do workspace.
+                    let ssh = s.settings.ssh.as_ref().map(|ssh| ssh.secret_key());
+                    std::iter::once(crate::secrets::password_key(&s.settings)).chain(ssh)
+                })
                 .collect();
             self.vault.lock().expect("vault lock").keys = keys;
             if o.git.take_files_changed() {

@@ -996,6 +996,115 @@ msgstr "Editar Propriedades do Registro de Servidor"
 msgid "Encryption:"
 msgstr "Criptografia:"
 
+# Túnel SSH da conexão.
+msgid "Choose the key file"
+msgstr "Escolher o arquivo da chave"
+
+msgid "Choose the private key file of the SSH tunnel (none was found in ~/.ssh)."
+msgstr "Escolha o arquivo da chave privada do túnel SSH (nenhuma foi encontrada em ~/.ssh)."
+
+msgid "Connect through an SSH tunnel"
+msgstr "Conectar por um túnel SSH"
+
+msgid "Could not connect to the SSH server {server}: {e}"
+msgstr "Não foi possível conectar ao servidor SSH {server}: {e}"
+
+msgid "Could not open the SSH key {file}: the passphrase is wrong or the file is not a private key."
+msgstr "Não foi possível abrir a chave SSH {file}: a frase secreta está errada ou o arquivo não é uma chave privada."
+
+msgid "Could not open the local port of the SSH tunnel: {e}"
+msgstr "Não foi possível abrir a porta local do túnel SSH: {e}"
+
+msgid "Could not read the SSH key {file}: {e}"
+msgstr "Não foi possível ler a chave SSH {file}: {e}"
+
+msgid "Enter the SSH server of the tunnel."
+msgstr "Informe o servidor SSH do túnel."
+
+msgid "Enter the SSH user of the tunnel."
+msgstr "Informe o usuário SSH do túnel."
+
+msgid "Enter the password of {user} on the SSH server {server}."
+msgstr "Informe a senha de {user} no servidor SSH {server}."
+
+msgid "For a database that only an SSH server (a bastion) can reach."
+msgstr "Para um banco que só um servidor SSH (um bastion) alcança."
+
+msgid "Key file"
+msgstr "Arquivo de chave"
+
+msgid "Key file:"
+msgstr "Arquivo da chave:"
+
+msgid "Only the path is saved, never the key. Empty tries the keys in ~/.ssh."
+msgstr "Só o caminho é salvo, nunca a chave. Vazio tenta as chaves de ~/.ssh."
+
+msgid "Passphrase:"
+msgstr "Frase secreta:"
+
+msgid "SSH agent"
+msgstr "Agente SSH"
+
+msgid "SSH authentication:"
+msgstr "Autenticação SSH:"
+
+msgid "SSH password:"
+msgstr "Senha do SSH:"
+
+msgid "SSH server:"
+msgstr "Servidor SSH:"
+
+msgid "SSH user:"
+msgstr "Usuário SSH:"
+
+msgid "The SSH agent has no keys. Add one with ssh-add."
+msgstr "O agente SSH não tem chaves. Adicione uma com ssh-add."
+
+msgid "The SSH agent is not available: {e}"
+msgstr "O agente SSH não está disponível: {e}"
+
+msgid "The SSH server {server} could not reach {host}:{port}: {e}"
+msgstr "O servidor SSH {server} não conseguiu alcançar {host}:{port}: {e}"
+
+msgid "The SSH server {server} did not answer when asked to reach {host}:{port}."
+msgstr "O servidor SSH {server} não respondeu ao pedido para alcançar {host}:{port}."
+
+msgid "The SSH server {server} refused the password of user {user}."
+msgstr "O servidor SSH {server} recusou a senha do usuário {user}."
+
+msgid "The SSH server {server} refused the key {file} for user {user}."
+msgstr "O servidor SSH {server} recusou a chave {file} para o usuário {user}."
+
+msgid "The SSH server {server} refused the keys of the SSH agent for user {user}."
+msgstr "O servidor SSH {server} recusou as chaves do agente SSH para o usuário {user}."
+
+msgid "The key of the SSH server {server} is not the one seen before ({file}, line {line}). If the server really changed, remove that line and connect again."
+msgstr "A chave do servidor SSH {server} não é a que foi vista antes ({file}, linha {line}). Se o servidor mudou mesmo, remova essa linha e conecte de novo."
+
+msgid "The key {file} is protected by a passphrase. Enter it in the SSH tunnel fields."
+msgstr "A chave {file} é protegida por uma frase secreta. Informe a frase nos campos do túnel SSH."
+
+msgid "Timed out connecting to the SSH server {server}."
+msgstr "Tempo esgotado ao conectar ao servidor SSH {server}."
+
+msgid "Uses the keys loaded in the SSH agent of this computer."
+msgstr "Usa as chaves carregadas no agente SSH deste computador."
+
+msgid "empty: none, or the saved one"
+msgstr "vazio: nenhuma, ou a que está salva"
+
+msgid "empty: the saved one"
+msgstr "vazio: a que está salva"
+
+msgid "host or host:port"
+msgstr "host ou host:porta"
+
+msgid "the server closed the connection"
+msgstr "o servidor fechou a conexão"
+
+msgid "{server}, through SSH {ssh}"
+msgstr "{server}, pelo SSH {ssh}"
+
 msgid "Enter a group name."
 msgstr "Digite um nome de grupo."
 

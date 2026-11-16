@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 pgstudio-i18n.workspace = true
 pgstudio-core.workspace = true
+pgstudio-ssh.workspace = true
 pgstudio-automation.workspace = true
 eframe.workspace = true
 image.workspace = true

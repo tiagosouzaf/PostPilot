@@ -371,6 +371,16 @@ de um servidor preenche os campos. Detalhes, o que fica visível no repositório
 e o que fazer se a senha mestra for esquecida estão em
 [`docs/workspace.md`](docs/workspace.md).
 
+### Túnel SSH
+
+Para o banco que só um bastion alcança, o **Connect to Server** e o registro
+de um servidor têm **Conectar por um túnel SSH**: servidor e usuário SSH, e
+arquivo de chave, senha ou agente SSH. Vale para PostgreSQL e SQL Server, no
+Linux e no Windows, sem precisar do `ssh` instalado. O túnel vai junto com a
+conexão (inclusive no `servers.json` do workspace); a senha do SSH ou a frase
+secreta da chave ficam no cofre, e a chave privada é só o caminho do arquivo.
+Detalhes em [`docs/ssh-tunnel.md`](docs/ssh-tunnel.md).
+
 ### Claude
 
 O PostPilot trabalha com o [Claude Code](https://claude.com/claude-code)

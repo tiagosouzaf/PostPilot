@@ -36,13 +36,33 @@ fn network(ssh: &SshSettings, e: &dyn std::fmt::Display) -> ConnectError {
     ))
 }
 
-fn refused(ssh: &SshSettings, how: &str) -> ConnectError {
-    ConnectError::Authentication(trf!(
-        "The SSH server {server} refused {how} for user {user}.",
-        server = ssh.server_name(),
-        how = how,
-        user = ssh.user
-    ))
+/// Com o que o usuário tentou entrar.
+enum Tried<'a> {
+    Password,
+    Key(&'a std::path::Path),
+    Agent,
+}
+
+fn refused(ssh: &SshSettings, tried: Tried) -> ConnectError {
+    let server = ssh.server_name();
+    ConnectError::Authentication(match tried {
+        Tried::Password => trf!(
+            "The SSH server {server} refused the password of user {user}.",
+            server = server,
+            user = ssh.user
+        ),
+        Tried::Key(file) => trf!(
+            "The SSH server {server} refused the key {file} for user {user}.",
+            server = server,
+            file = file.display(),
+            user = ssh.user
+        ),
+        Tried::Agent => trf!(
+            "The SSH server {server} refused the keys of the SSH agent for user {user}.",
+            server = server,
+            user = ssh.user
+        ),
+    })
 }
 
 pub async fn authenticate(
@@ -99,7 +119,7 @@ async fn password(
             }
         }
     }
-    Err(refused(ssh, tr("the password")))
+    Err(refused(ssh, Tried::Password))
 }
 
 async fn key_file(
@@ -152,10 +172,7 @@ async fn key_file(
         if result.success() {
             return Ok(());
         }
-        last = Some(refused(
-            ssh,
-            &trf!("the key {file}", file = file.display()),
-        ));
+        last = Some(refused(ssh, Tried::Key(&file)));
     }
     Err(last.expect("at least one key was tried"))
 }
@@ -201,10 +218,7 @@ async fn agent(session: &mut Handle<Checker>, ssh: &SshSettings) -> Result<(), C
             .map_err(|e| no_agent(&e))?
             .dynamic(),
     };
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| no_agent(&e))?;
+    let identities = agent.request_identities().await.map_err(|e| no_agent(&e))?;
     if identities.is_empty() {
         return Err(ConnectError::Authentication(
             tr("The SSH agent has no keys. Add one with ssh-add.").into(),
@@ -232,7 +246,7 @@ async fn agent(session: &mut Handle<Checker>, ssh: &SshSettings) -> Result<(), C
             return Err(network(ssh, &tr("the server closed the connection")));
         }
     }
-    Err(refused(ssh, tr("the keys of the SSH agent")))
+    Err(refused(ssh, Tried::Agent))
 }
 
 #[cfg(test)]
@@ -242,7 +256,10 @@ mod tests {
     #[test]
     fn tilde_is_the_home_folder_of_this_computer() {
         let home = std::env::home_dir().unwrap();
-        assert_eq!(expand_home("~/.ssh/id_ed25519"), home.join(".ssh/id_ed25519"));
+        assert_eq!(
+            expand_home("~/.ssh/id_ed25519"),
+            home.join(".ssh/id_ed25519")
+        );
         assert_eq!(expand_home("~\\.ssh\\id_rsa"), home.join(".ssh\\id_rsa"));
         assert_eq!(expand_home("~"), home);
         assert_eq!(expand_home("/keys/~x"), PathBuf::from("/keys/~x"));

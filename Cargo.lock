@@ -3833,6 +3833,7 @@ dependencies = [
  "pgstudio-pg-metadata",
  "pgstudio-result-grid",
  "pgstudio-sql-editor",
+ "pgstudio-ssh",
  "pgstudio-updater",
  "serde",
  "serde_json",

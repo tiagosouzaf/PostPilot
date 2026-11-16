@@ -2073,6 +2073,8 @@ pub struct ServerDialog {
     pub remember: bool,
     pub database: String,
     pub ssl: SslMode,
+    /// Túnel SSH da conexão (desligado, na maioria).
+    pub ssh: crate::ssh_fields::SshFields,
     pub name: String,
     pub description: String,
     /// Ambiente do servidor (`None`: o da pasta).
@@ -2119,6 +2121,7 @@ impl ServerDialog {
             } else {
                 SslMode::Require
             },
+            ssh: crate::ssh_fields::SshFields::new(s.ssh.as_ref()),
             name: server.name.clone(),
             description: server.description.clone(),
             environment: server.environment.clone(),
@@ -2212,6 +2215,7 @@ impl ServerDialog {
         if s.database.is_empty() {
             s.database = self.engine.default_database().into();
         }
+        s.ssh = self.ssh.settings()?;
         Ok(s)
     }
 
@@ -2281,6 +2285,11 @@ impl ServerDialog {
                 secrets::save_in_background(store, key, Some(self.password.clone()));
             } else if !self.remember && self.saved {
                 secrets::save_in_background(store, key, None);
+            }
+            // O segredo do túnel SSH digitado aqui fica guardado: o
+            // registro não tem outro lugar para ele.
+            if let Some(ssh) = &settings.ssh {
+                self.ssh.save_secret(store, ssh);
             }
         }
         Ok(path)
@@ -2402,6 +2411,8 @@ impl ServerDialog {
                         .response
                         .labelled_by(label.id);
                     ui.end_row();
+
+                    self.ssh.show(ui, "registered");
 
                     let label = ui.label(tr("Registered server name:"));
                     ui.add(

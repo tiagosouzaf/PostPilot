@@ -49,8 +49,16 @@ pub trait SecretStore: Send + Sync {
 /// Chave da senha de uma conexão: usuário, servidor e porta (com o prefixo
 /// `sqlserver:` no SQL Server). O banco não entra, porque a senha é do
 /// usuário no servidor. É também a chave do servidor conectado.
+///
+/// Por um túnel SSH o servidor SSH entra na chave: dois clientes podem ter
+/// o banco no mesmo endereço interno (`postgres@10.0.0.5:5432`), cada um
+/// atrás do seu bastion.
 pub fn password_key(settings: &ConnectionSettings) -> String {
-    let key = format!("{}@{}:{}", settings.user, settings.host, settings.port);
+    let mut key = format!("{}@{}:{}", settings.user, settings.host, settings.port);
+    if let Some(ssh) = &settings.ssh {
+        key.push_str(" via ");
+        key.push_str(&ssh.endpoint());
+    }
     match settings.engine {
         // O PostgreSQL fica como era, para achar as senhas já guardadas.
         pgstudio_core::connection::Engine::PostgreSql => key,

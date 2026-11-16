@@ -700,7 +700,10 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(r#""auth":"key-file""#), "{json}");
         assert!(!json.contains("\"port\":22"), "{json}");
-        assert_eq!(serde_json::from_str::<ConnectionSettings>(&json).unwrap(), s);
+        assert_eq!(
+            serde_json::from_str::<ConnectionSettings>(&json).unwrap(),
+            s
+        );
         let ssh = s.ssh.unwrap();
         assert_eq!(ssh.secret_key(), "ssh:deploy@bastion.example.com:22");
         assert_eq!(ssh.server_name(), "bastion.example.com");

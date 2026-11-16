@@ -219,7 +219,17 @@ pub async fn open_to(
             .ok()
             .flatten()
     };
-    let session = login(ssh, secret.as_deref()).await?;
+    let session = match login(ssh, secret.as_deref()).await {
+        Ok(s) => s,
+        Err(e) => {
+            // Segredo recusado: o digitado não serve mais (o próximo vem
+            // do diálogo ou do cofre).
+            if matches!(e, ConnectError::Authentication(_)) {
+                set_secret(ssh, "");
+            }
+            return Err(e);
+        }
+    };
     // Uma ida ao banco já agora: se o servidor SSH não o alcança (ou não
     // deixa encaminhar portas), o erro diz isso, em vez de o driver só ver
     // a conexão fechar.
@@ -313,12 +323,7 @@ fn live(key: &str) -> Option<Arc<Tunnel>> {
 /// sem conexão aberta por ele.
 pub fn local_addr(settings: &ConnectionSettings) -> Option<SocketAddr> {
     let ssh = settings.ssh.as_ref()?;
-    live(&tunnel_key(
-        ssh,
-        target_host(&settings.host),
-        settings.port,
-    ))
-    .map(|t| t.local_addr())
+    live(&tunnel_key(ssh, target_host(&settings.host), settings.port)).map(|t| t.local_addr())
 }
 
 /// Entra no servidor SSH: confere a chave dele e autentica.
