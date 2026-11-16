@@ -1042,6 +1042,8 @@ fn permissions_without_changes_have_nothing_to_script() {
     harness.get_by_label_contains("Script").click();
     harness.run_steps(2);
     harness.get_by_label("There are no changes to script.");
+    // O aviso acabou de aparecer e empurra os botões: espera assentar.
+    harness.run_steps(2);
     harness.get_by_label("Cancel").click();
     harness.run_steps(2);
     assert!(harness.state().security_dialog().is_none());
@@ -1125,6 +1127,9 @@ fn tasks_compare_schema_opens_with_the_database_as_source() {
 /// Responde todo "salvar resultados" com o mesmo arquivo.
 struct SaveResultsTo(std::path::PathBuf);
 
+/// Nomes sugeridos nos "salvar resultados" (o último fica aqui).
+static SUGGESTED_RESULTS_NAME: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 impl pgstudio_ui_shell::documents::FileDialogs for SaveResultsTo {
     fn save_path(&mut self, _: &str, _: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
         None
@@ -1134,7 +1139,10 @@ impl pgstudio_ui_shell::documents::FileDialogs for SaveResultsTo {
         None
     }
 
-    fn save_results_path(&mut self, _: &str) -> Option<std::path::PathBuf> {
+    fn save_results_path(&mut self, name: &str) -> Option<std::path::PathBuf> {
+        if self.0.extension().is_some_and(|e| e == "xlsx") {
+            *SUGGESTED_RESULTS_NAME.lock().unwrap() = name.to_string();
+        }
         Some(self.0.clone())
     }
 }
@@ -1192,6 +1200,56 @@ fn results_to_file_writes_the_rows_without_keeping_them() {
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "n,label\n0,row 0\n1,row 1\n2,row 2\n"
+    );
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn export_to_excel_saves_the_grid_as_a_workbook() {
+    let path = temp_file("results.xlsx");
+    let mut harness = harness_saving(&path);
+    let id = query_with(&mut harness, "rows 2");
+    harness.key_press(Key::F5);
+    wait(&mut harness, id);
+    harness.run();
+    let pos = execution(&harness, id).results[0]
+        .grid
+        .cell_center(pgstudio_result_grid::Cell { row: 1, col: 1 })
+        .unwrap();
+    for pressed in [true, false] {
+        harness.event(Event::PointerMoved(pos));
+        harness.event(Event::PointerButton {
+            pos,
+            button: eframe::egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    harness.run();
+    harness.get_by_label("Export to Excel...").click();
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if !harness.state().is_exporting() && path.exists() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "never saved");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.run();
+    // O diálogo já sugere um nome .xlsx.
+    assert_eq!(*SUGGESTED_RESULTS_NAME.lock().unwrap(), "Results.xlsx");
+    // Um ZIP: começa com a primeira planilha e termina no diretório.
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(b"PK\x03\x04"));
+    assert!(bytes.windows(24).any(|w| w == b"xl/worksheets/sheet1.xml"));
+    assert_eq!(&bytes[bytes.len() - 22..bytes.len() - 18], b"PK\x05\x06");
+    assert!(
+        harness
+            .state()
+            .output()
+            .iter()
+            .any(|l| l == &format!("Saved 2 rows to {}.", path.display()))
     );
     std::fs::remove_file(&path).unwrap();
 }

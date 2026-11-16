@@ -231,8 +231,8 @@ fn contains(hay: &str, needle: &str, buf: &mut String) -> bool {
 /// Ordena `rows` pelas chaves (o valor da coluna em cada linha, na mesma
 /// posição). Se todos os valores são números, a ordem é numérica; se não,
 /// é a do texto sem olhar maiúsculas e acentos. Empates ficam na ordem em
-/// que vieram; NULL vai para o fim na ordem crescente e para o começo na
-/// decrescente, como no PostgreSQL.
+/// que vieram; NULL vai sempre para o fim (quem ordena do maior para o
+/// menor quer ver os maiores, não os vazios).
 pub fn sort_rows(rows: Vec<u64>, keys: Vec<Option<String>>, descending: bool) -> Vec<u64> {
     let numbers: Option<Vec<Option<f64>>> = keys
         .iter()
@@ -254,17 +254,15 @@ pub fn sort_rows(rows: Vec<u64>, keys: Vec<Option<String>>, descending: bool) ->
     match numbers {
         Some(n) if n.iter().any(Option::is_some) => {
             order.sort_by(|&a, &b| {
-                by(nulls_last(&n[a as usize], &n[b as usize], |x, y| {
-                    x.total_cmp(y)
-                }))
+                nulls_last(&n[a as usize], &n[b as usize], |x, y| by(x.total_cmp(y)))
             });
         }
         _ => {
             let folded: Vec<Option<String>> = keys.iter().map(|k| k.as_deref().map(fold)).collect();
             order.sort_by(|&a, &b| {
                 let (a, b) = (a as usize, b as usize);
-                by(nulls_last(&folded[a], &folded[b], |x, y| x.cmp(y))
-                    .then_with(|| nulls_last(&keys[a], &keys[b], |x, y| x.cmp(y))))
+                nulls_last(&folded[a], &folded[b], |x, y| by(x.cmp(y)))
+                    .then_with(|| nulls_last(&keys[a], &keys[b], |x, y| by(x.cmp(y))))
             });
         }
     }
@@ -333,7 +331,7 @@ mod tests {
     fn numbers_sort_as_numbers_with_nulls_last() {
         let v = [Some("10"), Some("9"), None, Some("-1.5"), Some("9")];
         assert_eq!(sorted(&v, false), vec![3, 1, 4, 0, 2]);
-        assert_eq!(sorted(&v, true), vec![2, 0, 1, 4, 3]);
+        assert_eq!(sorted(&v, true), vec![0, 1, 4, 3, 2]);
     }
 
     #[test]

@@ -352,16 +352,31 @@ pub fn visuals(theme: Theme) -> egui::Visuals {
     v
 }
 
-/// Espaçamentos: um pouco mais de ar que o padrão do egui, sem perder a
-/// densidade de uma ferramenta de banco de dados.
+/// Quanto a interface inteira é ampliada no tamanho "100%" das opções: as
+/// letras do egui (12,5) ficam um pouco maiores, e ícones e espaços
+/// acompanham.
+pub const BASE_ZOOM: f32 = 1.08;
+
+/// A menor área (em pontos) que a janela precisa ter para os diálogos e as
+/// listas caberem: o zoom não passa do que deixa esse tanto visível.
+pub const MIN_AREA: Vec2 = Vec2::new(640.0, 400.0);
+
+/// O zoom do egui para o tamanho de interface escolhido nas opções.
+pub fn zoom_factor(scale: crate::preferences::UiScale) -> f32 {
+    BASE_ZOOM * scale.factor()
+}
+
+/// Espaçamentos: mais ar que o padrão do egui em volta do texto de menus,
+/// botões e linhas, sem perder a densidade de uma ferramenta de banco de
+/// dados.
 fn spacing(spacing: &mut egui::Spacing) {
-    spacing.item_spacing = Vec2::new(8.0, 4.0);
-    spacing.button_padding = Vec2::new(8.0, 3.0);
-    spacing.interact_size.y = 20.0;
+    spacing.item_spacing = Vec2::new(8.0, 5.0);
+    spacing.button_padding = Vec2::new(10.0, 4.0);
+    spacing.interact_size.y = 22.0;
     // Também é a margem do conteúdo das abas encaixadas (egui_dock); os
     // diálogos usam a margem maior de `dialog_frame`.
-    spacing.window_margin = Margin::same(8);
-    spacing.menu_margin = Margin::same(6);
+    spacing.window_margin = Margin::same(10);
+    spacing.menu_margin = Margin::same(8);
     spacing.combo_height = 260.0;
 }
 

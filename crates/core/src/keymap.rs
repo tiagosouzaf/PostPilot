@@ -30,6 +30,10 @@ pub enum Key {
     Up,
     Down,
     Break,
+    /// A tecla `+` (ou `=`, que é a mesma tecla sem Shift).
+    Plus,
+    /// A tecla `-`.
+    Minus,
 }
 
 impl Key {
@@ -64,6 +68,8 @@ impl Key {
             "UP" => Key::Up,
             "DOWN" => Key::Down,
             "BREAK" | "PAUSE" => Key::Break,
+            "+" | "=" | "PLUS" => Key::Plus,
+            "-" | "MINUS" => Key::Minus,
             _ => return None,
         })
     }
@@ -91,6 +97,8 @@ impl fmt::Display for Key {
             Key::Up => f.write_str("Up"),
             Key::Down => f.write_str("Down"),
             Key::Break => f.write_str("Break"),
+            Key::Plus => f.write_str("+"),
+            Key::Minus => f.write_str("-"),
         }
     }
 }
@@ -134,9 +142,21 @@ impl Chord {
     pub fn parse(s: &str) -> Result<Chord, KeymapError> {
         let s = s.trim();
         let err = || KeymapError::InvalidShortcut(s.to_string());
-        // O último "+" separa a tecla, o que permite tecla "+" no futuro.
-        let mut parts: Vec<&str> = s.split('+').map(str::trim).collect();
-        let key = parts.pop().filter(|k| !k.is_empty()).ok_or_else(err)?;
+        // O último "+" separa a tecla; a tecla "+" vem sozinha ou depois
+        // de outro "+" (`Ctrl++`).
+        let (head, plus_key) = match s.strip_suffix('+') {
+            Some("") => ("", true),
+            Some(rest) if rest.trim_end().ends_with('+') => (rest.trim_end(), true),
+            _ => (s, false),
+        };
+        let mut parts: Vec<&str> = head.split('+').map(str::trim).collect();
+        let key = if plus_key {
+            // Sobrou o "" depois do separador (ou a string vazia).
+            parts.pop();
+            "+"
+        } else {
+            parts.pop().filter(|k| !k.is_empty()).ok_or_else(err)?
+        };
         let mut mods = Modifiers::default();
         for m in parts {
             let flag = match m.to_ascii_lowercase().as_str() {
@@ -284,6 +304,9 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::PropertiesWindow, "F4"),
     (CommandId::Output, "Ctrl+Alt+O"),
     (CommandId::ActivityMonitor, "Ctrl+Alt+A"),
+    (CommandId::ZoomIn, "Ctrl++"),
+    (CommandId::ZoomOut, "Ctrl+-"),
+    (CommandId::ZoomReset, "Ctrl+0"),
     (CommandId::FullScreen, "Shift+Alt+Enter"),
     (CommandId::ChangeDatabase, "Ctrl+U"),
     (CommandId::Execute, "F5"),
@@ -458,6 +481,12 @@ mod tests {
 
     #[test]
     fn rejects_invalid_chords() {
+        assert_eq!(chord("Ctrl++"), Chord::ctrl(Key::Plus));
+        assert_eq!(chord("ctrl + ="), Chord::ctrl(Key::Plus));
+        assert_eq!(chord("+"), Chord::plain(Key::Plus));
+        assert_eq!(chord("Ctrl+-"), Chord::ctrl(Key::Minus));
+        assert_eq!(chord("Ctrl+Plus").to_string(), "Ctrl++");
+        assert_eq!(chord("Ctrl+Minus").to_string(), "Ctrl+-");
         for bad in ["", "Ctrl+", "Hyper+A", "Ctrl+Ctrl+A", "F25", "Ctrl+Foo"] {
             assert!(Chord::parse(bad).is_err(), "{bad:?} deveria falhar");
         }

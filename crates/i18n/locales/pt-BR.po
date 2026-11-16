@@ -538,6 +538,9 @@ msgstr "Texto (separado por tabulações)"
 msgid "SQL INSERT statements"
 msgstr "Instruções SQL INSERT"
 
+msgid "Excel Workbook"
+msgstr "Pasta de Trabalho do Excel"
+
 # Nomes que não mudam
 
 msgid "IntelliSense"
@@ -2020,6 +2023,12 @@ msgstr "Linhas"
 
 msgid "Save Results As..."
 msgstr "Salvar Resultados Como..."
+
+msgid "Export to Excel..."
+msgstr "Exportar para o Excel..."
+
+msgid "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut."
+msgstr "{n} célula(s) com mais de 32.767 caracteres, o limite de uma célula do Excel, foram cortadas."
 
 msgid "Saving..."
 msgstr "Salvando..."
@@ -4589,6 +4598,33 @@ msgstr "Filtrar por este valor"
 
 msgid "Clear Filter"
 msgstr "Limpar filtro"
+
+msgid "Zoom In"
+msgstr "Ampliar"
+
+msgid "Zoom Out"
+msgstr "Reduzir"
+
+msgid "Reset Zoom"
+msgstr "Tamanho Normal"
+
+msgid "Interface size: {percent}%"
+msgstr "Tamanho da interface: {percent}%"
+
+msgid "Interface size:"
+msgstr "Tamanho da interface:"
+
+msgid "Reset"
+msgstr "Restaurar"
+
+msgid "Makes text, icons and spacing larger or smaller in the whole application. Ctrl++ and Ctrl+- change it at any time; Ctrl+0 goes back to 100%."
+msgstr "Aumenta ou diminui letras, ícones e espaços no aplicativo inteiro. Ctrl++ e Ctrl+- mudam a qualquer momento; Ctrl+0 volta para 100%."
+
+msgid "Interface size: {percent}% (this window is too small for it; make the window larger to see it all)"
+msgstr "Tamanho da interface: {percent}% (a janela é pequena para esse tamanho; aumente a janela para ver tudo)"
+
+msgid "This window fits up to {percent}% now. A larger size is saved and applies when the window is larger."
+msgstr "Esta janela comporta até {percent}% agora. Um tamanho maior fica salvo e vale quando a janela estiver maior."
 
 msgid "The sign-in did not finish."
 msgstr "O login não terminou."

@@ -255,8 +255,8 @@ coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
 resultados; no modo texto, as larguras das colunas saem das primeiras mil
 linhas, até 256 caracteres, como no SSMS.
 
-Para exportar, o menu de contexto da grade tem "Save Results As..." e "Copy
-as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
+Para exportar, o menu de contexto da grade tem "Save Results As...",
+"Export to Excel..." e "Copy as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
 perguntarem um arquivo e escreverem as linhas nele direto do servidor, sem
 guardá-las. A extensão escolhe o formato:
 
@@ -265,6 +265,11 @@ guardá-las. A extensão escolhe o formato:
 - `.tsv` ou `.txt`: o formato texto do `COPY` (tab, `\N` para NULL).
 - `.json`: uma lista de objetos.
 - `.sql`: um `INSERT INTO table_name` por linha.
+- `.xlsx`: uma pasta de trabalho do Excel, com o cabeçalho em negrito,
+  congelado e com filtro. Cada resultado é uma planilha, e o que passa de
+  1.048.576 linhas continua na planilha seguinte. Números viram números
+  (menos códigos com zero à esquerda e inteiros com mais de 11 dígitos, que
+  ficam como texto para o Excel não mudar o valor); datas ficam como texto.
 
 O CSV e o TSV voltam iguais com `COPY`; há um teste que faz isso com 1
 milhão de linhas.
