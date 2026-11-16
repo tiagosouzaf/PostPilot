@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 pgstudio-core.workspace = true
+pgstudio-ssh.workspace = true
 pgstudio-i18n.workspace = true
 pgstudio-pg-client.workspace = true
 tiberius.workspace = true

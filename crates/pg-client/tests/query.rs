@@ -22,6 +22,7 @@ fn service() -> Option<PgQueryService> {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     Some(PgQueryService::new(
         settings,

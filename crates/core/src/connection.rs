@@ -259,6 +259,105 @@ impl SslMode {
     }
 }
 
+/// Porta padrão do SSH.
+pub const SSH_PORT: u16 = 22;
+
+/// Como o usuário se identifica no servidor SSH do túnel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SshAuth {
+    /// Senha do usuário no servidor SSH.
+    #[default]
+    Password,
+    /// Arquivo de chave privada (com ou sem frase secreta).
+    KeyFile,
+    /// As chaves do agente SSH do sistema (`ssh-agent`, Pageant).
+    Agent,
+}
+
+impl SshAuth {
+    /// Todos os modos, na ordem do diálogo.
+    pub const ALL: [SshAuth; 3] = [SshAuth::KeyFile, SshAuth::Password, SshAuth::Agent];
+
+    /// Nome exibido no diálogo.
+    pub fn label(self) -> &'static str {
+        pgstudio_i18n::tr(match self {
+            SshAuth::Password => "Password",
+            SshAuth::KeyFile => "Key file",
+            SshAuth::Agent => "SSH agent",
+        })
+    }
+
+    fn is_password(&self) -> bool {
+        *self == SshAuth::Password
+    }
+}
+
+fn ssh_port() -> u16 {
+    SSH_PORT
+}
+
+fn is_ssh_port(port: &u16) -> bool {
+    *port == SSH_PORT
+}
+
+/// Túnel SSH de uma conexão: o app entra no servidor SSH (o bastion) e de
+/// lá alcança o banco. Nenhum segredo fica aqui: a senha do SSH e a frase
+/// secreta da chave vão para o cofre, e a chave privada é só o caminho do
+/// arquivo (cada computador tem a sua).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SshSettings {
+    pub host: String,
+    #[serde(default = "ssh_port", skip_serializing_if = "is_ssh_port")]
+    pub port: u16,
+    pub user: String,
+    #[serde(default, skip_serializing_if = "SshAuth::is_password")]
+    pub auth: SshAuth,
+    /// Caminho da chave privada (`~/.ssh/id_ed25519`); o `~` é a pasta do
+    /// usuário em cada computador.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key_file: String,
+}
+
+impl Default for SshSettings {
+    fn default() -> Self {
+        SshSettings {
+            host: String::new(),
+            port: SSH_PORT,
+            user: String::new(),
+            auth: SshAuth::KeyFile,
+            key_file: String::new(),
+        }
+    }
+}
+
+impl SshSettings {
+    /// `usuario@host:porta` do servidor SSH: é a chave do segredo dele no
+    /// cofre (com o prefixo `ssh:`) e o que as mensagens mostram.
+    pub fn endpoint(&self) -> String {
+        format!("{}@{}:{}", self.user, self.host, self.port)
+    }
+
+    /// Chave do segredo (senha ou frase secreta) no cofre.
+    pub fn secret_key(&self) -> String {
+        format!("ssh:{}", self.endpoint())
+    }
+
+    /// O servidor como se digita: o host, mais a porta quando não é a 22.
+    pub fn server_name(&self) -> String {
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        if self.port == SSH_PORT {
+            host
+        } else {
+            format!("{host}:{}", self.port)
+        }
+    }
+}
+
 /// Dados de uma conexão, sem a senha. É o que fica salvo em "conexões
 /// recentes".
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -272,6 +371,9 @@ pub struct ConnectionSettings {
     pub user: String,
     #[serde(default)]
     pub ssl: SslMode,
+    /// Túnel SSH por onde a conexão passa; sem túnel não é gravado.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshSettings>,
 }
 
 impl Default for ConnectionSettings {
@@ -283,6 +385,7 @@ impl Default for ConnectionSettings {
             database: DEFAULT_DATABASE.into(),
             user: "postgres".into(),
             ssl: SslMode::default(),
+            ssh: None,
         }
     }
 }
@@ -579,6 +682,30 @@ mod tests {
         assert!(Engine::SqlServer.supports(Feature::Security));
         assert!(Engine::SqlServer.supports(Feature::Backup));
         assert!(Engine::SqlServer.supports(Feature::SchemaCompare));
+    }
+
+    #[test]
+    fn ssh_tunnel_is_saved_with_the_connection_and_old_files_open() {
+        let plain = serde_json::to_string(&ConnectionSettings::default()).unwrap();
+        assert!(!plain.contains("ssh"), "{plain}");
+        let s = ConnectionSettings {
+            ssh: Some(SshSettings {
+                host: "bastion.example.com".into(),
+                user: "deploy".into(),
+                key_file: "~/.ssh/id_ed25519".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""auth":"key-file""#), "{json}");
+        assert!(!json.contains("\"port\":22"), "{json}");
+        assert_eq!(serde_json::from_str::<ConnectionSettings>(&json).unwrap(), s);
+        let ssh = s.ssh.unwrap();
+        assert_eq!(ssh.secret_key(), "ssh:deploy@bastion.example.com:22");
+        assert_eq!(ssh.server_name(), "bastion.example.com");
+        let minimal: SshSettings = serde_json::from_str(r#"{"host":"b","user":"u"}"#).unwrap();
+        assert_eq!((minimal.port, minimal.auth), (22, SshAuth::Password));
     }
 
     #[test]

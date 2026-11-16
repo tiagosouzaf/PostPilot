@@ -17,6 +17,7 @@ members = [
     "crates/updater",
     "crates/i18n",
     "crates/mssql",
+    "crates/ssh",
     "xtask",
 ]
 exclude = ["spikes", "vendor"]
@@ -24,7 +25,7 @@ exclude = ["spikes", "vendor"]
 [workspace.package]
 version = "0.2.14"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tiagosouzaf/postpilot"
 
@@ -44,6 +45,7 @@ pgstudio-automation = { path = "crates/automation" }
 pgstudio-updater = { path = "crates/updater" }
 pgstudio-i18n = { path = "crates/i18n" }
 pgstudio-mssql = { path = "crates/mssql" }
+pgstudio-ssh = { path = "crates/ssh" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -69,6 +71,9 @@ rustls-native-certs = "0.8"
 # devolve mensagens, contagens e todos os erros do lote (Client::batch).
 tiberius = { path = "vendor/tiberius", default-features = false, features = ["tds80", "rustls", "sql-browser-tokio", "winauth"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+# Túnel SSH das conexões (banco atrás de bastion): cliente SSH em Rust puro,
+# com o ring (o mesmo do rustls) em vez do aws-lc, que complica o Windows.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 # Cofre do sistema para "Remember password" (marco 5.4). A 3.x pela MSRV de então (1.87);
 # no Linux, Secret Service por zbus (Rust puro, sem libdbus).
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "apple-native", "async-secret-service", "async-io", "crypto-rust"] }
