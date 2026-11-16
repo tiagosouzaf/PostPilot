@@ -89,7 +89,7 @@ impl RecentConnections {
         if let Err(e) = self.save()
             && let Some(path) = &self.path
         {
-            eprintln!("connections: could not save {}: {e}", path.display());
+            crate::log_line!("connections: could not save {}: {e}", path.display());
         }
     }
 

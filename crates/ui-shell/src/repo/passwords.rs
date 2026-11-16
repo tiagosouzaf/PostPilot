@@ -92,7 +92,7 @@ impl SecretStore for WorkspaceSecrets {
                 match v.get(key) {
                     Ok(Some(s)) => return Ok(Some(s)),
                     Ok(None) | Err(VaultError::Locked) => {}
-                    Err(e) => eprintln!("workspace passwords: {e}"),
+                    Err(e) => crate::log_line!("workspace passwords: {e}"),
                 }
             }
         }

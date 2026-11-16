@@ -990,7 +990,7 @@ impl crate::ShellApp {
     /// que já está nele).
     pub fn with_history(mut self, store: HistoryStore) -> Self {
         if let Some(e) = &store.error {
-            eprintln!("history: {e}");
+            crate::log_line!("history: {e}");
         }
         self.history.store = store;
         self

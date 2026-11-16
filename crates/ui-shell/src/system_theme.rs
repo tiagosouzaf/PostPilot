@@ -158,7 +158,7 @@ fn watch_colors(
             }
         });
     if let Err(e) = spawned {
-        eprintln!("system theme: {e}");
+        crate::log_line!("system theme: {e}");
     }
     rx
 }
@@ -292,11 +292,11 @@ mod portal {
             .name("system-theme".into())
             .spawn(move || {
                 if let Err(e) = watch(&ctx, &tx) {
-                    eprintln!("system theme: {e}");
+                    crate::log_line!("system theme: {e}");
                 }
             });
         if let Err(e) = spawned {
-            eprintln!("system theme: {e}");
+            crate::log_line!("system theme: {e}");
         }
         rx
     }

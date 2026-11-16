@@ -327,7 +327,7 @@ impl ShellApp {
                 .map_or(Ok(()), std::fs::create_dir_all)
                 .and_then(|_| std::fs::write(path, text));
             if let Err(e) = saved {
-                eprintln!("claude: could not save {}: {e}", path.display());
+                crate::log_line!("claude: could not save {}: {e}", path.display());
             }
         }
     }
@@ -502,6 +502,14 @@ impl ShellApp {
             }
         };
         let who = origin.label();
+        // No log: se o app cair no meio de uma chamada, a última linha diz
+        // qual era.
+        let detail = ["sql", "table", "function", "schema"]
+            .iter()
+            .find_map(|k| args.get(*k).and_then(Value::as_str))
+            .map(one_line)
+            .unwrap_or_default();
+        crate::applog::line(&format!("claude: {who}: {tool} {detail}"));
         match call {
             ToolCall::ListServers => {
                 self.output.push(format!("{who}: list_servers"));

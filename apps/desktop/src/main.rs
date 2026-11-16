@@ -126,6 +126,7 @@ use pgstudio_ui_shell::registered::RegisteredServers;
 use pgstudio_ui_shell::secrets::KeyringStore;
 use pgstudio_ui_shell::update::Updater;
 
+mod crash;
 mod migrate;
 mod renderer;
 
@@ -151,6 +152,11 @@ fn main() -> std::process::ExitCode {
                 .join("postpilot.log"),
         );
     }
+    // Antes da linha de início: a execução anterior que sumiu sem aviso
+    // aparece primeiro, e a partir daqui uma queda deixa rastro no log.
+    if let Some(config) = config_dir() {
+        crash::install(&config.join(pgstudio_core::CONFIG_DIR_NAME));
+    }
     log_line(&format!(
         "start: PostPilot {} on {} ({}), renderer {}",
         env!("CARGO_PKG_VERSION"),
@@ -167,9 +173,9 @@ fn main() -> std::process::ExitCode {
     // Até a 0.1 o app se chamava PGStudio: traz a configuração antiga.
     if let Some(config) = config_dir() {
         match migrate::legacy_config(&config) {
-            Ok(true) => eprintln!("postpilot: settings copied from the PGStudio folder"),
+            Ok(true) => pgstudio_ui_shell::log_line!("settings copied from the PGStudio folder"),
             Ok(false) => {}
-            Err(e) => eprintln!("postpilot: could not copy the PGStudio settings: {e}"),
+            Err(e) => pgstudio_ui_shell::log_line!("could not copy the PGStudio settings: {e}"),
         }
     }
     // Chaves dos servidores SSH que os túneis já viram (além do
@@ -181,7 +187,7 @@ fn main() -> std::process::ExitCode {
                 .join("ssh_known_hosts"),
         );
     }
-    match run(&launch) {
+    let code = match run(&launch) {
         Ok(()) => {
             log_line("exit");
             std::process::ExitCode::SUCCESS
@@ -196,7 +202,9 @@ fn main() -> std::process::ExitCode {
             log_line(&format!("error: {e}"));
             std::process::ExitCode::FAILURE
         }
-    }
+    };
+    crash::clean_exit();
+    code
 }
 
 fn log_line(message: &str) {
@@ -241,7 +249,7 @@ fn relaunch_with_glow() -> std::process::ExitCode {
             std::process::ExitCode::from(code)
         }
         Err(e) => {
-            eprintln!("postpilot: could not restart with glow: {e}");
+            pgstudio_ui_shell::log_line!("could not restart with glow: {e}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -267,7 +275,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
         .with_app_id(APP_ID);
     match eframe::icon_data::from_png_bytes(ICON_PNG) {
         Ok(icon) => viewport = viewport.with_icon(Arc::new(icon)),
-        Err(e) => eprintln!("could not load the window icon: {e}"),
+        Err(e) => pgstudio_ui_shell::log_line!("could not load the window icon: {e}"),
     }
     if let Some(window) = layout.as_ref().and_then(|l| l.saved.as_ref()?.window) {
         viewport = viewport
@@ -449,7 +457,7 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                         ));
                     }
                     Err(e) => {
-                        eprintln!("could not start the database runtime: {e}");
+                        pgstudio_ui_shell::log_line!("could not start the database runtime: {e}");
                         app = app.with_status(tr("Could not start the database runtime."));
                     }
                 }
@@ -620,7 +628,7 @@ fn env_settings(server: &str) -> Option<ConnectionSettings> {
         settings.database = db;
     }
     if let Err(e) = settings.set_server_name(server) {
-        eprintln!("PGSTUDIO_CONNECT: {e}");
+        pgstudio_ui_shell::log_line!("PGSTUDIO_CONNECT: {e}");
         return None;
     }
     settings.ssh = env_ssh();
@@ -636,13 +644,13 @@ fn env_ssh() -> Option<pgstudio_core::connection::SshSettings> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
     let spec = env("PGSTUDIO_SSH")?;
     let Some((user, server)) = spec.split_once('@') else {
-        eprintln!("PGSTUDIO_SSH: expected user@host");
+        pgstudio_ui_shell::log_line!("PGSTUDIO_SSH: expected user@host");
         return None;
     };
     let (host, port) = match parse_server_name_for(server, SSH_PORT) {
         Ok(hp) => hp,
         Err(e) => {
-            eprintln!("PGSTUDIO_SSH: {e}");
+            pgstudio_ui_shell::log_line!("PGSTUDIO_SSH: {e}");
             return None;
         }
     };
@@ -711,7 +719,7 @@ fn load_keymap() -> (Keymap, Option<String>) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (keymap, None),
         Err(e) => {
-            eprintln!("keymap: não foi possível ler {}: {e}", path.display());
+            pgstudio_ui_shell::log_line!("keymap: não foi possível ler {}: {e}", path.display());
             return (
                 keymap,
                 Some(trf!("Could not read {path}.", path = path.display())),
@@ -720,7 +728,7 @@ fn load_keymap() -> (Keymap, Option<String>) {
     };
     let errors = keymap.apply_overrides(&text);
     for e in &errors {
-        eprintln!("keymap: {}: {e}", path.display());
+        pgstudio_ui_shell::log_line!("keymap: {}: {e}", path.display());
     }
     let status = (!errors.is_empty()).then(|| {
         trf!(

@@ -666,7 +666,7 @@ impl ShellApp {
             self.window = saved.window;
         }
         if let Some(error) = &store.error {
-            eprintln!("layout: {}: {error}", store.path().display());
+            crate::log_line!("layout: {}: {error}", store.path().display());
             self.status =
                 tr("The saved window layout could not be read; using the default layout.")
                     .to_string();
@@ -699,7 +699,7 @@ impl ShellApp {
             return;
         };
         if let Err(e) = store.save(&self.current_layout()) {
-            eprintln!("layout: could not save {}: {e}", store.path().display());
+            crate::log_line!("layout: could not save {}: {e}", store.path().display());
         }
     }
 
@@ -815,7 +815,7 @@ impl ShellApp {
         prefs: preferences::Preferences,
     ) -> Self {
         if let Some(e) = store.as_ref().and_then(|s| s.error.as_ref()) {
-            eprintln!("preferences: {e}");
+            crate::log_line!("preferences: {e}");
             self.status =
                 tr("The saved options could not be read; using the defaults.").to_string();
         }
@@ -1233,7 +1233,7 @@ impl ShellApp {
                                 ctx,
                             ) {
                                 Ok(exec) => doc.execution = Some(exec),
-                                Err(e) => eprintln!("bench: {e}"),
+                                Err(e) => crate::log_line!("bench: {e}"),
                             }
                         }
                         self.activate_document(id);
@@ -4921,7 +4921,7 @@ impl ShellApp {
                 .and_then(|img| img.save(&shot.path).map_err(|e| e.to_string()));
             match result {
                 Ok(()) => println!("screenshot={}", shot.path.display()),
-                Err(e) => eprintln!("falha ao salvar o screenshot: {e}"),
+                Err(e) => crate::log_line!("falha ao salvar o screenshot: {e}"),
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else {

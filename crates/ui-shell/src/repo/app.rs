@@ -272,7 +272,7 @@ impl ShellApp {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Err(e) = std::fs::write(file, text) {
-            eprintln!("workspace: could not save {}: {e}", file.display());
+            crate::log_line!("workspace: could not save {}: {e}", file.display());
         }
     }
 

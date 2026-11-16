@@ -445,7 +445,7 @@ impl Updater {
         if let Some(program) = self.take_restart()
             && let Err(e) = std::process::Command::new(&program).spawn()
         {
-            eprintln!("could not restart {}: {e}", program.display());
+            crate::log_line!("could not restart {}: {e}", program.display());
         }
     }
 
