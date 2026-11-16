@@ -1,8 +1,9 @@
 //! A IA do PostPilot: qual assistente o painel, o Commit e o nome de
 //! arquivo sugerido usam, e as chaves dos provedores.
 //!
-//! O assistente é o Claude Code instalado (o padrão, com o login dele) ou
-//! um provedor por chave de API: OpenAI, OpenRouter, GLM ou qualquer
+//! O assistente é o Claude Code instalado (o padrão, com o login dele), o
+//! ChatGPT pela conta do usuário (o Codex CLI instalado, com o login dele;
+//! veja `pgstudio_automation::codex`) ou um provedor por chave de API: OpenAI, OpenRouter, GLM ou qualquer
 //! serviço compatível (veja `pgstudio_automation::llm`). A lista e a
 //! escolha ficam em `<config>/PostPilot/ai.json`, sem segredo nenhum.
 //!
@@ -16,13 +17,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use pgstudio_automation::llm::{Backend, Provider, ProviderKind};
+use pgstudio_automation::llm::{Backend, CHATGPT_LABEL, Provider, ProviderKind};
 use serde::{Deserialize, Serialize};
 
 use crate::secrets::SecretStore;
 
 /// O valor de [`AiSettings::active`] para o Claude Code.
 pub const CLAUDE_CODE: &str = "claude-code";
+
+/// O valor de [`AiSettings::active`] para o ChatGPT pela conta (Codex).
+pub const CHATGPT: &str = "chatgpt-account";
 
 /// De quanto em quanto tempo procurar o `claude` de novo.
 const PROGRAM_TTL: Duration = Duration::from_secs(20);
@@ -31,7 +35,7 @@ const PROGRAM_TTL: Duration = Duration::from_secs(20);
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiSettings {
-    /// [`CLAUDE_CODE`] ou o `id` de um provedor.
+    /// [`CLAUDE_CODE`], [`CHATGPT`] ou o `id` de um provedor.
     pub active: String,
     pub providers: Vec<Provider>,
 }
@@ -46,9 +50,32 @@ impl Default for AiSettings {
 }
 
 impl AiSettings {
-    /// O provedor escolhido, se não for o Claude Code.
+    /// O provedor por chave escolhido, se for um.
     pub fn active_provider(&self) -> Option<&Provider> {
         self.providers.iter().find(|p| p.id == self.active)
+    }
+
+    /// Se o escolhido é o ChatGPT pela conta.
+    pub fn uses_chatgpt(&self) -> bool {
+        self.active == CHATGPT
+    }
+
+    /// Nome do assistente escolhido.
+    pub fn active_label(&self) -> String {
+        match self.active_provider() {
+            Some(p) => p.name.clone(),
+            None if self.uses_chatgpt() => CHATGPT_LABEL.to_string(),
+            None => "Claude Code".to_string(),
+        }
+    }
+
+    /// O nome que o painel mostra: vazio com o Claude Code.
+    pub fn panel_name(&self) -> String {
+        match self.active_provider() {
+            Some(p) => p.name.clone(),
+            None if self.uses_chatgpt() => CHATGPT_LABEL.to_string(),
+            None => String::new(),
+        }
     }
 
     /// Um `id` que nenhum provedor usa.
@@ -195,6 +222,10 @@ pub struct Ai {
     program_override: Option<PathBuf>,
     /// O `claude` achado e quando foi procurado.
     program: Mutex<Option<(Instant, Option<PathBuf>)>>,
+    /// Programa no lugar do `codex` (testes).
+    codex_override: Option<PathBuf>,
+    /// O `codex` achado e quando foi procurado.
+    codex: Mutex<Option<(Instant, Option<PathBuf>)>>,
 }
 
 impl Default for Ai {
@@ -207,6 +238,8 @@ impl Default for Ai {
             detect: false,
             program_override: None,
             program: Mutex::new(None),
+            codex_override: None,
+            codex: Mutex::new(None),
         }
     }
 }
@@ -312,10 +345,38 @@ impl Ai {
         }
     }
 
+    /// Usa este programa no lugar do `codex` (testes).
+    pub fn set_codex(&mut self, program: Option<PathBuf>) {
+        self.codex_override = program;
+    }
+
+    /// Onde está o Codex CLI, se instalado (a busca no PATH vale por
+    /// alguns segundos).
+    pub fn codex(&self) -> Option<PathBuf> {
+        if let Some(p) = &self.codex_override {
+            return Some(p.clone());
+        }
+        if !self.detect {
+            return None;
+        }
+        let mut cached = self.codex.lock().expect("ai codex");
+        match &*cached {
+            Some((at, found)) if at.elapsed() < PROGRAM_TTL => found.clone(),
+            _ => {
+                let found = pgstudio_automation::codex::find_program();
+                *cached = Some((Instant::now(), found.clone()));
+                found
+            }
+        }
+    }
+
     /// A IA conectada: o assistente escolhido, se está pronto para usar
-    /// (Claude Code instalado, ou provedor com chave).
+    /// (Claude Code ou Codex instalado, ou provedor com chave).
     pub fn backend(&self) -> Option<Backend> {
         match self.settings.active_provider() {
+            None if self.settings.uses_chatgpt() => {
+                self.codex().map(|program| Backend::Codex { program })
+            }
             None => self
                 .claude_code()
                 .map(|program| Backend::ClaudeCode { program }),
@@ -337,9 +398,7 @@ impl Ai {
 
     /// Nome do assistente escolhido, pronto ou não.
     pub fn active_label(&self) -> String {
-        self.settings
-            .active_provider()
-            .map_or_else(|| "Claude Code".to_string(), |p| p.name.clone())
+        self.settings.active_label()
     }
 
     /// Aplica o que saiu de Tools > Options: grava `ai.json`, guarda as
@@ -400,6 +459,34 @@ impl Ai {
 mod tests {
     use super::*;
     use crate::secrets::{MemoryStore, NoStore};
+
+    #[test]
+    fn chatgpt_by_account_needs_the_codex_program_and_no_key() {
+        let dir = temp("chatgpt");
+        let mut ai = Ai::open(&dir, Some(Arc::new(MemoryStore::default())));
+        ai.set_program(None);
+        ai.set_codex(Some(PathBuf::from("/opt/codex")));
+        let mut settings = ai.settings().clone();
+        settings.active = CHATGPT.into();
+        assert_eq!(ai.apply(settings, HashMap::new()), None);
+        assert_eq!(
+            ai.backend(),
+            Some(Backend::Codex {
+                program: PathBuf::from("/opt/codex")
+            })
+        );
+        assert_eq!(ai.active_label(), "ChatGPT");
+        assert_eq!(ai.settings().panel_name(), "ChatGPT");
+        // A escolha fica salva; credencial nenhuma passa pelo PostPilot.
+        let text = std::fs::read_to_string(dir.join("ai.json")).unwrap();
+        assert!(text.contains("\"active\": \"chatgpt-account\""), "{text}");
+        assert!(!dir.join("ai-keys.json").exists());
+        let again = Ai::open(&dir, None);
+        assert!(again.settings().uses_chatgpt());
+        // Sem o Codex instalado, não há IA conectada.
+        assert_eq!(Ai::with(again.settings().clone(), &[]).backend(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("postpilot-ai-{name}-{}", std::process::id()));

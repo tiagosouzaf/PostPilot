@@ -805,7 +805,8 @@ impl ShellApp {
         let mut dialog = options::OptionsDialog::new(&self.preferences);
         dialog.system_theme = self.system_theme.current();
         dialog.ai =
-            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code());
+            options::AiDraft::new(self.ai.settings(), self.ai.keys(), self.ai.claude_code())
+                .with_codex(self.ai.codex());
         if let Some(page) = page {
             dialog.page = page;
         }
@@ -815,6 +816,11 @@ impl ShellApp {
     /// Tools > AI Providers: as opções, na página dos provedores de IA.
     pub(crate) fn open_ai_options(&mut self) {
         self.open_options(Some(options::Page::AiProviders));
+    }
+
+    /// O diálogo de opções aberto.
+    pub fn options(&self) -> Option<&options::OptionsDialog> {
+        self.options.as_ref()
     }
 
     /// O diálogo de opções aberto (testes).
@@ -830,11 +836,8 @@ impl ShellApp {
     /// Usa esta configuração de IA (o aplicativo lê a da pasta de
     /// configuração; os testes montam a deles).
     pub fn with_ai(mut self, ai: ai::Ai) -> Self {
-        self.claude_panel.provider = ai
-            .settings()
-            .active_provider()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+        self.claude_panel.provider = ai.settings().panel_name();
+        self.claude_panel.by_account = ai.settings().uses_chatgpt();
         self.ai = ai;
         self
     }
@@ -851,10 +854,8 @@ impl ShellApp {
             panel.agent = None;
             panel.session = None;
             panel.busy = false;
-            panel.provider = match self.ai.settings().active_provider() {
-                Some(p) => p.name.clone(),
-                None => String::new(),
-            };
+            panel.provider = self.ai.settings().panel_name();
+            panel.by_account = self.ai.settings().uses_chatgpt();
             if !panel.items.is_empty() {
                 panel.note(trf!(
                     "Now using {provider}. The conversation starts over.",
