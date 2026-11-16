@@ -15,12 +15,25 @@
 //!   `null`.
 //! - INSERT: um `INSERT INTO` por linha, valores como literais que o banco
 //!   converte para o tipo da coluna.
+//! - Excel: uma pasta de trabalho `.xlsx` (veja [`crate::xlsx`]).
 
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::Path;
 
+use pgstudio_i18n::tr;
+
 use crate::ResultStore;
+use crate::xlsx::Workbook;
+
+/// O que um "Save Results As" escreveu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Saved {
+    /// Linhas escritas.
+    pub rows: u64,
+    /// Células cortadas por não caberem no formato (Excel).
+    pub truncated: u64,
+}
 
 /// Formato do arquivo exportado.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,11 +43,13 @@ pub enum Format {
     Json,
     /// Comandos `INSERT INTO` numa tabela.
     Insert,
+    /// Pasta de trabalho do Excel (`.xlsx`).
+    Xlsx,
 }
 
 impl Format {
     /// Formato pela extensão do arquivo (`.csv`, `.tsv`/`.txt`, `.json`,
-    /// `.sql`); sem extensão conhecida, CSV.
+    /// `.sql`, `.xlsx`); sem extensão conhecida, CSV.
     pub fn from_path(path: &Path) -> Format {
         let ext = path
             .extension()
@@ -44,6 +59,7 @@ impl Format {
             Some("tsv" | "txt" | "tab") => Format::Tsv,
             Some("json") => Format::Json,
             Some("sql") => Format::Insert,
+            Some("xlsx") => Format::Xlsx,
             _ => Format::Csv,
         }
     }
@@ -51,7 +67,10 @@ impl Format {
 
 /// Escreve um resultado, uma linha por vez.
 pub struct Writer<W: Write> {
-    out: W,
+    /// A saída dos formatos de texto.
+    out: Option<W>,
+    /// A pasta de trabalho do Excel (uma planilha).
+    book: Option<Workbook<W>>,
     format: Format,
     columns: Vec<String>,
     /// Tabela dos INSERTs, já entre aspas.
@@ -63,6 +82,18 @@ impl<W: Write> Writer<W> {
     /// Começa um resultado com estas colunas (o CSV e o TSV já escrevem o
     /// cabeçalho). `table` é a tabela dos INSERTs.
     pub fn new(mut out: W, format: Format, columns: Vec<String>, table: &str) -> io::Result<Self> {
+        if format == Format::Xlsx {
+            let mut book = Workbook::new(out, tr("Results"));
+            book.sheet(&columns)?;
+            return Ok(Writer {
+                out: None,
+                book: Some(book),
+                format,
+                columns,
+                table: String::new(),
+                rows: 0,
+            });
+        }
         match format {
             Format::Csv => {
                 let names: Vec<String> = columns.iter().map(|c| csv_field(Some(c))).collect();
@@ -73,10 +104,11 @@ impl<W: Write> Writer<W> {
                 writeln!(out, "{}", names.join("\t"))?;
             }
             Format::Json => out.write_all(b"[")?,
-            Format::Insert => {}
+            Format::Insert | Format::Xlsx => {}
         }
         Ok(Writer {
-            out,
+            out: Some(out),
+            book: None,
             format,
             columns,
             table: quote_ident(table),
@@ -88,32 +120,39 @@ impl<W: Write> Writer<W> {
     pub fn row(&mut self, row: &[Option<String>]) -> io::Result<()> {
         let cell = |i: usize| row.get(i).and_then(|v| v.as_deref());
         let n = self.columns.len();
+        if let Some(book) = &mut self.book {
+            book.row(row)?;
+            self.rows += 1;
+            return Ok(());
+        }
+        let out = self.out.as_mut().expect("formato de texto");
         match self.format {
             Format::Csv => {
                 let fields: Vec<String> = (0..n).map(|i| csv_field(cell(i))).collect();
-                writeln!(self.out, "{}", fields.join(","))?;
+                writeln!(out, "{}", fields.join(","))?;
             }
             Format::Tsv => {
                 let fields: Vec<String> = (0..n).map(|i| tsv_field(cell(i))).collect();
-                writeln!(self.out, "{}", fields.join("\t"))?;
+                writeln!(out, "{}", fields.join("\t"))?;
             }
             Format::Json => {
                 let sep = if self.rows == 0 { "\n  {" } else { ",\n  {" };
-                self.out.write_all(sep.as_bytes())?;
+                out.write_all(sep.as_bytes())?;
                 for (i, name) in self.columns.iter().enumerate() {
                     if i > 0 {
-                        self.out.write_all(b", ")?;
+                        out.write_all(b", ")?;
                     }
                     let value = cell(i).map_or("null".to_string(), json_string);
-                    write!(self.out, "{}: {value}", json_string(name))?;
+                    write!(out, "{}: {value}", json_string(name))?;
                 }
-                self.out.write_all(b"}")?;
+                out.write_all(b"}")?;
             }
+            Format::Xlsx => {}
             Format::Insert => {
                 let names: Vec<String> = self.columns.iter().map(|c| quote_ident(c)).collect();
                 let values: Vec<String> = (0..n).map(|i| literal(cell(i))).collect();
                 writeln!(
-                    self.out,
+                    out,
                     "INSERT INTO {} ({}) VALUES ({});",
                     self.table,
                     names.join(", "),
@@ -130,27 +169,37 @@ impl<W: Write> Writer<W> {
         self.rows
     }
 
+    /// Células cortadas por não caberem no formato (só o Excel corta:
+    /// veja [`crate::xlsx::MAX_CELL_CHARS`]).
+    pub fn truncated(&self) -> u64 {
+        self.book.as_ref().map_or(0, Workbook::truncated)
+    }
+
     /// Fecha o resultado e devolve a saída.
-    pub fn finish(mut self) -> io::Result<W> {
+    pub fn finish(self) -> io::Result<W> {
+        if let Some(book) = self.book {
+            return book.finish();
+        }
+        let mut out = self.out.expect("formato de texto");
         if self.format == Format::Json {
             let end = if self.rows == 0 { "]\n" } else { "\n]\n" };
-            self.out.write_all(end.as_bytes())?;
+            out.write_all(end.as_bytes())?;
         }
-        self.out.flush()?;
-        Ok(self.out)
+        out.flush()?;
+        Ok(out)
     }
 }
 
 /// Exporta as linhas `rows` de um buffer travado só linha a linha: quem
-/// mostra a grade continua lendo enquanto isso. Devolve quantas linhas
-/// foram escritas.
+/// mostra a grade continua lendo enquanto isso. Devolve o que foi
+/// escrito.
 pub fn write_rows<W: Write>(
     store: &std::sync::Mutex<ResultStore>,
     rows: Range<u64>,
     format: Format,
     table: &str,
     out: W,
-) -> io::Result<u64> {
+) -> io::Result<Saved> {
     let lock = || store.lock().unwrap_or_else(|e| e.into_inner());
     let columns = lock().columns().to_vec();
     let mut w = Writer::new(out, format, columns, table)?;
@@ -158,9 +207,12 @@ pub fn write_rows<W: Write>(
         let row = lock().row(r);
         w.row(&row)?;
     }
-    let n = w.rows();
+    let saved = Saved {
+        rows: w.rows(),
+        truncated: w.truncated(),
+    };
     w.finish()?;
-    Ok(n)
+    Ok(saved)
 }
 
 /// As linhas e colunas escolhidas como comandos INSERT (para "Copy as
@@ -323,6 +375,7 @@ mod tests {
         assert_eq!(Format::from_path(Path::new("a.txt")), Format::Tsv);
         assert_eq!(Format::from_path(Path::new("a.json")), Format::Json);
         assert_eq!(Format::from_path(Path::new("a.sql")), Format::Insert);
+        assert_eq!(Format::from_path(Path::new("a.XLSX")), Format::Xlsx);
         assert_eq!(Format::from_path(Path::new("a")), Format::Csv);
     }
 
@@ -337,10 +390,33 @@ mod tests {
         let store = std::sync::Mutex::new(store);
         let mut out = Vec::new();
         let n = write_rows(&store, 0..50_000, Format::Csv, "t", &mut out).unwrap();
-        assert_eq!(n, 50_000);
+        assert_eq!(n.rows, 50_000);
         let text = String::from_utf8(out).unwrap();
         assert_eq!(text.lines().count(), 50_001);
         assert_eq!(text.lines().last(), Some("49999,linha 49999"));
+    }
+
+    #[test]
+    fn xlsx_is_a_workbook_with_one_sheet() {
+        let mut store = ResultStore::new(vec!["id".into(), "nome".into(), "obs".into()]);
+        for r in rows() {
+            store.push(&r);
+        }
+        let store = std::sync::Mutex::new(store);
+        let mut out = Vec::new();
+        let saved = write_rows(&store, 0..2, Format::Xlsx, "t", &mut out).unwrap();
+        assert_eq!(
+            saved,
+            Saved {
+                rows: 2,
+                truncated: 0
+            }
+        );
+        let files = crate::xlsx::unzip(&out);
+        let sheet = &files[0].1;
+        assert!(sheet.contains("<c r=\"A2\"><v>1</v></c>"));
+        assert!(sheet.contains(">Ana, &quot;A&quot;<"));
+        assert!(sheet.contains("<autoFilter ref=\"A1:C3\"/>"));
     }
 
     #[test]

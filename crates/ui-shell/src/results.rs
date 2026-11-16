@@ -17,13 +17,20 @@ use pgstudio_result_grid::{grid, text};
 
 use crate::result_edit::{ResultEditor, Status};
 
+/// Salvar o resultado com este índice, com a extensão sugerida (`csv` em
+/// "Save Results As...", `xlsx` em "Export to Excel...").
+pub type SaveRequest = (usize, &'static str);
+/// Abrir o JSON Viewer nesta célula do resultado com este índice.
+pub type JsonRequest = (usize, pgstudio_result_grid::Cell);
+
 /// O que o usuário pediu no painel.
 #[derive(Default)]
 pub struct Action {
     /// Clicou numa mensagem de erro: levar o cursor a esta posição.
     pub jump_to: Option<usize>,
-    /// "Save Results As..." no resultado com este índice.
-    pub save_results: Option<usize>,
+    /// "Save Results As..." (`csv`) ou "Export to Excel..." (`xlsx`) no
+    /// resultado com este índice, com a extensão sugerida.
+    pub save_results: Option<(usize, &'static str)>,
     /// Abrir o JSON Viewer nesta célula do resultado com este índice.
     pub open_json: Option<(usize, pgstudio_result_grid::Cell)>,
 }
@@ -233,7 +240,7 @@ fn grids(
     doc: u32,
     sets: &mut [ResultSet],
     log: &mut Vec<String>,
-) -> (Option<usize>, Option<(usize, pgstudio_result_grid::Cell)>) {
+) -> (Option<SaveRequest>, Option<JsonRequest>) {
     let mut save = None;
     let mut json = None;
     let gap = ui.spacing().item_spacing.y;
@@ -257,8 +264,10 @@ fn grids(
                         edit_strip(ui, editor);
                     }
                     let out = grid::show(ui, id, &mut store, state);
-                    if out.save_as {
-                        save = Some(i);
+                    if out.export_excel {
+                        save = Some((i, "xlsx"));
+                    } else if out.save_as {
+                        save = Some((i, "csv"));
                     }
                     if let Some(editor) = editor.as_mut() {
                         editor.handle(&out, &mut store, state);

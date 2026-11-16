@@ -538,6 +538,9 @@ msgstr "Texto (separado por tabulações)"
 msgid "SQL INSERT statements"
 msgstr "Instruções SQL INSERT"
 
+msgid "Excel Workbook"
+msgstr "Pasta de Trabalho do Excel"
+
 # Nomes que não mudam
 
 msgid "IntelliSense"
@@ -2020,6 +2023,12 @@ msgstr "Linhas"
 
 msgid "Save Results As..."
 msgstr "Salvar Resultados Como..."
+
+msgid "Export to Excel..."
+msgstr "Exportar para o Excel..."
+
+msgid "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut."
+msgstr "{n} célula(s) com mais de 32.767 caracteres, o limite de uma célula do Excel, foram cortadas."
 
 msgid "Saving..."
 msgstr "Salvando..."
