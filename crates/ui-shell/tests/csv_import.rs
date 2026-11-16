@@ -309,6 +309,7 @@ fn postgres_loads_an_excel_csv_and_rolls_back_on_error() {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     let service = pgstudio_pg_client::PgQueryService::new(
         settings,
