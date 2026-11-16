@@ -28,5 +28,5 @@ pub mod safety;
 pub mod tools;
 
 pub use hub::{Client, Inbox, Origin, Pending, Reply, Responder};
-pub use safety::{Safety, classify};
+pub use safety::{Place, Safety, classify};
 pub use tools::{EditMode, ToolCall, ToolSpec};

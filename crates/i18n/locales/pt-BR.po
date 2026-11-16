@@ -4298,8 +4298,23 @@ msgstr "Esta janela de consulta está conectada a um servidor de {environment}, 
 msgid "Do you want to execute it?"
 msgstr "Deseja executá-lo?"
 
-msgid "not only reading"
-msgstr "não é só leitura"
+msgid "This query window is connected to a server in {environment}, and PostPilot could not confirm that this SQL only reads data."
+msgstr "Esta janela de consulta está conectada a um servidor de {environment}, e o PostPilot não conseguiu confirmar que este SQL só lê dados."
+
+msgid "This query window runs on multiple servers, and PostPilot could not confirm that this SQL only reads data."
+msgstr "Esta janela de consulta roda em vários servidores, e o PostPilot não conseguiu confirmar que este SQL só lê dados."
+
+msgid "The statement is on line {line}."
+msgstr "O comando está na linha {line}."
+
+msgid "It stopped understanding the SQL on line {line}, near \"{near}\"."
+msgstr "Ele deixou de entender o SQL na linha {line}, perto de \"{near}\"."
+
+msgid "It stopped understanding the SQL on line {line}."
+msgstr "Ele deixou de entender o SQL na linha {line}."
+
+msgid "These servers ask for confirmation:"
+msgstr "Estes servidores pedem confirmação:"
 
 msgid "Confirm changes"
 msgstr "Confirmar alterações"
@@ -5328,8 +5343,8 @@ msgstr "Esta janela de consulta roda em {n} servidores."
 msgid "Plans and Object Information are not available on multiple servers."
 msgstr "Planos e Informações do Objeto não estão disponíveis em vários servidores."
 
-msgid "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:"
-msgstr "Esta janela de consulta roda em vários servidores, e este SQL pode alterar o banco ({reason}). Estes servidores pedem confirmação:"
+msgid "This query window runs on multiple servers, and this SQL can change the database ({reason})."
+msgstr "Esta janela de consulta roda em vários servidores, e este SQL pode alterar o banco ({reason})."
 
 msgid "The results are read-only: they come from multiple servers."
 msgstr "Os resultados são somente leitura: eles vêm de vários servidores."

@@ -877,6 +877,45 @@ fn production_asks_before_running_sql_that_changes_the_database() {
     assert!(!harness.state().is_confirming_environment());
     assert_ne!(harness.state().status(), "The query was not executed.");
 
+    // Só SELECTs, com um `;` faltando entre os dois últimos: o PostPilot não
+    // entende o lote, mas vê que ele só lê, e não pergunta (o erro de
+    // sintaxe vem do servidor).
+    set_text(
+        &mut harness,
+        "-- select a from t where b <> '[]'::jsonb;\nselect * from campo_complementar\n\nSELECT *\nFROM caixa\nLIMIT 10",
+    );
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert!(!harness.state().is_confirming_environment());
+
+    // A pergunta diz em que linha está o comando que altera.
+    set_text(&mut harness, "select 1;\n\ndelete from pedidos");
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert_eq!(
+        harness.state().environment_confirm_reason(),
+        Some((Some("DELETE".into()), Some(3)))
+    );
+    harness.get_by_label("The statement is on line 3.");
+    harness.get_by_label("Cancel").click();
+    harness.run();
+
+    // SQL que o PostPilot não entende e que tem palavra de escrita continua
+    // perguntando, e diz onde parou de entender.
+    set_text(
+        &mut harness,
+        "select 1;\nselect * from a\nupdate b set c = 1",
+    );
+    harness.state_mut().execute(&ctx, CommandId::Execute);
+    harness.run();
+    assert_eq!(
+        harness.state().environment_confirm_reason(),
+        Some((None, Some(3)))
+    );
+    harness.get_by_label("It stopped understanding the SQL on line 3, near \"b\".");
+    harness.get_by_label("Cancel").click();
+    harness.run();
+
     // Fora de Production, DDL roda sem perguntar.
     connect_with_dialog(&mut harness, "hr-db", false);
     harness.state_mut().execute(&ctx, CommandId::NewQuery);
