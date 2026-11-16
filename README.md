@@ -206,16 +206,25 @@ Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
 (Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
 trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
-O editor tem vários cursores e seleção em coluna. Alt+arrastar (ou
-Alt+Shift+setas) seleciona um bloco retangular, uma seleção por linha;
-Ctrl+Alt+↑/↓ põe um cursor na linha de cima ou de baixo; Ctrl+clique põe um
-cursor onde você clicar (e tira, se já houver um ali); Shift+Alt+. seleciona
-também a próxima ocorrência do texto selecionado. Digitar, apagar, Enter, Tab,
-recortar, colar e o IntelliSense valem para todos os cursores, e Ctrl+Z desfaz
-em todos de uma vez. Copiar junta as seleções, uma por linha, e colar de volta
-num bloco com o mesmo número de linhas devolve uma linha a cada cursor. Esc (ou
-um clique simples) volta a um cursor só. Executar, comentar e formatar usam a
-seleção principal, a do último cursor.
+O editor tem vários cursores e seleção em coluna, com os gestos do VS Code.
+Clique num lugar, segure Shift+Alt (ou Ctrl+Shift) e clique em outro: a seleção
+em coluna vai do cursor até o clique, uma seleção por linha. Alt+arrastar faz o
+mesmo a partir de onde o botão desceu. Pelo teclado, Shift+Alt+↑/↓ (ou
+Ctrl+Alt+↑/↓) põe um cursor na linha de cima ou de baixo, e Ctrl+Shift+Alt+setas
+(ou Shift+Alt+←/→ com o bloco já começado) mudam o bloco. Alt+clique ou
+Ctrl+clique põe um cursor onde você clicar (e tira, se já houver um ali). Ctrl+D
+seleciona a palavra do cursor e, de novo, a próxima ocorrência dela; Ctrl+F2
+seleciona todas. Shift+Alt+→ expande a seleção (palavra, texto entre aspas,
+parênteses, comando até o `;`, tudo) e Shift+Alt+← encolhe de volta. Depois de
+um duplo ou triplo clique, arrastar continua por palavra ou por linha.
+
+Digitar, apagar, Enter, Tab e Shift+Tab, recortar, colar e o IntelliSense valem
+para todos os cursores, e Ctrl+Z desfaz em todos de uma vez. Copiar junta as
+seleções, uma por linha, e colar de volta num bloco com o mesmo número de linhas
+devolve uma linha a cada cursor. Esc (ou um clique simples) volta a um cursor
+só. Executar, comentar e formatar usam a seleção principal, a do último cursor.
+Com o editor em foco, Ctrl+D é a próxima ocorrência; Results to Grid continua no
+menu Query (e Ctrl+K, Ctrl+D continua formatando).
 
 Format Document (Shift+Alt+F ou Ctrl+Shift+I, como no VS Code, ou Ctrl+K, Ctrl+D,
 como no Visual Studio; também em Edit > Advanced e no menu de contexto do editor)
