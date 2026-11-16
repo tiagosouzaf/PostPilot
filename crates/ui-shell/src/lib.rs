@@ -314,8 +314,12 @@ struct PendingEnvironment {
     /// Nome do ambiente, já traduzido.
     environment: String,
     color: registered::Rgb,
-    /// O que o lote faz, como "UPDATE" ou "DROP".
-    reason: String,
+    /// O que o lote faz, como "UPDATE" ou "DROP"; `None` quando o
+    /// PostPilot não entendeu o SQL e por isso não sabe se ele só lê.
+    reason: Option<String>,
+    /// Onde está o que motivou a pergunta, com a linha já contada no
+    /// editor (o lote pode ser só a seleção).
+    place: Option<pgstudio_automation::Place>,
     /// Numa janela de vários servidores, os que estão no ambiente que
     /// pede confirmação.
     servers: Vec<String>,
@@ -2233,6 +2237,22 @@ impl ShellApp {
         self.server_tag(&key)
     }
 
+    /// Passa a linha de um lugar do lote (que pode ser só a seleção, a
+    /// partir do caractere `offset`) para a linha do editor da janela `id`.
+    pub(crate) fn editor_place(
+        &self,
+        id: u32,
+        offset: usize,
+        place: Option<pgstudio_automation::Place>,
+    ) -> Option<pgstudio_automation::Place> {
+        let mut place = place?;
+        if let Some(doc) = self.documents.get(id) {
+            let before = doc.text.chars().take(offset).filter(|c| *c == '\n').count();
+            place.line += before as u64;
+        }
+        Some(place)
+    }
+
     /// Escolhe como rodar o lote já lido da janela `id`. Num ambiente que
     /// pede confirmação (Produção, por padrão), um lote que pode alterar o
     /// banco espera o "Execute" do usuário; `confirmed` diz que ele já
@@ -2257,14 +2277,14 @@ impl ShellApp {
                 .and_then(|k| self.engine_of_key(k))
                 .or_else(|| self.connection.as_ref().map(|c| c.settings.engine))
                 .unwrap_or_default();
-            let reason = match pgstudio_automation::safety::classify_for(engine, &sql) {
+            let (safety, place) = pgstudio_automation::safety::classify_located(engine, &sql);
+            let reason = match safety {
                 pgstudio_automation::safety::Safety::ReadOnly => None,
-                pgstudio_automation::safety::Safety::Writes { reason } => Some(reason),
-                pgstudio_automation::safety::Safety::Unknown { .. } => {
-                    Some(tr("not only reading").to_string())
-                }
+                pgstudio_automation::safety::Safety::Writes { reason } => Some(Some(reason)),
+                pgstudio_automation::safety::Safety::Unknown { .. } => Some(None),
             };
             if let Some(reason) = reason {
+                let place = self.editor_place(id, offset, place);
                 self.environment_confirm = Some(PendingEnvironment {
                     run: PendingActual {
                         doc: id,
@@ -2274,6 +2294,7 @@ impl ShellApp {
                     environment: tag.environment.unwrap_or_default(),
                     color: tag.color,
                     reason,
+                    place,
                     servers: Vec::new(),
                 });
                 return;
@@ -2491,17 +2512,43 @@ impl ShellApp {
                 registered::environment_badge(ui, &pending.environment, pending.color);
             });
             ui.add_space(4.0);
-            if pending.servers.is_empty() {
-                ui.label(trf!(
+            let many = !pending.servers.is_empty();
+            ui.label(match (&pending.reason, many) {
+                (Some(reason), false) => trf!(
                     "This query window is connected to a server in {environment}, and this SQL can change the database ({reason}).",
                     environment = pending.environment,
-                    reason = pending.reason
-                ));
-            } else {
-                ui.label(trf!(
-                    "This query window runs on multiple servers, and this SQL can change the database ({reason}). These servers ask for confirmation:",
-                    reason = pending.reason
-                ));
+                    reason = reason
+                ),
+                (None, false) => trf!(
+                    "This query window is connected to a server in {environment}, and PostPilot could not confirm that this SQL only reads data.",
+                    environment = pending.environment
+                ),
+                (Some(reason), true) => trf!(
+                    "This query window runs on multiple servers, and this SQL can change the database ({reason}).",
+                    reason = reason
+                ),
+                (None, true) => tr(
+                    "This query window runs on multiple servers, and PostPilot could not confirm that this SQL only reads data.",
+                )
+                .to_string(),
+            });
+            // Qual comando motivou a pergunta.
+            if let Some(place) = &pending.place {
+                ui.label(match (&pending.reason, &place.near) {
+                    (Some(_), _) => trf!("The statement is on line {line}.", line = place.line),
+                    (None, Some(near)) => trf!(
+                        "It stopped understanding the SQL on line {line}, near \"{near}\".",
+                        line = place.line,
+                        near = near
+                    ),
+                    (None, None) => trf!(
+                        "It stopped understanding the SQL on line {line}.",
+                        line = place.line
+                    ),
+                });
+            }
+            if many {
+                ui.label(tr("These servers ask for confirmation:"));
                 egui::ScrollArea::vertical()
                     .id_salt("environment_confirm_servers")
                     .max_height(140.0)
@@ -2544,6 +2591,16 @@ impl ShellApp {
     /// Lote esperando a confirmação do ambiente (testes).
     pub fn is_confirming_environment(&self) -> bool {
         self.environment_confirm.is_some()
+    }
+
+    /// O motivo da confirmação pendente e a linha do editor em que ele
+    /// está (testes). O motivo é `None` quando o SQL não foi entendido.
+    pub fn environment_confirm_reason(&self) -> Option<(Option<String>, Option<u64>)> {
+        let pending = self.environment_confirm.as_ref()?;
+        Some((
+            pending.reason.clone(),
+            pending.place.as_ref().map(|p| p.line),
+        ))
     }
 
     /// Pergunta antes do plano real de comandos que alteram dados, com a

@@ -1059,24 +1059,30 @@ impl ShellApp {
     ) {
         let targets = self.multi_run_targets(id);
         if !confirmed {
-            use pgstudio_automation::safety::{Safety, classify_for};
+            use pgstudio_automation::safety::{Safety, classify_located};
             let mut reason = None;
+            let mut place = None;
             let mut first: Option<ServerTag> = None;
             let mut names = Vec::new();
             for (t, tag) in &targets {
                 let Some(tag) = tag.as_ref().filter(|g| g.confirm_changes) else {
                     continue;
                 };
-                let why = match classify_for(t.settings.engine, &sql) {
+                let (safety, at) = classify_located(t.settings.engine, &sql);
+                let why = match safety {
                     Safety::ReadOnly => continue,
-                    Safety::Writes { reason } => reason,
-                    Safety::Unknown { .. } => tr("not only reading").to_string(),
+                    Safety::Writes { reason } => Some(reason),
+                    Safety::Unknown { .. } => None,
                 };
-                reason.get_or_insert(why);
+                if reason.is_none() {
+                    reason = Some(why);
+                    place = at;
+                }
                 first.get_or_insert_with(|| tag.clone());
                 names.push(t.name.clone());
             }
             if let (Some(reason), Some(tag)) = (reason, first) {
+                let place = self.editor_place(id, offset, place);
                 self.environment_confirm = Some(crate::PendingEnvironment {
                     run: crate::PendingActual {
                         doc: id,
@@ -1086,6 +1092,7 @@ impl ShellApp {
                     environment: tag.environment.unwrap_or_default(),
                     color: tag.color,
                     reason,
+                    place,
                     servers: names,
                 });
                 return;
