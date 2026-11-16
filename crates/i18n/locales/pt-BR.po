@@ -6317,6 +6317,107 @@ msgstr "Adicionar Workspace..."
 msgid "Workspaces: your connections, queries and snippets in Git repositories. Switch between the open ones or add another."
 msgstr "Workspaces: as suas conexões, consultas e trechos em repositórios Git. Troque entre os abertos ou adicione outro."
 
+# Consulta entre servidores
+
+msgid "Cross-Server Query"
+msgstr "Consulta entre Servidores"
+
+msgid "\"{name}\" is not a saved connection. Register the servers in the workspace or in Registered Servers."
+msgstr "\"{name}\" não é uma conexão guardada. Registre os servidores no workspace ou em Servidores Registrados."
+
+msgid "\"{name}\" is not a saved connection. The servers are: {servers}."
+msgstr "\"{name}\" não é uma conexão guardada. Os servidores são: {servers}."
+
+msgid "$$ text"
+msgstr "texto entre $$"
+
+msgid "(no saved connections yet: register servers in the workspace or in Registered Servers)"
+msgstr "(ainda não há conexões guardadas: registre servidores no workspace ou em Servidores Registrados)"
+
+msgid "(several servers)"
+msgstr "(vários servidores)"
+
+msgid "A cross-server query only reads, and the query for {source} can change the server ({reason})."
+msgstr "A consulta entre servidores só lê, e a consulta de {source} pode alterar o servidor ({reason})."
+
+msgid "A cross-server query only reads: write a SELECT."
+msgstr "A consulta entre servidores só lê: escreva um SELECT."
+
+msgid "Could not use the local database for the join: {error}"
+msgstr "Não foi possível usar o banco local do join: {error}"
+
+msgid "Cross-server"
+msgstr "Entre servidores"
+
+msgid "Cross-server query: joins data from the saved connections."
+msgstr "Consulta entre servidores: junta dados das conexões guardadas."
+
+msgid "Cross-server query: one SELECT that joins data from saved connections."
+msgstr "Consulta entre servidores: um SELECT que junta dados das conexões guardadas."
+
+msgid "Plans and Object Information are not available in a cross-server query."
+msgstr "Planos e Informações do Objeto não estão disponíveis numa consulta entre servidores."
+
+msgid "Servers: {servers}"
+msgstr "Servidores: {servers}"
+
+msgid "The query returned no result to join."
+msgstr "A consulta não devolveu um resultado para juntar."
+
+msgid "The server query is empty."
+msgstr "A consulta do servidor está vazia."
+
+msgid "This query window joins data from the saved connections."
+msgstr "Esta janela de consulta junta dados das conexões guardadas."
+
+msgid "Unterminated {what}."
+msgstr "Faltou fechar: {what}."
+
+msgid "Write a server query as server($$ ... $$) or server.database($$ ... $$)."
+msgstr "Escreva a consulta do servidor como servidor($$ ... $$) ou servidor.banco($$ ... $$)."
+
+msgid "Write the collection as server.database.collection or server.collection."
+msgstr "Escreva a coleção como servidor.banco.coleção ou servidor.coleção."
+
+msgid "Write the index as server.index."
+msgstr "Escreva o índice como servidor.índice."
+
+msgid "Write the keys as server.\"pattern\" or server.database.\"pattern\", like cache.\"user:*\"."
+msgstr "Escreva as chaves como servidor.\"padrão\" ou servidor.banco.\"padrão\", como cache.\"usuario:*\"."
+
+msgid "Write the table as server.database.schema.table, server.schema.table or server.table."
+msgstr "Escreva a tabela como servidor.banco.schema.tabela, servidor.schema.tabela ou servidor.tabela."
+
+msgid "[{source}] The query returned more than one result; only the first is used."
+msgstr "[{source}] A consulta devolveu mais de um resultado; só o primeiro é usado."
+
+msgid "[{source}] WARNING: only the first {rows} rows were read. Filter on the server with server($$ query $$) to read less."
+msgstr "[{source}] AVISO: só as primeiras {rows} linhas foram lidas. Filtre no servidor com servidor($$ consulta $$) para ler menos."
+
+msgid "comment"
+msgstr "comentário"
+
+msgid "name in brackets"
+msgstr "nome entre colchetes"
+
+msgid "quoted text"
+msgstr "texto entre aspas"
+
+msgid "A whole table:  server.database.schema.table  (or server.table)"
+msgstr "Tabela inteira:        servidor.banco.schema.tabela  (ou servidor.tabela)"
+
+msgid "A server query: server($$ select ... where ... $$) alias  (filters on the server)"
+msgstr "Consulta no servidor:  servidor($$ select ... where ... $$) apelido  (filtra no servidor)"
+
+msgid "MongoDB:        server.collection  or  server($$ db.orders.find({...}) $$)"
+msgstr "MongoDB:               servidor.coleção  ou  servidor($$ db.pedidos.find({...}) $$)"
+
+msgid "Elasticsearch:  server.index       Redis: server.\"user:*\"  (key, type, value)"
+msgstr "Elasticsearch:         servidor.índice     Redis: servidor.\"usuario:*\"  (key, type, value)"
+
+msgid "The outer SQL is SQLite; json_extract reads inside documents. Read-only."
+msgstr "O SQL de fora é SQLite; json_extract lê dentro dos documentos. Só leitura."
+
 msgid "Connected"
 msgstr "Conectado"
 

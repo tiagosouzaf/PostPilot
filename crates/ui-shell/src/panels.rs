@@ -135,6 +135,8 @@ pub struct Viewer<'a> {
     pub doc_tags: std::collections::HashMap<u32, crate::registered::ServerTag>,
     /// Catálogos do IntelliSense.
     pub catalogs: &'a crate::intellisense::Catalogs,
+    /// Catálogo das janelas entre servidores: os servidores e as tabelas.
+    pub federated_catalog: &'a pgstudio_core::catalog::Catalog,
     /// Banco das janelas sem conexão própria.
     pub default_database: Option<String>,
     /// Chave (`usuario@host:porta`) do servidor ativo, se conectado.
@@ -461,7 +463,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .resizable(false)
                         .frame(crate::results::strip_frame(ui, tag))
                         .show(ui, |ui| {
-                            if doc.multi.is_some() {
+                            if doc.federated.is_some() {
+                                crate::federated::strip(ui);
+                            } else if doc.multi.is_some() {
                                 crate::multi::strip(ui, server, tag);
                             } else {
                                 crate::results::connected_strip(
@@ -473,7 +477,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                             }
                         });
                 }
-                let catalog = db.and_then(|db| self.catalogs.get(&db));
+                let catalog = if doc.federated.is_some() {
+                    Some(self.federated_catalog)
+                } else {
+                    db.and_then(|db| self.catalogs.get(&db))
+                };
                 let out = pgstudio_sql_editor::SqlEditor::new(
                     &mut doc.text,
                     &mut doc.editor,

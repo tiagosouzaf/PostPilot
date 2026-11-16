@@ -343,6 +343,13 @@ async fn client_command(
                 }
             }
         }
+        "KEYS" => {
+            let pattern = command.text(2).unwrap_or_else(|| "*".into());
+            if let Err(e) = keys(state, settings, password, &pattern, sink).await {
+                state.connection = None;
+                sink(QueryEvent::Error(ServerMessage::error(e)));
+            }
+        }
         "INTRANSACTION" => emit(
             Rendered::Grid {
                 columns: vec!["in_transaction".into()],
@@ -357,4 +364,92 @@ async fn client_command(
             command,
         )),
     }
+}
+
+/// `POSTPILOT KEYS padrão`: as chaves que casam com o padrão, uma linha
+/// por chave, com o tipo e o valor (`key`, `type`, `value`). É a "tabela"
+/// do Redis para a consulta entre servidores. Texto sai como está; hash,
+/// lista, set e sorted set saem em JSON (o hash como objeto). Percorre com
+/// `SCAN`, que não trava o servidor como o `KEYS`.
+async fn keys(
+    state: &mut State,
+    settings: &ConnectionSettings,
+    password: &str,
+    pattern: &str,
+    sink: &mut QuerySink,
+) -> Result<(), String> {
+    let connection = connect(state, settings, password).await?;
+    sink(QueryEvent::Columns(vec![
+        "key".into(),
+        "type".into(),
+        "value".into(),
+    ]));
+    let mut seen = std::collections::HashSet::new();
+    let mut cursor = "0".to_string();
+    let mut rows = 0u64;
+    loop {
+        let reply = connection
+            .query(&["SCAN", &cursor, "MATCH", pattern, "COUNT", "1000"])
+            .await?;
+        let mut parts = reply.into_items();
+        let found = parts.pop().unwrap_or(Value::Null).into_items();
+        cursor = parts
+            .pop()
+            .and_then(|c| c.to_cell())
+            .unwrap_or_else(|| "0".into());
+        // O `SCAN` pode repetir chaves.
+        let batch: Vec<String> = found
+            .into_iter()
+            .filter_map(|k| k.to_cell())
+            .filter(|k| seen.insert(k.clone()))
+            .collect();
+        // Os tipos de todas de uma vez, depois os valores de todas.
+        for key in &batch {
+            connection
+                .send(&[b"TYPE".to_vec(), key.clone().into_bytes()])
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        let mut types = Vec::with_capacity(batch.len());
+        for _ in &batch {
+            let ty = connection.read().await.map_err(|e| e.to_string())?;
+            types.push(ty.to_cell().unwrap_or_default());
+        }
+        for (key, ty) in batch.iter().zip(&types) {
+            let args: Vec<&str> = match ty.as_str() {
+                "string" => vec!["GET", key],
+                "hash" => vec!["HGETALL", key],
+                "list" => vec!["LRANGE", key, "0", "-1"],
+                "set" => vec!["SMEMBERS", key],
+                "zset" => vec!["ZRANGE", key, "0", "-1", "WITHSCORES"],
+                // Streams e tipos de módulos: só a chave e o tipo. O
+                // `EXISTS` mantém uma resposta por chave.
+                _ => vec!["EXISTS", key],
+            };
+            let args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+            connection.send(&args).await.map_err(|e| e.to_string())?;
+        }
+        for (key, ty) in batch.iter().zip(&types) {
+            let value = connection.read().await.map_err(|e| e.to_string())?;
+            let cell = match (ty.as_str(), value) {
+                (_, Value::Error(_) | Value::Null) => None,
+                ("string", v) => v.to_cell(),
+                // No RESP2 o hash vem como lista de campo e valor.
+                ("hash", v) => Value::Map(v.into_pairs()).to_cell(),
+                ("list" | "set" | "zset", v) => v.to_cell(),
+                _ => None,
+            };
+            sink(QueryEvent::Row(vec![
+                Some(key.clone()),
+                Some(ty.clone()),
+                cell,
+            ]));
+            rows += 1;
+        }
+        if cursor == "0" {
+            break;
+        }
+    }
+    sink(QueryEvent::CommandComplete { rows });
+    Ok(())
 }

@@ -403,6 +403,15 @@ no Object Explorer. "Remember password", no Connect to Server e no registro,
 guarda a senha no cofre do sistema (Credential Manager no Windows, Secret
 Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 
+### Consulta entre servidores
+
+**Consulta > Consulta entre Servidores** transforma a janela num `SELECT` que
+junta dados de conexões guardadas diferentes: PostgreSQL com SQL Server, e
+também com MongoDB, Elasticsearch e Redis. Cada fonte é lida no servidor dela
+(`servidor.banco.schema.tabela`, ou a consulta do próprio servidor em
+`servidor($$ ... $$)`) e o join roda num SQLite local. Só leitura. Sintaxe e
+limites em [docs/consulta-entre-servidores.md](docs/consulta-entre-servidores.md).
+
 ### Workspace num repositório
 
 O **Workspace Explorer** (Ctrl+Alt+L) abre uma pasta, normalmente um
