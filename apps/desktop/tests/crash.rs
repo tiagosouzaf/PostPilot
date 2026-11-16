@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use std::os::unix::process::ExitStatusExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 fn config(name: &str) -> PathBuf {
@@ -15,7 +15,7 @@ fn config(name: &str) -> PathBuf {
 }
 
 /// Roda o app com a queda `kind` e devolve como ele terminou e o log.
-fn crash(config: &PathBuf, kind: &str, stderr: Stdio) -> (ExitStatus, String) {
+fn crash(config: &Path, kind: &str, stderr: Stdio) -> (ExitStatus, String) {
     let status = Command::new(env!("CARGO_BIN_EXE_postpilot"))
         .env("XDG_CONFIG_HOME", config)
         .env("PGSTUDIO_CRASH_TEST", kind)
@@ -29,7 +29,7 @@ fn crash(config: &PathBuf, kind: &str, stderr: Stdio) -> (ExitStatus, String) {
     (status, log)
 }
 
-fn markers(config: &PathBuf) -> Vec<String> {
+fn markers(config: &Path) -> Vec<String> {
     std::fs::read_dir(config.join("PostPilot"))
         .unwrap()
         .flatten()
