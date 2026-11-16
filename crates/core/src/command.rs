@@ -73,6 +73,7 @@ commands! {
     QuickInfo => "Edit.QuickInfo", "Quick Info";
     CompleteWord => "Edit.CompleteWord", "Complete Word";
     RefreshLocalCache => "Edit.RefreshLocalCache", "Refresh Local Cache";
+    AiSuggestions => "Edit.AiSuggestions", "AI Suggestions";
     CommentSelection => "Edit.CommentSelection", "Comment Selection";
     UncommentSelection => "Edit.UncommentSelection", "Uncomment Selection";
     MakeUppercase => "Edit.MakeUppercase", "Make Uppercase";

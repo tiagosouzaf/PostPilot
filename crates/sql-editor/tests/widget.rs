@@ -361,3 +361,115 @@ fn syntax_errors_are_underlined_while_they_last() {
     use egui_kittest::kittest::Queryable;
     h.get_by_label("Unclosed quotation mark after the character string.");
 }
+
+fn hint(
+    title: &str,
+    action: pgstudio_sql_editor::hints::HintAction,
+) -> pgstudio_sql_editor::hints::Hint {
+    pgstudio_sql_editor::hints::Hint {
+        kind: Default::default(),
+        title: title.into(),
+        detail: String::new(),
+        action,
+    }
+}
+
+#[test]
+fn ai_hints_replace_the_statement_or_add_one_after_it() {
+    use pgstudio_sql_editor::hints::{HintAction, Hints};
+    use pgstudio_sql_editor::lexer::Dialect;
+
+    let text = "select 1;\nselect * from pedido ;\nselect 3";
+    let base = "select * from pedido";
+    let start = text.find(base).unwrap();
+    let hints = || Hints {
+        items: vec![
+            hint("troca", HintAction::Replace("select id from pedido".into())),
+            hint(
+                "índice",
+                HintAction::Insert("create index on pedido (id)".into()),
+            ),
+        ],
+        range: start..start + base.len(),
+        base: base.into(),
+        source: "IA".into(),
+    };
+    let mut h = harness(text);
+    h.run();
+    // Sem sugestões, pedir a lista vira um pedido à casca.
+    h.state_mut().state.open_hints();
+    h.run();
+    assert!(!h.state().state.hints_open());
+    assert!(h.state_mut().state.take_hint_request());
+    assert!(!h.state_mut().state.take_hint_request());
+
+    // "Acrescentar": depois do `;` que o comando já tem.
+    h.state_mut().state.set_hints(Some(hints()));
+    h.state_mut().state.open_hints();
+    h.run();
+    assert!(h.state().state.hints_open());
+    assert!(!h.state_mut().state.take_hint_request());
+    h.key_press(Key::ArrowDown);
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().text,
+        "select 1;\nselect * from pedido ;\n\ncreate index on pedido (id)\nselect 3"
+    );
+    // A outra sugestão continua valendo; Enter troca só o comando dela.
+    assert_eq!(h.state().state.hints().unwrap().items.len(), 1);
+    h.state_mut().state.open_hints();
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().text,
+        "select 1;\nselect id from pedido ;\n\ncreate index on pedido (id)\nselect 3"
+    );
+    assert!(h.state().state.hints().is_none());
+    // Cada sugestão é um passo do desfazer.
+    h.key_press_modifiers(Modifiers::CTRL, Key::Z);
+    h.run();
+    h.key_press_modifiers(Modifiers::CTRL, Key::Z);
+    h.run();
+    assert_eq!(h.state().text, text);
+
+    // Se o comando mudou depois que a IA leu, a sugestão não é aplicada.
+    let mut stale = hints();
+    stale.base = "select * from outra".into();
+    h.state_mut().state.set_hints(Some(stale));
+    h.state_mut().state.open_hints();
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(h.state().text, text);
+    assert!(h.state().state.hints().is_none());
+
+    // Digitar fecha a lista; no T-SQL o comando novo não ganha `;`.
+    let mut h = harness("SELECT 1");
+    h.state_mut().state.set_dialect(Dialect::TSql);
+    h.run();
+    let all = Hints {
+        items: vec![hint(
+            "plano",
+            HintAction::Insert("SET STATISTICS IO ON".into()),
+        )],
+        range: 0..8,
+        base: "SELECT 1".into(),
+        source: "IA".into(),
+    };
+    h.state_mut().state.set_hints(Some(all.clone()));
+    h.state_mut().state.open_hints();
+    h.run();
+    h.event(Event::Text("x".into()));
+    h.run();
+    assert!(!h.state().state.hints_open());
+    h.key_press(Key::Backspace);
+    h.run();
+    h.state_mut().state.open_hints();
+    h.run();
+    h.key_press(Key::Tab);
+    h.run();
+    assert_eq!(h.state().text, "SELECT 1\n\nSET STATISTICS IO ON");
+}

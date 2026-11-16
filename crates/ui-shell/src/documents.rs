@@ -16,6 +16,10 @@ pub struct Document {
     pub editor: pgstudio_sql_editor::EditorState,
     /// Linha e coluna do cursor (a partir de 1), para a status bar.
     pub cursor: Option<(usize, usize)>,
+    /// Onde o cursor está no texto, em bytes (para as sugestões da IA).
+    pub cursor_byte: usize,
+    /// Sugestão da IA aplicada no editor neste frame.
+    pub applied_hint: Option<pgstudio_sql_editor::hints::Hint>,
     /// Conexão da janela, aberta na primeira execução.
     pub session: Option<Session>,
     /// Banco em que a janela conecta (o do nó do Object Explorer de onde ela
@@ -104,6 +108,8 @@ impl Documents {
             saved: String::new(),
             editor: Default::default(),
             cursor: None,
+            cursor_byte: 0,
+            applied_hint: None,
             session: None,
             database: None,
             execution: None,
@@ -141,6 +147,8 @@ impl Documents {
             text,
             editor: Default::default(),
             cursor: None,
+            cursor_byte: 0,
+            applied_hint: None,
             session: None,
             database: None,
             execution: None,
@@ -167,6 +175,8 @@ impl Documents {
             saved,
             editor: Default::default(),
             cursor: None,
+            cursor_byte: 0,
+            applied_hint: None,
             session: None,
             database: None,
             execution: None,

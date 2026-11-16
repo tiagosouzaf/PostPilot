@@ -4238,6 +4238,7 @@ name = "pgstudio-sql-editor"
 version = "0.2.37"
 dependencies = [
  "eframe",
+ "egui-phosphor",
  "egui_kittest",
  "pgstudio-core",
  "pgstudio-i18n",

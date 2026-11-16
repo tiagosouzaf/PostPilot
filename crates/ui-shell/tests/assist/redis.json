@@ -1,0 +1,32 @@
+{
+ "suggestions": [
+  {
+   "kind": "performance",
+   "title": "Trocar KEYS sessao:* por SCAN 0 MATCH sessao:* COUNT 100",
+   "detail": "KEYS percorre todas as chaves de uma vez e bloqueia o Redis em bancos grandes; SCAN pagina pelo cursor sem travar o servidor.",
+   "action": "replace",
+   "code": "SCAN 0 MATCH sessao:* COUNT 100"
+  },
+  {
+   "kind": "columns",
+   "title": "Ler a sessão sessao:ana com HGETALL",
+   "detail": "sessao:ana é um hash; HGETALL traz todos os campos e valores da sessão.",
+   "action": "insert",
+   "code": "HGETALL sessao:ana"
+  },
+  {
+   "kind": "other",
+   "title": "Verificar o TTL de sessao:ana",
+   "detail": "Sessões normalmente devem expirar; TTL mostra se sessao:ana tem prazo (-1 indica que nunca expira).",
+   "action": "insert",
+   "code": "TTL sessao:ana"
+  },
+  {
+   "kind": "other",
+   "title": "Medir o uso de memória de sessao:ana",
+   "detail": "MEMORY USAGE mostra quantos bytes a sessão ocupa, útil para estimar o custo de todas as chaves sessao:*.",
+   "action": "insert",
+   "code": "MEMORY USAGE sessao:ana"
+  }
+ ]
+}

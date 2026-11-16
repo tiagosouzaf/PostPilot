@@ -13,6 +13,7 @@
 //! [`collect::Collector`], com limite de linhas e de bytes.
 
 pub mod agent;
+pub mod assist;
 pub mod catalog;
 pub mod chat_agent;
 pub mod codex;

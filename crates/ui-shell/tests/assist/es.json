@@ -1,0 +1,46 @@
+{
+ "suggestions": [
+  {
+   "kind": "idiom",
+   "title": "Trocar match por term em filter no campo status",
+   "detail": "status é keyword: term faz a comparação exata, e dentro de bool.filter o resultado é cacheado e não calcula score.",
+   "action": "replace",
+   "code": "GET /pedidos/_search\n{\n  \"query\": {\n    \"bool\": {\n      \"filter\": [\n        { \"term\": { \"status\": \"pago\" } }\n      ]\n    }\n  }\n}"
+  },
+  {
+   "kind": "filter",
+   "title": "Filtrar por data dos últimos 30 dias com range",
+   "detail": "Junta o status pago com um range em data usando date math (now-30d/d) para limitar aos pedidos recentes.",
+   "action": "replace",
+   "code": "GET /pedidos/_search\n{\n  \"query\": {\n    \"bool\": {\n      \"filter\": [\n        { \"term\": { \"status\": \"pago\" } },\n        { \"range\": { \"data\": { \"gte\": \"now-30d/d\" } } }\n      ]\n    }\n  }\n}"
+  },
+  {
+   "kind": "aggregate",
+   "title": "Somar total por cliente.cidade com terms e sum",
+   "detail": "Com \"size\": 0 a busca devolve só as agregações: quantidade de pedidos pagos e soma de total por cidade.",
+   "action": "replace",
+   "code": "GET /pedidos/_search\n{\n  \"size\": 0,\n  \"query\": {\n    \"bool\": {\n      \"filter\": [\n        { \"term\": { \"status\": \"pago\" } }\n      ]\n    }\n  },\n  \"aggs\": {\n    \"por_cidade\": {\n      \"terms\": { \"field\": \"cliente.cidade\" },\n      \"aggs\": {\n        \"soma_total\": { \"sum\": { \"field\": \"total\" } }\n      }\n    }\n  }\n}"
+  },
+  {
+   "kind": "sort",
+   "title": "Ordenar por data desc e limitar com size",
+   "detail": "Mostra os pedidos pagos mais recentes primeiro, trazendo só os 20 primeiros.",
+   "action": "replace",
+   "code": "GET /pedidos/_search\n{\n  \"size\": 20,\n  \"query\": { \"match\": { \"status\": \"pago\" } },\n  \"sort\": [\n    { \"data\": \"desc\" }\n  ]\n}"
+  },
+  {
+   "kind": "columns",
+   "title": "Retornar só cliente.nome, total e data via _source",
+   "detail": "Filtrar o _source reduz o tamanho da resposta quando você só precisa desses campos.",
+   "action": "replace",
+   "code": "GET /pedidos/_search\n{\n  \"_source\": [\"cliente.nome\", \"total\", \"data\"],\n  \"query\": { \"match\": { \"status\": \"pago\" } }\n}"
+  },
+  {
+   "kind": "aggregate",
+   "title": "Usar _count para contar pedidos pagos",
+   "detail": "Se a ideia é só saber quantos pedidos estão pagos, _count é mais leve que _search.",
+   "action": "insert",
+   "code": "GET /pedidos/_count\n{\n  \"query\": { \"term\": { \"status\": \"pago\" } }\n}"
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "suggestions": [
+  {
+   "kind": "sort",
+   "title": "Ordenar por data decrescente e limitar com .limit(50)",
+   "detail": "Mostra os pedidos pagos mais recentes primeiro e evita trazer a coleção pedidos inteira de uma vez.",
+   "action": "replace",
+   "code": "db.pedidos.find({ status: \"pago\" }).sort({ data: -1 }).limit(50)"
+  },
+  {
+   "kind": "columns",
+   "title": "Projetar só cliente_id, total, data e status",
+   "detail": "Os documentos trazem o array itens inteiro; uma projeção reduz o volume transferido quando você só precisa dos dados principais.",
+   "action": "replace",
+   "code": "db.pedidos.find({ status: \"pago\" }).projection({ cliente_id: 1, total: 1, data: 1, status: 1 })"
+  },
+  {
+   "kind": "filter",
+   "title": "Filtrar um período com $gte/$lt em data",
+   "detail": "Restringe os pedidos pagos a um intervalo de datas, útil para relatórios mensais.",
+   "action": "replace",
+   "code": "db.pedidos.find({ status: \"pago\", data: { $gte: ISODate(\"2026-11-01T00:00:00Z\"), $lt: ISODate(\"2026-12-01T00:00:00Z\") } })"
+  },
+  {
+   "kind": "aggregate",
+   "title": "Somar total por cliente_id com $group",
+   "detail": "Um pipeline com $match em status \"pago\" e $group por cliente_id mostra quanto cada cliente pagou e quantos pedidos fez.",
+   "action": "replace",
+   "code": "db.pedidos.aggregate([{ $match: { status: \"pago\" } }, { $group: { _id: \"$cliente_id\", total_pago: { $sum: \"$total\" }, pedidos: { $sum: 1 } } }, { $sort: { total_pago: -1 } }, { $limit: 20 }])"
+  },
+  {
+   "kind": "join",
+   "title": "Juntar clientes via $lookup em cliente_id",
+   "detail": "cliente_id parece ser a chave _id da coleção clientes; o $lookup traz os dados do cliente junto de cada pedido pago.",
+   "action": "replace",
+   "code": "db.pedidos.aggregate([{ $match: { status: \"pago\" } }, { $lookup: { from: \"clientes\", localField: \"cliente_id\", foreignField: \"_id\", as: \"cliente\" } }, { $unwind: \"$cliente\" }, { $sort: { data: -1 } }, { $limit: 50 }])"
+  },
+  {
+   "kind": "index",
+   "title": "Criar índice em { status: 1, data: -1 }",
+   "detail": "Atende ao filtro por status e à ordenação por data sem varrer toda a coleção pedidos.",
+   "action": "insert",
+   "code": "db.pedidos.createIndex({ status: 1, data: -1 })"
+  }
+ ]
+}

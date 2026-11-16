@@ -95,6 +95,7 @@ pub const MENUS: &[Menu] = &[
                     I(ParameterInfo),
                     I(QuickInfo),
                     I(CompleteWord),
+                    I(AiSuggestions),
                     SEP,
                     I(RefreshLocalCache),
                 ],

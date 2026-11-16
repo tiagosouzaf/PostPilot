@@ -452,6 +452,26 @@ impl AiDraft {
         };
         ui.add_space(8.0);
         ui.horizontal(|ui| {
+            ui.label(tr("Suggest what to do with the query in the editor:"));
+            egui::ComboBox::from_id_salt("options_ai_assist")
+                .selected_text(self.settings.assist.label())
+                .show_ui(ui, |ui| {
+                    for mode in crate::ai::AssistMode::ALL {
+                        ui.selectable_value(&mut self.settings.assist, mode, mode.label());
+                    }
+                });
+        });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "The AI reads the query under the cursor and the names in the catalog (tables, columns, keys and indexes) and proposes joins, filters, indexes, fixes and more; the list opens in Edit > IntelliSense > AI Suggestions. The data in the tables is not sent and nothing runs on the server.",
+                ))
+                .weak(),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
             ui.strong(tr("Providers"));
             ui.menu_button(
                 format!("{} {}", egui_phosphor::regular::PLUS, tr("Add")),
@@ -638,7 +658,7 @@ impl OptionsDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Action {
         let mut action = Action::None;
         let mut open = true;
-        egui::Window::new(tr("Options"))
+        let shown = egui::Window::new(tr("Options"))
             .id(egui::Id::new("options_dialog"))
             .open(&mut open)
             .collapsible(false)
@@ -671,6 +691,18 @@ impl OptionsDialog {
                     });
                 });
             });
+        // A janela fica centrada pelo tamanho do quadro anterior: quando o
+        // conteúdo muda de altura, mais um quadro a põe no lugar.
+        if let Some(shown) = shown {
+            let size = shown.response.rect.size();
+            let id = egui::Id::new("options_dialog_size");
+            let before: Option<egui::Vec2> = ctx.data(|d| d.get_temp(id));
+            ctx.data_mut(|d| d.insert_temp(id, size));
+            let before = before != Some(size);
+            if before {
+                ctx.request_repaint();
+            }
+        }
         if !open {
             action = Action::Cancel;
         }

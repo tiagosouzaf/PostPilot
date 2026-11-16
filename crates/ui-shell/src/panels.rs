@@ -434,6 +434,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 if out.cursor.is_some() {
                     doc.cursor = out.cursor;
                 }
+                doc.cursor_byte = out.cursor_byte;
+                if out.applied_hint.is_some() {
+                    doc.applied_hint = out.applied_hint;
+                }
                 out.response.context_menu(|ui| {
                     editor_context_menu(ui, self.keymap, &mut self.commands);
                 });

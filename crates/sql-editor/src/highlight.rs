@@ -3,7 +3,9 @@
 
 use eframe::egui::{self, Color32, FontId, TextFormat, text::LayoutJob};
 
-use crate::lexer::{Token, TokenKind, tokenize};
+#[cfg(test)]
+use crate::lexer::tokenize;
+use crate::lexer::{Dialect, Token, TokenKind, tokenize_in};
 
 /// Cores de um tema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -57,12 +59,17 @@ impl Colors {
 /// Monta o texto colorido. Tokens vizinhos da mesma cor viram um pedaço só,
 /// para o layout ficar leve em arquivos grandes.
 pub fn layout_job(text: &str, colors: &Colors, font: FontId) -> LayoutJob {
+    layout_job_in(text, colors, font, Dialect::Postgres)
+}
+
+/// [`layout_job`] no dialeto `dialect`.
+pub fn layout_job_in(text: &str, colors: &Colors, font: FontId, dialect: Dialect) -> LayoutJob {
     let mut job = LayoutJob {
         text: text.to_string(),
         ..Default::default()
     };
     let mut current: Option<(Color32, usize, usize)> = None;
-    for token in tokenize(text) {
+    for token in tokenize_in(text, dialect) {
         let color = if token.kind == TokenKind::Whitespace {
             // Espaço herda a cor de quem estiver aberto, para juntar pedaços.
             current.map_or(colors.text, |(c, _, _)| c)
