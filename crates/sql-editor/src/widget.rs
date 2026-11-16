@@ -250,14 +250,16 @@ impl Editing<'_> {
         if self.buf.popup.is_none() && !open {
             return;
         }
-        // Sem lista de palavras do SQL numa consulta do MongoDB.
-        if !self.range().is_empty() || self.buf.dialect == Dialect::MongoDb {
+        if !self.range().is_empty() {
             self.buf.popup = None;
             return;
         }
         let at = self.buf.index.byte_of(self.text, self.view.cursor);
         let c = match self.buf.dialect {
             Dialect::Redis => crate::redis::complete(self.text, &self.buf.tokens, at, self.catalog),
+            Dialect::MongoDb => {
+                crate::mongodb::complete(self.text, &self.buf.tokens, at, self.catalog)
+            }
             _ => complete(self.text, &self.buf.tokens, at, self.catalog),
         };
         if c.items.is_empty() {
@@ -1045,6 +1047,10 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
                     (Some(':' | ' '), None)
                         if ed.buf.dialect == Dialect::Redis && ed.line_has_text() =>
                     {
+                        ed.refresh_popup(true)
+                    }
+                    // MongoDB: os operadores começam com `$`.
+                    (Some('$'), None) if ed.buf.dialect == Dialect::MongoDb => {
                         ed.refresh_popup(true)
                     }
                     _ => ed.buf.popup = None,

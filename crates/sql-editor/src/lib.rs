@@ -23,6 +23,7 @@ pub mod edit;
 pub mod format;
 pub mod highlight;
 pub mod lexer;
+pub mod mongodb;
 pub mod redis;
 mod widget;
 
