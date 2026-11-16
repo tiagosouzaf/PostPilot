@@ -18,6 +18,10 @@
 //!   (outro workspace, minimizada) o compositor pode segurar os frames de
 //!   propósito; a linha diz se a janela estava em foco no último frame.
 //!
+//! Um pânico do Rust entra no log com a pilha de chamadas. As quedas que
+//! não passam pelo pânico (sinal fatal, processo morto por fora) ficam por
+//! conta de quem abre o app: veja `crash` em `apps/desktop`.
+//!
 //! Em ambos os casos, quando os frames voltam, uma linha diz quanto tempo
 //! a janela ficou parada.
 
@@ -77,9 +81,19 @@ fn lock(log: &Mutex<Log>) -> std::sync::MutexGuard<'_, Log> {
 }
 
 /// Escreve uma linha no log (com a hora) e na saída de erro.
+///
+/// A saída de erro pode ter sido fechada por quem abriu o app (um terminal
+/// que fechou, um lançador que saiu): o `eprintln!` entra em pânico nesse
+/// caso, e um pânico dentro do aviso de pânico derruba o processo sem
+/// deixar nada. Por isso a escrita aqui ignora o erro, e o arquivo vem
+/// primeiro.
 pub fn line(message: &str) {
     let stamped = format!("{} {message}", timestamp(SystemTime::now()));
-    eprintln!("postpilot: {message}");
+    write_to_file(&stamped);
+    let _ = writeln!(std::io::stderr(), "postpilot: {message}");
+}
+
+fn write_to_file(stamped: &str) {
     let Some(log) = LOG.get() else {
         return;
     };
@@ -108,27 +122,56 @@ macro_rules! log_line {
 }
 
 fn install_panic_hook() {
-    let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("?");
-        line(&format!("panic in thread '{name}': {info}"));
-        previous(info);
+        // A pilha vai junto: sem ela a mensagem sozinha raramente diz de
+        // onde o pânico veio. O aviso padrão do Rust não é chamado: ele
+        // repetiria a mesma mensagem na saída de erro.
+        let trace = short_trace(&std::backtrace::Backtrace::force_capture().to_string());
+        line(&format!("panic in thread '{name}': {info}\n{trace}"));
     }));
+}
+
+/// Linhas de uma pilha de chamadas que vão para o log.
+pub const TRACE_LINES: usize = 160;
+
+/// A pilha de chamadas com no máximo [`TRACE_LINES`] linhas: uma recursão
+/// sem fim tem milhares de quadros iguais e encheria o log sozinha.
+pub fn short_trace(trace: &str) -> String {
+    let total = trace.lines().count();
+    if total <= TRACE_LINES {
+        return trace.trim_end().to_string();
+    }
+    let mut out: String = trace
+        .lines()
+        .take(TRACE_LINES)
+        .flat_map(|l| [l, "\n"])
+        .collect();
+    out.push_str(&format!("  ... {} more lines", total - TRACE_LINES));
+    out
 }
 
 /// `2026-11-15T17:36:21.123Z`, sem depender de biblioteca de datas.
 pub fn timestamp(t: SystemTime) -> String {
     let since = t.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = since.as_secs();
+    let mut out = String::with_capacity(24);
+    let _ = write_timestamp(&mut out, since.as_secs(), since.subsec_millis());
+    out
+}
+
+/// A hora de [`timestamp`] escrita em `out` sem alocar memória (o aviso de
+/// queda do app roda dentro de um tratador de sinal, onde alocar não é
+/// seguro).
+pub fn write_timestamp(out: &mut dyn std::fmt::Write, secs: u64, millis: u32) -> std::fmt::Result {
     let (days, rest) = (secs / 86_400, secs % 86_400);
     let (y, m, d) = civil_from_days(days as i64);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
+    write!(
+        out,
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
         rest / 3600,
         rest % 3600 / 60,
         rest % 60,
-        since.subsec_millis()
     )
 }
 
@@ -281,6 +324,23 @@ mod tests {
         assert_eq!(timestamp(UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
         let leap = UNIX_EPOCH + Duration::from_secs(951_782_400); // 2000-02-29
         assert_eq!(&timestamp(leap)[..10], "2000-02-29");
+    }
+
+    #[test]
+    fn long_traces_are_cut() {
+        let short = "   0: a\n   1: b\n";
+        assert_eq!(short_trace(short), "   0: a\n   1: b");
+        let long: String = (0..5000).map(|i| format!("  {i}: deep\n")).collect();
+        let cut = short_trace(&long);
+        assert_eq!(cut.lines().count(), TRACE_LINES + 1);
+        assert!(cut.ends_with(&format!("... {} more lines", 5000 - TRACE_LINES)));
+    }
+
+    #[test]
+    fn timestamp_without_allocating_matches() {
+        let mut out = String::new();
+        write_timestamp(&mut out, 1_794_764_181, 123).unwrap();
+        assert_eq!(out, "2026-11-15T17:36:21.123Z");
     }
 
     #[test]

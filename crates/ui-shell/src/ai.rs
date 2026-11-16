@@ -471,7 +471,7 @@ impl Ai {
                     if key.is_empty() {
                         vault.delete(&id);
                     } else if let Err(e) = vault.set(&id, &key) {
-                        eprintln!("ai: could not keep the API key: {e}");
+                        crate::log_line!("ai: could not keep the API key: {e}");
                     }
                 }
             });

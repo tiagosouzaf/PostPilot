@@ -66,7 +66,13 @@ impl Checker {
         if let Some(ours) = &self.ours
             && let Err(e) = learn_known_hosts_path(&self.host, self.port, key, ours)
         {
-            eprintln!("ssh: could not write {}: {e}", ours.display());
+            // Sem `eprintln!`: ele entra em pânico se a saída de erro fechou.
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "ssh: could not write {}: {e}",
+                ours.display()
+            );
         }
         true
     }

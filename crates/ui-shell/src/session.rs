@@ -424,7 +424,7 @@ impl ShellApp {
     /// e do cofre, para os servidores reconectarem.
     pub fn with_session(mut self, mut store: SessionStore) -> Self {
         if let Some(e) = &store.error {
-            eprintln!("session: {}: {e}", store.path().display());
+            crate::log_line!("session: {}: {e}", store.path().display());
             self.status =
                 tr("The last session could not be read; starting with an empty one.").to_string();
         }
@@ -868,7 +868,7 @@ impl ShellApp {
                 .chain(results.iter().map(|(file, json)| (file.as_str(), *json)))
                 .collect();
             if let Err(e) = store.save(&state, &texts) {
-                eprintln!("session: could not save {}: {e}", store.path().display());
+                crate::log_line!("session: could not save {}: {e}", store.path().display());
             }
         }
         // O layout vai junto: uma queda também não perde a arrumação das

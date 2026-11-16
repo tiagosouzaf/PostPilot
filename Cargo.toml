@@ -126,4 +126,6 @@ codegen-units = 1
 # Binários dos pacotes (`cargo xtask dist`): o release sem símbolos.
 [profile.dist]
 inherits = "release"
-strip = true
+# Sem as informações de depuração, mas com os nomes das funções: é o que
+# faz a pilha de uma queda no `postpilot.log` dizer onde ela aconteceu.
+strip = "debuginfo"

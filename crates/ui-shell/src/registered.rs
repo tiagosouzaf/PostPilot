@@ -891,7 +891,7 @@ impl RegisteredServers {
         if let Err(e) = self.save()
             && let Some(path) = &self.path
         {
-            eprintln!("registered servers: could not save {}: {e}", path.display());
+            crate::log_line!("registered servers: could not save {}: {e}", path.display());
         }
     }
 

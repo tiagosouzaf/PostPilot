@@ -4104,6 +4104,7 @@ name = "pgstudio-desktop"
 version = "0.2.47"
 dependencies = [
  "eframe",
+ "libc",
  "pgstudio-automation",
  "pgstudio-core",
  "pgstudio-elasticsearch",

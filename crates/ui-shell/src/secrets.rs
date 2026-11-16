@@ -238,7 +238,7 @@ pub fn lookup(store: &Arc<dyn SecretStore>, key: String) -> Lookup {
         .name("pgstudio-keyring".into())
         .spawn(move || {
             let found = store.get(&k).unwrap_or_else(|e| {
-                eprintln!("keyring: {e}");
+                crate::log_line!("keyring: {e}");
                 None
             });
             let _ = tx.send(found);
@@ -259,7 +259,7 @@ pub fn save_in_background(store: &Arc<dyn SecretStore>, key: String, secret: Opt
                 None => store.delete(&key),
             };
             if let Err(e) = result {
-                eprintln!("keyring: {e}");
+                crate::log_line!("keyring: {e}");
             }
         })
         .expect("spawn keyring thread");

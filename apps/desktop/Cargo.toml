@@ -26,5 +26,9 @@ pgstudio-elasticsearch.workspace = true
 eframe = { workspace = true, features = ["glow"] }
 rfd.workspace = true
 
+# Os sinais do sistema, para o aviso de queda no log (`crash.rs`).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true
