@@ -333,7 +333,11 @@ impl Picker<'_> {
         }
 
         let spacing = ui.spacing().item_spacing.y;
-        let row = ui.spacing().interact_size.y;
+        // A altura de um `selectable_label`: o texto com a folga do botão,
+        // ou a altura mínima dos controles, o que for maior.
+        let row = (ui.text_style_height(&egui::TextStyle::Button)
+            + 2.0 * ui.spacing().button_padding.y)
+            .max(ui.spacing().interact_size.y);
         let height = VISIBLE_ROWS as f32 * (row + spacing) - spacing;
         egui::ScrollArea::vertical()
             .id_salt("database_picker_rows")

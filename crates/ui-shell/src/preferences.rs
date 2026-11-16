@@ -95,6 +95,72 @@ impl From<ThemeSetting> for String {
     }
 }
 
+/// Tamanho da interface (letras, ícones e espaços juntos), em porcentagem:
+/// 100 é o tamanho normal. Muda em Environment > General, no menu View e
+/// com Ctrl++, Ctrl+- e Ctrl+0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "f64", into = "u32")]
+pub struct UiScale(u32);
+
+impl UiScale {
+    /// Menor tamanho: 70%.
+    pub const MIN: UiScale = UiScale(70);
+    /// Maior tamanho: 300%.
+    pub const MAX: UiScale = UiScale(300);
+    /// Quanto cada Ctrl++ ou Ctrl+- muda.
+    const STEP: i64 = 10;
+
+    /// A porcentagem, sempre entre [`UiScale::MIN`] e [`UiScale::MAX`].
+    pub fn percent(self) -> u32 {
+        self.0
+    }
+
+    /// O fator de multiplicação (`1.0` para 100%).
+    pub fn factor(self) -> f32 {
+        self.0 as f32 / 100.0
+    }
+
+    /// A partir de uma porcentagem, trazida para os limites.
+    pub fn from_percent(percent: u32) -> Self {
+        UiScale(percent.clamp(Self::MIN.0, Self::MAX.0))
+    }
+
+    /// Um passo maior (`steps` positivo) ou menor, parando nos limites e
+    /// sempre num múltiplo do passo (105% + 1 passo = 110%).
+    pub fn stepped(self, steps: i32) -> Self {
+        let current = i64::from(self.0);
+        let next = if steps >= 0 {
+            (current.div_euclid(Self::STEP) + i64::from(steps)) * Self::STEP
+        } else {
+            (-(-current).div_euclid(Self::STEP) + i64::from(steps)) * Self::STEP
+        };
+        UiScale::from_percent(next.clamp(0, i64::from(u32::MAX)) as u32)
+    }
+}
+
+impl Default for UiScale {
+    fn default() -> Self {
+        UiScale(100)
+    }
+}
+
+impl From<f64> for UiScale {
+    /// Valor fora dos limites volta para dentro deles: um arquivo editado à
+    /// mão não deixa a janela ilegível.
+    fn from(percent: f64) -> Self {
+        if !percent.is_finite() {
+            return UiScale::default();
+        }
+        UiScale::from_percent(percent.round().clamp(0.0, 10_000.0) as u32)
+    }
+}
+
+impl From<UiScale> for u32 {
+    fn from(s: UiScale) -> Self {
+        s.0
+    }
+}
+
 /// As preferências.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -103,6 +169,8 @@ pub struct Preferences {
     pub language: LanguageSetting,
     /// Tema de cores (View > Color Theme ou Environment > General).
     pub theme: ThemeSetting,
+    /// Tamanho da interface.
+    pub ui_scale: UiScale,
 }
 
 impl Preferences {
@@ -179,9 +247,13 @@ mod tests {
         let json = serde_json::to_string(&Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
             theme: ThemeSetting::Fixed(Theme::Light),
+            ui_scale: UiScale::from_percent(130),
         })
         .unwrap();
-        assert_eq!(json, r#"{"language":"pt-BR","theme":"light"}"#);
+        assert_eq!(
+            json,
+            r#"{"language":"pt-BR","theme":"light","ui_scale":130}"#
+        );
         let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Dark);
         let p: Preferences = serde_json::from_str(r#"{"theme":"pink"}"#).unwrap();
@@ -192,8 +264,27 @@ mod tests {
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Light);
         assert_eq!(
             serde_json::to_string(&Preferences::default()).unwrap(),
-            r#"{"language":"system","theme":"system"}"#
+            r#"{"language":"system","theme":"system","ui_scale":100}"#
         );
+    }
+
+    #[test]
+    fn ui_scale_stays_within_limits() {
+        let read = |json: &str| serde_json::from_str::<Preferences>(json).unwrap().ui_scale;
+        assert_eq!(read("{}").percent(), 100);
+        assert_eq!(read(r#"{"ui_scale":150}"#).percent(), 150);
+        assert_eq!(read(r#"{"ui_scale":112.4}"#).percent(), 112);
+        assert_eq!(read(r#"{"ui_scale":5}"#), UiScale::MIN);
+        assert_eq!(read(r#"{"ui_scale":100000}"#), UiScale::MAX);
+        assert_eq!(read(r#"{"ui_scale":-3}"#), UiScale::MIN);
+        let s = UiScale::default();
+        assert_eq!(s.stepped(1).percent(), 110);
+        assert_eq!(s.stepped(-1).percent(), 90);
+        assert_eq!(UiScale::from_percent(105).stepped(1).percent(), 110);
+        assert_eq!(UiScale::from_percent(105).stepped(-1).percent(), 100);
+        assert_eq!(UiScale::MAX.stepped(1), UiScale::MAX);
+        assert_eq!(UiScale::MIN.stepped(-1), UiScale::MIN);
+        assert_eq!(UiScale::from_percent(150).factor(), 1.5);
     }
 
     #[test]
@@ -214,6 +305,7 @@ mod tests {
         let prefs = Preferences {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
             theme: ThemeSetting::Fixed(Theme::Light),
+            ui_scale: UiScale::from_percent(140),
         };
         store.save(&prefs).unwrap();
         assert_eq!(PreferencesStore::open(&file).1, prefs);
