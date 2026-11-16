@@ -4565,3 +4565,48 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "AI: reads freely"
+msgstr "IA: lê livremente"
+
+msgid "AI: asks first"
+msgstr "IA: pergunta antes"
+
+msgid "AI: blocked"
+msgstr "IA: bloqueada"
+
+msgid "What Claude and the other AI providers may do on servers of this environment. Reads freely: reading is free and changes ask for confirmation. Asks first: reading the schema is free, and anything that runs SQL or brings data asks for confirmation. Blocked: the AI cannot reach these servers."
+msgstr "O que o Claude e os outros provedores de IA podem fazer nos servidores deste ambiente. Lê livremente: ler é livre e alterar pede confirmação. Pergunta antes: ler o esquema é livre, e tudo o que roda SQL ou traz dados pede confirmação. Bloqueada: a IA não chega a esses servidores."
+
+msgid "{what} Servers in {environment} ask before the AI runs anything."
+msgstr "{what} Servidores em {environment} perguntam antes de a IA rodar qualquer coisa."
+
+msgid "{who}: explain_query ({kind}): {sql}"
+msgstr "{who}: explain_query ({kind}): {sql}"
+
+msgid "{who}: explain_query needs your confirmation: {sql}"
+msgstr "{who}: explain_query precisa da sua confirmação: {sql}"
+
+msgid "{safety} The actual plan runs the statement to measure it, then rolls it back."
+msgstr "{safety} O plano real executa o comando para medir e desfaz tudo no fim."
+
+msgid "{who} wants to run SQL for its actual plan"
+msgstr "{who} quer executar SQL para ver o plano real"
+
+msgid "{who}: get_activity needs your confirmation"
+msgstr "{who}: get_activity precisa da sua confirmação"
+
+msgid "{who} wants to read the server activity"
+msgstr "{who} quer ler a atividade do servidor"
+
+msgid "Sessions with their current SQL, locks and who is blocking whom, as the Activity Monitor shows."
+msgstr "Sessões com o SQL que estão rodando, locks e quem está bloqueando quem, como o Monitor de Atividade mostra."
+
+msgid "This only reads the server activity."
+msgstr "Isto só lê a atividade do servidor."
+
+msgid "Read execution plan"
+msgstr "Leu o plano de execução"
+
+msgid "Read server activity"
+msgstr "Leu a atividade do servidor"

@@ -448,6 +448,8 @@ const TOOL_LABELS: &[(&str, &str)] = &[
     ("describe_table", tr_noop("Read table")),
     ("describe_function", tr_noop("Read function")),
     ("run_query", tr_noop("Ran query")),
+    ("explain_query", tr_noop("Read execution plan")),
+    ("get_activity", tr_noop("Read server activity")),
     ("list_query_windows", tr_noop("Listed query windows")),
     ("get_query_window", tr_noop("Read query window")),
     ("edit_query_window", tr_noop("Edited query window")),
@@ -464,7 +466,8 @@ pub fn tool_label(name: &str, input: &Value) -> String {
         "describe_function" => arg("function"),
         "list_objects" => arg("schema").or_else(|| arg("database")),
         "list_databases" => arg("server"),
-        "run_query" => arg("sql").map(|s| one_line(&s, 24)),
+        "run_query" | "explain_query" => arg("sql").map(|s| one_line(&s, 24)),
+        "get_activity" => arg("server"),
         "edit_query_window" => arg("mode").or(Some("replace_selection".into())),
         "open_query_window" => arg("database"),
         _ => None,
@@ -750,12 +753,16 @@ impl crate::ShellApp {
                     tr("Optimize this query.")
                 },
                 format!(
-                    "Read {target} with get_query_window. Look at the tables, indexes and row \
-                     counts it touches (describe_table, and on PostgreSQL EXPLAIN without ANALYZE \
-                     through run_query if useful). Write the improved version into the editor with \
-                     edit_query_window, mode {mode}, keeping the same results. Then say briefly \
-                     what changed and why. If it is already fine, say so and leave the editor \
-                     alone. Suggest indexes in your answer, do not create them."
+                    "Read {target} with get_query_window. Get its estimated plan with \
+                     explain_query (do not use analyze unless the user asks), and look at the \
+                     tables, indexes and row counts it touches with describe_table. Base every \
+                     change on what the plan shows: scans on large tables, bad row estimates, \
+                     expensive sorts and joins, missing indexes. Write the improved version \
+                     into the editor with edit_query_window, mode {mode}, keeping the same \
+                     results, and check its plan with explain_query too. Then say briefly what \
+                     changed and why, with the plan cost before and after. If it is already \
+                     fine, say so and leave the editor alone. Suggest indexes in your answer, \
+                     do not create them."
                 ),
             ),
             _ => {
