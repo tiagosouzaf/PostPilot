@@ -4610,3 +4610,12 @@ msgstr "Leu o plano de execução"
 
 msgid "Read server activity"
 msgstr "Leu a atividade do servidor"
+
+msgid "This SQL only reads data."
+msgstr "Este SQL só lê dados."
+
+msgid "This SQL can change the database ({reason})."
+msgstr "Este SQL pode alterar o banco ({reason})."
+
+msgid "PostPilot could not confirm that this SQL only reads data ({reason})."
+msgstr "O PostPilot não conseguiu confirmar que este SQL só lê dados ({reason})."

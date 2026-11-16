@@ -181,6 +181,24 @@ impl Target {
     }
 }
 
+/// Frase do diálogo de confirmação sobre o que o SQL faz.
+fn describe(safety: &pgstudio_automation::Safety) -> String {
+    use pgstudio_automation::Safety;
+    match safety {
+        Safety::ReadOnly => tr("This SQL only reads data.").to_string(),
+        Safety::Writes { reason } => {
+            trf!(
+                "This SQL can change the database ({reason}).",
+                reason = reason
+            )
+        }
+        Safety::Unknown { reason } => trf!(
+            "PostPilot could not confirm that this SQL only reads data ({reason}).",
+            reason = reason
+        ),
+    }
+}
+
 /// Nome e cor do ambiente, para a etiqueta.
 fn badge(tag: Option<&ServerTag>) -> Option<(String, Rgb)> {
     tag.and_then(|t| Some((t.environment.clone()?, t.color)))
@@ -558,9 +576,9 @@ impl ShellApp {
                         title: trf!("{who} wants to run SQL", who = who),
                         sql,
                         reason: if read_only {
-                            environment_reason(target.tag.as_ref(), &safety.describe())
+                            environment_reason(target.tag.as_ref(), &describe(&safety))
                         } else {
-                            safety.describe()
+                            describe(&safety)
                         },
                         target: target.label(),
                         environment: badge(target.tag.as_ref()),
@@ -608,7 +626,7 @@ impl ShellApp {
                     ));
                     let what = trf!(
                         "{safety} The actual plan runs the statement to measure it, then rolls it back.",
-                        safety = safety.describe()
+                        safety = describe(&safety)
                     );
                     self.claude.confirms.push_back(Confirmation {
                         origin,
@@ -784,9 +802,9 @@ impl ShellApp {
                         title: trf!("{who} wants to run SQL", who = who),
                         sql,
                         reason: if safety.is_read_only() {
-                            environment_reason(tag.as_ref(), &safety.describe())
+                            environment_reason(tag.as_ref(), &describe(&safety))
                         } else {
-                            safety.describe()
+                            describe(&safety)
                         },
                         target,
                         environment: badge(tag.as_ref()),

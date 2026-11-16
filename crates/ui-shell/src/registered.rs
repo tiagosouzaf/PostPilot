@@ -2635,7 +2635,8 @@ impl EnvironmentsDialog {
                         ui.add(
                             egui::TextEdit::singleline(&mut row.name)
                                 .id_salt(("environment_name", i))
-                                .desired_width(200.0),
+                                .min_size(egui::vec2(180.0, 0.0))
+                                .desired_width(180.0),
                         );
                         ui.checkbox(&mut row.confirm_changes, tr("Confirm changes"))
                             .on_hover_text(tr(
