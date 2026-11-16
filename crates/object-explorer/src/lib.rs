@@ -129,6 +129,8 @@ pub struct ObjectExplorer {
     props_rx: Receiver<PropertiesReply>,
     /// Contexto do egui, para pedir um novo frame quando uma carga termina.
     ctx: Option<egui::Context>,
+    /// "Filter Keys..." aberto: o nó e o texto sendo escrito.
+    filter_edit: Option<(NodeId, String)>,
 }
 
 impl Default for ObjectExplorer {
@@ -149,6 +151,7 @@ impl Default for ObjectExplorer {
             props_tx,
             props_rx,
             ctx: None,
+            filter_edit: None,
         }
     }
 }
@@ -547,6 +550,11 @@ impl ObjectExplorer {
         let selected = self.selected.clone();
         let server_label = self.server_label.clone();
         let move_targets = self.move_targets.clone();
+        let provider = self.provider.clone();
+        // Banco relacional: Tasks, Design, Script as, Activity Monitor.
+        let relational = provider.as_ref().is_none_or(|p| p.relational());
+        let mut filter: Option<(NodeId, String)> = None;
+        let mut clear_filter: Option<NodeId> = None;
         let range = range.start.min(rows.len())..range.end.min(rows.len());
         for row in &rows[range] {
             ui.horizontal(|ui| {
@@ -614,8 +622,41 @@ impl ObjectExplorer {
                         if label.double_clicked() && node.has_children {
                             toggle = Some(node.id.clone());
                         }
+                        if node.kind == NodeKind::Note {
+                            return;
+                        }
                         label.context_menu(|ui| {
                             select = Some(node.id.clone());
+                            if node.kind == NodeKind::Key {
+                                if ui.button(tr("Open Value")).clicked() {
+                                    events.push(Event::SelectTop(node.id.clone()));
+                                    ui.close();
+                                }
+                                if ui.button(tr("Delete Key...")).clicked() {
+                                    events.push(Event::Script(node.id.clone(), ScriptAction::Drop));
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
+                            if let Some(current) =
+                                provider.as_ref().and_then(|p| p.filter(&node.id))
+                            {
+                                if ui.button(tr("Filter Keys...")).clicked() {
+                                    filter = Some((node.id.clone(), current.clone()));
+                                    ui.close();
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !current.is_empty(),
+                                        egui::Button::new(tr("Clear Filter")),
+                                    )
+                                    .clicked()
+                                {
+                                    clear_filter = Some(node.id.clone());
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
                             if node.kind == NodeKind::Folder(Folder::Tables) {
                                 if ui.button(tr("New Table...")).clicked() {
                                     events.push(Event::NewTable(node.id.clone()));
@@ -649,7 +690,7 @@ impl ObjectExplorer {
                                 }
                                 ui.separator();
                             }
-                            if node.kind == NodeKind::Database {
+                            if node.kind == NodeKind::Database && relational {
                                 ui.menu_button(tr("Tasks"), |ui| {
                                     if ui.button(tr("Back Up...")).clicked() {
                                         events.push(Event::BackUp(node.id.clone()));
@@ -698,11 +739,13 @@ impl ObjectExplorer {
                                     });
                                 }
                                 ui.separator();
-                                if ui.button(tr("Activity Monitor")).clicked() {
-                                    events.push(Event::ActivityMonitor(node.id.clone()));
-                                    ui.close();
+                                if relational {
+                                    if ui.button(tr("Activity Monitor")).clicked() {
+                                        events.push(Event::ActivityMonitor(node.id.clone()));
+                                        ui.close();
+                                    }
+                                    ui.separator();
                                 }
-                                ui.separator();
                             }
                             if node.kind == NodeKind::Table {
                                 if ui.button(tr("Design")).clicked() {
@@ -717,6 +760,8 @@ impl ObjectExplorer {
                                     | NodeKind::Database
                                     | NodeKind::Table
                                     | NodeKind::View
+                                    | NodeKind::KeyGroup
+                                    | NodeKind::Key
                             );
                             if ui
                                 .add_enabled(queryable, egui::Button::new(tr("New Query")))
@@ -753,7 +798,10 @@ impl ObjectExplorer {
                                     ui.close();
                                 }
                             }
-                            if node.kind.scriptable() {
+                            if !relational {
+                                // Sem CREATE/DROP: a chave tem o "Delete
+                                // Key..." lá em cima.
+                            } else if node.kind.scriptable() {
                                 let label = trf!("Script {kind} as", kind = node.kind.label());
                                 ui.menu_button(label, |ui| {
                                     for (text, action) in [
@@ -828,7 +876,97 @@ impl ObjectExplorer {
         if let Some(id) = refresh {
             self.refresh(&id);
         }
+        if let Some(id) = clear_filter {
+            self.set_filter(&id, "");
+        }
+        if filter.is_some() {
+            self.filter_edit = filter;
+        }
+        self.filter_window(ui.ctx());
         events
+    }
+
+    /// Troca o filtro dos filhos de `id` (as chaves de um banco) e relê.
+    pub fn set_filter(&mut self, id: &NodeId, filter: &str) {
+        if let Some(provider) = &self.provider {
+            provider.set_filter(id, filter);
+            self.refresh(id);
+        }
+    }
+
+    /// Os filtros em uso, para a sessão guardar: nó e texto.
+    pub fn filters(&self) -> Vec<(NodeId, String)> {
+        let Some(provider) = &self.provider else {
+            return Vec::new();
+        };
+        let mut out: Vec<(NodeId, String)> = self
+            .entries
+            .keys()
+            .filter_map(|id| Some((id.clone(), provider.filter(id).filter(|f| !f.is_empty())?)))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Filtros de uma sessão anterior: valem quando os nós abrirem.
+    pub fn restore_filters(&mut self, filters: impl IntoIterator<Item = (NodeId, String)>) {
+        if let Some(provider) = &self.provider {
+            for (id, filter) in filters {
+                provider.set_filter(&id, &filter);
+            }
+        }
+    }
+
+    /// Abre o "Filter Keys..." de `id` (o menu de contexto faz o mesmo).
+    pub fn edit_filter(&mut self, id: &NodeId) {
+        if let Some(current) = self.provider.as_ref().and_then(|p| p.filter(id)) {
+            self.filter_edit = Some((id.clone(), current));
+        }
+    }
+
+    /// A janela do "Filter Keys...".
+    fn filter_window(&mut self, ctx: &egui::Context) {
+        let Some((id, mut text)) = self.filter_edit.take() else {
+            return;
+        };
+        let mut apply = false;
+        let mut open = true;
+        let mut cancel = false;
+        egui::Window::new(tr("Filter Keys"))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(tr(
+                    "Show only the keys that contain this text. A pattern also works: user:*",
+                ));
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .desired_width(320.0)
+                        .hint_text("user:*"), // i18n-ignore
+                );
+                if !field.has_focus() && !field.lost_focus() {
+                    field.request_focus();
+                }
+                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    apply = true;
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr("OK")).clicked() {
+                        apply = true;
+                    }
+                    if ui.button(tr("Cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if apply {
+            self.set_filter(&id, &text);
+        } else if open && !cancel && !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.filter_edit = Some((id, text));
+        }
     }
 }
 
@@ -882,6 +1020,10 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
         NodeKind::Sequence => icon::LIST_NUMBERS,
         NodeKind::Constraint => icon::KEY,
         NodeKind::Role => icon::USER,
+        NodeKind::KeyGroup if expanded => icon::FOLDER_OPEN,
+        NodeKind::KeyGroup => icon::FOLDER,
+        NodeKind::Key => icon::KEY,
+        NodeKind::Note => icon::INFO,
     }
 }
 
