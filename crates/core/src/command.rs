@@ -78,6 +78,7 @@ commands! {
     MakeUppercase => "Edit.MakeUppercase", "Make Uppercase";
     MakeLowercase => "Edit.MakeLowercase", "Make Lowercase";
     FormatDocument => "Edit.FormatDocument", "Format Document";
+    SaveAsSnippet => "Edit.SaveAsSnippet", "Save as Snippet...";
     // View
     ObjectExplorer => "View.ObjectExplorer", "Object Explorer";
     ObjectExplorerDetails => "View.ObjectExplorerDetails", "Object Explorer Details";
@@ -87,6 +88,7 @@ commands! {
     TemplateExplorer => "View.TemplateExplorer", "Template Explorer";
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";
+    QueryHistory => "View.QueryHistory", "Query History";
     ActivityMonitor => "View.ActivityMonitor", "Activity Monitor";
     ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";

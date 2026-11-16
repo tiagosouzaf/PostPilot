@@ -10,6 +10,10 @@
 //!   e os nós expandidos de cada um;
 //! - as janelas de consulta: arquivo, nome, texto não salvo, banco,
 //!   servidor e qual estava na frente;
+//! - o Template Explorer: a pesquisa e as pastas abertas;
+//! - se o Query History estava aberto e o que estava na pesquisa dele (as
+//!   execuções ficam no arquivo do próprio histórico, veja
+//!   [`crate::history`]);
 //! - o "Data Compare" aberto: os dois lados e as tabelas desmarcadas.
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
@@ -109,6 +113,12 @@ pub struct SessionState {
     pub documents: Vec<SessionDocument>,
     /// Número da última `SQLQueryN.sql`, para a numeração continuar.
     pub query_counter: u32,
+    /// Template Explorer: pesquisa e pastas abertas.
+    pub templates: Option<crate::templates::TemplatesSession>,
+    /// A janela Query History estava aberta.
+    pub history_open: bool,
+    /// O que estava escrito na pesquisa do Query History.
+    pub history_filter: String,
     /// O "Data Compare" aberto: os dois lados e as tabelas desmarcadas (o
     /// resultado não é guardado; basta comparar de novo).
     pub data_compare: Option<crate::data_compare::Setup>,
@@ -317,6 +327,13 @@ impl ShellApp {
     /// Reabre as janelas e põe os servidores na fila para reconectar.
     fn restore_session(&mut self, store: &SessionStore, state: SessionState) {
         self.documents.set_query_counter(state.query_counter);
+        if let Some(templates) = state.templates.clone() {
+            self.templates.restore(templates);
+        }
+        self.history.filter = state.history_filter.clone();
+        if state.history_open {
+            self.show_query_history();
+        }
         let mut front = None;
         for d in &state.documents {
             let on_disk = d
@@ -467,6 +484,9 @@ impl ShellApp {
             servers,
             documents,
             query_counter: self.documents.query_counter(),
+            templates: Some(self.templates.session()),
+            history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
+            history_filter: self.history.filter.clone(),
             data_compare: self.data_compare_setup(),
         }
     }

@@ -14,6 +14,7 @@ vendas/
   servers.json               servidores registrados, sem nenhuma senha
   secrets.json               senhas, criptografadas com a senha mestra
   queries/                   uma consulta por arquivo .sql, em subpastas
+  snippets/                  seus trechos do Template Explorer, um por arquivo .sql
   .gitignore                 arquivos temporários desta máquina
 ```
 
@@ -33,6 +34,13 @@ select count(*) from pedidos;
 Abrir essa consulta conecta no servidor "Produção", no banco `vendas`. Ao
 salvar uma consulta nova conectada a um servidor do workspace, essa linha é
 escrita sozinha.
+
+Os trechos de `snippets/` aparecem no Template Explorer (Exibir > Template
+Explorer, Ctrl+Alt+T), junto dos modelos que vêm com o PostPilot para
+PostgreSQL e SQL Server. Salve um trecho pelo botão "Novo Trecho" do painel
+ou por "Salvar como Trecho..." no menu de contexto do editor; as subpastas
+de `snippets/` são as pastas do painel. Sem workspace aberto, os trechos
+ficam só neste computador, na pasta de configuração do PostPilot.
 
 ## Começar
 
