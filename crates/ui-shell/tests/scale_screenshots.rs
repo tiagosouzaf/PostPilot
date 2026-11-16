@@ -2,7 +2,8 @@
 //! desenhadas sem janela. Só com `--features screenshots`; os PNGs vão para
 //! `PGSTUDIO_SHOTS` (ou a pasta temporária), com o sufixo de
 //! `PGSTUDIO_SHOT_SUFFIX`. `PGSTUDIO_SHOT_STEPS=N` aperta Ctrl++ N vezes
-//! antes (cada um, 10%); `PGSTUDIO_SHOT_SIZE=LxA` muda o tamanho da janela.
+//! antes (cada um, 10%); `PGSTUDIO_SHOT_SIZE=LxA` muda o tamanho da janela;
+//! `PGSTUDIO_SHOT_THEME=light` usa o tema claro.
 #![cfg(feature = "screenshots")]
 
 use std::path::PathBuf;
@@ -29,6 +30,14 @@ fn window() -> [f32; 2] {
             Some([w.parse().ok()?, h.parse().ok()?])
         })
         .unwrap_or([1280.0, 800.0])
+}
+
+/// Tema das capturas: `PGSTUDIO_SHOT_THEME=light`, ou o escuro.
+fn theme() -> pgstudio_core::Theme {
+    match std::env::var("PGSTUDIO_SHOT_THEME").as_deref() {
+        Ok("light") => pgstudio_core::Theme::Light,
+        _ => pgstudio_core::Theme::Dark,
+    }
 }
 
 const DATABASES: &[&str] = &[
@@ -159,7 +168,7 @@ fn start() -> Harness<'static, ShellApp> {
         .with_size(window())
         .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
     pgstudio_ui_shell::install_fonts(&h.ctx);
-    pgstudio_ui_shell::theme::apply(&h.ctx, pgstudio_core::Theme::Dark);
+    pgstudio_ui_shell::theme::apply(&h.ctx, theme());
     until(&mut h, "never connected", |app| app.connection().is_some());
 
     let steps: usize = std::env::var("PGSTUDIO_SHOT_STEPS")

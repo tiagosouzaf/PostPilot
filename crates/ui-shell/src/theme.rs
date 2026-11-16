@@ -116,9 +116,12 @@ struct Base {
     faint: Color32,
     /// Botões: parado, sob o mouse e pressionado.
     widget: [Color32; 3],
-    /// Bordas discretas (painéis, separadores, campos).
+    /// Bordas discretas (painéis, separadores).
     border: Color32,
-    /// Borda dos campos sob o mouse.
+    /// Borda dos campos e botões parados: tem de aparecer tanto sobre o
+    /// fundo do campo quanto sobre o do painel ou do diálogo em volta.
+    field_border: Color32,
+    /// Borda dos campos e botões sob o mouse.
     border_hover: Color32,
     /// Texto.
     text: Color32,
@@ -146,7 +149,8 @@ fn base_from(c: &SystemColors) -> Base {
         faint: mix(bg, fg, 0.04),
         widget: [mix(bg, fg, 0.10), mix(bg, fg, 0.17), mix(bg, fg, 0.24)],
         border: mix(bg, fg, 0.13),
-        border_hover: mix(bg, fg, 0.32),
+        field_border: mix(bg, fg, 0.38),
+        border_hover: mix(bg, fg, 0.58),
         text: fg,
         weak_text: mix(fg, bg, 0.40),
         selection: mix(bg, c.accent(), if dark { 0.40 } else { 0.30 }),
@@ -226,7 +230,8 @@ fn base_of(theme: Theme) -> Base {
                 Color32::from_rgb(0xCB, 0xD1, 0xDA),
             ],
             border: Color32::from_rgb(0xDC, 0xDF, 0xE4),
-            border_hover: Color32::from_rgb(0xB4, 0xBA, 0xC4),
+            field_border: Color32::from_rgb(0xA6, 0xAD, 0xB8),
+            border_hover: Color32::from_rgb(0x7A, 0x83, 0x90),
             text: Color32::from_rgb(0x1F, 0x23, 0x28),
             weak_text: Color32::from_rgb(0x6B, 0x72, 0x7C),
             selection: Color32::from_rgb(0xC9, 0xDD, 0xF8),
@@ -243,7 +248,8 @@ fn base_of(theme: Theme) -> Base {
                 Color32::from_rgb(0x40, 0x47, 0x53),
             ],
             border: Color32::from_rgb(0x2E, 0x33, 0x3B),
-            border_hover: Color32::from_rgb(0x4A, 0x52, 0x5E),
+            field_border: Color32::from_rgb(0x56, 0x5F, 0x6C),
+            border_hover: Color32::from_rgb(0x7E, 0x88, 0x96),
             text: Color32::from_rgb(0xD8, 0xDC, 0xE2),
             weak_text: Color32::from_rgb(0x8A, 0x92, 0x9E),
             selection: Color32::from_rgb(0x26, 0x4F, 0x8F),
@@ -281,8 +287,10 @@ fn palette_of(theme: Theme) -> Palette {
 
 /// Monta o `egui::Visuals` do tema.
 pub fn visuals(theme: Theme) -> egui::Visuals {
-    let p = palette(theme);
-    let b = base(theme);
+    visuals_of(theme, &base(theme), &palette(theme))
+}
+
+fn visuals_of(theme: Theme, b: &Base, p: &Palette) -> egui::Visuals {
     let mut v = match theme {
         Theme::Light => egui::Visuals::light(),
         Theme::Dark => egui::Visuals::dark(),
@@ -309,7 +317,9 @@ pub fn visuals(theme: Theme) -> egui::Visuals {
         color: b.shadow,
     };
     v.selection.bg_fill = b.selection;
-    v.selection.stroke = Stroke::new(1.0, b.text);
+    // Também é a borda do campo de texto com o foco: mais grossa que a
+    // do campo parado, para o campo em uso saltar aos olhos.
+    v.selection.stroke = Stroke::new(FOCUS_BORDER, b.text);
     v.hyperlink_color = p.accent;
     v.window_corner_radius = CornerRadius::same(WINDOW_RADIUS);
     v.menu_corner_radius = CornerRadius::same(MENU_RADIUS);
@@ -321,25 +331,29 @@ pub fn visuals(theme: Theme) -> egui::Visuals {
     w.noninteractive.weak_bg_fill = b.panel;
     w.noninteractive.bg_stroke = Stroke::new(1.0, b.border);
     w.noninteractive.fg_stroke = Stroke::new(1.0, b.text);
-    // Botões e campos parados, sob o mouse, pressionados e abertos.
+    // Botões e campos parados, sob o mouse, pressionados e abertos. A
+    // borda vale para tudo em que se digita ou escolhe (campos de texto,
+    // listas, caixas de seleção, números): sem ela o campo some no fundo.
     w.inactive.weak_bg_fill = b.widget[0];
     w.inactive.bg_fill = b.widget[0];
-    w.inactive.bg_stroke = Stroke::NONE;
+    w.inactive.bg_stroke = Stroke::new(BORDER, b.field_border);
+    w.inactive.expansion = BORDER;
     w.inactive.fg_stroke = Stroke::new(1.0, b.text);
     w.hovered.weak_bg_fill = b.widget[1];
     w.hovered.bg_fill = b.widget[1];
-    w.hovered.bg_stroke = Stroke::new(1.0, b.border_hover);
+    w.hovered.bg_stroke = Stroke::new(BORDER, b.border_hover);
     w.hovered.fg_stroke = Stroke::new(1.5, b.text);
-    w.hovered.expansion = 0.0;
+    w.hovered.expansion = BORDER;
     w.active.weak_bg_fill = b.widget[2];
     w.active.bg_fill = b.widget[2];
-    w.active.bg_stroke = Stroke::new(1.0, p.accent);
+    w.active.bg_stroke = Stroke::new(BORDER, p.accent);
     w.active.fg_stroke = Stroke::new(2.0, b.text);
-    w.active.expansion = 0.0;
+    w.active.expansion = BORDER;
     w.open.weak_bg_fill = b.widget[1];
     w.open.bg_fill = b.widget[1];
-    w.open.bg_stroke = Stroke::new(1.0, b.border_hover);
+    w.open.bg_stroke = Stroke::new(BORDER, b.border_hover);
     w.open.fg_stroke = Stroke::new(1.0, b.text);
+    w.open.expansion = BORDER;
     for w in [
         &mut w.noninteractive,
         &mut w.inactive,
@@ -351,6 +365,17 @@ pub fn visuals(theme: Theme) -> egui::Visuals {
     }
     v
 }
+
+/// Espessura da borda de campos e botões. O egui desconta a borda da
+/// margem interna, e um item sem moldura quando parado (linha de árvore,
+/// item de menu) ficaria menor que sob o mouse; a `expansion` igual à
+/// borda devolve esse tanto, e nada muda de tamanho ao passar o mouse.
+const BORDER: f32 = 1.0;
+
+/// Espessura da borda do campo de texto com o foco. Inteira: o egui
+/// arredonda a margem, e com meio ponto o campo mudaria de tamanho ao
+/// ganhar o foco.
+const FOCUS_BORDER: f32 = 2.0;
 
 /// Quanto a interface inteira é ampliada no tamanho "100%" das opções: as
 /// letras do egui (12,5) ficam um pouco maiores, e ícones e espaços
@@ -449,6 +474,75 @@ mod tests {
             assert_eq!(v.widgets.inactive.corner_radius.nw, WIDGET_RADIUS);
             assert_eq!(v.window_corner_radius.nw, WINDOW_RADIUS);
             assert_eq!(v.menu_corner_radius.nw, MENU_RADIUS);
+        }
+    }
+
+    /// Contraste WCAG entre duas cores (1 = iguais, 21 = preto e branco).
+    fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+        let lum = |c: Color32| {
+            let ch = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
+        };
+        let (la, lb) = (lum(a), lum(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// A borda dos campos parados aparece sobre o fundo do campo, do painel
+    /// e do diálogo; sob o mouse e com o foco ela fica mais forte.
+    fn fields_have_a_visible_border(name: &str, v: &egui::Visuals) {
+        let idle = v.widgets.inactive.bg_stroke;
+        let hover = v.widgets.hovered.bg_stroke;
+        let focus = v.selection.stroke;
+        assert!(idle.width >= 1.0, "{name}: no border");
+        let field = v.text_edit_bg_color();
+        for (what, bg) in [
+            ("field", field),
+            ("panel", v.panel_fill),
+            ("dialog", v.window_fill),
+            ("button", v.widgets.inactive.weak_bg_fill),
+        ] {
+            let c = contrast_ratio(idle.color, bg);
+            assert!(c >= 1.5, "{name}: border on the {what} is {c:.2}");
+        }
+        assert!(
+            contrast_ratio(hover.color, field) > contrast_ratio(idle.color, field),
+            "{name}: hover is not stronger"
+        );
+        assert!(
+            contrast_ratio(focus.color, field) > contrast_ratio(hover.color, field),
+            "{name}: focus is not stronger"
+        );
+        assert!(focus.width > idle.width, "{name}: focus is not thicker");
+        assert_eq!(focus.width.fract(), 0.0, "{name}: focus resizes the field");
+        // Mesma borda e mesma folga em todos os estados: passar o mouse
+        // não muda o tamanho de nada.
+        for w in [
+            &v.widgets.inactive,
+            &v.widgets.hovered,
+            &v.widgets.active,
+            &v.widgets.open,
+        ] {
+            assert_eq!(w.bg_stroke.width, idle.width, "{name}: border width");
+            assert_eq!(w.expansion, w.bg_stroke.width, "{name}: expansion");
+        }
+    }
+
+    #[test]
+    fn fields_have_a_visible_border_in_every_theme() {
+        for theme in Theme::ALL {
+            let v = visuals_of(theme, &base_of(theme), &palette_of(theme));
+            fields_have_a_visible_border(&format!("{theme:?}"), &v);
+        }
+        for (name, c) in [("tokyo night", tokyo_night()), ("latte", latte())] {
+            let v = visuals_of(c.theme(), &base_from(&c), &palette_from(&c));
+            fields_have_a_visible_border(name, &v);
         }
     }
 
