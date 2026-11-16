@@ -968,7 +968,7 @@ impl EditRows {
     pub fn show(&mut self, ui: &mut egui::Ui, id: u32) {
         let ctx = ui.ctx().clone();
         self.step(&ctx);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let refresh =
                 egui::Button::new(format!("{} {}", icon::ARROWS_CLOCKWISE, tr("Refresh")));
             if ui
@@ -1368,7 +1368,7 @@ impl EditRows {
         let mut answer = None;
         let row = self.confirm_delete.and_then(|r| self.confirm_row_text(r));
         let modal = crate::theme::modal(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
-            ui.set_width(380.0);
+            crate::fit::dialog_width(ui, 380.0);
             ui.heading(tr("Delete Row"));
             ui.label(tr("You are about to delete 1 row. Are you sure?"));
             if let Some(row) = &row {

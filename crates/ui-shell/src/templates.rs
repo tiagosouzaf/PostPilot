@@ -471,7 +471,7 @@ impl TemplatesPanel {
         let mut actions = Vec::new();
         let width = ui.clip_rect().intersect(ui.max_rect()).width();
         let target = self.default_folder();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let new = egui::Button::new(format!("{} {}", icon::PLUS, tr("New Snippet")));
             let response = ui.add_enabled(target.is_some(), new).on_hover_text(tr(
                 "Save your own snippet. It starts with the text selected in the editor.",
@@ -933,7 +933,7 @@ impl TemplatesPanel {
                 error,
             } => {
                 crate::theme::modal(egui::Id::new("templates_new_snippet")).show(ctx, |ui| {
-                    ui.set_width(520.0);
+                    crate::fit::dialog_width(ui, 520.0);
                     ui.heading(tr("New Snippet"));
                     ui.label(tr("Name:"));
                     name_field(ui, name, &mut answer);
@@ -955,7 +955,7 @@ impl TemplatesPanel {
             }
             Dialog::Folder { name, error, .. } => {
                 crate::theme::modal(egui::Id::new("templates_new_folder")).show(ctx, |ui| {
-                    ui.set_width(320.0);
+                    crate::fit::dialog_width(ui, 320.0);
                     ui.heading(tr("New Folder"));
                     ui.label(tr("Folder name:"));
                     name_field(ui, name, &mut answer);
@@ -965,7 +965,7 @@ impl TemplatesPanel {
             }
             Dialog::Rename { name, error, .. } => {
                 crate::theme::modal(egui::Id::new("templates_rename")).show(ctx, |ui| {
-                    ui.set_width(320.0);
+                    crate::fit::dialog_width(ui, 320.0);
                     ui.heading(tr("Rename"));
                     ui.label(tr("Name:"));
                     name_field(ui, name, &mut answer);
@@ -975,7 +975,7 @@ impl TemplatesPanel {
             }
             Dialog::Delete { path } => {
                 crate::theme::modal(egui::Id::new("templates_delete")).show(ctx, |ui| {
-                    ui.set_width(380.0);
+                    crate::fit::dialog_width(ui, 380.0);
                     ui.heading(tr("Delete"));
                     let name = if path.is_dir() {
                         path.file_name()

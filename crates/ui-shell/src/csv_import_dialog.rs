@@ -319,7 +319,7 @@ impl ImportDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step();
         let modal = crate::theme::modal(egui::Id::new("csv_import")).show(ctx, |ui| {
-            ui.set_width(720.0);
+            crate::fit::dialog_width(ui, 720.0);
             ui.horizontal(|ui| {
                 match &self.target {
                     Some(t) => ui.heading(trf!("Import CSV into {table}", table = t.display())),

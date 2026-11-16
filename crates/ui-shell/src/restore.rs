@@ -519,7 +519,7 @@ impl RestoreDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("restore_dialog")).show(ctx, |ui| {
-            ui.set_width(680.0);
+            crate::fit::dialog_width(ui, 680.0);
             ui.heading(tr("Restore Database"));
             ui.separator();
             let editing = matches!(self.phase, Phase::Editing);

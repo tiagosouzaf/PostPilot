@@ -493,7 +493,7 @@ impl Passwords {
                 DialogKind::Change => tr("Change Master Password"),
             };
             crate::theme::modal(egui::Id::new("workspace_vault")).show(ctx, |ui| {
-                ui.set_width(420.0);
+                crate::fit::dialog_width(ui, 420.0);
                 ui.heading(title);
                 match d.kind {
                     DialogKind::Create => {

@@ -891,7 +891,7 @@ impl QueryDesigner {
         let mut open_picker = false;
         let mut remove = None;
         let modal = crate::theme::modal(egui::Id::new("query_designer")).show(ctx, |ui| {
-            let width = (ctx.content_rect().width() - 80.0).clamp(500.0, 1100.0);
+            let width = (ctx.content_rect().width() - 80.0).clamp(300.0, 1100.0);
             ui.set_width(width);
             ui.heading(tr("Query Designer"));
             match &self.state {
@@ -921,7 +921,7 @@ impl QueryDesigner {
                             ),
                         );
                     }
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui
                             .button(format!("{} {}", icon::PLUS, tr("Add Table...")))
                             .clicked()

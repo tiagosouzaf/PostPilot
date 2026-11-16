@@ -556,10 +556,15 @@ impl WorkspacePanel {
             return actions;
         };
         let mut refresh = false;
-        ui.horizontal(|ui| {
-            ui.strong(format!("{} {}", icon::BRIEFCASE, o.workspace.name()))
-                .on_hover_text(o.workspace.root().display().to_string());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        crate::fit::ends(
+            ui,
+            |ui| {
+                let name = format!("{} {}", icon::BRIEFCASE, o.workspace.name());
+                if let Some(name) = crate::fit::text(ui, egui::RichText::new(name).strong()) {
+                    name.on_hover_text(o.workspace.root().display().to_string());
+                }
+            },
+            |ui| {
                 if ui
                     .add(egui::Button::new(icon::ARROWS_CLOCKWISE).frame(false))
                     .on_hover_text(tr("Refresh"))
@@ -567,8 +572,8 @@ impl WorkspacePanel {
                 {
                     refresh = true;
                 }
-            });
-        });
+            },
+        );
         o.git.show(ui);
         o.passwords.show(ui);
         ui.separator();
@@ -755,7 +760,7 @@ impl WorkspacePanel {
         let mut clone_cancel = false;
         if let Some(dialog) = &mut self.clone {
             crate::theme::modal(egui::Id::new("workspace_clone")).show(ctx, |ui| {
-                ui.set_width(460.0);
+                crate::fit::dialog_width(ui, 460.0);
                 ui.heading(tr("Clone Workspace"));
                 ui.label(tr("Repository URL, for example git@github.com:you/sql.git:"));
                 let edit = ui.add(
@@ -794,7 +799,7 @@ impl WorkspacePanel {
         if let Some(count) = self.offer_import {
             let mut answer = None;
             crate::theme::modal(egui::Id::new("workspace_offer_import")).show(ctx, |ui| {
-                ui.set_width(440.0);
+                crate::fit::dialog_width(ui, 440.0);
                 ui.heading(tr("Bring your connections?"));
                 ui.label(if count == 1 {
                     tr("This computer has 1 connection that is not in the workspace.").to_string()
@@ -824,7 +829,7 @@ impl WorkspacePanel {
         let mut cancel = false;
         if let Some(dialog) = &mut self.new_folder {
             crate::theme::modal(egui::Id::new("workspace_new_folder")).show(ctx, |ui| {
-                ui.set_width(320.0);
+                crate::fit::dialog_width(ui, 320.0);
                 ui.heading(tr("New Folder"));
                 ui.label(tr("Folder name:"));
                 let edit = ui.text_edit_singleline(&mut dialog.name);

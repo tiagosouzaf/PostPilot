@@ -550,7 +550,7 @@ impl SourceControl {
         let mut cancel = false;
         if let Some(dialog) = &mut self.commit {
             crate::theme::modal(egui::Id::new("workspace_commit")).show(ctx, |ui| {
-                ui.set_width(460.0);
+                crate::fit::dialog_width(ui, 460.0);
                 ui.heading(tr("Commit"));
                 ui.label(tr("Changes:"));
                 egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -644,7 +644,7 @@ impl SourceControl {
         if let Some(dialog) = &mut self.changes {
             let busy = self.job.is_some();
             crate::theme::modal(egui::Id::new("workspace_changes")).show(ctx, |ui| {
-                ui.set_width(480.0);
+                crate::fit::dialog_width(ui, 480.0);
                 ui.heading(tr("Changes"));
                 if let Some(note) = &dialog.note {
                     ui.colored_label(ui.visuals().warn_fg_color, note);
@@ -731,7 +731,7 @@ impl SourceControl {
         let mut cancel = false;
         if let Some(dialog) = &mut self.remote {
             crate::theme::modal(egui::Id::new("workspace_remote")).show(ctx, |ui| {
-                ui.set_width(460.0);
+                crate::fit::dialog_width(ui, 460.0);
                 ui.heading(tr("Remote"));
                 ui.label(tr(
                     "Repository URL (origin), for example git@github.com:you/sql.git:",

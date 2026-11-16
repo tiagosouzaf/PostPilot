@@ -229,7 +229,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
         match pane {
             Panel::ObjectExplorer => {
                 let mut new_folder = false;
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let connected = self.explorer.is_connected();
                     let connect = egui::Button::new(format!(
                         "{} {}",
@@ -384,7 +384,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     let action = egui::Panel::bottom(egui::Id::new(("results_pane", *id)))
                         .resizable(true)
                         .default_size(height * 0.45)
-                        .min_size(90.0)
+                        // Numa janela baixa os resultados cedem: o editor
+                        // fica com pelo menos umas linhas e a faixa de
+                        // status não sai para fora da janela.
+                        .size_range(crate::fit::pane_range(height, 90.0, 60.0))
                         .show(ui, |ui| crate::results::show(ui, *id, exec, server, tag))
                         .inner;
                     if let Some((i, extension)) = action.save_results {

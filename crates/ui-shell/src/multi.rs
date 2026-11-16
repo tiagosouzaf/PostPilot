@@ -603,7 +603,7 @@ impl Dialog {
     pub fn show(&mut self, ctx: &egui::Context) -> DialogAction {
         let mut action = DialogAction::None;
         let modal = crate::theme::modal(egui::Id::new("multi_server")).show(ctx, |ui| {
-            ui.set_width(520.0);
+            crate::fit::dialog_width(ui, 520.0);
             ui.heading(tr("Run on Multiple Servers"));
             ui.add_space(2.0);
             ui.label(tr(
@@ -767,21 +767,27 @@ impl Dialog {
 /// Faixa de status de uma janela de vários servidores que ainda não
 /// executou.
 pub fn strip(ui: &mut egui::Ui, label: &str, tag: Option<&ServerTag>) {
-    ui.horizontal(|ui| {
-        ui.label(egui_phosphor::regular::HARD_DRIVES);
-        ui.label(tr("Runs on multiple servers."));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(label);
+    crate::fit::ends(
+        ui,
+        |ui| {
+            ui.label(egui_phosphor::regular::HARD_DRIVES);
+            crate::fit::text(ui, tr("Runs on multiple servers."));
+        },
+        |ui| {
+            // Os servidores encurtam para sobrar lugar para a mensagem.
+            let max = ui.available_width() * 0.5;
+            crate::fit::text_within(ui, label, max);
             if let Some(ServerTag {
                 environment: Some(name),
                 color,
                 ..
             }) = tag
+                && ui.available_width() >= crate::registered::environment_badge_width(ui, name)
             {
                 crate::registered::environment_badge(ui, name, *color);
             }
-        });
-    });
+        },
+    );
 }
 
 impl ShellApp {

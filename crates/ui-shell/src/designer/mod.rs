@@ -1159,7 +1159,7 @@ impl TableDesigner {
             script.clone()
         };
         let modal = crate::theme::modal(egui::Id::new(("change_script", id))).show(ctx, |ui| {
-            ui.set_width(560.0);
+            crate::fit::dialog_width(ui, 560.0);
             ui.heading(tr("Save Change Script"));
             ui.label(trf!(
                 "These statements run in one transaction when {name} is saved:",
@@ -1199,7 +1199,7 @@ impl TableDesigner {
         };
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new(("designer_warnings", id))).show(ctx, |ui| {
-            ui.set_width(460.0);
+            crate::fit::dialog_width(ui, 460.0);
             ui.heading(tr("Validation Warnings"));
             ui.label(tr("Saving these changes might lose data:"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -1234,7 +1234,7 @@ impl TableDesigner {
         let name = self.qualified_name();
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new(("designer_close", id))).show(ctx, |ui| {
-            ui.set_width(380.0);
+            crate::fit::dialog_width(ui, 380.0);
             ui.heading(pgstudio_core::APP_NAME);
             ui.label(tr("Save changes to the following items?"));
             egui::Frame::group(ui.style()).show(ui, |ui| {

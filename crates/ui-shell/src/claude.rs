@@ -368,13 +368,18 @@ impl ShellApp {
         let Some(l) = &self.claude.listener else {
             return;
         };
-        ui.separator();
         let busy = l.running() > 0 || self.claude.is_confirming();
         let text = if busy {
             tr("Claude Code: working")
         } else {
             tr("Claude Code: on")
         };
+        // Numa barra estreita demais, o aviso some em vez de cobrir o resto.
+        let needed = crate::fit::text_width(ui, text) + 2.0 * ui.spacing().item_spacing.x + 8.0;
+        if ui.available_width() < needed {
+            return;
+        }
+        ui.separator();
         ui.label(egui::RichText::new(text).color(color))
             .on_hover_text(trf!(
                 "Claude Code can use PostPilot through `postpilot mcp`. {calls} call(s) so far. \
@@ -1063,7 +1068,7 @@ impl ShellApp {
         let mut answer = None;
         let pending = self.claude.confirms.len();
         let modal = crate::theme::modal(egui::Id::new("claude_confirm")).show(ctx, |ui| {
-            ui.set_width(560.0);
+            crate::fit::dialog_width(ui, 560.0);
             ui.heading(&c.title);
             ui.label(&c.reason);
             ui.horizontal(|ui| {

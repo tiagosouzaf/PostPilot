@@ -863,7 +863,7 @@ impl ActivityMonitor {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .button(format!("{} {}", icon::ARROWS_CLOCKWISE, tr("Refresh")))
                 .clicked()
@@ -1295,7 +1295,7 @@ impl ActivityMonitor {
         };
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new("activity_confirm")).show(ctx, |ui| {
-            ui.set_width(400.0);
+            crate::fit::dialog_width(ui, 400.0);
             ui.heading(title);
             ui.label(text);
             ui.add_space(6.0);

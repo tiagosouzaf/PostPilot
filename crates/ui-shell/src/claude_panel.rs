@@ -247,24 +247,46 @@ impl ClaudePanel {
         // A largura é a da área do painel; nada de dentro pode alargá-la.
         let width = ui.available_width();
         ui.set_max_width(width);
-        ui.horizontal(|ui| {
-            let name = if self.provider.is_empty() {
-                "Claude"
-            } else {
-                self.provider.as_str()
-            };
-            // i18n-ignore
-            let title = ui.strong(format!("{} {name}", egui_phosphor::regular::SPARKLE));
-            if !self.model.is_empty() {
-                title.on_hover_text(trf!("Model: {model}", model = self.model));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let name = if self.provider.is_empty() {
+            "Claude"
+        } else {
+            self.provider.as_str()
+        };
+        // i18n-ignore
+        let title = format!("{} {name}", egui_phosphor::regular::SPARKLE);
+        let model = self.model.clone();
+        let busy = self.busy;
+        crate::fit::ends(
+            ui,
+            |ui| {
+                let title = crate::fit::text(ui, egui::RichText::new(title.clone()).strong());
+                if let Some(title) = title
+                    && !model.is_empty()
+                {
+                    title.on_hover_text(trf!("Model: {model}", model = model));
+                }
+            },
+            |ui| {
+                // Num painel estreito o botão fica só com o ícone, para o
+                // nome do provedor continuar aparecendo.
+                let new_chat = format!("{} {}", egui_phosphor::regular::PLUS, tr("New chat"));
+                let pad = 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
+                let stop = format!("{} {}", egui_phosphor::regular::STOP, tr("Stop"));
+                let mut wide = crate::fit::text_width(ui, new_chat.as_str())
+                    + crate::fit::text_width(ui, egui_phosphor::regular::GEAR)
+                    + crate::fit::text_width(ui, egui::RichText::new(title.as_str()).strong())
+                    + 2.0 * pad
+                    + ui.spacing().item_spacing.x;
+                if busy {
+                    wide += crate::fit::text_width(ui, stop.as_str()) + pad;
+                }
+                let caption = if ui.available_width() >= wide {
+                    new_chat
+                } else {
+                    egui_phosphor::regular::PLUS.to_string()
+                };
                 if ui
-                    .button(format!(
-                        "{} {}",
-                        egui_phosphor::regular::PLUS,
-                        tr("New chat")
-                    ))
+                    .button(caption)
                     .on_hover_text(tr("Start a new conversation"))
                     .clicked()
                 {
@@ -279,15 +301,11 @@ impl ClaudePanel {
                 {
                     actions.push(PanelAction::Settings);
                 }
-                if self.busy
-                    && ui
-                        .button(format!("{} {}", egui_phosphor::regular::STOP, tr("Stop")))
-                        .clicked()
-                {
+                if busy && ui.button(stop).clicked() {
                     actions.push(PanelAction::Stop);
                 }
-            });
-        });
+            },
+        );
         ui.separator();
         let input_height = 120.0;
         let transcript = (ui.available_height() - input_height).max(80.0);

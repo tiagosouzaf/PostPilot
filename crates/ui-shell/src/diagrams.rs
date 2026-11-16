@@ -1059,7 +1059,7 @@ impl DiagramView {
         };
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new(("diagram_script", id))).show(ctx, |ui| {
-            ui.set_width(560.0);
+            crate::fit::dialog_width(ui, 560.0);
             ui.heading(if save {
                 tr("Save Diagram")
             } else {
@@ -1106,7 +1106,7 @@ impl DiagramView {
         let mut answer = None;
         let title = self.title();
         let modal = crate::theme::modal(egui::Id::new(("diagram_close", id))).show(ctx, |ui| {
-            ui.set_width(380.0);
+            crate::fit::dialog_width(ui, 380.0);
             ui.heading(tr("Unsaved Changes"));
             ui.label(trf!(
                 "{title} has changes that were not saved. Close it anyway?",
@@ -1141,7 +1141,7 @@ pub(crate) fn table_picker(
 ) -> Option<bool> {
     let mut answer = None;
     let modal = crate::theme::modal(id).show(ctx, |ui| {
-        ui.set_width(380.0);
+        crate::fit::dialog_width(ui, 380.0);
         ui.heading(tr("Add Table"));
         ui.horizontal(|ui| {
             ui.label(tr("Filter:"));
@@ -1154,8 +1154,9 @@ pub(crate) fn table_picker(
         });
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let height = crate::fit::dialog_height(ui, 280.0, 190.0);
             egui::ScrollArea::vertical()
-                .max_height(280.0)
+                .max_height(height)
                 .auto_shrink([false, true])
                 .show_rows(ui, 20.0, candidates.len(), |ui, range| {
                     for (table, name) in &candidates[range] {

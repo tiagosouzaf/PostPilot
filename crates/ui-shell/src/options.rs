@@ -665,18 +665,29 @@ impl OptionsDialog {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                // Numa janela pequena (ou com zoom grande) o diálogo
+                // encolhe para caber: a lista e a página ficam mais
+                // estreitas e o texto da página quebra a linha.
+                let screen = ui.ctx().content_rect().size();
+                let tree = if screen.x < 640.0 { 150.0 } else { 200.0 };
+                let page = (screen.x - tree - 70.0).clamp(180.0, 380.0);
+                let height = (screen.y - 150.0).clamp(120.0, 260.0);
                 ui.horizontal_top(|ui| {
-                    ui.allocate_ui(egui::vec2(200.0, 260.0), |ui| {
-                        ui.set_min_size(egui::vec2(200.0, 260.0));
+                    ui.allocate_ui(egui::vec2(tree, height), |ui| {
+                        ui.set_min_size(egui::vec2(tree, height));
                         egui::Frame::group(ui.style()).show(ui, |ui| {
-                            ui.set_min_size(egui::vec2(190.0, 250.0));
+                            ui.set_min_size(egui::vec2(tree - 10.0, height - 10.0));
+                            ui.set_max_width(tree - 10.0);
                             ui.vertical(|ui| self.tree(ui));
                         });
                     });
                     ui.vertical(|ui| {
-                        ui.set_min_width(380.0);
-                        ui.set_max_width(420.0);
-                        self.page(ui);
+                        ui.set_min_width(page);
+                        ui.set_max_width(page + 40.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("options_page")
+                            .max_height((screen.y - 150.0).max(120.0))
+                            .show(ui, |ui| self.page(ui));
                     });
                 });
                 ui.separator();
@@ -718,10 +729,8 @@ impl OptionsDialog {
             }
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
-                if ui
-                    .selectable_label(self.page == page, tr(page.title()))
-                    .clicked()
-                {
+                let item = egui::Button::selectable(self.page == page, tr(page.title())).truncate();
+                if ui.add(item).clicked() {
                     self.page = page;
                 }
             });
