@@ -177,6 +177,47 @@ struct Entry {
     /// Seleção antes e depois, para restaurar.
     before: (usize, usize),
     after: (usize, usize),
+    /// Os outros cursores (edição com vários cursores), antes e depois.
+    before_extra: Vec<Sel>,
+    after_extra: Vec<Sel>,
+}
+
+/// Uma seleção: (âncora, cursor), em caracteres.
+pub type Sel = (usize, usize);
+
+/// Junta duas mudanças seguidas (`second` feita no texto depois de `first`)
+/// numa só, se elas se tocam. É o que deixa uma palavra digitada em vários
+/// cursores voltar num desfazer só.
+fn compose(first: &Change, second: &Change) -> Option<Change> {
+    let len = |s: &str| s.chars().count();
+    let from = |s: &str, n: usize| s.char_indices().nth(n).map_or(s.len(), |(b, _)| b);
+    let (a1, a2) = (first.at, second.at);
+    let e1 = a1 + len(&first.inserted);
+    let e2 = a2 + len(&second.removed);
+    if a2 > e1 || e2 < a1 {
+        return None;
+    }
+    let mut removed = String::new();
+    if a2 < a1 {
+        removed.push_str(&second.removed[..from(&second.removed, a1 - a2)]);
+    }
+    removed.push_str(&first.removed);
+    if e2 > e1 {
+        removed.push_str(&second.removed[from(&second.removed, e1 - a2)..]);
+    }
+    let mut inserted = String::new();
+    if a2 > a1 {
+        inserted.push_str(&first.inserted[..from(&first.inserted, a2 - a1)]);
+    }
+    inserted.push_str(&second.inserted);
+    if e2 < e1 {
+        inserted.push_str(&first.inserted[from(&first.inserted, e2 - a1)..]);
+    }
+    Some(Change {
+        at: a1.min(a2),
+        removed,
+        inserted,
+    })
 }
 
 /// Edições guardadas no histórico, no máximo.
@@ -230,15 +271,55 @@ impl History {
                 }
             }
         }
-        self.undo.push(Entry {
+        self.push(Entry {
             change,
             kind,
             before,
             after,
+            before_extra: Vec::new(),
+            after_extra: Vec::new(),
         });
+    }
+
+    fn push(&mut self, entry: Entry) {
+        self.undo.push(entry);
         if self.undo.len() > MAX_HISTORY {
             self.undo.remove(0);
         }
+    }
+
+    /// Guarda uma edição feita em vários cursores de uma vez. `change` é o
+    /// trecho inteiro, do primeiro ao último cursor, então desfazer volta
+    /// todos juntos. Digitar e apagar em seguida, com os mesmos cursores,
+    /// juntam num passo só.
+    pub fn record_multi(
+        &mut self,
+        change: Change,
+        kind: EditKind,
+        before: (Sel, Vec<Sel>),
+        after: (Sel, Vec<Sel>),
+    ) {
+        self.redo.clear();
+        if let Some(last) = self.undo.last_mut()
+            && kind != EditKind::Other
+            && last.kind == kind
+            && last.after == before.0
+            && last.after_extra == before.1
+            && let Some(joined) = compose(&last.change, &change)
+        {
+            last.change = joined;
+            last.after = after.0;
+            last.after_extra = after.1;
+            return;
+        }
+        self.push(Entry {
+            change,
+            kind,
+            before: before.0,
+            after: after.0,
+            before_extra: before.1,
+            after_extra: after.1,
+        });
     }
 
     /// Fecha a edição atual: a próxima não junta com ela.
@@ -258,6 +339,11 @@ impl History {
 
     /// Desfaz a última edição em `text` e devolve a seleção a restaurar.
     pub fn undo(&mut self, text: &mut String) -> Option<(usize, usize)> {
+        self.undo_multi(text).map(|(sel, _)| sel)
+    }
+
+    /// Como [`History::undo`], e devolve também os outros cursores.
+    pub fn undo_multi(&mut self, text: &mut String) -> Option<(Sel, Vec<Sel>)> {
         let entry = self.undo.pop()?;
         apply(
             text,
@@ -265,13 +351,18 @@ impl History {
             &entry.change.inserted,
             &entry.change.removed,
         );
-        let sel = entry.before;
+        let sel = (entry.before, entry.before_extra.clone());
         self.redo.push(entry);
         Some(sel)
     }
 
     /// Refaz a última edição desfeita.
     pub fn redo(&mut self, text: &mut String) -> Option<(usize, usize)> {
+        self.redo_multi(text).map(|(sel, _)| sel)
+    }
+
+    /// Como [`History::redo`], e devolve também os outros cursores.
+    pub fn redo_multi(&mut self, text: &mut String) -> Option<(Sel, Vec<Sel>)> {
         let entry = self.redo.pop()?;
         apply(
             text,
@@ -279,7 +370,7 @@ impl History {
             &entry.change.removed,
             &entry.change.inserted,
         );
-        let sel = entry.after;
+        let sel = (entry.after, entry.after_extra.clone());
         self.undo.push(entry);
         Some(sel)
     }
@@ -378,6 +469,30 @@ mod tests {
         assert_eq!(h.redo(&mut t), Some((2, 2)));
         assert_eq!(h.redo(&mut t), Some((5, 5)));
         assert_eq!(t, "ab cd");
+    }
+
+    #[test]
+    fn changes_that_touch_compose_into_one() {
+        let c = |at, removed: &str, inserted: &str| Change {
+            at,
+            removed: removed.into(),
+            inserted: inserted.into(),
+        };
+        // "a|\nb|" -> digitar x nos dois cursores, depois y.
+        let first = c(1, "\nb", "x\nbx");
+        let second = c(2, "\nbx", "y\nbxy");
+        assert_eq!(compose(&first, &second), Some(c(1, "\nb", "xy\nbxy")));
+        // Backspace nos dois cursores de "ab|\ncd|", duas vezes.
+        let first = c(1, "b\ncd", "\nc");
+        let second = c(0, "a\nc", "\n");
+        assert_eq!(compose(&first, &second), Some(c(0, "ab\ncd", "\n")));
+        // Longe uma da outra: não juntam.
+        assert_eq!(compose(&c(0, "", "a"), &c(5, "", "b")), None);
+        // A segunda passa do fim da primeira.
+        assert_eq!(
+            compose(&c(2, "", "çã"), &c(3, "ãxy", "")),
+            Some(c(2, "xy", "ç"))
+        );
     }
 
     #[test]
