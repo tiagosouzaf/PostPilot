@@ -164,6 +164,29 @@ O painel e as ações rápidas funcionam igual (o PostPilot procura
 O `.msi` não instala o plugin. Nada disso foi testado num Windows de
 verdade.
 
+## ChatGPT pela sua conta (sem chave de API)
+
+Do mesmo jeito que o Claude usa o login do Claude Code, o ChatGPT pode usar
+a sua conta (o plano do ChatGPT) em vez de uma chave de API paga por uso.
+O PostPilot faz isso pelo **Codex**, o programa oficial da OpenAI, que tem o
+"Sign in with ChatGPT". O PostPilot não guarda o login: quem guarda é o
+Codex.
+
+1. Instale o Codex: `npm install -g @openai/codex` (precisa do Node.js).
+2. Em **Ferramentas > Provedores de IA…**, escolha **ChatGPT (sua conta)**
+   na lista de cima.
+3. Clique em **Entrar com o ChatGPT**. O navegador abre a página da OpenAI;
+   entre com a sua conta. Se o navegador não abrir, use **Copiar o link de
+   login**. (Dá no mesmo rodar `codex login` num terminal.)
+4. Quando aparecer "Conectado com a sua conta do ChatGPT", dê OK.
+
+O painel, o **Gerar com IA** do Commit e o nome de arquivo sugerido passam a
+usar o ChatGPT. Por baixo, o PostPilot roda `codex exec` com o sandbox só de
+leitura e sem a ferramenta de shell, e liga as ferramentas do PostPilot por
+MCP: alterar dados ou esquema continua pedindo a confirmação de sempre. O
+modelo é o configurado no Codex (`~/.codex/config.toml`). Se o Codex está
+fora do `PATH`, aponte `PGSTUDIO_CODEX` para ele.
+
 ## Outras IAs: OpenAI, OpenRouter, GLM
 
 O Claude Code é o padrão, mas o painel, o botão **Gerar com IA** do Commit e
