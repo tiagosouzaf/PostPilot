@@ -162,7 +162,7 @@ impl From<UiScale> for u32 {
 }
 
 /// As preferências.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     /// Idioma da interface.
@@ -171,6 +171,20 @@ pub struct Preferences {
     pub theme: ThemeSetting,
     /// Tamanho da interface.
     pub ui_scale: UiScale,
+    /// Conectar em segundo plano, ao abrir, os servidores guardados que têm
+    /// a senha lembrada.
+    pub auto_connect: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Preferences {
+            language: LanguageSetting::default(),
+            theme: ThemeSetting::default(),
+            ui_scale: UiScale::default(),
+            auto_connect: true,
+        }
+    }
 }
 
 impl Preferences {
@@ -248,11 +262,12 @@ mod tests {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
             theme: ThemeSetting::Fixed(Theme::Light),
             ui_scale: UiScale::from_percent(130),
+            auto_connect: false,
         })
         .unwrap();
         assert_eq!(
             json,
-            r#"{"language":"pt-BR","theme":"light","ui_scale":130}"#
+            r#"{"language":"pt-BR","theme":"light","ui_scale":130,"auto_connect":false}"#
         );
         let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Dark);
@@ -264,7 +279,7 @@ mod tests {
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Light);
         assert_eq!(
             serde_json::to_string(&Preferences::default()).unwrap(),
-            r#"{"language":"system","theme":"system","ui_scale":100}"#
+            r#"{"language":"system","theme":"system","ui_scale":100,"auto_connect":true}"#
         );
     }
 
@@ -306,6 +321,7 @@ mod tests {
             language: LanguageSetting::Fixed(Language::PortugueseBrazil),
             theme: ThemeSetting::Fixed(Theme::Light),
             ui_scale: UiScale::from_percent(140),
+            auto_connect: false,
         };
         store.save(&prefs).unwrap();
         assert_eq!(PreferencesStore::open(&file).1, prefs);

@@ -836,6 +836,20 @@ impl OptionsDialog {
                 .wrap(),
             );
         }
+        ui.add_space(10.0);
+        ui.checkbox(
+            &mut self.draft.auto_connect,
+            tr("Connect saved servers in the background when PostPilot opens"),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "Servers with a remembered password connect by themselves, a few at a time, without opening any dialog. Nothing is executed on them. Servers without a saved password wait for a double-click.",
+                ))
+                .weak(),
+            )
+            .wrap(),
+        );
     }
 
     fn international(&mut self, ui: &mut egui::Ui) {
