@@ -2200,9 +2200,10 @@ impl ShellApp {
         self.workspace.open(Panel::Query(id));
     }
 
-    /// "Save Results As...": pergunta o arquivo e exporta o resultado `i`
-    /// da janela `doc` numa thread, no formato da extensão.
-    fn save_results_as(&mut self, doc: u32, i: usize) {
+    /// "Save Results As..." e "Export to Excel...": pergunta o arquivo
+    /// (sugerindo a extensão `extension`) e exporta o resultado `i` da
+    /// janela `doc` numa thread, no formato da extensão escolhida.
+    fn save_results_as(&mut self, doc: u32, i: usize, extension: &str) {
         let Some(set) = self
             .documents
             .get(doc)
@@ -2214,7 +2215,7 @@ impl ShellApp {
         let store = set.shared_store();
         let rows = set.len();
         let question = file_dialogs::Question::SaveResults {
-            name: format!("{}.csv", tr("Results")),
+            name: format!("{}.{extension}", tr("Results")),
         };
         self.ask_path(question, move |app, ctx, path| {
             if let Some(path) = path {
@@ -2245,8 +2246,17 @@ impl ShellApp {
                 )
             });
             let text = match result {
-                Ok(1) => trf!("Saved 1 row to {path}.", path = path.display()),
-                Ok(n) => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                Ok(saved) => {
+                    let mut text = match saved.rows {
+                        1 => trf!("Saved 1 row to {path}.", path = path.display()),
+                        n => trf!("Saved {n} rows to {path}.", n = n, path = path.display()),
+                    };
+                    if saved.truncated > 0 {
+                        text.push(' ');
+                        text.push_str(&execution::truncated_text(saved.truncated));
+                    }
+                    text
+                }
                 Err(e) => trf!(
                     "Could not save the results to {path}: {error}",
                     path = path.display(),
@@ -3259,8 +3269,8 @@ impl ShellApp {
                     self.active_doc = Some(id);
                     self.request_close(vec![id], false);
                 }
-                for (doc, i) in save_results {
-                    self.save_results_as(doc, i);
+                for (doc, i, extension) in save_results {
+                    self.save_results_as(doc, i, extension);
                 }
             });
         for (doc, i, cell) in open_json {

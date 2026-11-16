@@ -307,6 +307,8 @@ pub struct GridOutput {
     pub copied: Option<String>,
     /// Pediu "Save Results As..." pelo menu de contexto.
     pub save_as: bool,
+    /// Pediu "Export to Excel..." pelo menu de contexto.
+    pub export_excel: bool,
     /// Pediu para ver o JSON desta célula (duplo clique, Enter ou "View
     /// JSON..." no menu de contexto). A célula tem um objeto ou array.
     pub open_json: Option<Cell>,
@@ -591,6 +593,7 @@ pub fn show(
     // Teclado.
     let mut copied = None;
     let mut save_as = false;
+    let mut export_excel = false;
     let mut edit_refused = false;
     let mut delete_rows = None;
     if response.has_focus() {
@@ -737,6 +740,10 @@ pub fn show(
             save_as = true;
             ui.close();
         }
+        if ui.button(tr("Export to Excel...")).clicked() {
+            export_excel = true;
+            ui.close();
+        }
         if ui.button(tr("Select All")).clicked() {
             state.select_all(store);
             ui.close();
@@ -781,6 +788,7 @@ pub fn show(
         response,
         copied,
         save_as,
+        export_excel,
         open_json,
         commit,
         delete_rows,

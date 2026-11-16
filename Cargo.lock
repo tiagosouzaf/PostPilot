@@ -3164,8 +3164,10 @@ dependencies = [
 name = "pgstudio-result-grid"
 version = "0.2.14"
 dependencies = [
+ "crc32fast",
  "eframe",
  "egui_kittest",
+ "flate2",
  "pgstudio-i18n",
 ]
 

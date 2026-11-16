@@ -81,6 +81,9 @@ argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
 base64 = "0.22"
 zeroize = "1"
+# ZIP do Excel (.xlsx) em "Save Results As": deflate em Rust puro e CRC-32.
+flate2 = "1"
+crc32fast = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
