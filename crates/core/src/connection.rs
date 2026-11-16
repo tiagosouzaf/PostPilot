@@ -182,7 +182,7 @@ impl Engine {
                     | Feature::Claude
             ),
             // O Redis ganha os seus marco a marco (Fase N do plano).
-            Engine::Redis => matches!(feature, Feature::Query),
+            Engine::Redis => matches!(feature, Feature::Query | Feature::IntelliSense),
         }
     }
 

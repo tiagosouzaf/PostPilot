@@ -479,3 +479,22 @@ fn explorer_cuts_a_huge_database_and_says_so() {
     assert_eq!(filtered[1].name, "big:* (10)");
     run(session.as_ref(), "FLUSHDB");
 }
+
+/// O catálogo do IntelliSense: as chaves do banco com o tipo.
+#[test]
+fn catalog_lists_keys_with_their_types() {
+    let Some((s, pw)) = settings() else { return };
+    let connected = connector().connect(&s, &pw).expect("connect");
+    let session = connected.queries.open("db9");
+    let seed = "FLUSHDB\nSET k:10 a\nSET k:2 b\nHSET h f v";
+    assert_eq!(errors(&run(session.as_ref(), seed)), Vec::<String>::new());
+    let catalog = connected.metadata.catalog("db9").unwrap();
+    assert_eq!(catalog.engine, Engine::Redis);
+    let keys: Vec<(&str, &str)> = catalog.schemas[0]
+        .relations
+        .iter()
+        .map(|r| (r.name.as_str(), r.columns[0].ty.as_str()))
+        .collect();
+    assert_eq!(keys, [("h", "hash"), ("k:2", "string"), ("k:10", "string")]);
+    run(session.as_ref(), "FLUSHDB");
+}

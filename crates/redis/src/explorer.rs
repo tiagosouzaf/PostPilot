@@ -16,7 +16,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use pgstudio_core::connection::{ConnectionSettings, redis_argument, redis_database_index};
+use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
+use pgstudio_core::connection::{ConnectionSettings, Engine, redis_argument, redis_database_index};
 use pgstudio_core::metadata::{
     MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property, ScriptAction,
 };
@@ -31,6 +32,8 @@ const SERVER: &str = "server";
 pub const SCAN_LIMIT: usize = 20_000;
 /// Chaves pedidas a cada `SCAN`.
 const SCAN_COUNT: &str = "1000";
+/// Chaves que o IntelliSense guarda de cada banco.
+pub const CATALOG_KEYS: usize = 5_000;
 /// Tipos pedidos de uma vez (um `TYPE` por chave, em sequência).
 const TYPE_BATCH: usize = 500;
 
@@ -512,6 +515,48 @@ impl MetadataProvider for RedisExplorer {
             "" => filters.remove(&db),
             f => filters.insert(db, f.to_string()),
         };
+    }
+
+    /// As chaves do banco para o IntelliSense: cada uma é uma "tabela"
+    /// do schema sem nome, com o tipo dela como única coluna.
+    fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
+        let db = redis_database_index(database).unwrap_or(0);
+        let (keys, _) = self.scan(db, b"*")?;
+        let mut keys: Vec<Vec<u8>> = keys
+            .into_iter()
+            .filter(|k| std::str::from_utf8(k).is_ok())
+            .collect();
+        keys.sort_by(|a, b| natural(a, b));
+        keys.truncate(CATALOG_KEYS);
+        let types = self.run(
+            db,
+            &keys
+                .iter()
+                .map(|k| vec![b"TYPE".to_vec(), k.clone()])
+                .collect::<Vec<_>>(),
+        )?;
+        let relations = keys
+            .iter()
+            .zip(types)
+            .map(|(key, ty)| Relation {
+                name: bytes_to_text(key),
+                kind: RelationKind::Table,
+                columns: vec![Column {
+                    name: "value".into(),
+                    ty: ty.as_text().unwrap_or_default(),
+                }],
+            })
+            .collect();
+        Ok(Catalog {
+            engine: Engine::Redis,
+            database: format!("db{db}"),
+            search_path: vec![String::new()],
+            schemas: vec![Schema {
+                name: String::new(),
+                relations,
+                functions: Vec::new(),
+            }],
+        })
     }
 
     fn database_of(&self, node: &NodeId) -> Option<String> {

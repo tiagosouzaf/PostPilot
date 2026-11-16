@@ -43,6 +43,9 @@ fn connected() -> Option<Harness<'static, ShellApp>> {
         dialog.database = "db15".into();
         dialog.password = var("REDIS_TEST_PASSWORD", "");
     }
+    // O diálogo muda com o motor (o Redis não tem túnel SSH): desenha de
+    // novo antes de clicar.
+    harness.run();
     harness.get_by_label("Connect").click();
     let start = Instant::now();
     while harness.state().connection().is_none() {
