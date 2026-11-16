@@ -5556,3 +5556,49 @@ msgstr "Clientes e Comandos Lentos"
 
 msgid "Listen to a Channel"
 msgstr "Escutar um Canal"
+
+# Redis: chaves no Object Explorer
+msgid "Key Group"
+msgstr "Grupo de Chaves"
+
+msgid "Key"
+msgstr "Chave"
+
+msgid "Open Value"
+msgstr "Abrir Valor"
+
+msgid "Delete Key..."
+msgstr "Excluir Chave..."
+
+msgid "Filter Keys..."
+msgstr "Filtrar Chaves..."
+
+msgid "Filter Keys"
+msgstr "Filtrar Chaves"
+
+msgid "Show only the keys that contain this text. A pattern also works: user:*"
+msgstr "Mostra só as chaves que contêm este texto. Um padrão também vale: user:*"
+
+msgid "Filter: {filter}"
+msgstr "Filtro: {filter}"
+
+msgid "Only the first {n} keys were read. Use Filter Keys to narrow."
+msgstr "Só as primeiras {n} chaves foram lidas. Use Filtrar Chaves para estreitar."
+
+msgid "The key no longer exists. Refresh the list."
+msgstr "A chave não existe mais. Atualize a lista."
+
+msgid "Expires in (TTL)"
+msgstr "Expira em (TTL)"
+
+msgid "No expiry"
+msgstr "Não expira"
+
+msgid "{n} s"
+msgstr "{n} s"
+
+msgid "Length"
+msgstr "Tamanho"
+
+msgid "Memory (bytes)"
+msgstr "Memória (bytes)"

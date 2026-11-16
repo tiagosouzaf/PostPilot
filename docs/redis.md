@@ -50,6 +50,34 @@ SCAN 0 MATCH cliente:* COUNT 100
 - Num servidor de um ambiente que pede confirmação (Produção), um texto com
   qualquer comando que não seja de leitura pede o "Execute" antes de rodar.
 
+## Chaves no Pesquisador de Objetos
+
+Cada banco (`db0 (48)`: o número é o total de chaves) abre com as chaves
+dele, agrupadas pelo prefixo até o `:`: `cliente:* (3)`, e dentro dele
+`cliente:1:* (2)` e assim por diante. Um prefixo com uma chave só não vira
+grupo. Cada chave mostra o tipo (`string`, `hash`, `list`, `set`, `zset`,
+`stream`...), e números dentro do nome ordenam como números (`sessao:2`
+antes de `sessao:10`).
+
+No menu de uma chave:
+
+- **Abrir Valor** abre uma janela de consulta com o comando de leitura do
+  tipo dela, já rodado: `GET`, `HGETALL`, `LRANGE 0 999`, `SMEMBERS`,
+  `ZRANGE 0 999 WITHSCORES`, `XRANGE - + COUNT 1000`.
+- **Excluir Chave...** abre o `DEL` numa janela para você conferir e rodar;
+  nada é apagado pelo menu.
+- **Propriedades** (F4): tipo, tempo para expirar (TTL), tamanho,
+  codificação e memória.
+
+No menu de um banco, **Filtrar Chaves...** mostra só as que contêm um texto
+(ou casam com um padrão, como `user:*` ou `sess?o:1[0-9]`). O filtro aparece
+como a primeira linha do banco e volta quando o app reabre.
+
+As chaves são lidas com `SCAN`, que não trava o servidor. Cada leitura para
+em 20.000 chaves: se o banco tem mais, as contagens saem com `+` e uma linha
+avisa; o filtro estreita a busca. "Atualizar" relê depois de criar ou apagar
+chaves.
+
 ## O que não existe para o Redis
 
 Table Designer, diagramas, Schema Compare, Query Designer, plano de

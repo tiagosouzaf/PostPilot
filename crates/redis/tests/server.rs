@@ -319,3 +319,163 @@ fn tls_connects_without_verifying_and_refuses_when_verifying() {
         Err(ConnectError::Tls(_))
     ));
 }
+
+/// O Object Explorer de um banco: grupos por prefixo, chaves com o tipo,
+/// filtro, "Open Value", "Delete Key" e propriedades. Usa o banco 14, só
+/// dele.
+#[test]
+fn explorer_groups_keys_and_opens_values() {
+    use pgstudio_core::metadata::{NodeKind, ScriptAction};
+
+    let Some((s, pw)) = settings() else { return };
+    let connected = connector().connect(&s, &pw).expect("connect");
+    let session = connected.queries.open("db11");
+    let seed = "FLUSHDB\n\
+        SET user:1:name Ana\n\
+        HSET user:1:profile city Recife age 30\n\
+        SET user:2:name Bia\n\
+        RPUSH queue:mail a b c\n\
+        SADD tags rust redis\n\
+        ZADD rank 1 ana 2 bia\n\
+        SET \"com espaco\" x\n\
+        SET \"sess\\xff\\x00\" bin\n\
+        EXPIRE tags 1000";
+    assert_eq!(errors(&run(session.as_ref(), seed)), Vec::<String>::new());
+
+    let meta = &connected.metadata;
+    assert!(!meta.relational());
+    let server = meta.roots().unwrap().remove(0);
+    let dbs = meta.children(&server.id).unwrap();
+    let db = dbs.iter().find(|d| d.id.0 == "db/11").unwrap();
+    assert_eq!((db.name.as_str(), db.has_children), ("db11 (8)", true));
+    assert!(!dbs.iter().find(|d| d.id.0 == "db/12").unwrap().has_children);
+
+    let names = |nodes: &[pgstudio_core::metadata::ObjectNode]| -> Vec<String> {
+        nodes.iter().map(|n| n.name.clone()).collect()
+    };
+    let top = meta.children(&db.id).unwrap();
+    assert_eq!(
+        names(&top),
+        [
+            "user:* (3)",
+            "com espaco (string)",
+            "queue:mail (list)",
+            "rank (zset)",
+            "sess\\xff\\x00 (string)",
+            "tags (set)",
+        ]
+    );
+    assert_eq!(top[0].kind, NodeKind::KeyGroup);
+    assert_eq!(top[1].kind, NodeKind::Key);
+    assert_eq!(meta.database_of(&top[1].id), Some("db11".into()));
+
+    let users = meta.children(&top[0].id).unwrap();
+    assert_eq!(names(&users), ["user:1:* (2)", "user:2:name (string)"]);
+    let user1 = meta.children(&users[0].id).unwrap();
+    assert_eq!(
+        names(&user1),
+        ["user:1:name (string)", "user:1:profile (hash)"]
+    );
+
+    // "Open Value": o comando do tipo, que roda como está.
+    let open = |name: &str, level: &[pgstudio_core::metadata::ObjectNode]| -> String {
+        let node = level.iter().find(|n| n.name.starts_with(name)).unwrap();
+        meta.script(&node.id, ScriptAction::SelectTop(1000))
+            .unwrap()
+    };
+    assert_eq!(open("user:1:profile", &user1), "HGETALL user:1:profile");
+    assert_eq!(open("queue:mail", &top), "LRANGE queue:mail 0 999");
+    assert_eq!(open("rank", &top), "ZRANGE rank 0 999 WITHSCORES");
+    assert_eq!(open("tags", &top), "SMEMBERS tags");
+    assert_eq!(open("com espaco", &top), "GET \"com espaco\"");
+    let binary = open("sess", &top);
+    assert_eq!(binary, "GET \"sess\\xff\\x00\"");
+    assert_eq!(rows(&run(session.as_ref(), &binary)), [["bin"]]);
+    assert_eq!(
+        rows(&run(session.as_ref(), &open("user:1:profile", &user1))),
+        [["city", "Recife"], ["age", "30"]]
+    );
+
+    // Propriedades de uma chave.
+    let tags = top.iter().find(|n| n.name.starts_with("tags")).unwrap();
+    let props = meta.properties(&tags.id).unwrap();
+    let prop = |name: &str| {
+        props
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value.clone())
+            .unwrap_or_else(|| panic!("{name} missing in {props:?}"))
+    };
+    assert_eq!(prop("Key"), "tags");
+    assert_eq!(prop("Data type"), "set");
+    assert_eq!(prop("Length"), "2");
+    let ttl: i64 = prop("Expires in (TTL)")
+        .trim_end_matches(" s")
+        .parse()
+        .unwrap();
+    assert!((900..=1000).contains(&ttl), "{ttl}");
+    let rank = top.iter().find(|n| n.name.starts_with("rank")).unwrap();
+    let props = meta.properties(&rank.id).unwrap();
+    assert!(props.iter().any(|p| p.value == "No expiry"), "{props:?}");
+
+    // Filtro: texto solto é "contém"; com `*`, o padrão como está.
+    assert_eq!(meta.filter(&db.id), Some(String::new()));
+    assert_eq!(meta.filter(&top[0].id), None);
+    meta.set_filter(&db.id, "name");
+    let filtered = meta.children(&db.id).unwrap();
+    assert_eq!(names(&filtered), ["Filter: name", "user:* (2)"]);
+    assert_eq!(filtered[0].kind, NodeKind::Note);
+    let users = meta.children(&filtered[1].id).unwrap();
+    assert_eq!(
+        names(&users),
+        ["user:1:name (string)", "user:2:name (string)"]
+    );
+    meta.set_filter(&db.id, "queue:*");
+    assert_eq!(
+        names(&meta.children(&db.id).unwrap()),
+        ["Filter: queue:*", "queue:mail (list)"]
+    );
+    meta.set_filter(&db.id, " ");
+    assert_eq!(meta.children(&db.id).unwrap().len(), 6);
+
+    // "Delete Key": o DEL para conferir; depois de rodar, a chave some.
+    let del = meta.script(&tags.id, ScriptAction::Drop).unwrap();
+    assert_eq!(del, "DEL tags");
+    assert_eq!(errors(&run(session.as_ref(), &del)), Vec::<String>::new());
+    assert!(
+        meta.script(&tags.id, ScriptAction::SelectTop(10))
+            .unwrap_err()
+            .0
+            .contains("no longer exists")
+    );
+    assert_eq!(meta.children(&db.id).unwrap().len(), 5);
+    run(session.as_ref(), "FLUSHDB");
+}
+
+/// Mais chaves do que uma leitura traz: a lista corta e avisa.
+#[test]
+fn explorer_cuts_a_huge_database_and_says_so() {
+    use pgstudio_core::metadata::NodeKind;
+
+    let Some((s, pw)) = settings() else { return };
+    let connected = connector().connect(&s, &pw).expect("connect");
+    let session = connected.queries.open("db13");
+    let fill = "FLUSHDB\nEVAL \"for i=1,25000 do redis.call('SET','big:'..i,i) end return 1\" 0";
+    assert_eq!(errors(&run(session.as_ref(), fill)), Vec::<String>::new());
+    let db = NodeId("db/13".into());
+    let top = connected.metadata.children(&db).unwrap();
+    assert_eq!(top.len(), 2, "{top:?}");
+    assert!(
+        top[0].name.starts_with("big:* (2") && top[0].name.ends_with("+)"),
+        "{}",
+        top[0].name
+    );
+    assert_eq!(top[1].kind, NodeKind::Note);
+    assert!(top[1].name.contains("20000"), "{}", top[1].name);
+    // O filtro estreita e a lista volta a caber.
+    connected.metadata.set_filter(&db, "big:2499?");
+    let filtered = connected.metadata.children(&db).unwrap();
+    assert_eq!(filtered.len(), 2, "{filtered:?}");
+    assert_eq!(filtered[1].name, "big:* (10)");
+    run(session.as_ref(), "FLUSHDB");
+}
