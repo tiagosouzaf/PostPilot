@@ -33,6 +33,25 @@ senhas nunca saem do PostPilot.
   `SELECT` roda na hora, de um comando que altera pede confirmação. Nos dois
   casos tudo roda numa transação que é desfeita no fim.
 
+## Redis, MongoDB e Elasticsearch
+
+As mesmas ferramentas valem nos motores sem SQL, cada um na sua linguagem:
+comandos do Redis, consultas no estilo do mongosh e requisições do console
+do Elasticsearch. O `list_servers` diz o motor de cada servidor.
+
+| Ferramenta | Redis | MongoDB | Elasticsearch |
+|---|---|---|---|
+| `list_databases` | bancos numerados | bancos | saúde do cluster |
+| `list_objects` | chaves (`schema` é um padrão do `SCAN`) | coleções | índices e aliases (`schema` é um padrão de nome) |
+| `describe_table` | validade, tamanho e tipo da chave | documentos de exemplo, índices e contagem | mapeamento e contagem |
+| `run_query` | leitura na hora, escrita com confirmação | igual | igual |
+
+`explain_query`, `get_activity` e `describe_function` não existem nesses
+motores: a resposta diz ao Claude o que usar no lugar (`.explain()` no
+MongoDB, `"profile": true` no Elasticsearch, `SLOWLOG GET` no Redis). Não
+há transação só de leitura neles, então a proteção é o classificador: o
+que o PostPilot não consegue ler como só leitura pede confirmação.
+
 ## Plano de execução e atividade
 
 O Claude não precisa adivinhar por que uma consulta é lenta nem quem está

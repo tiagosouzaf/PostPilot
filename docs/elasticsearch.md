@@ -119,8 +119,19 @@ No menu de um índice (ou alias, ou data stream):
 
 Table Designer, diagramas, Schema Compare, Data Compare, Query Designer,
 edição na grade, importação de CSV, plano de execução gráfico, Activity
-Monitor, backup e as ferramentas do Claude avisam na status bar que não
-estão disponíveis para o Elasticsearch.
+Monitor e backup avisam na status bar que não estão disponíveis para o
+Elasticsearch.
+
+## Claude
+
+As ferramentas do Claude (painel, Claude Code pelo MCP, **Explicar** e
+**Perguntar ao Claude**) funcionam no Elasticsearch, com as mesmas regras
+de `docs/claude.md`: buscas e leituras (`GET`, `_search`, `_count`,
+`_cat`...) rodam na hora; o que grava ou apaga (`PUT`, `DELETE`, `_bulk`,
+`_update`...) abre a confirmação com a requisição inteira; o ambiente do
+servidor (Produção) vale igual. O Claude lista índices e aliases, lê o
+mapeamento e a contagem de um índice, e para desempenho usa
+`"profile": true`.
 
 ## Testes
 

@@ -181,6 +181,44 @@ impl Target {
     }
 }
 
+/// Por que `explain_query` não vale neste motor, e o que usar no lugar.
+fn no_plan_hint(engine: Engine) -> Option<&'static str> {
+    match engine {
+        Engine::PostgreSql | Engine::SqlServer => None,
+        Engine::Redis => Some(
+            "explain_query is not available for Redis: commands have no execution plan. \
+             Use run_query with SLOWLOG GET or OBJECT ENCODING to investigate.",
+        ),
+        Engine::MongoDb => Some(
+            "explain_query is not available for MongoDB. Use run_query with \
+             db.collection.find(...).explain() (or .explain(\"executionStats\")).",
+        ),
+        Engine::Elasticsearch => Some(
+            "explain_query is not available for Elasticsearch. Use run_query with \
+             \"profile\": true in the body of a _search, or GET /index/_explain/id.",
+        ),
+    }
+}
+
+/// Por que `get_activity` não vale neste motor, e o que usar no lugar.
+fn no_activity_hint(engine: Engine) -> Option<&'static str> {
+    match engine {
+        Engine::PostgreSql | Engine::SqlServer => None,
+        Engine::Redis => Some(
+            "get_activity is not available for Redis. Use run_query with INFO, CLIENT LIST \
+             or SLOWLOG GET.",
+        ),
+        Engine::MongoDb => Some(
+            "get_activity is not available for MongoDB. Use run_query with \
+             db.adminCommand({ currentOp: 1 }) or db.serverStatus().",
+        ),
+        Engine::Elasticsearch => Some(
+            "get_activity is not available for Elasticsearch. Use run_query with \
+             GET /_tasks?detailed or GET /_cat/thread_pool?v.",
+        ),
+    }
+}
+
 /// Frase do diálogo de confirmação sobre o que o SQL faz.
 fn describe(safety: &pgstudio_automation::Safety) -> String {
     use pgstudio_automation::Safety;
@@ -472,11 +510,9 @@ impl ShellApp {
                 None,
                 responder,
                 |t| match t.engine {
-                    Engine::PostgreSql
-                    | Engine::Redis
-                    | Engine::MongoDb
-                    | Engine::Elasticsearch => (catalog::list_databases(), &[]),
-                    Engine::SqlServer => (catalog::tsql::list_databases(), &[]),
+                    Engine::PostgreSql => Ok((catalog::list_databases(), &[])),
+                    Engine::SqlServer => Ok((catalog::tsql::list_databases(), &[])),
+                    engine => Ok((catalog::nosql::list_databases(engine), &[])),
                 },
             ),
             ToolCall::ListObjects {
@@ -491,11 +527,9 @@ impl ShellApp {
                 database,
                 responder,
                 move |t| match t.engine {
-                    Engine::PostgreSql
-                    | Engine::Redis
-                    | Engine::MongoDb
-                    | Engine::Elasticsearch => (catalog::list_objects(schema.as_deref()), &[]),
-                    Engine::SqlServer => (catalog::tsql::list_objects(schema.as_deref()), &[]),
+                    Engine::PostgreSql => Ok((catalog::list_objects(schema.as_deref()), &[])),
+                    Engine::SqlServer => Ok((catalog::tsql::list_objects(schema.as_deref()), &[])),
+                    engine => catalog::nosql::list_objects(engine, schema.as_deref()),
                 },
             ),
             ToolCall::DescribeTable {
@@ -509,17 +543,16 @@ impl ShellApp {
                 server,
                 database,
                 responder,
-                move |t| {
-                    (
-                        match t.engine {
-                            Engine::PostgreSql
-                            | Engine::Redis
-                            | Engine::MongoDb
-                            | Engine::Elasticsearch => catalog::describe_table(&table),
-                            Engine::SqlServer => catalog::tsql::describe_table(&table),
-                        },
+                move |t| match t.engine {
+                    Engine::PostgreSql => Ok((
+                        catalog::describe_table(&table),
                         catalog::DESCRIBE_TABLE_LABELS,
-                    )
+                    )),
+                    Engine::SqlServer => Ok((
+                        catalog::tsql::describe_table(&table),
+                        catalog::DESCRIBE_TABLE_LABELS,
+                    )),
+                    engine => catalog::nosql::describe(engine, &table),
                 },
             ),
             ToolCall::DescribeFunction {
@@ -534,11 +567,12 @@ impl ShellApp {
                 database,
                 responder,
                 move |t| match t.engine {
-                    Engine::PostgreSql
-                    | Engine::Redis
-                    | Engine::MongoDb
-                    | Engine::Elasticsearch => (catalog::describe_function(&function), &[]),
-                    Engine::SqlServer => (catalog::tsql::describe_function(&function), &[]),
+                    Engine::PostgreSql => Ok((catalog::describe_function(&function), &[])),
+                    Engine::SqlServer => Ok((catalog::tsql::describe_function(&function), &[])),
+                    engine => Err(format!(
+                        "{} has no functions or procedures to describe.",
+                        catalog::nosql::engine_name(engine)
+                    )),
                 },
             ),
             ToolCall::RunQuery {
@@ -613,6 +647,9 @@ impl ShellApp {
                     Ok(t) => t,
                     Err(e) => return responder.send(Reply::error(e)),
                 };
+                if let Some(hint) = no_plan_hint(target.engine) {
+                    return responder.send(Reply::error(hint));
+                }
                 // O estimado não roda nada; o real executa o comando.
                 let touch = if analyze { Touch::Data } else { Touch::Schema };
                 let ask = match gate(target.tag.as_ref(), touch) {
@@ -665,6 +702,9 @@ impl ShellApp {
                     Ok(t) => t,
                     Err(e) => return responder.send(Reply::error(e)),
                 };
+                if let Some(hint) = no_activity_hint(target.engine) {
+                    return responder.send(Reply::error(hint));
+                }
                 match gate(target.tag.as_ref(), Touch::Data) {
                     Gate::Blocked(e) => responder.send(Reply::error(e)),
                     Gate::Open => self.claude_run_activity(
@@ -860,7 +900,7 @@ impl ShellApp {
         server: Option<String>,
         database: Option<String>,
         responder: Responder,
-        sql: impl FnOnce(&Target) -> (String, &'static [&'static str]),
+        sql: impl FnOnce(&Target) -> Result<(String, &'static [&'static str]), String>,
     ) {
         let target = match self.claude_target(server.as_deref(), database) {
             Ok(t) => t,
@@ -869,7 +909,10 @@ impl ShellApp {
         if let Gate::Blocked(e) = gate(target.tag.as_ref(), Touch::Schema) {
             return responder.send(Reply::error(e));
         }
-        let (sql, labels) = sql(&target);
+        let (sql, labels) = match sql(&target) {
+            Ok(s) => s,
+            Err(e) => return responder.send(Reply::error(e)),
+        };
         self.output.push(format!(
             "{}: {tool} ({}, {})",
             origin.label(),

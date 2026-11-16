@@ -54,13 +54,19 @@ pub fn all() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "list_servers",
-            description: "List the database servers (PostgreSQL or SQL Server) connected in PostPilot's \
+            description: "List the database servers (PostgreSQL, SQL Server, Redis, MongoDB or \
+                Elasticsearch) connected in PostPilot's \
                 Object Explorer, with the active one marked, the engine of each, and its \
                 environment (such as Production) with the user's rule for AI there \
                 (ai_access): free = reads run right away and changes ask; confirm = anything \
                 that runs SQL or brings data asks the user first; blocked = no tool can reach \
                 that server, so do not try. Start here to know what you can query, and write \
-                SQL in that engine's dialect (T-SQL when engine is sqlserver).",
+                SQL in that engine's dialect (T-SQL when engine is sqlserver). The other engines \
+                take their own language wherever a tool says SQL: redis = Redis commands, one \
+                per line (GET key, HGETALL key); mongodb = mongosh style \
+                (db.orders.find({ total: { $gt: 10 } }).limit(20), show collections); \
+                elasticsearch = console requests (GET /index/_search followed by the JSON \
+                body on the next lines).",
             input_schema: schema(json!({}), &[]),
             read_only: true,
         },
@@ -78,7 +84,9 @@ pub fn all() -> Vec<ToolSpec> {
             name: "list_objects",
             description: "List tables, views, materialized views, sequences, functions and \
                 procedures of a database (system schemas excluded), with estimated row counts \
-                and comments.",
+                and comments. On Redis it lists keys (schema is a SCAN pattern such as \
+                user:*), on MongoDB the collections of the database, on Elasticsearch the \
+                indices and aliases (schema is an index name pattern).",
             input_schema: schema(
                 json!({
                     "server": { "type": "string", "description": SERVER },
@@ -93,7 +101,10 @@ pub fn all() -> Vec<ToolSpec> {
             name: "describe_table",
             description: "Describe a table or view: columns with types, nullability, defaults \
                 and comments; constraints (primary, unique, foreign keys, checks); indexes; \
-                foreign keys from other tables that reference it; and the view definition.",
+                foreign keys from other tables that reference it; and the view definition. \
+                On Redis, pass a key: TTL, memory and (in messages) type. On MongoDB, a collection: sample \
+                documents, indexes and document count. On Elasticsearch, an index: mapping \
+                and document count.",
             input_schema: schema(
                 json!({
                     "table": { "type": "string", "description": "Table or view as written in SQL, e.g. orders or sales.\"Items\"." },
@@ -128,7 +139,10 @@ pub fn all() -> Vec<ToolSpec> {
                 ANALYZE of a change, ...) shows a confirmation dialog in PostPilot with the full \
                 SQL, and runs only if the user clicks Run; if they decline, you get an error \
                 saying so. Results are capped (max_rows per result, 64 KB in total). To show \
-                SQL to the user instead of running it, use edit_query_window.",
+                SQL to the user instead of running it, use edit_query_window. On Redis, \
+                MongoDB and Elasticsearch, sql is text in that engine's language (see \
+                list_servers); commands that only read run right away, anything that writes \
+                or deletes asks the user first.",
             input_schema: schema(
                 json!({
                     "sql": { "type": "string", "description": "One or more statements separated by semicolons." },

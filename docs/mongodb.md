@@ -138,8 +138,19 @@ coleção (com as chaves). No menu de uma coleção:
 Table Designer, diagramas, Schema Compare, Data Compare, Query Designer,
 Editar as 200 Primeiras Linhas (edite pelo resultado de um `find`),
 importação de CSV, plano de execução gráfico, Activity
-Monitor, backup e as ferramentas do Claude avisam na status bar que não
-estão disponíveis para o MongoDB.
+Monitor e backup avisam na status bar que não estão disponíveis para o
+MongoDB.
+
+## Claude
+
+As ferramentas do Claude (painel, Claude Code pelo MCP, **Explicar** e
+**Perguntar ao Claude**) funcionam no MongoDB, com as mesmas regras de
+`docs/claude.md`: `find`, `aggregate` e os outros comandos que só leem
+rodam na hora; `insert`, `update`, `delete`, `drop` e um `aggregate` com
+`$out` ou `$merge` abrem a confirmação com o texto inteiro; o ambiente do
+servidor (Produção) vale igual. O Claude lista bancos e coleções, vê
+documentos de exemplo, índices e a contagem de uma coleção, e para
+desempenho usa `.explain()`.
 
 ## Testes
 

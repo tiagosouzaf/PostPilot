@@ -1,11 +1,11 @@
 ---
 name: postpilot
-description: Work in the user's PostPilot (desktop PostgreSQL manager) through its MCP tools. Use when the user mentions PostPilot, their query window or editor, a database or table open in PostPilot, or asks to write, explain, fix, optimize or run PostgreSQL queries against a server connected there.
+description: Work in the user's PostPilot (desktop database manager for PostgreSQL, SQL Server, Redis, MongoDB and Elasticsearch) through its MCP tools. Use when the user mentions PostPilot, their query window or editor, a database, table, collection, key or index open in PostPilot, or asks to write, explain, fix, optimize or run queries against a server connected there.
 ---
 
 # Working in PostPilot
 
-PostPilot is the user's desktop PostgreSQL manager, in the style of SQL Server Management Studio. The `postpilot` MCP tools act on the PostPilot window open on their machine. If a tool answers that PostPilot is not open or that Claude Code access is off, tell the user to open PostPilot and turn on **Tools > Allow Claude Code (MCP)**, then try again. Do not work around it.
+PostPilot is the user's desktop database manager, in the style of SQL Server Management Studio. It connects to PostgreSQL, SQL Server, Redis, MongoDB and Elasticsearch. The `postpilot` MCP tools act on the PostPilot window open on their machine. If a tool answers that PostPilot is not open or that Claude Code access is off, tell the user to open PostPilot and turn on **Tools > Allow Claude Code (MCP)**, then try again. Do not work around it.
 
 ## Find your way first
 
@@ -18,6 +18,16 @@ PostPilot is the user's desktop PostgreSQL manager, in the style of SQL Server M
 - `run_query` runs read-only SQL at once, inside a READ ONLY transaction with a 60 s timeout. Use it to explore: counts, samples with `LIMIT`, `EXPLAIN` (without ANALYZE).
 - Any SQL that can change data or schema opens a confirmation dialog in PostPilot. The user sees the full SQL and clicks Run or Don't Run. If they decline, the tool says so. Accept it and do not retry the same statement.
 - Results sent to you are capped: 200 rows per result by default, 1000 at most, 64 KB in all. Ask for aggregates and `LIMIT` instead of whole tables. A `truncated: true` result means there are more rows than you saw.
+
+## Redis, MongoDB and Elasticsearch
+
+`list_servers` gives the `engine` of each server. On these engines, write in the engine's own language wherever a tool takes `sql`:
+
+- `redis`: Redis commands, one per line (`GET user:1`, `HGETALL cart:9`). `list_objects` lists keys and takes a SCAN pattern in `schema` (`user:*`). `describe_table` takes a key.
+- `mongodb`: mongosh style (`db.orders.find({ total: { $gt: 10 } }).sort({ date: -1 }).limit(20)`, `show collections`). `list_objects` lists collections. `describe_table` takes a collection and returns sample documents, indexes and the count. For speed, add `.explain("executionStats")`.
+- `elasticsearch`: console requests, the method and path on one line and the JSON body on the next lines (`GET /orders/_search`). `list_objects` lists indices and aliases. `describe_table` takes an index and returns its mapping and count. For speed, put `"profile": true` in the search body.
+
+Commands that only read run at once. Anything that writes or deletes asks the user first, exactly like SQL. There is no read-only transaction on these engines, so never try to slip a write past the confirmation. `explain_query`, `get_activity` and `describe_function` do not exist there; their error says what to use instead.
 
 ## Plans and activity
 

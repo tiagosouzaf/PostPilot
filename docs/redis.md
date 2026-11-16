@@ -95,8 +95,18 @@ chaves.
 ## O que não existe para o Redis
 
 Table Designer, diagramas, Schema Compare, Query Designer, plano de
-execução, Activity Monitor, backup e as ferramentas do Claude avisam na
-status bar que não estão disponíveis para o Redis.
+execução, Activity Monitor e backup avisam na status bar que não estão
+disponíveis para o Redis.
+
+## Claude
+
+As ferramentas do Claude (painel, Claude Code pelo MCP, **Explicar** e
+**Perguntar ao Claude**) funcionam no Redis, com as mesmas regras de
+`docs/claude.md`: comandos que só leem rodam na hora, qualquer comando que
+grava ou apaga abre a confirmação com o texto inteiro, e o ambiente do
+servidor (Produção) vale igual. O Claude lista as chaves (`SCAN` com
+padrão), vê tipo, validade e tamanho de uma chave e escreve comandos na
+janela de consulta.
 
 ## Testes
 
