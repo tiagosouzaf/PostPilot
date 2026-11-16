@@ -101,6 +101,13 @@ const ROW_HEIGHT: f32 = 20.0;
 /// Recuo por nível.
 const INDENT: f32 = 16.0;
 
+/// Largura reservada para a bolinha de estado na linha de um servidor.
+pub const STATUS_DOT_WIDTH: f32 = 10.0;
+/// Raio da bolinha de estado.
+pub const STATUS_DOT_RADIUS: f32 = 4.0;
+/// Verde da bolinha de um servidor conectado.
+pub const CONNECTED_GREEN: egui::Color32 = egui::Color32::from_rgb(0x3F, 0xB9, 0x50);
+
 /// A árvore e as cargas em andamento.
 /// Como o nó do servidor aparece quando a conexão está registrada.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -591,6 +598,19 @@ impl ObjectExplorer {
                         let registered = server_label
                             .as_ref()
                             .filter(|_| node.kind == NodeKind::Server);
+                        if node.kind == NodeKind::Server {
+                            // A bolinha verde: este servidor está conectado.
+                            let (rect, dot) = ui.allocate_exact_size(
+                                egui::vec2(STATUS_DOT_WIDTH, ROW_HEIGHT),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                STATUS_DOT_RADIUS,
+                                CONNECTED_GREEN,
+                            );
+                            dot.on_hover_text(tr("Connected"));
+                        }
                         if let Some((env, [r, g, b])) =
                             registered.and_then(|l| l.environment.as_ref())
                         {

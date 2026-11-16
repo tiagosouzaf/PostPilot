@@ -366,6 +366,14 @@ impl WorkspacePanel {
         self.workspaces.get_mut(index).map(|o| &mut o.passwords)
     }
 
+    /// Quantos cofres de workspace estão destrancados.
+    pub fn unlocked_count(&self) -> usize {
+        self.workspaces
+            .iter()
+            .filter(|o| o.passwords.is_unlocked())
+            .count()
+    }
+
     /// Se algum cofre está conferindo a senha mestra agora.
     pub fn is_unlocking(&self) -> bool {
         self.workspaces.iter().any(|o| o.passwords.is_busy())

@@ -10,6 +10,7 @@ pub mod ai;
 pub mod ai_assist;
 pub mod ai_names;
 pub mod applog;
+pub mod autoconnect;
 pub mod backup;
 pub mod backup_mssql;
 pub mod bench;
@@ -3341,6 +3342,7 @@ impl ShellApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         self.connect_step();
+        self.background_step(&ctx);
         self.ssh_browse_step();
         self.expand_step();
         self.execution_step(&ctx);

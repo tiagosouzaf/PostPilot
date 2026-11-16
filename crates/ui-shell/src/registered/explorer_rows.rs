@@ -219,6 +219,7 @@ impl RegisteredPanel {
         ui: &mut egui::Ui,
         path: &NodePath,
         depth: usize,
+        background: &crate::autoconnect::Background,
         actions: &mut Vec<Action>,
         menu: &mut TreeMenu,
     ) {
@@ -226,10 +227,14 @@ impl RegisteredPanel {
             return;
         };
         let menu = &mut menu.0;
+        let state = background.state(&crate::servers::server_key(&server.settings));
         ui.horizontal(|ui| {
             ui.set_height(ROW_HEIGHT);
             // Alinhado com os servidores conectados, que têm a seta.
             ui.add_space(depth as f32 * INDENT + CARET + ui.spacing().item_spacing.x);
+            // A bolinha de estado, no lugar da verde dos conectados.
+            let (dot, dot_tip) = crate::autoconnect::dot(state, ui.visuals());
+            crate::autoconnect::show_dot(ui, dot, &dot_tip);
             if let Some(e) = self.servers.node_environment(path) {
                 environment_badge(ui, environment_name(&e.name), e.color);
             }
@@ -243,11 +248,27 @@ impl RegisteredPanel {
             );
             label.dnd_set_drag_payload(path.clone());
             drop_target(ui, &label, path, &path.groups, menu);
-            let mut tip = trf!(
-                "{server} ({user}): not connected, double-click to connect.",
-                server = server.settings.server_name(),
-                user = server.settings.user
-            );
+            let mut tip = match state {
+                Some(
+                    crate::autoconnect::LinkState::Queued
+                    | crate::autoconnect::LinkState::Connecting,
+                ) => trf!(
+                    "{server} ({user}): connecting in the background…",
+                    server = server.settings.server_name(),
+                    user = server.settings.user
+                ),
+                Some(crate::autoconnect::LinkState::Failed(error)) => trf!(
+                    "{server} ({user}): could not connect: {error}\nDouble-click to try again.",
+                    server = server.settings.server_name(),
+                    user = server.settings.user,
+                    error = error
+                ),
+                _ => trf!(
+                    "{server} ({user}): not connected, double-click to connect.",
+                    server = server.settings.server_name(),
+                    user = server.settings.user
+                ),
+            };
             if !server.description.is_empty() {
                 tip.push('\n');
                 tip.push_str(&server.description);

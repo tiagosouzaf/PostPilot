@@ -48,6 +48,8 @@ pub struct Servers {
     next_order: u32,
     /// Servidores registrados a conectar um depois do outro.
     queue: std::collections::VecDeque<ConnectionSettings>,
+    /// As conexões em segundo plano e o estado de cada servidor guardado.
+    pub background: crate::autoconnect::Background,
 }
 
 impl Servers {
@@ -231,7 +233,14 @@ pub fn show(
                         i += 1;
                     }
                     Line::Saved(path, depth) => {
-                        saved.show_server_row(ui, path, *depth, &mut shown.actions, &mut menu);
+                        saved.show_server_row(
+                            ui,
+                            path,
+                            *depth,
+                            &servers.background,
+                            &mut shown.actions,
+                            &mut menu,
+                        );
                         i += 1;
                     }
                     Line::Object { slot, row, depth } => {
