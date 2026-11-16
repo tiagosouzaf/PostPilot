@@ -143,7 +143,7 @@ pub struct SessionWindow {
     pub kind: WindowKind,
 }
 
-/// As pastas recolhidas do workspace aberto.
+/// As pastas recolhidas de um workspace aberto.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceTree {
@@ -169,8 +169,12 @@ pub struct SessionState {
     pub windows: Vec<SessionWindow>,
     /// Pastas recolhidas do Registered Servers, pelo nome de cada nível.
     pub collapsed_servers: Vec<Vec<String>>,
-    /// Pastas recolhidas do workspace aberto.
+    /// Pastas recolhidas do workspace ativo (até a 0.2.41 só havia um
+    /// aberto; continua aqui para uma versão anterior ler).
     pub workspace_tree: Option<WorkspaceTree>,
+    /// Pastas recolhidas de cada workspace aberto. Quais estão abertos e
+    /// qual é o ativo fica em `workspace.txt`.
+    pub workspace_trees: Vec<WorkspaceTree>,
     /// Template Explorer: pesquisa e pastas abertas.
     pub templates: Option<crate::templates::TemplatesSession>,
     /// A janela Query History estava aberta.
@@ -486,13 +490,9 @@ impl ShellApp {
             self.restore_data_compare(setup);
         }
         self.registered.collapse_names(&state.collapsed_servers);
-        if let Some(tree) = &state.workspace_tree
-            && self.workspace_panel.workspace().map(|w| w.root()) == Some(tree.root.as_path())
-        {
-            self.workspace_panel.collapse_folders(&tree.folders);
-            if let Some(servers) = self.workspace_panel.servers_mut() {
-                servers.collapse_names(&tree.servers);
-            }
+        for tree in state.workspace_tree.iter().chain(&state.workspace_trees) {
+            self.workspace_panel
+                .collapse_tree(&tree.root, &tree.folders, &tree.servers);
         }
         if self.connector.is_none() || state.servers.is_empty() {
             return;
@@ -766,15 +766,21 @@ impl ShellApp {
         // As que ainda vão abrir continuam na sessão.
         windows.extend(self.session.opening_windows.iter().map(|(w, _)| w.clone()));
         windows.extend(self.session.waiting_windows.iter().cloned());
-        let workspace_tree = self.workspace_panel.workspace().map(|w| WorkspaceTree {
-            root: w.root().to_path_buf(),
-            folders: self.workspace_panel.collapsed_folders(),
-            servers: self
-                .workspace_panel
-                .servers()
-                .map(|s| s.collapsed_names())
-                .unwrap_or_default(),
-        });
+        let workspace_trees: Vec<WorkspaceTree> = self
+            .workspace_panel
+            .trees()
+            .into_iter()
+            .map(|(root, folders, servers)| WorkspaceTree {
+                root,
+                folders,
+                servers,
+            })
+            .collect();
+        let workspace_tree = self
+            .workspace_panel
+            .workspace()
+            .and_then(|w| workspace_trees.iter().find(|t| t.root == w.root()))
+            .cloned();
         SessionState {
             servers,
             documents,
@@ -782,6 +788,7 @@ impl ShellApp {
             windows,
             collapsed_servers: self.registered.collapsed_names(),
             workspace_tree,
+            workspace_trees,
             templates: Some(self.templates.session()),
             history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
             history_filter: self.history.filter.clone(),

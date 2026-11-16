@@ -324,7 +324,7 @@ impl ShellApp {
         // do workspace.
         self.secrets = Some(Arc::new(crate::repo::passwords::WorkspaceSecrets::new(
             Some(store),
-            self.workspace_panel.vault_slot(),
+            self.workspace_panel.vault_slots(),
         )));
         // O túnel SSH busca no mesmo cofre a senha ou a frase secreta que
         // o usuário não digitou.
@@ -571,11 +571,12 @@ impl ShellApp {
     pub fn saved_connections(&self) -> Vec<crate::connect::SavedConnection> {
         let mut out: Vec<crate::connect::SavedConnection> = Vec::new();
         let mut keys: Vec<String> = Vec::new();
-        let workspace = self.workspace_panel.servers().map(|p| p.servers());
-        let sources = workspace
+        let sources = self
+            .workspace_panel
+            .all_servers()
             .into_iter()
-            .map(|r| (r, true))
-            .chain([(self.registered.servers(), false)]);
+            .map(|(name, p)| (p.servers(), Some(name.to_string())))
+            .chain([(self.registered.servers(), None)]);
         for (servers, workspace) in sources {
             for (path, folder, s) in servers.servers_with_folders() {
                 let key = server_key(&s.settings);
@@ -589,7 +590,7 @@ impl ShellApp {
                     environment: servers
                         .node_tag(&path)
                         .and_then(|t| Some((t.environment?, t.color))),
-                    workspace,
+                    workspace: workspace.clone(),
                     settings: s.settings.clone(),
                 });
             }
@@ -601,8 +602,9 @@ impl ShellApp {
     /// vindos do workspace aberto ou, sem ele lá, dos Registered Servers.
     pub fn server_tag(&self, key: &str) -> Option<crate::registered::ServerTag> {
         self.workspace_panel
-            .servers()
-            .and_then(|p| p.servers().tag_for_key(key))
+            .all_servers()
+            .into_iter()
+            .find_map(|(_, p)| p.servers().tag_for_key(key))
             .or_else(|| self.registered.servers().tag_for_key(key))
     }
 
@@ -610,8 +612,9 @@ impl ShellApp {
     /// aberto ou, se não está lá, nos Registered Servers.
     pub fn registered_name(&self, key: &str) -> Option<String> {
         self.workspace_panel
-            .servers()
-            .and_then(|p| p.servers().name_for_key(key))
+            .all_servers()
+            .into_iter()
+            .find_map(|(_, p)| p.servers().name_for_key(key))
             .or_else(|| self.registered.servers().name_for_key(key))
             .map(str::to_string)
     }
@@ -796,10 +799,7 @@ impl ShellApp {
 
         // A fila espera o cofre do workspace destrancar: é lá que podem
         // estar as senhas dos servidores que a sessão vai reconectar.
-        let unlocking = self
-            .workspace_panel
-            .passwords()
-            .is_some_and(|p| p.is_busy());
+        let unlocking = self.workspace_panel.is_unlocking();
         if self.connect_dialog.is_none()
             && !unlocking
             && let Some(next) = self.servers.queue.pop_front()

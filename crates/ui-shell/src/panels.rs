@@ -269,6 +269,54 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         new_folder = true;
                     }
                 });
+                // Com mais de um workspace aberto: de qual são as pastas e
+                // as conexões guardadas mostradas abaixo, e a troca.
+                let list = self.workspace_panel.list();
+                if list.len() > 1 {
+                    let mut choose = None;
+                    crate::fit::ends(
+                        ui,
+                        |ui| {
+                            crate::fit::text(
+                                ui,
+                                egui::RichText::new(tr("Workspace:")).small().weak(),
+                            );
+                        },
+                        |ui| {
+                            let current = list
+                                .iter()
+                                .find(|w| w.active)
+                                .map(|w| w.name.clone())
+                                .unwrap_or_default();
+                            let width = (ui.available_width() - 90.0).clamp(80.0, 220.0);
+                            egui::ComboBox::from_id_salt("explorer_workspace")
+                                .selected_text(format!(
+                                    "{} {current}", // i18n-ignore
+                                    egui_phosphor::regular::BRIEFCASE
+                                ))
+                                .width(width)
+                                .truncate()
+                                .show_ui(ui, |ui| {
+                                    for (i, w) in list.iter().enumerate() {
+                                        if ui
+                                            .selectable_label(w.active, &w.name)
+                                            .on_hover_text(w.root.display().to_string())
+                                            .clicked()
+                                        {
+                                            choose = Some(i);
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(tr(
+                                    "The saved connections below are the ones of this workspace. Choose another open workspace to see its connections.",
+                                ));
+                        },
+                    );
+                    if let Some(i) = choose {
+                        self.workspace_panel.activate(i);
+                    }
+                }
                 ui.separator();
                 let in_workspace = self.workspace_panel.workspace().is_some();
                 let (saved, store) = match self.workspace_panel.saved_servers(self.secrets) {

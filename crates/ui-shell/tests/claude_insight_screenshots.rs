@@ -44,6 +44,7 @@ fn production_confirmation_and_environments() {
         database: "postgres".into(),
         user: var("PGSTUDIO_TEST_USER", "postgres"),
         ssl: SslMode::Disable,
+        ssh: None,
     };
     pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
 

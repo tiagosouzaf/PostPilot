@@ -583,7 +583,7 @@ fn connect_to_server_offers_the_workspace_connections() {
     let saved = h.state().saved_connections();
     let names: Vec<_> = saved
         .iter()
-        .map(|c| (c.name.as_str(), c.workspace))
+        .map(|c| (c.name.as_str(), c.workspace.is_some()))
         .collect();
     assert_eq!(names, [("tiib", true), ("Local", false)]);
     assert_eq!(saved[0].environment.as_ref().unwrap().0, "Production");

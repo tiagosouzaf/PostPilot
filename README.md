@@ -408,9 +408,10 @@ Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 O **Workspace Explorer** (Ctrl+Alt+L) abre uma pasta, normalmente um
 repositório git, com os servidores (`servers.json`), as consultas
 (`queries/*.sql`) e as senhas do projeto. As senhas ficam criptografadas com
-uma senha mestra (Argon2id + XChaCha20-Poly1305) em `secrets.json`. Pull,
-Commit e Push ficam no próprio painel, e Clone Workspace... abre o repositório
-em outra máquina. Colar uma connection string `postgresql://...` no registro
+uma senha mestra (Argon2id + XChaCha20-Poly1305) em `secrets.json`. Vários
+workspaces ficam abertos ao mesmo tempo (um por cliente, por exemplo), cada um
+num cartão com o estado do repositório e os botões Salvar alterações e
+Sincronizar; **Adicionar** clona um repositório ou usa uma pasta do computador. Colar uma connection string `postgresql://...` no registro
 de um servidor preenche os campos. Detalhes, o que fica visível no repositório
 e o que fazer se a senha mestra for esquecida estão em
 [`docs/workspace.md`](docs/workspace.md).

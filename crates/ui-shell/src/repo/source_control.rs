@@ -53,6 +53,30 @@ struct ChangesDialog {
     confirm: Option<Discard>,
 }
 
+/// Como o workspace está em relação ao repositório.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncKind {
+    /// Ainda lendo.
+    Reading,
+    /// Sem git ou sem remoto: nada a sincronizar.
+    Local,
+    /// Nada a salvar, enviar ou receber.
+    Synced,
+    /// Há alterações a salvar, commits a enviar ou a receber.
+    Pending,
+    /// Conflito ou erro do git.
+    Problem,
+}
+
+/// O estado do git de um workspace em uma frase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub kind: SyncKind,
+    pub text: String,
+    /// A operação rodando agora ("Pulling..."), traduzida.
+    pub busy: Option<String>,
+}
+
 pub struct SourceControl {
     git: Git,
     /// Último estado lido; `None` antes da primeira leitura.
@@ -64,6 +88,8 @@ pub struct SourceControl {
     stale: bool,
     /// Depois desta ação, fazer Push (Commit and Push).
     push_after_commit: bool,
+    /// Depois do Pull, fazer Push se sobrou algo a enviar (Sincronizar).
+    push_after_pull: bool,
     commit: Option<CommitDialog>,
     remote: Option<RemoteDialog>,
     changes: Option<ChangesDialog>,
@@ -82,6 +108,7 @@ impl SourceControl {
             queue: VecDeque::new(),
             stale: false,
             push_after_commit: false,
+            push_after_pull: false,
             commit: None,
             remote: None,
             changes: None,
@@ -175,6 +202,55 @@ impl SourceControl {
                 }
             })
         });
+    }
+
+    /// Sincronizar: Pull e, se ele deu certo e sobraram commits daqui,
+    /// Push. É o botão de quem não quer saber de git.
+    pub fn sync(&mut self) {
+        self.push_after_pull = true;
+        self.pull();
+    }
+
+    /// O estado em uma frase, sem jargão, para o cartão do workspace.
+    pub fn summary(&self) -> Summary {
+        let (kind, text) = match &self.state {
+            None => (SyncKind::Reading, tr("Reading status...").to_string()),
+            Some(Err(GitError::NotRepo)) => {
+                (SyncKind::Local, tr("Only on this computer").to_string())
+            }
+            Some(Err(_)) => (SyncKind::Problem, tr("Git problem").to_string()),
+            Some(Ok(s)) if !s.conflicts.is_empty() => {
+                (SyncKind::Problem, tr("Conflict to resolve").to_string())
+            }
+            Some(Ok(s)) => {
+                let mut parts: Vec<String> = Vec::new();
+                match s.changes.len() {
+                    0 => {}
+                    1 => parts.push(tr("1 change").into()),
+                    n => parts.push(trf!("{n} changes", n = n)),
+                }
+                if s.ahead > 0 {
+                    parts.push(trf!("{n} to send", n = s.ahead));
+                }
+                if s.behind > 0 {
+                    parts.push(trf!("{n} to receive", n = s.behind));
+                }
+                if parts.is_empty() {
+                    if s.remote.is_none() {
+                        (SyncKind::Local, tr("Only on this computer").to_string())
+                    } else {
+                        (SyncKind::Synced, tr("Up to date").to_string())
+                    }
+                } else {
+                    (SyncKind::Pending, parts.join(" · "))
+                }
+            }
+        };
+        Summary {
+            kind,
+            text,
+            busy: self.job.as_ref().map(|j| tr(j.label).to_string()),
+        }
     }
 
     /// Push.
@@ -375,9 +451,17 @@ impl SourceControl {
                             self.push_after_commit = false;
                             self.push();
                         }
+                        if what == "Pulling..." && std::mem::take(&mut self.push_after_pull) {
+                            if self.status().is_some_and(|s| s.ahead > 0) {
+                                self.push();
+                            } else {
+                                self.message = Some(tr("Synchronized.").into());
+                            }
+                        }
                     }
                     Err(e) => {
                         self.push_after_commit = false;
+                        self.push_after_pull = false;
                         self.message = Some(e.to_string());
                         // O Pull parou em alterações locais: mostra quais
                         // são, com o botão de descartar ao lado.

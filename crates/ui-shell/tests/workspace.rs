@@ -319,8 +319,9 @@ fn ctrl_alt_l_opens_the_workspace_explorer_without_a_workspace() {
         .execute(&ctx, CommandId::WorkspaceExplorer);
     harness.run();
     assert!(harness.state().is_panel_open(Panel::WorkspaceExplorer));
-    harness.get_by_label_contains("New Workspace...");
-    harness.get_by_label_contains("Open Workspace...");
+    // As duas formas de começar, em botões grandes.
+    harness.get_by_label("Clone a repository");
+    harness.get_by_label("Use a folder on this computer");
 }
 
 /// Um seletor de pasta "nativo": espera a pessoa (aqui, o teste) responder.
