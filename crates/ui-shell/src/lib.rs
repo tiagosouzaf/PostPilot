@@ -163,6 +163,8 @@ pub struct ShellApp {
     db_switch: Option<PendingSwitch>,
     /// Ctrl+U: abrir a lista de bancos da toolbar no próximo frame.
     open_database_list: bool,
+    /// A janela é pequena demais para o tamanho de interface escolhido.
+    zoom_limited: bool,
     /// Abrir a lista de bancos assim que houver janela pronta (screenshots).
     database_list_on_load: bool,
     /// O usuário já respondeu à pergunta de salvar; a janela pode fechar.
@@ -376,6 +378,7 @@ impl Default for ShellApp {
             databases: Default::default(),
             db_switch: None,
             open_database_list: false,
+            zoom_limited: false,
             database_list_on_load: false,
             allow_close: false,
             layout_store: None,
@@ -413,6 +416,9 @@ impl ShellApp {
     /// Cria o aplicativo, instala a fonte de ícones e aplica o tema padrão.
     pub fn new(ctx: &egui::Context) -> Self {
         install_fonts(ctx);
+        // O zoom é do PostPilot (lembrado nas preferências), não o embutido
+        // do egui, que não é salvo e disputa o Ctrl+0 com a grade.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let mut app = Self::default();
         theme::apply(ctx, app.theme);
         app.connect_demo();
@@ -659,9 +665,12 @@ impl ShellApp {
             return;
         }
         if let Some(inner) = inner {
+            // Em pontos sem o zoom da interface: é assim que a janela é
+            // criada na próxima vez.
+            let zoom = Self::frame_zoom(ctx);
             self.window = Some(WindowGeometry {
-                position: outer.map(|r| [r.min.x, r.min.y]),
-                size: [inner.width(), inner.height()],
+                position: outer.map(|r| [r.min.x * zoom, r.min.y * zoom]),
+                size: [inner.width() * zoom, inner.height() * zoom],
                 maximized: false,
             });
         }
@@ -772,9 +781,12 @@ impl ShellApp {
     }
 
     fn options_window(&mut self, ctx: &egui::Context) {
+        let limit = Self::zoom_limit(ctx);
         let Some(dialog) = &mut self.options else {
             return;
         };
+        dialog.max_scale =
+            preferences::UiScale::from_percent((limit / theme::BASE_ZOOM * 100.0).floor() as u32);
         match dialog.show(ctx) {
             options::Action::None => {}
             options::Action::Cancel => self.options = None,
@@ -864,6 +876,80 @@ impl ShellApp {
             );
         }
         self.preferences = prefs;
+    }
+
+    /// Tamanho da interface em uso.
+    pub fn ui_scale(&self) -> preferences::UiScale {
+        self.preferences.ui_scale
+    }
+
+    /// Muda o tamanho da interface, lembra a escolha e avisa na status bar.
+    /// O zoom do egui acompanha no próximo frame ([`Self::zoom_step`]).
+    pub fn set_ui_scale(&mut self, scale: preferences::UiScale) {
+        if scale != self.preferences.ui_scale {
+            let mut prefs = self.preferences.clone();
+            prefs.ui_scale = scale;
+            self.save_preferences(prefs);
+        }
+        let wanted = theme::zoom_factor(scale);
+        let limited = self
+            .frame_ctx
+            .as_ref()
+            .is_some_and(|ctx| wanted > Self::zoom_limit(ctx) + 1e-3);
+        self.status = if limited {
+            trf!(
+                "Interface size: {percent}% (this window is too small for it; make the window larger to see it all)",
+                percent = scale.percent()
+            )
+        } else {
+            trf!("Interface size: {percent}%", percent = scale.percent())
+        };
+    }
+
+    /// Se a janela é pequena demais para o tamanho de interface escolhido
+    /// (o zoom fica no maior que cabe).
+    pub fn zoom_limited(&self) -> bool {
+        self.zoom_limited
+    }
+
+    fn step_ui_scale(&mut self, steps: i32) {
+        let mut from = self.preferences.ui_scale;
+        // Reduzir parte do tamanho que está na tela, não de um maior que a
+        // janela não comporta.
+        if steps < 0
+            && let Some(ctx) = &self.frame_ctx
+        {
+            let fits = (Self::zoom_limit(ctx) / theme::BASE_ZOOM * 100.0).floor() as u32;
+            if from.percent() > fits {
+                from = preferences::UiScale::from_percent(fits);
+            }
+        }
+        self.set_ui_scale(from.stepped(steps));
+    }
+
+    /// O zoom em uso neste frame (o do egui muda só no frame seguinte).
+    fn frame_zoom(ctx: &egui::Context) -> f32 {
+        ctx.pixels_per_point() / ctx.native_pixels_per_point().unwrap_or(1.0)
+    }
+
+    /// O maior zoom que ainda deixa a janela com [`theme::MIN_AREA`] pontos,
+    /// o bastante para os diálogos e as listas caberem inteiros.
+    fn zoom_limit(ctx: &egui::Context) -> f32 {
+        let window = ctx.content_rect().size() * Self::frame_zoom(ctx);
+        (window.x / theme::MIN_AREA.x)
+            .min(window.y / theme::MIN_AREA.y)
+            .max(1.0)
+    }
+
+    /// Mantém o zoom do egui igual ao tamanho de interface das preferências,
+    /// até onde a janela comporta.
+    fn zoom_step(&mut self, ctx: &egui::Context) {
+        let wanted = theme::zoom_factor(self.preferences.ui_scale);
+        let zoom = wanted.min(Self::zoom_limit(ctx));
+        self.zoom_limited = zoom < wanted;
+        if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
+            ctx.set_zoom_factor(zoom);
+        }
     }
 
     /// Troca o tema pelo menu ou pela toolbar e lembra a escolha.
@@ -1583,6 +1669,9 @@ impl ShellApp {
                 | ClaudeCodeAccess
                 | AiProviders
                 | ThemeDark
+                | ZoomIn
+                | ZoomOut
+                | ZoomReset
                 | FullScreen
                 | About
                 | Options
@@ -1682,6 +1771,9 @@ impl ShellApp {
             }
             CommandId::ThemeLight => self.choose_theme(ctx, Theme::Light),
             CommandId::ThemeDark => self.choose_theme(ctx, Theme::Dark),
+            CommandId::ZoomIn => self.step_ui_scale(1),
+            CommandId::ZoomOut => self.step_ui_scale(-1),
+            CommandId::ZoomReset => self.set_ui_scale(preferences::UiScale::default()),
             CommandId::FullScreen => {
                 let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
@@ -3098,6 +3190,7 @@ impl ShellApp {
         let ctx = ui.ctx().clone();
         self.frame_ctx = Some(ctx.clone());
         self.phase("steps");
+        self.zoom_step(&ctx);
         self.file_dialog_step(&ctx);
         if self.pending_dialog.is_some() {
             // A resposta chega por outra thread; ela pede um frame, e este
@@ -3127,10 +3220,31 @@ impl ShellApp {
             || self.restore_mssql.is_some()
             || self.compare.is_some()
         {
-            Vec::new()
+            // Com um diálogo aberto só o tamanho da interface responde ao
+            // teclado: é a saída se o diálogo ficou grande demais.
+            self.zoom_keys(&ctx)
         } else {
             self.keyboard(&ctx)
         };
+        // O Ctrl+0 também é "NULL" numa célula em edição: o Reset Zoom do
+        // teclado espera o fim do frame e só vale se ninguém usou a tecla.
+        let zoom_reset_key = commands.contains(&CommandId::ZoomReset);
+        commands.retain(|c| *c != CommandId::ZoomReset);
+        let ctrl_zero = |ctx: &egui::Context| {
+            ctx.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::Num0,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                })
+            })
+        };
+        let had_ctrl_zero = zoom_reset_key && ctrl_zero(&ctx);
         self.track_window(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             let dirty = self.documents.dirty();
@@ -3325,6 +3439,9 @@ impl ShellApp {
         }
         commands.extend(self.updater.window(&ctx));
 
+        if zoom_reset_key && (!had_ctrl_zero || ctrl_zero(&ctx)) {
+            commands.push(CommandId::ZoomReset);
+        }
         self.phase("commands");
         for cmd in commands {
             self.execute(&ctx, cmd);
@@ -4046,6 +4163,27 @@ impl ShellApp {
             }
         }
         commands
+    }
+
+    /// As teclas de tamanho da interface (Ctrl++, Ctrl+- e Ctrl+0), para
+    /// quando um diálogo segura o resto do teclado.
+    fn zoom_keys(&self, ctx: &egui::Context) -> Vec<CommandId> {
+        ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(keys::chord)
+                .filter_map(|chord| {
+                    self.keymap
+                        .command_for(&pgstudio_core::keymap::Shortcut::single(chord))
+                })
+                .filter(|cmd| {
+                    matches!(
+                        cmd,
+                        CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomReset
+                    )
+                })
+                .collect()
+        })
     }
 
     /// Desenha as entradas de um menu e guarda o comando clicado.

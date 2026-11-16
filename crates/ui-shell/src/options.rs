@@ -14,7 +14,7 @@ use pgstudio_i18n::{Language, tr, trf};
 
 use crate::ai::{AiSettings, CLAUDE_CODE, Keys};
 
-use crate::preferences::{LanguageSetting, Preferences, ThemeSetting};
+use crate::preferences::{LanguageSetting, Preferences, ThemeSetting, UiScale};
 use pgstudio_core::Theme;
 
 /// Uma página da árvore.
@@ -382,6 +382,8 @@ pub struct OptionsDialog {
     pub system_theme: Option<Theme>,
     /// Provedores de IA em edição (a casca aplica junto com o OK).
     pub ai: AiDraft,
+    /// O maior tamanho de interface que a janela comporta agora.
+    pub max_scale: UiScale,
 }
 
 impl OptionsDialog {
@@ -392,6 +394,7 @@ impl OptionsDialog {
             page: Page::International,
             system_theme: None,
             ai: AiDraft::default(),
+            max_scale: UiScale::MAX,
         }
     }
 
@@ -490,6 +493,72 @@ impl OptionsDialog {
                     }
                 });
         });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(tr("Interface size:"));
+            let scale = &mut self.draft.ui_scale;
+            if ui
+                .add_enabled(
+                    *scale != UiScale::MIN,
+                    egui::Button::new(egui_phosphor::regular::MINUS),
+                )
+                .on_hover_text(tr("Zoom Out"))
+                .clicked()
+            {
+                *scale = scale.stepped(-1);
+            }
+            let mut percent = scale.percent();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut percent)
+                        .range(UiScale::MIN.percent()..=UiScale::MAX.percent())
+                        .speed(1.0)
+                        .suffix("%"),
+                )
+                .changed()
+            {
+                *scale = UiScale::from_percent(percent);
+            }
+            if ui
+                .add_enabled(
+                    *scale != UiScale::MAX,
+                    egui::Button::new(egui_phosphor::regular::PLUS),
+                )
+                .on_hover_text(tr("Zoom In"))
+                .clicked()
+            {
+                *scale = scale.stepped(1);
+            }
+            if ui
+                .add_enabled(*scale != UiScale::default(), egui::Button::new(tr("Reset")))
+                .clicked()
+            {
+                *scale = UiScale::default();
+            }
+        });
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr(
+                    "Makes text, icons and spacing larger or smaller in the whole application. Ctrl++ and Ctrl+- change it at any time; Ctrl+0 goes back to 100%.",
+                ))
+                .weak(),
+            )
+            .wrap(),
+        );
+        if self.draft.ui_scale.percent() > self.max_scale.percent() {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(trf!(
+                        "This window fits up to {percent}% now. A larger size is saved and applies when the window is larger.",
+                        percent = self.max_scale.percent()
+                    ))
+                    .color(ui.visuals().warn_fg_color),
+                )
+                .wrap(),
+            );
+        }
     }
 
     fn international(&mut self, ui: &mut egui::Ui) {

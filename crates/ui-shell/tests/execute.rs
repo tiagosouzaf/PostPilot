@@ -1042,6 +1042,8 @@ fn permissions_without_changes_have_nothing_to_script() {
     harness.get_by_label_contains("Script").click();
     harness.run_steps(2);
     harness.get_by_label("There are no changes to script.");
+    // O aviso acabou de aparecer e empurra os botões: espera assentar.
+    harness.run_steps(2);
     harness.get_by_label("Cancel").click();
     harness.run_steps(2);
     assert!(harness.state().security_dialog().is_none());

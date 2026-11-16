@@ -829,6 +829,8 @@ fn cell_editor(
     // tira o foco da janela, não da edição.
     let focused = ui.memory(|m| m.has_focus(edit_id));
     if focused && null {
+        // O Ctrl+0 é desta célula (NULL), não do "Reset Zoom" da casca.
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Num0));
         state.editing = None;
         grid.request_focus();
         return (store.cell(cell.row, cell.col).is_some()).then_some((cell, None));
