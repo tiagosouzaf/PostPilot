@@ -25,6 +25,7 @@ pub mod diagrams;
 pub mod documents;
 pub mod edit_rows;
 pub mod execution;
+pub mod federated;
 pub mod file_dialogs;
 pub mod fit;
 pub mod history;
@@ -171,6 +172,8 @@ pub struct ShellApp {
     environment_confirm: Option<PendingEnvironment>,
     /// "Run on Multiple Servers" aberto.
     multi_dialog: Option<multi::Dialog>,
+    /// IntelliSense das janelas entre servidores.
+    federated: federated::Cache,
     /// Bancos de cada servidor, para o seletor da toolbar.
     databases: databases::DatabaseLists,
     /// Troca de banco de uma janela esperando a checagem de transação ou
@@ -406,6 +409,7 @@ impl Default for ShellApp {
             actual_confirm: None,
             environment_confirm: None,
             multi_dialog: None,
+            federated: Default::default(),
             databases: Default::default(),
             db_switch: None,
             open_database_list: false,
@@ -1758,6 +1762,7 @@ impl ShellApp {
                 | RefreshLocalCache
                 | Execute
                 | MultiServer
+                | CrossServer
                 | EstimatedPlan
                 | ActualPlan
                 | CancelQuery
@@ -1986,6 +1991,7 @@ impl ShellApp {
             CommandId::DesignQuery => self.open_query_designer(ctx),
             CommandId::Execute => self.execute_query(ctx, Ask::Run),
             CommandId::MultiServer => self.open_multi_dialog(),
+            CommandId::CrossServer => self.toggle_federated(),
             CommandId::EstimatedPlan => self.execute_query(ctx, Ask::Plan),
             CommandId::ObjectInfo => self.execute_query(ctx, Ask::Info),
             CommandId::ActualPlan => {
@@ -2050,6 +2056,12 @@ impl ShellApp {
                 self.workspace_panel.open_add();
                 self.workspace.open(Panel::WorkspaceExplorer);
             }
+            CommandId::RefreshLocalCache
+                if self.active_doc.is_some_and(|id| self.is_federated(id)) =>
+            {
+                self.federated_refresh();
+                self.status = tr("Refreshing local cache...").to_string();
+            }
             CommandId::RefreshLocalCache => {
                 let db = self.active_doc.and_then(|id| self.document_database(id));
                 match (
@@ -2085,6 +2097,9 @@ impl ShellApp {
             self.status = tr("No query window is open.").to_string();
             return;
         };
+        if self.execute_federated(ctx, id, ask == Ask::Run) {
+            return;
+        }
         if self.execute_multi(ctx, id, ask == Ask::Run) {
             return;
         }
@@ -2317,9 +2332,10 @@ impl ShellApp {
         let Some(doc) = self.documents.get_mut(id) else {
             return;
         };
-        let session = match &doc.multi {
-            Some(multi) => multi.session(),
-            None => doc.session.as_ref().map(|s| s.0.clone()),
+        let session = match (&doc.federated, &doc.multi) {
+            (Some(federated), _) => federated.session(),
+            (None, Some(multi)) => multi.session(),
+            (None, None) => doc.session.as_ref().map(|s| s.0.clone()),
         };
         let Some(session) = session else {
             return;
@@ -2354,7 +2370,7 @@ impl ShellApp {
             return;
         };
         exec.mode = doc.results_mode;
-        exec.multi = doc.multi.is_some();
+        exec.multi = doc.multi.is_some() || doc.federated.is_some();
         doc.execution = Some(exec);
         self.status = execution::Outcome::Running.label().to_string();
         self.workspace.open(Panel::Query(id));
@@ -3018,7 +3034,14 @@ impl ShellApp {
     /// Realce e erros do editor no dialeto do servidor de cada janela.
     fn dialect_step(&mut self) {
         for id in self.documents.ids() {
-            let dialect = match self.document_engine(id) {
+            // Entre servidores o SQL de fora é o do SQLite: o realce do
+            // PostgreSQL serve (aspas, `$$`).
+            let engine = if self.is_federated(id) {
+                None
+            } else {
+                self.document_engine(id)
+            };
+            let dialect = match engine {
                 Some(Engine::SqlServer) => pgstudio_sql_editor::lexer::Dialect::TSql,
                 Some(Engine::Redis) => pgstudio_sql_editor::lexer::Dialect::Redis,
                 Some(Engine::MongoDb) => pgstudio_sql_editor::lexer::Dialect::MongoDb,
@@ -3346,6 +3369,7 @@ impl ShellApp {
         self.execution_step(&ctx);
         self.claude_step(&ctx);
         self.dialect_step();
+        self.federated_step(&ctx);
         self.intellisense_step(&ctx);
         self.databases_step();
         self.script_step(&ctx);
@@ -3474,6 +3498,12 @@ impl ShellApp {
                 None => doc_tags.remove(&id),
             };
         }
+        // Uma janela entre servidores não é de um servidor (nem de um
+        // ambiente).
+        for (id, label) in self.federated_labels() {
+            doc_servers.insert(id, label);
+            doc_tags.remove(&id);
+        }
         let active_key = self
             .connection
             .as_ref()
@@ -3510,6 +3540,7 @@ impl ShellApp {
                     doc_servers,
                     doc_tags,
                     catalogs: &self.catalogs,
+                    federated_catalog: self.federated.catalog(),
                     default_database: default_db,
                     active_key,
                     servers: &mut self.servers,
@@ -4454,6 +4485,8 @@ impl ShellApp {
                         .is_some_and(|id| !self.multi_selection(id).is_empty());
                     let selected = (cmd == CommandId::ActualPlan && actual)
                         || (cmd == CommandId::MultiServer && multi)
+                        || (cmd == CommandId::CrossServer
+                            && self.active_doc.is_some_and(|id| self.is_federated(id)))
                         || (cmd == CommandId::ClaudeCodeAccess && self.claude.is_listening())
                         || matches!(
                             (cmd, self.preferences.theme),
@@ -4538,7 +4571,9 @@ impl ShellApp {
                         let pressed = (command == CommandId::ActualPlan
                             && doc.is_some_and(|d| d.actual_plan))
                             || (command == CommandId::MultiServer
-                                && doc.is_some_and(|d| d.multi.is_some()));
+                                && doc.is_some_and(|d| d.multi.is_some()))
+                            || (command == CommandId::CrossServer
+                                && doc.is_some_and(|d| d.federated.is_some()));
                         let button = egui::Button::new(caption).selected(pressed);
                         let response = ui
                             .add_enabled(Self::is_available(command), button)

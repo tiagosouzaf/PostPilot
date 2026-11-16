@@ -21,6 +21,7 @@ members = [
     "crates/redis",
     "crates/mongodb",
     "crates/elasticsearch",
+    "crates/federated",
     "xtask",
 ]
 exclude = ["spikes", "vendor"]
@@ -52,6 +53,7 @@ pgstudio-ssh = { path = "crates/ssh" }
 pgstudio-redis = { path = "crates/redis" }
 pgstudio-mongodb = { path = "crates/mongodb" }
 pgstudio-elasticsearch = { path = "crates/elasticsearch" }
+pgstudio-federated = { path = "crates/federated" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -99,6 +101,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # ZIP do Excel (.xlsx) em "Save Results As": deflate em Rust puro e CRC-32.
 flate2 = "1"
 crc32fast = "1"
+# Consulta entre servidores: as fontes de cada servidor vão para um SQLite
+# local (embutido no binário), que faz o join. `hooks` dá o autorizador que
+# deixa o SQL local só ler.
+rusqlite = { version = "0.43", features = ["bundled", "hooks"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

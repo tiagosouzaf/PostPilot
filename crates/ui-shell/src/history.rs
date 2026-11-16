@@ -1018,8 +1018,10 @@ impl crate::ShellApp {
             let label = self
                 .multi_labels()
                 .into_iter()
-                .find(|(doc, ..)| *doc == run.doc)
-                .map(|(_, label, _)| label)
+                .map(|(doc, label, _)| (doc, label))
+                .chain(self.federated_labels())
+                .find(|(doc, _)| *doc == run.doc)
+                .map(|(_, label)| label)
                 .unwrap_or_default();
             (String::new(), label, Engine::default())
         } else {

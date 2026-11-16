@@ -203,36 +203,12 @@ impl Shared {
     /// Explorer, uma já aberta por esta sessão, ou uma nova com a senha
     /// guardada.
     fn service(&self, target: &RunTarget) -> Result<Arc<dyn QueryService>, String> {
-        if target.missing {
-            return Err(tr("This server is no longer in the saved connections.").to_string());
-        }
-        if let Some(live) = &target.live {
-            return Ok(live.clone());
-        }
-        let id = TargetId::of(&target.settings);
-        if let Some(c) = lock(&self.connected).get(&id) {
-            return Ok(c.queries.clone());
-        }
-        let Some(connector) = &self.connector else {
-            return Err(tr("Connect to a server to run queries.").to_string());
-        };
-        let key = crate::secrets::password_key(&target.settings);
-        let password = self
-            .secrets
-            .as_ref()
-            .and_then(|s| s.get(&key).ok().flatten());
-        let Some(password) = password else {
-            return Err(tr(
-                "No saved password. Connect to this server once with \"Remember password\", or save its password in the workspace.",
-            )
-            .to_string());
-        };
-        let connected = connector
-            .connect(&target.settings, &password)
-            .map_err(|e| e.message().to_string())?;
-        let queries = connected.queries.clone();
-        lock(&self.connected).insert(id, connected);
-        Ok(queries)
+        open_service(
+            target,
+            self.connector.as_ref(),
+            self.secrets.as_ref(),
+            &self.connected,
+        )
     }
 
     /// Roda `sql` num servidor e espera a resposta inteira.
@@ -303,6 +279,45 @@ impl Shared {
         report.elapsed = started.elapsed();
         report
     }
+}
+
+/// De onde saem as sessões de um servidor guardado: a conexão do Object
+/// Explorer, uma já aberta em `connected`, ou uma nova com a senha
+/// guardada (que fica em `connected`). Conecta: chame fora da thread da
+/// interface.
+pub(crate) fn open_service(
+    target: &RunTarget,
+    connector: Option<&Arc<dyn Connector>>,
+    secrets: Option<&Arc<dyn SecretStore>>,
+    connected: &Connections,
+) -> Result<Arc<dyn QueryService>, String> {
+    if target.missing {
+        return Err(tr("This server is no longer in the saved connections.").to_string());
+    }
+    if let Some(live) = &target.live {
+        return Ok(live.clone());
+    }
+    let id = TargetId::of(&target.settings);
+    if let Some(c) = lock(connected).get(&id) {
+        return Ok(c.queries.clone());
+    }
+    let Some(connector) = connector else {
+        return Err(tr("Connect to a server to run queries.").to_string());
+    };
+    let key = crate::secrets::password_key(&target.settings);
+    let password = secrets.and_then(|s| s.get(&key).ok().flatten());
+    let Some(password) = password else {
+        return Err(tr(
+            "No saved password. Connect to this server once with \"Remember password\", or save its password in the workspace.",
+        )
+        .to_string());
+    };
+    let opened = connector
+        .connect(&target.settings, &password)
+        .map_err(|e| e.message().to_string())?;
+    let queries = opened.queries.clone();
+    lock(connected).insert(id, opened);
+    Ok(queries)
 }
 
 /// Mensagem do servidor com detalhe e dica na mesma linha.
@@ -918,7 +933,16 @@ impl ShellApp {
     /// Os servidores da janela `id` prontos para executar: o registro de
     /// cada um e, se já está conectado no Object Explorer, a conexão dele.
     fn multi_run_targets(&self, id: u32) -> Vec<(RunTarget, Option<ServerTag>)> {
-        let saved = self.multi_targets();
+        self.run_targets(self.multi_selection(id), &self.multi_targets())
+    }
+
+    /// Os servidores `ids` (entre os guardados `saved`) prontos para
+    /// executar.
+    pub(crate) fn run_targets(
+        &self,
+        ids: &[TargetId],
+        saved: &[Target],
+    ) -> Vec<(RunTarget, Option<ServerTag>)> {
         let live: Vec<&Connected> = self
             .connection
             .iter()
@@ -929,8 +953,7 @@ impl ShellApp {
                     .filter_map(|p| p.connection.as_ref()),
             )
             .collect();
-        self.multi_selection(id)
-            .iter()
+        ids.iter()
             .map(|id| match saved.iter().find(|t| t.id() == *id) {
                 Some(t) => (
                     RunTarget {

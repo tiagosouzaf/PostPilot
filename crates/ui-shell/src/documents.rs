@@ -35,6 +35,9 @@ pub struct Document {
     /// Os servidores em que a janela roda, quando são vários (veja
     /// [`crate::multi`]); None usa a conexão dela.
     pub multi: Option<crate::multi::Selection>,
+    /// A janela é uma consulta entre servidores (veja
+    /// [`crate::federated`]).
+    pub federated: Option<crate::federated::Window>,
 }
 
 /// A conexão de uma janela de consulta.
@@ -116,6 +119,7 @@ impl Documents {
             results_mode: Default::default(),
             actual_plan: false,
             multi: None,
+            federated: None,
         })
     }
 
@@ -155,6 +159,7 @@ impl Documents {
             results_mode: Default::default(),
             actual_plan: false,
             multi: None,
+            federated: None,
         }))
     }
 
@@ -183,6 +188,7 @@ impl Documents {
             results_mode: Default::default(),
             actual_plan: false,
             multi: None,
+            federated: None,
         })
     }
 

@@ -112,6 +112,9 @@ pub struct SessionDocument {
     /// Os servidores de uma janela de vários servidores.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub multi: Vec<crate::multi::TargetId>,
+    /// A janela é uma consulta entre servidores.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub federated: bool,
     /// Se era a janela na frente.
     pub active: bool,
     /// O último resultado, num arquivo da pasta `session/`.
@@ -466,6 +469,9 @@ impl ShellApp {
                 if !d.multi.is_empty() {
                     doc.multi = Some(crate::multi::Selection::new(d.multi.clone()));
                 }
+                if d.federated {
+                    doc.federated = Some(Default::default());
+                }
             }
             if let Some(key) = &d.server {
                 self.doc_servers.insert(id, key.clone());
@@ -743,6 +749,7 @@ impl ShellApp {
                         .as_ref()
                         .map(|m| m.targets.clone())
                         .unwrap_or_default(),
+                    federated: d.federated.is_some(),
                     active: self.active_doc == Some(id),
                     result: self.session.results.get(&id).map(|c| Unsaved {
                         file: result_file(id),

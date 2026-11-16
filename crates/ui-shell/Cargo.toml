@@ -12,6 +12,7 @@ pgstudio-i18n.workspace = true
 pgstudio-core.workspace = true
 pgstudio-ssh.workspace = true
 pgstudio-automation.workspace = true
+pgstudio-federated.workspace = true
 eframe.workspace = true
 image.workspace = true
 egui-phosphor.workspace = true

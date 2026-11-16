@@ -105,6 +105,7 @@ commands! {
     ChangeDatabase => "Query.ChangeDatabase", "Change Database";
     Execute => "Query.Execute", "Execute";
     MultiServer => "Query.MultiServer", "Run on Multiple Servers…";
+    CrossServer => "Query.CrossServer", "Cross-Server Query";
     Parse => "Query.Parse", "Parse";
     DesignQuery => "Query.DesignQuery", "Design Query in Editor…";
     CancelQuery => "Query.Cancel", "Cancel Executing Query";
