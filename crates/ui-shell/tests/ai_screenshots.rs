@@ -125,3 +125,59 @@ fn options_and_commit() {
     );
     save(&mut h, "commit-com-ia.png");
 }
+
+/// Tools > AI Providers com o ChatGPT pela conta: antes e depois de
+/// entrar. O `codex` é um script que só responde ao `login status`.
+#[cfg(unix)]
+#[test]
+fn chatgpt_account() {
+    use pgstudio_automation::codex::Login;
+    use pgstudio_ui_shell::ai::CHATGPT;
+    use std::os::unix::fs::PermissionsExt;
+
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let dir = std::env::temp_dir().join(format!("postpilot-shots-codex-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".local/bin")).unwrap();
+    let codex = dir.join(".local/bin/codex");
+    std::fs::write(
+        &codex,
+        format!(
+            "#!/bin/sh\nif [ -f '{0}/in' ]; then echo 'Logged in using ChatGPT'; exit 0; fi\necho 'Not logged in' >&2; exit 1\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    for (signed_in, name) in [
+        (false, "chatgpt-entrar.png"),
+        (true, "chatgpt-conectado.png"),
+    ] {
+        if signed_in {
+            std::fs::write(dir.join("in"), "").unwrap();
+        }
+        let mut ai = Ai::default();
+        ai.set_codex(Some(codex.clone()));
+        let mut h = harness(ShellApp::default().with_ai(ai));
+        h.run();
+        h.get_by_label("Ferramentas").click();
+        h.run();
+        h.get_by_label("Provedores de IA…").click();
+        h.run();
+        h.state_mut().options_mut().unwrap().ai.settings.active = CHATGPT.into();
+        let start = Instant::now();
+        let want = if signed_in {
+            Login::ChatGpt
+        } else {
+            Login::SignedOut
+        };
+        while h.state().options().unwrap().ai.chatgpt.as_ref() != Some(&want) {
+            h.step();
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        save(&mut h, name);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
