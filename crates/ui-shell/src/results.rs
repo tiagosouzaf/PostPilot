@@ -50,6 +50,12 @@ pub fn show(
         .show(ui, |ui| status_strip(ui, exec, server, tag));
     // Sem resultados (ainda), só há o que mostrar em Messages; a escolha
     // do usuário fica guardada para quando eles chegarem.
+    if let Some(restored) = exec.restored() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(icons::CLOCK_COUNTER_CLOCKWISE).weak());
+            ui.add(egui::Label::new(RichText::new(restored.notice()).weak()).truncate());
+        });
+    }
     let tab = match exec.tab {
         Tab::Plan if !exec.plans.is_empty() => Tab::Plan,
         Tab::Results if !exec.results.is_empty() => Tab::Results,
