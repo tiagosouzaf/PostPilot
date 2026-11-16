@@ -50,6 +50,20 @@ SCAN 0 MATCH cliente:* COUNT 100
 - Num servidor de um ambiente que pede confirmação (Produção), um texto com
   qualquer comando que não seja de leitura pede o "Execute" antes de rodar.
 
+## Sugestões ao digitar
+
+- No começo da linha: os comandos, com os argumentos ao lado (`HSET` mostra
+  `key field value [field value ...]`).
+- Depois de `CONFIG`, `CLIENT`, `OBJECT`, `MEMORY`, `XINFO`, `ACL` e outros
+  comandos com subcomandos: os subcomandos.
+- Onde o comando espera uma chave (`GET `, `HGETALL `, todos os argumentos
+  do `DEL`): as chaves do banco da janela, com o tipo. Chave com espaço
+  entra entre aspas.
+
+A lista abre sozinha ao digitar, depois do espaço que segue o comando e com
+Ctrl+Espaço. O PostPilot guarda até 5.000 chaves de cada banco para isso;
+"Editar > IntelliSense > Atualizar Cache Local" relê.
+
 ## Chaves no Pesquisador de Objetos
 
 Cada banco (`db0 (48)`: o número é o total de chaves) abre com as chaves

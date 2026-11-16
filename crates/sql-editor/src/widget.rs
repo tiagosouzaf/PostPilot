@@ -250,13 +250,15 @@ impl Editing<'_> {
         if self.buf.popup.is_none() && !open {
             return;
         }
-        // Sem lista de palavras do SQL num texto que não é SQL.
-        if !self.range().is_empty() || self.buf.dialect == Dialect::Redis {
+        if !self.range().is_empty() {
             self.buf.popup = None;
             return;
         }
         let at = self.buf.index.byte_of(self.text, self.view.cursor);
-        let c = complete(self.text, &self.buf.tokens, at, self.catalog);
+        let c = match self.buf.dialect {
+            Dialect::Redis => crate::redis::complete(self.text, &self.buf.tokens, at, self.catalog),
+            _ => complete(self.text, &self.buf.tokens, at, self.catalog),
+        };
         if c.items.is_empty() {
             self.buf.popup = None;
             return;
@@ -267,6 +269,13 @@ impl Editing<'_> {
             selected,
             top: selected.saturating_sub(POPUP_ROWS / 2),
         });
+    }
+
+    /// Se a linha do cursor tem algo escrito antes dele.
+    fn line_has_text(&self) -> bool {
+        let at = self.buf.index.byte_of(self.text, self.view.cursor);
+        let line = self.text[..at].rfind('\n').map_or(0, |i| i + 1);
+        !self.text[line..at].trim().is_empty()
     }
 
     /// Troca a palavra digitada pela sugestão escolhida.
@@ -1030,6 +1039,13 @@ fn handle_event(ui: &Ui, ed: &mut Editing<'_>, f: &Frame, event: Event) {
                 let mut chars = s.chars();
                 match (chars.next(), chars.next()) {
                     (Some(c), None) if is_word(c) || c == '.' => ed.refresh_popup(true),
+                    // Redis: `:` faz parte do nome da chave, e o espaço
+                    // depois do comando já mostra as chaves.
+                    (Some(':' | ' '), None)
+                        if ed.buf.dialect == Dialect::Redis && ed.line_has_text() =>
+                    {
+                        ed.refresh_popup(true)
+                    }
                     _ => ed.buf.popup = None,
                 }
             }

@@ -1,6 +1,6 @@
 {
   "name": "postpilot",
-  "version": "0.2.28",
+  "version": "0.2.30",
   "description": "Use PostPilot, the desktop PostgreSQL manager, from Claude Code: see its servers, catalog, query windows and results, write SQL into its editor and run queries, with reads free and every change confirmed in PostPilot.",
   "author": {
     "name": "Tiago de Souza"
