@@ -3157,6 +3157,148 @@ msgstr "Comparação de Esquemas: as alterações foram revertidas ({e})."
 msgid "Schema Compare: the script was saved to {path}."
 msgstr "Comparação de Esquemas: o script foi salvo em {path}."
 
+# Data Compare
+msgid "Data Compare…"
+msgstr "Comparação de Dados…"
+
+msgid "Choose a connected server as the source."
+msgstr "Escolha um servidor conectado como origem."
+
+msgid "Choose a connected server as the target."
+msgstr "Escolha um servidor conectado como destino."
+
+msgid "Choose the source database."
+msgstr "Escolha o banco de origem."
+
+msgid "Choose the target database."
+msgstr "Escolha o banco de destino."
+
+msgid "Comparing {table} ({n} of {total}): {source} rows read from the source, {target} from the target"
+msgstr "Comparando {table} ({n} de {total}): {source} linhas lidas da origem, {target} do destino"
+
+msgid "Connect to a server to compare data."
+msgstr "Conecte a um servidor para comparar dados."
+
+msgid "Data Compare"
+msgstr "Comparação de Dados"
+
+msgid "Data Compare: changes that make {target} like {source}."
+msgstr "Comparação de Dados: alterações que deixam {target} igual a {source}."
+
+msgid "Data Compare: the script was opened in a new query window."
+msgstr "Comparação de Dados: o script foi aberto numa nova janela de consulta."
+
+msgid "Data Compare: the script was saved to {path}."
+msgstr "Comparação de Dados: o script foi salvo em {path}."
+
+msgid "Data Compare: {source} to {target}: {differences} different rows in {tables} tables."
+msgstr "Comparação de Dados: {source} para {target}: {differences} linhas diferentes em {tables} tabelas."
+
+msgid "Deletes"
+msgstr "Exclusões"
+
+msgid "Difference"
+msgstr "Diferença"
+
+msgid "In the script:"
+msgstr "No script:"
+
+msgid "Inserts"
+msgstr "Inserções"
+
+msgid "List Tables"
+msgstr "Listar Tabelas"
+
+msgid "Not compared (computed or only on one side): {columns}"
+msgstr "Fora da comparação (calculadas ou só de um lado): {columns}"
+
+msgid "Nothing is changed here: the script opens in a query window for you to review and run."
+msgstr "Nada é alterado aqui: o script abre numa janela de consulta para você revisar e executar."
+
+msgid "Reading the tables..."
+msgstr "Lendo as tabelas..."
+
+msgid "Review the script before running it. It runs in one transaction: if a command fails, nothing is changed (in PostgreSQL, run ROLLBACK afterwards)."
+msgstr "Revise o script antes de executar. Ele roda numa transação só: se um comando falhar, nada é alterado (no PostgreSQL, execute ROLLBACK em seguida)."
+
+msgid "Saving the script..."
+msgstr "Salvando o script..."
+
+msgid "Search tables"
+msgstr "Pesquisar tabelas"
+
+msgid "Select a table to see its differences."
+msgstr "Selecione uma tabela para ver as diferenças."
+
+msgid "Select at least one table with a primary key."
+msgstr "Selecione pelo menos uma tabela com chave primária."
+
+msgid "Showing the first {shown} differences; the script has all of them."
+msgstr "Mostrando as primeiras {shown} diferenças; o script tem todas."
+
+msgid "Tables are in alphabetical order. With foreign keys between them, reorder the commands if the server refuses one."
+msgstr "As tabelas estão em ordem alfabética. Com chaves estrangeiras entre elas, reordene os comandos se o servidor recusar algum."
+
+msgid "Target: {target}\nSource: {source}"
+msgstr "Destino: {target}\nOrigem: {source}"
+
+msgid "The comparison was canceled."
+msgstr "A comparação foi cancelada."
+
+msgid "The key order of {table} could not be reproduced; the table was not compared."
+msgstr "Não foi possível reproduzir a ordem da chave de {table}; a tabela não foi comparada."
+
+msgid "The script ({statements} commands) was saved to {path}."
+msgstr "O script ({statements} comandos) foi salvo em {path}."
+
+msgid "The source has no tables."
+msgstr "A origem não tem tabelas."
+
+msgid "There is nothing to put in the script."
+msgstr "Não há nada para pôr no script."
+
+msgid "This table cannot be compared: {reason}."
+msgstr "Esta tabela não pode ser comparada: {reason}."
+
+msgid "To compare with another server, connect to it in the Object Explorer."
+msgstr "Para comparar com outro servidor, conecte a ele no Pesquisador de Objetos."
+
+msgid "Updates"
+msgstr "Atualizações"
+
+msgid "a key column cannot be compared"
+msgstr "uma coluna da chave não pode ser comparada"
+
+msgid "equal ({rows} rows)"
+msgstr "iguais ({rows} linhas)"
+
+msgid "failed"
+msgstr "falhou"
+
+msgid "no primary key in the source"
+msgstr "sem chave primária na origem"
+
+msgid "no primary key in the target"
+msgstr "sem chave primária no destino"
+
+msgid "not in the target"
+msgstr "não existe no destino"
+
+msgid "the primary keys are different"
+msgstr "as chaves primárias são diferentes"
+
+msgid "{count} commands"
+msgstr "{count} comandos"
+
+msgid "{server} (not connected)"
+msgstr "{server} (não conectado)"
+
+msgid "{table}: {columns} columns will be compared by the primary key."
+msgstr "{table}: {columns} colunas serão comparadas pela chave primária."
+
+msgid "{table}: {only_source} only in the source, {different} different, {only_target} only in the target, {equal} equal"
+msgstr "{table}: {only_source} só na origem, {different} diferentes, {only_target} só no destino, {equal} iguais"
+
 msgid "Schema Compare: {source} to {target}: {differences} differences, {equal} equal."
 msgstr "Comparação de Esquemas: {source} com {target}: {differences} diferenças, {equal} iguais."
 

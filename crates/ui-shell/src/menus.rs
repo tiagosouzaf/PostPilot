@@ -178,6 +178,7 @@ pub const MENUS: &[Menu] = &[
         title: "Tools",
         entries: &[
             I(SchemaCompare),
+            I(DataCompare),
             SEP,
             I(ClaudeCodeAccess),
             I(AiProviders),

@@ -20,7 +20,8 @@
 //! - o Template Explorer: a pesquisa e as pastas abertas;
 //! - se o Query History estava aberto e o que estava na pesquisa dele (as
 //!   execuções ficam no arquivo do próprio histórico, veja
-//!   [`crate::history`]).
+//!   [`crate::history`]);
+//! - o "Data Compare" aberto: os dois lados e as tabelas desmarcadas.
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -174,6 +175,9 @@ pub struct SessionState {
     pub history_open: bool,
     /// O que estava escrito na pesquisa do Query History.
     pub history_filter: String,
+    /// O "Data Compare" aberto: os dois lados e as tabelas desmarcadas (o
+    /// resultado não é guardado; basta comparar de novo).
+    pub data_compare: Option<crate::data_compare::Setup>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -476,6 +480,9 @@ impl ShellApp {
         if let Some(id) = front {
             self.activate_document(id);
         }
+        if let Some(setup) = state.data_compare.clone() {
+            self.restore_data_compare(setup);
+        }
         self.registered.collapse_names(&state.collapsed_servers);
         if let Some(tree) = &state.workspace_tree
             && self.workspace_panel.workspace().map(|w| w.root()) == Some(tree.root.as_path())
@@ -768,6 +775,7 @@ impl ShellApp {
             templates: Some(self.templates.session()),
             history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
             history_filter: self.history.filter.clone(),
+            data_compare: self.data_compare_setup(),
         }
     }
 

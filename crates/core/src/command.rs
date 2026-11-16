@@ -119,6 +119,7 @@ commands! {
     ClaudeFix => "Query.ClaudeFix", "Fix Error with Claude";
     // Tools
     SchemaCompare => "Tools.SchemaCompare", "Schema Compare…";
+    DataCompare => "Tools.DataCompare", "Data Compare…";
     ClaudeCodeAccess => "Tools.ClaudeCodeAccess", "Allow Claude Code (MCP)";
     AiProviders => "Tools.AiProviders", "AI Providers…";
     Options => "Tools.Options", "Options…";
