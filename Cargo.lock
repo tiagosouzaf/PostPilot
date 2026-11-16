@@ -3069,7 +3069,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pgstudio-automation"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "getrandom 0.3.4",
  "pgstudio-core",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-core"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "pgstudio-i18n",
  "pgstudio-schema-model",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-desktop"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "pgstudio-automation",
@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-diagram-engine"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "egui_kittest",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-docking"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "egui-phosphor",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-execution-plan"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "egui-phosphor",
@@ -3142,14 +3142,14 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-i18n"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "sys-locale",
 ]
 
 [[package]]
 name = "pgstudio-mssql"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "futures-util",
  "pgstudio-core",
@@ -3162,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-object-explorer"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "egui-phosphor",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-pg-client"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "futures-util",
  "pgstudio-core",
@@ -3186,7 +3186,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-pg-metadata"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "pgstudio-core",
  "pgstudio-i18n",
@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-result-grid"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "crc32fast",
  "eframe",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-schema-model"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "pgstudio-i18n",
  "serde",
@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-sql-editor"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "eframe",
  "egui_kittest",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-ui-shell"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -3260,7 +3260,7 @@ dependencies = [
 
 [[package]]
 name = "pgstudio-updater"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "rustls",
  "rustls-native-certs",
@@ -5931,7 +5931,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.17"
+version = "0.2.18"
 
 [[package]]
 name = "yoke"
