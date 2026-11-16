@@ -747,7 +747,7 @@ impl ObjectExplorer {
                                     ui.separator();
                                 }
                             }
-                            if node.kind == NodeKind::Table {
+                            if node.kind == NodeKind::Table && relational {
                                 if ui.button(tr("Design")).clicked() {
                                     events.push(Event::Design(node.id.clone()));
                                     ui.close();
@@ -770,7 +770,30 @@ impl ObjectExplorer {
                                 events.push(Event::NewQuery(node.id.clone()));
                                 ui.close();
                             }
-                            if node.kind.has_rows() {
+                            if node.kind.has_rows() && !relational {
+                                // Coleção de um banco de documentos.
+                                ui.separator();
+                                let open = trf!("Open First {n} Documents", n = SELECT_TOP_ROWS);
+                                if ui.button(open).clicked() {
+                                    events.push(Event::SelectTop(node.id.clone()));
+                                    ui.close();
+                                }
+                                if ui.button(tr("Script Collection as CREATE")).clicked() {
+                                    events
+                                        .push(Event::Script(node.id.clone(), ScriptAction::Create));
+                                    ui.close();
+                                }
+                                if ui.button(tr("Drop Collection...")).clicked() {
+                                    events.push(Event::Script(node.id.clone(), ScriptAction::Drop));
+                                    ui.close();
+                                }
+                            } else if node.kind == NodeKind::Index && !relational {
+                                ui.separator();
+                                if ui.button(tr("Drop Index...")).clicked() {
+                                    events.push(Event::Script(node.id.clone(), ScriptAction::Drop));
+                                    ui.close();
+                                }
+                            } else if node.kind.has_rows() {
                                 ui.separator();
                                 let top = trf!("Select Top {n} Rows", n = SELECT_TOP_ROWS);
                                 if ui.button(top).clicked() {
@@ -799,8 +822,9 @@ impl ObjectExplorer {
                                 }
                             }
                             if !relational {
-                                // Sem CREATE/DROP: a chave tem o "Delete
-                                // Key..." lá em cima.
+                                // Sem "Script as": a chave tem o "Delete
+                                // Key..." e a coleção o "Drop
+                                // Collection..." lá em cima.
                             } else if node.kind.scriptable() {
                                 let label = trf!("Script {kind} as", kind = node.kind.label());
                                 ui.menu_button(label, |ui| {

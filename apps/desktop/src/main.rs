@@ -434,7 +434,14 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                                     Engine::SqlServer,
                                     Arc::new(MssqlConnector::new(runtime.clone())),
                                 )
-                                .with(Engine::Redis, Arc::new(RedisConnector::new(runtime))),
+                                .with(
+                                    Engine::Redis,
+                                    Arc::new(RedisConnector::new(runtime.clone())),
+                                )
+                                .with(
+                                    Engine::MongoDb,
+                                    Arc::new(pgstudio_mongodb::MongoConnector::new(runtime)),
+                                ),
                         ));
                     }
                     Err(e) => {

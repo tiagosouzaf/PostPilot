@@ -45,6 +45,15 @@ const fn rd(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
     }
 }
 
+const fn mg(folder: &'static str, name: &'static str, sql: &'static str) -> Builtin {
+    Builtin {
+        engine: Engine::MongoDb,
+        folder,
+        name,
+        sql,
+    }
+}
+
 /// Todos os modelos, na ordem em que aparecem.
 pub const ALL: &[Builtin] = &[
     // ---------------------------------------------------------------
@@ -805,6 +814,130 @@ SLOWLOG GET 20
 SUBSCRIBE channel_name
 ",
     ),
+    // ---------------------------------------------------------------
+    // MongoDB
+    // ---------------------------------------------------------------
+    mg(
+        tr_noop("Find"),
+        tr_noop("Find Documents"),
+        "db.collection_name.find({ field: \"value\" }).limit(100)
+",
+    ),
+    mg(
+        tr_noop("Find"),
+        tr_noop("Find with Projection and Sort"),
+        "db.collection_name
+  .find({ total: { $gte: 100 } }, { name: 1, total: 1 })
+  .sort({ total: -1 })
+  .limit(50)
+",
+    ),
+    mg(
+        tr_noop("Find"),
+        tr_noop("Find by Id"),
+        "db.collection_name.findOne({ _id: ObjectId(\"000000000000000000000000\") })
+",
+    ),
+    mg(
+        tr_noop("Find"),
+        tr_noop("Count Documents"),
+        "db.collection_name.countDocuments({ field: \"value\" })
+",
+    ),
+    mg(
+        tr_noop("Find"),
+        tr_noop("Distinct Values"),
+        "db.collection_name.distinct(\"field\", {})
+",
+    ),
+    mg(
+        tr_noop("Aggregate"),
+        tr_noop("Group and Count"),
+        "db.collection_name.aggregate([
+  { $match: {} },
+  { $group: { _id: \"$field\", count: { $sum: 1 } } },
+  { $sort: { count: -1 } },
+])
+",
+    ),
+    mg(
+        tr_noop("Aggregate"),
+        tr_noop("Join Another Collection"),
+        "db.collection_name.aggregate([
+  { $lookup: {
+      from: \"other_collection\",
+      localField: \"other_id\",
+      foreignField: \"_id\",
+      as: \"other\",
+  } },
+  { $limit: 100 },
+])
+",
+    ),
+    mg(
+        tr_noop("Write"),
+        tr_noop("Insert Document"),
+        "db.collection_name.insertOne({ name: \"value\", created_at: ISODate() })
+",
+    ),
+    mg(
+        tr_noop("Write"),
+        tr_noop("Update Documents"),
+        "db.collection_name.updateMany(
+  { field: \"value\" },
+  { $set: { other_field: \"new value\" } }
+)
+",
+    ),
+    mg(
+        tr_noop("Write"),
+        tr_noop("Delete Documents"),
+        "db.collection_name.deleteMany({ field: \"value\" })
+",
+    ),
+    mg(
+        tr_noop("Indexes"),
+        tr_noop("Create Index"),
+        "db.collection_name.createIndex({ field: 1 }, { unique: false })
+",
+    ),
+    mg(
+        tr_noop("Indexes"),
+        tr_noop("List Indexes"),
+        "db.collection_name.getIndexes()
+",
+    ),
+    mg(
+        tr_noop("Collections"),
+        tr_noop("Create Collection"),
+        "db.createCollection(\"collection_name\")
+",
+    ),
+    mg(
+        tr_noop("Collections"),
+        tr_noop("Collection Statistics"),
+        "db.collection_name.stats()
+",
+    ),
+    mg(
+        tr_noop("Server"),
+        tr_noop("List Databases and Collections"),
+        "show dbs
+show collections
+",
+    ),
+    mg(
+        tr_noop("Server"),
+        tr_noop("Server Status"),
+        "db.serverStatus()
+",
+    ),
+    mg(
+        tr_noop("Server"),
+        tr_noop("Current Operations"),
+        "db.adminCommand({ currentOp: 1, active: true })
+",
+    ),
 ];
 
 /// As pastas de um servidor, na ordem em que aparecem.
@@ -827,6 +960,14 @@ pub fn in_folder(engine: Engine, folder: &str) -> impl Iterator<Item = &'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mongodb_templates_are_valid_queries() {
+        for t in ALL.iter().filter(|t| t.engine == Engine::MongoDb) {
+            let parsed = pgstudio_mongodb::shell::parse(t.sql);
+            assert!(parsed.is_ok_and(|p| !p.is_empty()), "{}: {}", t.name, t.sql);
+        }
+    }
 
     #[test]
     fn every_engine_has_templates_with_unique_names_per_folder() {

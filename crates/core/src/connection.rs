@@ -24,6 +24,10 @@ pub const SQL_SERVER_PORT: u16 = 1433;
 
 /// Porta padrão do Redis.
 pub const REDIS_PORT: u16 = 6379;
+/// Porta padrão do MongoDB.
+pub const MONGODB_PORT: u16 = 27017;
+/// Como começa o "Server name" de um cluster achado pelo DNS (Atlas).
+pub const MONGODB_SRV: &str = "mongodb+srv://";
 
 /// O motor do servidor. Configurações salvas antes do SQL Server não têm
 /// o campo e abrem como PostgreSQL.
@@ -36,6 +40,10 @@ pub enum Engine {
     SqlServer,
     /// Redis (Fase N): não é SQL; a janela de consulta roda comandos.
     Redis,
+    /// MongoDB (Fase N): a janela de consulta roda comandos no estilo do
+    /// mongosh.
+    #[serde(rename = "mongodb")]
+    MongoDb,
 }
 
 impl Engine {
@@ -54,6 +62,7 @@ impl Engine {
             Engine::PostgreSql => crate::schema::quote_ident(name),
             Engine::SqlServer => format!("[{}]", name.replace(']', "]]")),
             Engine::Redis => redis_argument(name),
+            Engine::MongoDb => name.to_string(),
         }
     }
 
@@ -63,6 +72,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => crate::schema::quote_ident(name),
             Engine::Redis => redis_argument(name),
+            Engine::MongoDb => name.to_string(),
             Engine::SqlServer => {
                 let mut chars = name.chars();
                 // As palavras reservadas do PostgreSQL servem de lista
@@ -93,11 +103,17 @@ impl Engine {
             (Engine::PostgreSql, Some(v)) => format!("'{}'", v.replace('\'', "''")),
             (Engine::SqlServer, Some(v)) => format!("N'{}'", v.replace('\'', "''")),
             (Engine::Redis, Some(v)) => redis_argument(v),
+            (Engine::MongoDb, Some(v)) => mongodb_string(v),
         }
     }
 
     /// Os motores, na ordem do Connect to Server.
-    pub const ALL: [Engine; 3] = [Engine::PostgreSql, Engine::SqlServer, Engine::Redis];
+    pub const ALL: [Engine; 4] = [
+        Engine::PostgreSql,
+        Engine::SqlServer,
+        Engine::Redis,
+        Engine::MongoDb,
+    ];
 
     /// Nome do produto (não se traduz).
     pub fn label(self) -> &'static str {
@@ -105,6 +121,7 @@ impl Engine {
             Engine::PostgreSql => "PostgreSQL",
             Engine::SqlServer => "SQL Server",
             Engine::Redis => "Redis",
+            Engine::MongoDb => "MongoDB",
         }
     }
 
@@ -114,6 +131,7 @@ impl Engine {
             Engine::PostgreSql => DEFAULT_PORT,
             Engine::SqlServer => SQL_SERVER_PORT,
             Engine::Redis => REDIS_PORT,
+            Engine::MongoDb => MONGODB_PORT,
         }
     }
 
@@ -123,6 +141,7 @@ impl Engine {
             Engine::PostgreSql => DEFAULT_DATABASE,
             Engine::SqlServer => "master",
             Engine::Redis => "db0",
+            Engine::MongoDb => "test",
         }
     }
 
@@ -131,14 +150,15 @@ impl Engine {
         match self {
             Engine::PostgreSql => SslMode::Prefer,
             Engine::SqlServer => SslMode::Require,
-            Engine::Redis => SslMode::Disable,
+            Engine::Redis | Engine::MongoDb => SslMode::Disable,
         }
     }
 
     /// Se o login pode ficar vazio: no Redis sem ACL só existe a senha
-    /// (`requirepass`), ou nem ela.
+    /// (`requirepass`), ou nem ela; um MongoDB sem autenticação não tem
+    /// usuário.
     pub fn login_optional(self) -> bool {
-        self == Engine::Redis
+        matches!(self, Engine::Redis | Engine::MongoDb)
     }
 
     /// Prefixo da chave do servidor conectado e da senha no cofre. O
@@ -149,6 +169,7 @@ impl Engine {
             Engine::PostgreSql => "",
             Engine::SqlServer => "sqlserver:",
             Engine::Redis => "redis:",
+            Engine::MongoDb => "mongodb:",
         }
     }
 
@@ -157,7 +178,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "postgres",
             Engine::SqlServer => "sa",
-            Engine::Redis => "",
+            Engine::Redis | Engine::MongoDb => "",
         }
     }
 
@@ -183,6 +204,7 @@ impl Engine {
             ),
             // O Redis ganha os seus marco a marco (Fase N do plano).
             Engine::Redis => matches!(feature, Feature::Query | Feature::IntelliSense),
+            Engine::MongoDb => matches!(feature, Feature::Query),
         }
     }
 
@@ -199,7 +221,9 @@ impl Engine {
             }
             // Comando do cliente: a sessão do Redis responde sem ir ao
             // servidor com isto (`db0`... pelo `CONFIG GET databases`).
-            Engine::Redis => REDIS_LIST_DATABASES,
+            // As sessões do Redis e do MongoDB respondem a este comando
+            // do cliente.
+            Engine::Redis | Engine::MongoDb => REDIS_LIST_DATABASES,
         }
     }
 
@@ -210,7 +234,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "SELECT now() <> statement_timestamp()",
             Engine::SqlServer => "SELECT @@TRANCOUNT",
-            Engine::Redis => REDIS_IN_TRANSACTION,
+            Engine::Redis | Engine::MongoDb => REDIS_IN_TRANSACTION,
         }
     }
 
@@ -256,6 +280,41 @@ pub fn redis_argument(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Um texto como literal numa consulta do MongoDB: entre aspas duplas,
+/// com os escapes do JSON.
+pub fn mongodb_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Como uma coleção entra numa consulta: `db.pedidos` quando o nome é
+/// simples, `db.getCollection("meus pedidos")` quando não.
+pub fn mongodb_collection(name: &str) -> String {
+    let mut chars = name.chars();
+    let plain = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if plain {
+        format!("db.{name}")
+    } else {
+        format!("db.getCollection({})", mongodb_string(name))
+    }
 }
 
 /// Número do banco do Redis a partir do nome (`db3`, `3` ou vazio, que é
@@ -333,7 +392,7 @@ impl SslMode {
     pub fn options(engine: Engine) -> &'static [SslMode] {
         match engine {
             Engine::PostgreSql => &SslMode::ALL,
-            Engine::SqlServer | Engine::Redis => {
+            Engine::SqlServer | Engine::Redis | Engine::MongoDb => {
                 &[SslMode::Disable, SslMode::Require, SslMode::VerifyFull]
             }
         }
@@ -343,11 +402,15 @@ impl SslMode {
     pub fn label_for(self, engine: Engine) -> &'static str {
         match (engine, self) {
             (Engine::PostgreSql, _) => self.label(),
-            (Engine::Redis, SslMode::Disable) => pgstudio_i18n::tr("No encryption"),
-            (Engine::Redis, SslMode::Prefer | SslMode::Require) => {
+            (Engine::Redis | Engine::MongoDb, SslMode::Disable) => {
+                pgstudio_i18n::tr("No encryption")
+            }
+            (Engine::Redis | Engine::MongoDb, SslMode::Prefer | SslMode::Require) => {
                 pgstudio_i18n::tr("TLS, trust server certificate")
             }
-            (Engine::Redis, SslMode::VerifyFull) => pgstudio_i18n::tr("TLS, verify certificate"),
+            (Engine::Redis | Engine::MongoDb, SslMode::VerifyFull) => {
+                pgstudio_i18n::tr("TLS, verify certificate")
+            }
             (Engine::SqlServer, SslMode::Disable) => pgstudio_i18n::tr("Optional (login only)"),
             (Engine::SqlServer, SslMode::Prefer | SslMode::Require) => {
                 pgstudio_i18n::tr("Mandatory, trust server certificate")
@@ -538,16 +601,27 @@ impl ConnectionSettings {
     /// O login para mostrar: no Redis sem usuário, o `default` do
     /// servidor.
     pub fn login_label(&self) -> &str {
-        if self.user.is_empty() && self.engine == Engine::Redis {
-            "default"
-        } else {
-            &self.user
+        match (self.user.is_empty(), self.engine) {
+            (true, Engine::Redis) => "default",
+            (true, Engine::MongoDb) => pgstudio_i18n::tr("no login"),
+            _ => &self.user,
         }
+    }
+
+    /// O nome do cluster quando o servidor do MongoDB é achado pelo DNS
+    /// (`mongodb+srv://cluster0.abc.mongodb.net`, como no Atlas).
+    pub fn mongodb_srv(&self) -> Option<&str> {
+        self.host
+            .strip_prefix(MONGODB_SRV)
+            .filter(|_| self.engine == Engine::MongoDb)
     }
 
     /// "Server name" como no SSMS: o host, mais a porta quando não é a
     /// padrão (`db.exemplo.com,5433`).
     pub fn server_name(&self) -> String {
+        if self.mongodb_srv().is_some() {
+            return self.host.clone();
+        }
         let host = if self.host.contains(':') {
             format!("[{}]", self.host)
         } else {
@@ -562,6 +636,20 @@ impl ConnectionSettings {
 
     /// Preenche host e porta a partir do "Server name" digitado.
     pub fn set_server_name(&mut self, text: &str) -> Result<(), String> {
+        // Cluster do MongoDB achado pelo DNS: o nome inteiro é o host.
+        if let Some(cluster) = text.trim().strip_prefix(MONGODB_SRV)
+            && self.engine == Engine::MongoDb
+        {
+            let cluster = cluster.trim_end_matches('/');
+            if cluster.is_empty() || cluster.contains(['/', '@', ',', ' ']) {
+                return Err(
+                    pgstudio_i18n::tr("After mongodb+srv:// goes only the cluster name.").into(),
+                );
+            }
+            self.host = format!("{MONGODB_SRV}{cluster}");
+            self.port = MONGODB_PORT;
+            return Ok(());
+        }
         let (host, port) = parse_server_name_for(text, self.engine.default_port())?;
         self.host = host;
         self.port = port;
@@ -873,6 +961,29 @@ mod tests {
                 .contains(r#""engine":"redis""#)
         );
         assert!(!Engine::Redis.is_sql());
+        assert!(!Engine::MongoDb.is_sql());
+        assert!(Engine::MongoDb.supports(Feature::Query));
+        assert!(!Engine::MongoDb.supports(Feature::EditRows));
+        let mut m = ConnectionSettings::for_engine(Engine::MongoDb);
+        assert_eq!(
+            (m.port, m.database.as_str(), m.user.as_str()),
+            (27017, "test", "")
+        );
+        m.set_server_name("mongodb+srv://cluster0.abc.mongodb.net/")
+            .unwrap();
+        assert_eq!(m.mongodb_srv(), Some("cluster0.abc.mongodb.net"));
+        assert_eq!(m.server_name(), "mongodb+srv://cluster0.abc.mongodb.net");
+        assert!(m.set_server_name("mongodb+srv://u@cluster0").is_err());
+        m.set_server_name("mongo.local,27018").unwrap();
+        assert_eq!(
+            (m.host.as_str(), m.port, m.mongodb_srv()),
+            ("mongo.local", 27018, None)
+        );
+        assert_eq!(mongodb_collection("pedidos"), "db.pedidos");
+        assert_eq!(
+            mongodb_collection("meus \"pedidos\""),
+            "db.getCollection(\"meus \\\"pedidos\\\"\")"
+        );
         assert!(Engine::Redis.supports(Feature::Query));
         assert!(!Engine::Redis.supports(Feature::Designers));
         assert_eq!(redis_argument("user:1"), "user:1");

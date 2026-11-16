@@ -45,7 +45,34 @@ pub enum Dialect {
     /// `"..."` e `'...'` são textos, `#`, `--` e `//` no começo da linha
     /// são comentários.
     Redis,
+    /// Consultas do MongoDB no estilo do mongosh: `db.colecao.find({...})`,
+    /// textos entre aspas simples, duplas ou crases, `//` e `/* */`,
+    /// `$operadores` e `/regex/`.
+    MongoDb,
 }
+
+/// Palavras e tipos que o realce do MongoDB destaca.
+pub const MONGODB_KEYWORDS: &[&str] = &[
+    "Date",
+    "ISODate",
+    "MaxKey",
+    "MinKey",
+    "NumberDecimal",
+    "NumberInt",
+    "NumberLong",
+    "ObjectId",
+    "RegExp",
+    "Timestamp",
+    "UUID",
+    "db",
+    "false",
+    "new",
+    "null",
+    "show",
+    "true",
+    "undefined",
+    "use",
+];
 
 /// Um pedaço do texto, em bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -726,6 +753,9 @@ impl Lexer<'_> {
         if self.dialect == Dialect::Redis {
             return self.redis_kind(c);
         }
+        if self.dialect == Dialect::MongoDb {
+            return self.mongodb_kind(c);
+        }
         if self.dialect == Dialect::TSql
             && let Some(kind) = self.tsql_kind(c)
         {
@@ -811,6 +841,87 @@ impl Lexer<'_> {
                 self.bump();
                 TokenKind::Other
             }
+        }
+    }
+
+    /// Um pedaço de uma consulta do MongoDB (a sintaxe de valores do
+    /// JavaScript, sem o resto da linguagem).
+    fn mongodb_kind(&mut self, c: char) -> TokenKind {
+        if c.is_whitespace() {
+            self.eat_while(char::is_whitespace);
+            return TokenKind::Whitespace;
+        }
+        let rest = self.rest();
+        if rest.starts_with("//") {
+            self.eat_while(|c| c != '\n');
+            return TokenKind::Comment;
+        }
+        if rest.starts_with("/*") {
+            self.pos = match rest.find("*/") {
+                Some(i) => self.pos + i + 2,
+                None => self.text.len(),
+            };
+            return TokenKind::Comment;
+        }
+        if matches!(c, '"' | '\'' | '`') {
+            self.bump();
+            while let Some(d) = self.bump() {
+                if d == '\\' {
+                    self.bump();
+                } else if d == c || (d == '\n' && c != '`') {
+                    break;
+                }
+            }
+            return TokenKind::String;
+        }
+        if c == '/' {
+            // Uma `/` onde cabe um valor (depois de `(`, `,`, `:`, `[`)
+            // abre uma expressão regular, que vai até a outra `/` na
+            // mesma linha.
+            let before = self.text[..self.pos].trim_end().chars().next_back();
+            let line = rest.split('\n').next().unwrap_or_default();
+            let mut end = None;
+            let mut escaped = false;
+            for (i, d) in line.char_indices().skip(1) {
+                match d {
+                    _ if escaped => escaped = false,
+                    '\\' => escaped = true,
+                    '/' => {
+                        end = Some(i + 1);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let (Some('(' | ',' | ':' | '[' | '{'), Some(end)) = (before, end) {
+                self.pos += end;
+                self.eat_while(|c| c.is_ascii_alphabetic());
+                return TokenKind::String;
+            }
+            self.bump();
+            return TokenKind::Operator;
+        }
+        if c.is_ascii_digit() {
+            self.eat_while(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+            return TokenKind::Number;
+        }
+        if c == '$' || c == '_' || c.is_alphabetic() {
+            let start = self.pos;
+            self.eat_while(|c| c == '$' || c == '_' || c.is_alphanumeric());
+            let word = &self.text[start..self.pos];
+            return if word.starts_with('$') {
+                TokenKind::Parameter
+            } else if MONGODB_KEYWORDS.binary_search(&word).is_ok() {
+                TokenKind::Keyword
+            } else {
+                TokenKind::Identifier
+            };
+        }
+        self.bump();
+        if "(){}[],;.:".contains(c) {
+            TokenKind::Punctuation
+        } else {
+            TokenKind::Operator
         }
     }
 
@@ -1004,6 +1115,45 @@ mod tests {
 
     use super::*;
     use TokenKind::*;
+
+    #[test]
+    fn mongodb_queries_are_highlighted() {
+        assert!(MONGODB_KEYWORDS.windows(2).all(|w| w[0] < w[1]));
+        let text = "db.pedidos.find({ total: { $gt: 10.5 }, nome: /^an\\/a/i, _id: ObjectId('a\\'b') }) // fim\n/* bloco */ 8 / 2";
+        let got: Vec<(TokenKind, &str)> = tokenize_in(text, Dialect::MongoDb)
+            .into_iter()
+            .filter(|t| t.kind != TokenKind::Whitespace && t.kind != TokenKind::Punctuation)
+            .map(|t| (t.kind, &text[t.range.clone()]))
+            .collect();
+        use TokenKind::*;
+        assert_eq!(
+            got,
+            [
+                (Keyword, "db"),
+                (Identifier, "pedidos"),
+                (Identifier, "find"),
+                (Identifier, "total"),
+                (Parameter, "$gt"),
+                (Number, "10.5"),
+                (Identifier, "nome"),
+                (String, "/^an\\/a/i"),
+                (Identifier, "_id"),
+                (Keyword, "ObjectId"),
+                (String, "'a\\'b'"),
+                (Comment, "// fim"),
+                (Comment, "/* bloco */"),
+                (Number, "8"),
+                (Operator, "/"),
+                (Number, "2"),
+            ]
+        );
+        // Editar no meio dá o mesmo que ler tudo de novo.
+        let mut text = "db.c.find({ a: 1 })\ndb.c.find({ b: 'x' })".to_string();
+        let mut tokens = tokenize_in(&text, Dialect::MongoDb);
+        text.insert_str(12, "/* ");
+        retokenize_in(&text, &mut tokens, 12, 0, 3, Dialect::MongoDb);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::MongoDb));
+    }
 
     #[test]
     fn redis_commands_strings_and_comments() {

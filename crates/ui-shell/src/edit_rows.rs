@@ -87,7 +87,7 @@ impl EditTable {
     /// SQL que lê as primeiras `limit` linhas.
     pub fn select_sql(&self, limit: u32) -> String {
         match self.engine {
-            Engine::PostgreSql | Engine::Redis => format!(
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
                 "SELECT {} FROM {} LIMIT {limit}",
                 self.column_list(),
                 self.name
@@ -155,7 +155,7 @@ impl EditTable {
         }
         let filter = self.key_filter(original);
         Some(match self.engine {
-            Engine::PostgreSql | Engine::Redis => format!(
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
                 "UPDATE {} SET {} WHERE {filter} RETURNING {}",
                 self.name,
                 sets.join(", "),

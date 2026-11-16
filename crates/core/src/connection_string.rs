@@ -24,6 +24,8 @@ pub fn looks_like(text: &str) -> bool {
         || t.starts_with("postgresql://")
         || t.starts_with("redis://")
         || t.starts_with("rediss://")
+        || t.starts_with("mongodb://")
+        || t.starts_with("mongodb+srv://")
         || t.contains('=')
 }
 
@@ -39,6 +41,13 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
         .or_else(|| text.strip_prefix("rediss://").map(|r| (r, true)))
     {
         return parse_redis(rest, tls);
+    }
+    if let Some((rest, srv)) = text
+        .strip_prefix("mongodb://")
+        .map(|r| (r, false))
+        .or_else(|| text.strip_prefix("mongodb+srv://").map(|r| (r, true)))
+    {
+        return parse_mongodb(rest, srv);
     }
     let mut parsed = Parsed {
         settings: ConnectionSettings {
@@ -110,6 +119,44 @@ fn parse_redis(rest: &str, tls: bool) -> Result<Parsed, String> {
             // Parâmetros de outros clientes: não mudam a conexão.
             _ => {}
         }
+    }
+    Ok(parsed)
+}
+
+/// `mongodb://[usuario:senha@]host[:porta][/banco][?tls=true]`;
+/// `mongodb+srv://` é um cluster achado pelo DNS (Atlas), sempre com TLS.
+fn parse_mongodb(rest: &str, srv: bool) -> Result<Parsed, String> {
+    use crate::connection::{Engine, MONGODB_SRV};
+    let mut parsed = Parsed {
+        settings: ConnectionSettings::for_engine(Engine::MongoDb),
+        password: None,
+    };
+    if srv {
+        parsed.settings.ssl = SslMode::VerifyFull;
+    }
+    for (key, value) in parse_uri(rest, &mut parsed)? {
+        match key.as_str() {
+            "user" => parsed.settings.user = value,
+            "password" => parsed.password = Some(value),
+            "host" if srv => parsed.settings.host = format!("{MONGODB_SRV}{value}"),
+            "host" => parsed.settings.host = value,
+            "dbname" => parsed.settings.database = value,
+            "tls" | "ssl" => {
+                parsed.settings.ssl = match value.as_str() {
+                    "true" => SslMode::VerifyFull,
+                    _ => SslMode::Disable,
+                };
+            }
+            "tlsAllowInvalidCertificates" | "tlsInsecure" if value == "true" => {
+                parsed.settings.ssl = SslMode::Require;
+            }
+            // `authSource`, `replicaSet`, `retryWrites`...: não mudam a
+            // conexão daqui.
+            _ => {}
+        }
+    }
+    if srv {
+        parsed.settings.port = Engine::MongoDb.default_port();
     }
     Ok(parsed)
 }
@@ -306,6 +353,43 @@ fn parse_pairs(text: &str) -> Result<Vec<(String, String)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mongodb_urls() {
+        use crate::connection::Engine;
+        let p =
+            parse("mongodb://app:s%40nha@mongo.exemplo.com:27018/loja?authSource=admin").unwrap();
+        assert_eq!(p.settings.engine, Engine::MongoDb);
+        assert_eq!(
+            (
+                p.settings.host.as_str(),
+                p.settings.port,
+                p.settings.database.as_str()
+            ),
+            ("mongo.exemplo.com", 27018, "loja")
+        );
+        assert_eq!(
+            (p.settings.user.as_str(), p.password.as_deref()),
+            ("app", Some("s@nha"))
+        );
+        assert_eq!(p.settings.ssl, SslMode::Disable);
+        let p = parse("mongodb://localhost/?tls=true&tlsAllowInvalidCertificates=true").unwrap();
+        assert_eq!(
+            (p.settings.database.as_str(), p.settings.ssl),
+            ("test", SslMode::Require)
+        );
+        // Atlas: o cluster pelo DNS, com TLS.
+        let p = parse("mongodb+srv://app:x@cluster0.abc.mongodb.net/?retryWrites=true&w=majority")
+            .unwrap();
+        assert_eq!(p.settings.mongodb_srv(), Some("cluster0.abc.mongodb.net"));
+        assert_eq!(
+            p.settings.server_name(),
+            "mongodb+srv://cluster0.abc.mongodb.net"
+        );
+        assert_eq!(p.settings.ssl, SslMode::VerifyFull);
+        assert!(looks_like("mongodb+srv://cluster0.abc.mongodb.net"));
+        assert!(parse("mongodb://a,b/loja").is_err());
+    }
 
     #[test]
     fn redis_urls() {

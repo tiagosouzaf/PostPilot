@@ -1,0 +1,19 @@
+[package]
+name = "pgstudio-mongodb"
+description = "Conexão do PostPilot com o MongoDB (driver oficial, consultas no estilo do mongosh)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+pgstudio-i18n.workspace = true
+pgstudio-pg-client.workspace = true
+mongodb = { version = "3.2", default-features = false, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
