@@ -109,8 +109,9 @@ pub struct Viewer<'a> {
     pub explorer_events: Vec<Event>,
     /// Documentos com alterações cujo fechamento foi pedido pela aba.
     pub close_requests: Vec<u32>,
-    /// "Save Results As...": janela e índice do resultado.
-    pub save_results: Vec<(u32, usize)>,
+    /// "Save Results As..." e "Export to Excel...": janela, índice do
+    /// resultado e extensão sugerida.
+    pub save_results: Vec<(u32, usize, &'static str)>,
     /// JSON Viewer pedido: janela, índice do resultado e célula.
     pub open_json: Vec<(u32, usize, pgstudio_result_grid::Cell)>,
     /// Atalhos em uso, para o menu de contexto do editor.
@@ -365,8 +366,8 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .min_size(90.0)
                         .show(ui, |ui| crate::results::show(ui, *id, exec, server, tag))
                         .inner;
-                    if let Some(i) = action.save_results {
-                        self.save_results.push((*id, i));
+                    if let Some((i, extension)) = action.save_results {
+                        self.save_results.push((*id, i, extension));
                     }
                     if let Some((i, cell)) = action.open_json {
                         self.open_json.push((*id, i, cell));
@@ -388,12 +389,16 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .resizable(false)
                         .frame(crate::results::strip_frame(ui, tag))
                         .show(ui, |ui| {
-                            crate::results::connected_strip(
-                                ui,
-                                db.as_deref().unwrap_or(""),
-                                server,
-                                tag,
-                            )
+                            if doc.multi.is_some() {
+                                crate::multi::strip(ui, server, tag);
+                            } else {
+                                crate::results::connected_strip(
+                                    ui,
+                                    db.as_deref().unwrap_or(""),
+                                    server,
+                                    tag,
+                                )
+                            }
                         });
                 }
                 let catalog = db.and_then(|db| self.catalogs.get(&db));
