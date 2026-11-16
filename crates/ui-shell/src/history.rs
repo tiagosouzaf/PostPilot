@@ -934,6 +934,8 @@ pub(crate) struct Finished {
     pub outcome: Outcome,
     pub rows: u64,
     pub error: Option<String>,
+    /// Rodou em vários servidores de uma vez (veja [`crate::multi`]).
+    pub multi: bool,
 }
 
 impl crate::ShellApp {
@@ -963,21 +965,34 @@ impl crate::ShellApp {
 
     /// Guarda no histórico a execução que terminou na janela `run.doc`.
     pub(crate) fn record_history(&mut self, run: Finished) {
-        let key = self.doc_servers.get(&run.doc).cloned().or_else(|| {
-            self.connection
-                .as_ref()
-                .map(|c| crate::servers::server_key(&c.settings))
-        });
-        // Sem servidor (o de demonstração), nada rodou.
-        let Some(key) = key else {
-            return;
+        let (key, name, engine) = if run.multi {
+            // Vários servidores: fica "N servers" no lugar do servidor, e a
+            // consulta reaberta roda no servidor ativo.
+            let label = self
+                .multi_labels()
+                .into_iter()
+                .find(|(doc, ..)| *doc == run.doc)
+                .map(|(_, label, _)| label)
+                .unwrap_or_default();
+            (String::new(), label, Engine::default())
+        } else {
+            let key = self.doc_servers.get(&run.doc).cloned().or_else(|| {
+                self.connection
+                    .as_ref()
+                    .map(|c| crate::servers::server_key(&c.settings))
+            });
+            // Sem servidor (o de demonstração), nada rodou.
+            let Some(key) = key else {
+                return;
+            };
+            let name = self
+                .document_servers()
+                .get(&run.doc)
+                .cloned()
+                .unwrap_or_else(|| key.clone());
+            let engine = self.engine_of_key(&key).unwrap_or_default();
+            (key, name, engine)
         };
-        let name = self
-            .document_servers()
-            .get(&run.doc)
-            .cloned()
-            .unwrap_or_else(|| key.clone());
-        let engine = self.engine_of_key(&key).unwrap_or_default();
         self.history.store.add(Entry::finished(
             &key,
             &name,

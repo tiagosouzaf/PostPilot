@@ -354,6 +354,9 @@ pub struct Execution {
     rows_done: u64,
     /// Texto do primeiro erro, para o histórico.
     first_error: Option<String>,
+    /// O lote rodou em vários servidores (veja [`crate::multi`]): a grade
+    /// é só leitura.
+    pub multi: bool,
     ctx: egui::Context,
 }
 
@@ -469,6 +472,7 @@ impl Execution {
             estimated: false,
             rows_done: 0,
             first_error: None,
+            multi: false,
             ctx: ui_ctx,
         }
     }
@@ -579,6 +583,7 @@ impl Execution {
             estimated: false,
             rows_done: 0,
             first_error: None,
+            multi: false,
             ctx: ui_ctx,
         })
     }
@@ -836,7 +841,11 @@ impl Execution {
             return;
         }
         let statements = pgstudio_sql_editor::lexer::statements(&self.sql);
-        let reason = if self.batch.segments.is_empty() {
+        let reason = if self.multi {
+            Some(tr(
+                "The results are read-only: they come from multiple servers.",
+            ))
+        } else if self.batch.segments.is_empty() {
             Some(tr(
                 "The results are read-only: they were produced by PostPilot, not by a query.",
             ))
