@@ -107,6 +107,59 @@ pub struct Environment {
     /// pode alterar o banco (INSERT, UPDATE, DELETE, DDL...).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub confirm_changes: bool,
+    /// O que a IA (Claude e os outros provedores) pode fazer nos servidores
+    /// do ambiente. Sem escolha, vale [`Environment::ai_access`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<AiAccess>,
+}
+
+impl Environment {
+    /// O que a IA pode fazer aqui: a escolha do usuário ou, sem ela,
+    /// perguntar antes de tudo nos ambientes que já confirmam alterações
+    /// (Produção, por padrão) e a regra de sempre nos outros.
+    pub fn ai_access(&self) -> AiAccess {
+        self.ai.unwrap_or(if self.confirm_changes {
+            AiAccess::Confirm
+        } else {
+            AiAccess::Free
+        })
+    }
+}
+
+/// O que a IA pode fazer nos servidores de um ambiente.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiAccess {
+    /// Ler é livre; alterar pede confirmação.
+    #[default]
+    Free,
+    /// Ler o esquema e o plano estimado é livre; tudo o que roda SQL ou
+    /// traz dados do servidor pede confirmação.
+    Confirm,
+    /// A IA não chega ao servidor.
+    Blocked,
+}
+
+impl AiAccess {
+    pub const ALL: [AiAccess; 3] = [AiAccess::Free, AiAccess::Confirm, AiAccess::Blocked];
+
+    /// Nome na tela.
+    pub fn label(self) -> &'static str {
+        match self {
+            AiAccess::Free => tr("AI: reads freely"),
+            AiAccess::Confirm => tr("AI: asks first"),
+            AiAccess::Blocked => tr("AI: blocked"),
+        }
+    }
+
+    /// Como as ferramentas dizem ao modelo.
+    pub fn id(self) -> &'static str {
+        match self {
+            AiAccess::Free => "free",
+            AiAccess::Confirm => "confirm",
+            AiAccess::Blocked => "blocked",
+        }
+    }
 }
 
 /// Desenvolvimento (verde), homologação (laranja) e produção (vermelho).
@@ -116,16 +169,19 @@ pub fn default_environments() -> Vec<Environment> {
             name: DEVELOPMENT.into(),
             color: FOLDER_COLORS[3],
             confirm_changes: false,
+            ai: None,
         },
         Environment {
             name: STAGING.into(),
             color: FOLDER_COLORS[1],
             confirm_changes: false,
+            ai: None,
         },
         Environment {
             name: PRODUCTION.into(),
             color: FOLDER_COLORS[0],
             confirm_changes: true,
+            ai: None,
         },
     ]
 }
@@ -149,6 +205,8 @@ pub struct ServerTag {
     pub color: Rgb,
     /// O ambiente pede confirmação antes de alterar o banco.
     pub confirm_changes: bool,
+    /// O que a IA pode fazer no servidor.
+    pub ai: AiAccess,
 }
 
 /// Um servidor registrado.
@@ -424,11 +482,13 @@ impl RegisteredServers {
                 environment: Some(environment_name(&e.name).to_string()),
                 color: e.color,
                 confirm_changes: e.confirm_changes,
+                ai: e.ai_access(),
             }),
             None => self.color(&path.groups).map(|color| ServerTag {
                 environment: None,
                 color,
                 confirm_changes: false,
+                ai: AiAccess::Free,
             }),
         }
     }
@@ -1354,9 +1414,11 @@ impl RegisteredPanel {
                 .map(|e| EnvironmentRow {
                     original: Some(e.name.clone()),
                     name: environment_name(&e.name).to_string(),
-                    stored: e.name,
                     color: e.color,
                     confirm_changes: e.confirm_changes,
+                    ai: e.ai_access(),
+                    ai_chosen: e.ai.is_some(),
+                    stored: e.name,
                 })
                 .collect(),
             error: None,
@@ -2495,6 +2557,10 @@ pub struct EnvironmentRow {
     pub color: Rgb,
     /// "Confirm changes": pedir confirmação antes de alterar o banco.
     pub confirm_changes: bool,
+    /// O que a IA pode fazer nos servidores do ambiente.
+    pub ai: AiAccess,
+    /// O usuário escolheu `ai` (senão ela acompanha "Confirm changes").
+    ai_chosen: bool,
 }
 
 /// "Environments": nome e cor de cada ambiente, adicionar e remover.
@@ -2517,6 +2583,8 @@ impl EnvironmentsDialog {
             name: name.into(),
             color,
             confirm_changes: false,
+            ai: AiAccess::Free,
+            ai_chosen: false,
         });
     }
 
@@ -2536,6 +2604,7 @@ impl EnvironmentsDialog {
                         name,
                         color: r.color,
                         confirm_changes: r.confirm_changes,
+                        ai: r.ai_chosen.then_some(r.ai),
                     },
                     r.original.clone(),
                 )
@@ -2546,7 +2615,7 @@ impl EnvironmentsDialog {
     fn show(&mut self, ctx: &egui::Context) -> Reply {
         let mut reply = Reply::None;
         let modal = crate::theme::modal(egui::Id::new("registered_environments")).show(ctx, |ui| {
-            ui.set_width(420.0);
+            ui.set_width(600.0);
             ui.heading(tr("Environments"));
             ui.add_space(4.0);
             ui.weak(tr(
@@ -2555,7 +2624,7 @@ impl EnvironmentsDialog {
             ui.add_space(6.0);
             let mut remove = None;
             egui::Grid::new("registered_environments_rows")
-                .num_columns(4)
+                .num_columns(5)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     for (i, row) in self.rows.iter_mut().enumerate() {
@@ -2566,12 +2635,36 @@ impl EnvironmentsDialog {
                         ui.add(
                             egui::TextEdit::singleline(&mut row.name)
                                 .id_salt(("environment_name", i))
-                                .desired_width(200.0),
+                                .min_size(egui::vec2(180.0, 0.0))
+                                .desired_width(180.0),
                         );
                         ui.checkbox(&mut row.confirm_changes, tr("Confirm changes"))
                             .on_hover_text(tr(
                                 "Ask before running SQL that can change the database (INSERT, UPDATE, DELETE, DDL) in a query window.",
                             ));
+                        if !row.ai_chosen {
+                            row.ai = if row.confirm_changes {
+                                AiAccess::Confirm
+                            } else {
+                                AiAccess::Free
+                            };
+                        }
+                        let before = row.ai;
+                        egui::ComboBox::from_id_salt(("environment_ai", i))
+                            .selected_text(row.ai.label())
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                for level in AiAccess::ALL {
+                                    ui.selectable_value(&mut row.ai, level, level.label());
+                                }
+                            })
+                            .response
+                            .on_hover_text(tr(
+                                "What Claude and the other AI providers may do on servers of this environment. Reads freely: reading is free and changes ask for confirmation. Asks first: reading the schema is free, and anything that runs SQL or brings data asks for confirmation. Blocked: the AI cannot reach these servers.",
+                            ));
+                        if row.ai != before {
+                            row.ai_chosen = true;
+                        }
                         if ui.button(icon::TRASH).on_hover_text(tr("Remove")).clicked() {
                             remove = Some(i);
                         }
@@ -2871,6 +2964,43 @@ mod tests {
     }
 
     #[test]
+    fn ai_access_follows_confirm_changes_until_chosen() {
+        // Production pergunta antes; os outros seguem a regra de sempre.
+        let levels: Vec<_> = default_environments()
+            .iter()
+            .map(Environment::ai_access)
+            .collect();
+        assert_eq!(levels, [AiAccess::Free, AiAccess::Free, AiAccess::Confirm]);
+        // Um arquivo antigo, sem a escolha, cai no mesmo padrão.
+        let old: Environment =
+            serde_json::from_str(r##"{"name":"Prod","color":"#c80000","confirm_changes":true}"##)
+                .unwrap();
+        assert_eq!(old.ai, None);
+        assert_eq!(old.ai_access(), AiAccess::Confirm);
+        assert!(!serde_json::to_string(&old).unwrap().contains("\"ai\""));
+        // A escolha do usuário vale e fica gravada.
+        let chosen = Environment {
+            ai: Some(AiAccess::Blocked),
+            ..old
+        };
+        let text = serde_json::to_string(&chosen).unwrap();
+        assert!(text.contains(r#""ai":"blocked""#), "{text}");
+        let back: Environment = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.ai_access(), AiAccess::Blocked);
+
+        // O diálogo só grava a escolha quando o usuário mexe nela.
+        let mut dialog = EnvironmentsDialog {
+            rows: Vec::new(),
+            error: None,
+        };
+        dialog.add("QA", FOLDER_COLORS[2]);
+        assert_eq!(dialog.result().0[0].ai, None);
+        dialog.rows[0].ai = AiAccess::Blocked;
+        dialog.rows[0].ai_chosen = true;
+        assert_eq!(dialog.result().0[0].ai, Some(AiAccess::Blocked));
+    }
+
+    #[test]
     fn environments_are_inherited_renamed_and_saved_in_english() {
         let dir = std::env::temp_dir().join(format!("pgstudio-envs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2938,6 +3068,7 @@ mod tests {
                 environment: None,
                 color: FOLDER_COLORS[5],
                 confirm_changes: false,
+                ai: AiAccess::Free,
             })
         );
         r.update_group(&prod, "Clientes", "", None, Some(PRODUCTION.into()))
@@ -2971,11 +3102,13 @@ mod tests {
                         name: "QA".into(),
                         color: FOLDER_COLORS[0],
                         confirm_changes: false,
+                        ai: None,
                     },
                     Environment {
                         name: "qa".into(),
                         color: FOLDER_COLORS[1],
                         confirm_changes: false,
+                        ai: None,
                     }
                 ],
                 &[None, None]

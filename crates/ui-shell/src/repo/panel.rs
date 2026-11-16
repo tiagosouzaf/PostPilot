@@ -207,6 +207,25 @@ impl WorkspacePanel {
         }
     }
 
+    /// As pastas de consultas recolhidas do workspace aberto, em ordem
+    /// (para a sessão).
+    pub fn collapsed_folders(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self
+            .opened
+            .iter()
+            .flat_map(|o| o.collapsed.iter().cloned())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Recolhe estas pastas de consultas.
+    pub fn collapse_folders(&mut self, folders: &[PathBuf]) {
+        if let Some(o) = &mut self.opened {
+            o.collapsed.extend(folders.iter().cloned());
+        }
+    }
+
     /// O workspace aberto.
     pub fn workspace(&self) -> Option<&Workspace> {
         self.opened.as_ref().map(|o| &o.workspace)

@@ -74,6 +74,42 @@ impl RegisteredPanel {
         }
     }
 
+    /// As pastas recolhidas, pelo nome de cada nível (para a sessão: os
+    /// nomes valem mesmo se a ordem das pastas mudar).
+    pub fn collapsed_names(&self) -> Vec<Vec<String>> {
+        let mut out: Vec<Vec<String>> = self
+            .collapsed
+            .iter()
+            .filter_map(|groups| {
+                (1..=groups.len())
+                    .map(|n| self.servers.group(&groups[..n]).map(|g| g.name.clone()))
+                    .collect()
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Recolhe as pastas com estes nomes (as que ainda existem).
+    pub fn collapse_names(&mut self, names: &[Vec<String>]) {
+        for path in names {
+            let mut groups = Vec::new();
+            let mut group = self.servers.group(&[]);
+            for name in path {
+                let Some(i) = group.and_then(|g| g.groups.iter().position(|s| s.name == *name))
+                else {
+                    group = None;
+                    break;
+                };
+                groups.push(i);
+                group = self.servers.group(&groups);
+            }
+            if group.is_some() && !groups.is_empty() {
+                self.collapsed.insert(groups);
+            }
+        }
+    }
+
     /// Abre ou fecha uma pasta.
     pub fn set_collapsed(&mut self, groups: &[usize], collapsed: bool) {
         if collapsed {

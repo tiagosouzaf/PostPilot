@@ -28,8 +28,57 @@ senhas nunca saem do PostPilot.
   inteiro. Só roda se você clicar em **Run**. Executar uma janela de consulta
   a pedido do Claude passa pela mesma regra.
 
-O que o Claude lê (esquema, texto das consultas, resultados) vai para a
-Anthropic como o resto da conversa. Os resultados chegam cortados: 200
+- **O plano real segue a mesma regra de rodar.** O plano estimado não
+  executa nada e é livre. O plano real executa o comando para medir: de um
+  `SELECT` roda na hora, de um comando que altera pede confirmação. Nos dois
+  casos tudo roda numa transação que é desfeita no fim.
+
+## Plano de execução e atividade
+
+O Claude não precisa adivinhar por que uma consulta é lenta nem quem está
+travando quem:
+
+- **`explain_query`** devolve o plano de execução em texto, no PostgreSQL
+  (`EXPLAIN`, e `EXPLAIN (ANALYZE, BUFFERS)` no real) e no SQL Server
+  (`SHOWPLAN_XML`, e `STATISTICS XML` no real): operadores, linhas estimadas
+  e reais, custo, predicados, avisos e, no SQL Server, os índices que o
+  servidor sente falta. O **Otimizar com o Claude** e o `/postpilot:optimize`
+  leem o plano antes de mexer na consulta e comparam o custo depois.
+- **`get_activity`** lê o que o Monitor de Atividade mostra: sessões com o
+  SQL que estão rodando, há quanto tempo e o que esperam; as cadeias de
+  bloqueio, começando por quem segura todo mundo; os locks em espera; e, se
+  pedido, as consultas mais caras. O Claude só lê: ele diz qual sessão
+  cancelar ou encerrar, e quem faz isso é você, no Monitor de Atividade.
+
+Pergunte, por exemplo, "por que esta consulta está lenta?" ou "tem alguém
+bloqueando alguém no servidor do cliente X?".
+
+## Ambientes: Produção pergunta antes
+
+A IA respeita o ambiente do servidor (o mesmo da etiqueta colorida das
+janelas de consulta). O diálogo de confirmação mostra a etiqueta do
+ambiente, e cada ambiente tem uma regra para a IA, em **Servidores
+Registrados > botão direito na raiz > Ambientes...** (ou na lista de
+servidores do workspace):
+
+| Regra | O que a IA pode fazer nos servidores do ambiente |
+| --- | --- |
+| **IA: lê livremente** | A regra de sempre: ler é livre, alterar pede confirmação. |
+| **IA: pergunta antes** | Ler o esquema (tabelas, colunas, índices, funções) e pedir o plano estimado continua livre. Tudo o que roda SQL ou traz dados pede confirmação, mesmo um `SELECT`: consultas, executar a janela, plano real e atividade do servidor. |
+| **IA: bloqueada** | Nenhuma ferramenta chega ao servidor, nem para ler o esquema ou os resultados de uma janela. A IA recebe o aviso de que você bloqueou e não tenta de novo. |
+
+**Produção já vem em "pergunta antes"**; Desenvolvimento e Homologação, em
+"lê livremente". Um ambiente seu que tenha **Confirmar alterações** marcado
+também começa em "pergunta antes", até você escolher outra regra. Servidor
+sem ambiente segue a regra de sempre. Ao executar uma janela de consulta a
+pedido da IA em Produção, a confirmação é uma só.
+
+A regra vale para o painel, para o Claude Code no terminal e para os outros
+provedores de IA (OpenAI, OpenRouter, GLM): todos passam pelas mesmas
+ferramentas.
+
+O que o Claude lê (esquema, texto das consultas, resultados, planos e o SQL
+das sessões na atividade) vai para a Anthropic como o resto da conversa. Os resultados chegam cortados: 200
 linhas por resultado por padrão (até 1000) e 64 KB por chamada.
 
 ## No Omarchy (Arch + Hyprland)
@@ -161,7 +210,8 @@ Keyring); sem cofre, em `~/.config/PostPilot/ai-keys.json`, que só você lê
 chave nenhuma. Nada disso vai para a pasta do workspace nem para o Git.
 
 Com um provedor escolhido, o painel usa as mesmas ferramentas e a mesma
-regra: ler é livre, alterar pede confirmação. O que o assistente lê vai para
+regra: ler é livre, alterar pede confirmação, e a regra do ambiente
+(Produção pergunta antes, ou bloqueada) vale igual. O que o assistente lê vai para
 o servidor do provedor.
 
 **Com uma IA conectada** (Claude Code instalado ou um provedor com chave):

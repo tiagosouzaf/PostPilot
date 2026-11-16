@@ -55,9 +55,12 @@ pub fn all() -> Vec<ToolSpec> {
         ToolSpec {
             name: "list_servers",
             description: "List the database servers (PostgreSQL or SQL Server) connected in PostPilot's \
-                Object Explorer, with the active one marked and the engine of each. Start \
-                here to know what you can query, and write SQL in that engine's dialect \
-                (T-SQL when engine is sqlserver).",
+                Object Explorer, with the active one marked, the engine of each, and its \
+                environment (such as Production) with the user's rule for AI there \
+                (ai_access): free = reads run right away and changes ask; confirm = anything \
+                that runs SQL or brings data asks the user first; blocked = no tool can reach \
+                that server, so do not try. Start here to know what you can query, and write \
+                SQL in that engine's dialect (T-SQL when engine is sqlserver).",
             input_schema: schema(json!({}), &[]),
             read_only: true,
         },
@@ -136,6 +139,48 @@ pub fn all() -> Vec<ToolSpec> {
                 &["sql"],
             ),
             read_only: false,
+        },
+        ToolSpec {
+            name: "explain_query",
+            description: "Get the execution plan of SQL as readable text, to ground any advice \
+                about performance. By default the plan is estimated and nothing runs \
+                (PostgreSQL EXPLAIN, SQL Server SHOWPLAN). With analyze=true the statement is \
+                executed to measure real rows, time and buffers (PostgreSQL EXPLAIN ANALYZE, \
+                SQL Server STATISTICS XML), always inside a transaction that is rolled back; \
+                it follows the same rule as run_query: read-only SQL runs right away, SQL that \
+                can change anything first shows the confirmation dialog. The answer has one \
+                plan per statement, with operators, estimated and actual rows, costs, \
+                predicates, warnings and, on SQL Server, missing-index suggestions. Use the \
+                estimated plan first; ask for analyze only when estimates are not enough.",
+            input_schema: schema(
+                json!({
+                    "sql": { "type": "string", "description": "The statement(s) to explain, without EXPLAIN or SET SHOWPLAN." },
+                    "analyze": { "type": "boolean", "description": "Run the statement and return the actual plan (default false: estimated plan, nothing runs)." },
+                    "server": { "type": "string", "description": SERVER },
+                    "database": { "type": "string", "description": DATABASE },
+                }),
+                &["sql"],
+            ),
+            read_only: false,
+        },
+        ToolSpec {
+            name: "get_activity",
+            description: "Read what is happening on a server right now, like the Activity \
+                Monitor: sessions with state, wait, running time and current SQL; blocking \
+                chains (who blocks whom, starting at the head blocker); locks that are waiting \
+                and the locks held by blockers; and optionally the most expensive statements \
+                (pg_stat_statements on PostgreSQL, the plan cache on SQL Server). Read only. \
+                Use it to answer why something is slow or stuck. It never cancels or kills a \
+                session: tell the user which one to act on.",
+            input_schema: schema(
+                json!({
+                    "server": { "type": "string", "description": SERVER },
+                    "include_idle": { "type": "boolean", "description": "Also list idle sessions (default false: only active, waiting, blocking or in a transaction)." },
+                    "top_statements": { "type": "boolean", "description": "Also return the most expensive statements (default false)." },
+                }),
+                &[],
+            ),
+            read_only: true,
         },
         ToolSpec {
             name: "list_query_windows",
@@ -262,6 +307,17 @@ pub enum ToolCall {
         database: Option<String>,
         max_rows: Option<usize>,
     },
+    ExplainQuery {
+        sql: String,
+        analyze: bool,
+        server: Option<String>,
+        database: Option<String>,
+    },
+    GetActivity {
+        server: Option<String>,
+        include_idle: bool,
+        top_statements: bool,
+    },
     ListQueryWindows,
     GetQueryWindow {
         window: Option<u32>,
@@ -299,6 +355,9 @@ struct Args {
     mode: Option<EditMode>,
     window: Option<u32>,
     max_rows: Option<usize>,
+    analyze: Option<bool>,
+    include_idle: Option<bool>,
+    top_statements: Option<bool>,
 }
 
 impl ToolCall {
@@ -339,6 +398,17 @@ impl ToolCall {
                 server: blank(a.server),
                 database: blank(a.database),
                 max_rows: a.max_rows,
+            },
+            "explain_query" => ToolCall::ExplainQuery {
+                sql: required(a.sql, "sql")?,
+                analyze: a.analyze.unwrap_or(false),
+                server: blank(a.server),
+                database: blank(a.database),
+            },
+            "get_activity" => ToolCall::GetActivity {
+                server: blank(a.server),
+                include_idle: a.include_idle.unwrap_or(false),
+                top_statements: a.top_statements.unwrap_or(false),
             },
             "list_query_windows" => ToolCall::ListQueryWindows,
             "get_query_window" => ToolCall::GetQueryWindow { window: a.window },
