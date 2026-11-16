@@ -32,6 +32,11 @@ pub enum Panel {
     WorkspaceExplorer,
     /// Conversa com o Claude (marco 7.4).
     Claude,
+    /// Template Explorer (Ctrl+Alt+T).
+    TemplateExplorer,
+    /// Histórico de consultas executadas (Ctrl+Alt+H), uma aba entre os
+    /// documentos.
+    QueryHistory,
 }
 
 impl Panel {
@@ -54,6 +59,8 @@ impl Panel {
             Panel::RegisteredServers => "Registered Servers",
             Panel::WorkspaceExplorer => "Workspace Explorer",
             Panel::Claude => "Claude",
+            Panel::TemplateExplorer => "Template Explorer",
+            Panel::QueryHistory => "Query History",
         }
     }
 }
@@ -64,12 +71,13 @@ impl Pane for Panel {
             Panel::ObjectExplorer | Panel::RegisteredServers | Panel::WorkspaceExplorer => {
                 Area::Left
             }
-            Panel::Properties | Panel::Claude => Area::Right,
+            Panel::Properties | Panel::Claude | Panel::TemplateExplorer => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
             | Panel::TableDesigner(_)
             | Panel::Diagram(_)
             | Panel::ActivityMonitor
+            | Panel::QueryHistory
             | Panel::EditRows(_) => Area::Document,
         }
     }
@@ -149,6 +157,14 @@ pub struct Viewer<'a> {
     pub claude_panel: &'a mut crate::claude_panel::ClaudePanel,
     /// Pedidos do painel do Claude.
     pub claude_actions: Vec<crate::claude_panel::PanelAction>,
+    /// Template Explorer.
+    pub templates: &'a mut crate::templates::TemplatesPanel,
+    /// Pedidos do Template Explorer.
+    pub template_actions: Vec<crate::templates::Action>,
+    /// Histórico de consultas executadas.
+    pub history: &'a mut crate::history::History,
+    /// Execuções do histórico a reabrir numa janela de consulta.
+    pub history_open: Vec<crate::history::Entry>,
 }
 
 impl PaneViewer<Panel> for Viewer<'_> {
@@ -295,6 +311,11 @@ impl PaneViewer<Panel> for Viewer<'_> {
                 let actions = self.claude_panel.show(ui);
                 self.claude_actions.extend(actions);
             }
+            Panel::TemplateExplorer => {
+                let actions = self.templates.show(ui);
+                self.template_actions.extend(actions);
+            }
+            Panel::QueryHistory => self.history_open.extend(self.history.show(ui)),
             Panel::Properties => match self.explorer.selected().cloned() {
                 Some(node) => {
                     let props = self.explorer.properties(&node.id).cloned();
@@ -389,12 +410,16 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         .resizable(false)
                         .frame(crate::results::strip_frame(ui, tag))
                         .show(ui, |ui| {
-                            crate::results::connected_strip(
-                                ui,
-                                db.as_deref().unwrap_or(""),
-                                server,
-                                tag,
-                            )
+                            if doc.multi.is_some() {
+                                crate::multi::strip(ui, server, tag);
+                            } else {
+                                crate::results::connected_strip(
+                                    ui,
+                                    db.as_deref().unwrap_or(""),
+                                    server,
+                                    tag,
+                                )
+                            }
                         });
                 }
                 let catalog = db.and_then(|db| self.catalogs.get(&db));

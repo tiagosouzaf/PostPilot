@@ -9,7 +9,11 @@
 //! - os servidores conectados no Object Explorer, na ordem, qual é o ativo
 //!   e os nós expandidos de cada um;
 //! - as janelas de consulta: arquivo, nome, texto não salvo, banco,
-//!   servidor e qual estava na frente.
+//!   servidor e qual estava na frente;
+//! - o Template Explorer: a pesquisa e as pastas abertas;
+//! - se o Query History estava aberto e o que estava na pesquisa dele (as
+//!   execuções ficam no arquivo do próprio histórico, veja
+//!   [`crate::history`]).
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -91,6 +95,9 @@ pub struct SessionDocument {
     pub server: Option<String>,
     /// "Include Actual Execution Plan" ligado.
     pub actual_plan: bool,
+    /// Os servidores de uma janela de vários servidores.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub multi: Vec<crate::multi::TargetId>,
     /// Se era a janela na frente.
     pub active: bool,
 }
@@ -105,6 +112,12 @@ pub struct SessionState {
     pub documents: Vec<SessionDocument>,
     /// Número da última `SQLQueryN.sql`, para a numeração continuar.
     pub query_counter: u32,
+    /// Template Explorer: pesquisa e pastas abertas.
+    pub templates: Option<crate::templates::TemplatesSession>,
+    /// A janela Query History estava aberta.
+    pub history_open: bool,
+    /// O que estava escrito na pesquisa do Query History.
+    pub history_filter: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -310,6 +323,13 @@ impl ShellApp {
     /// Reabre as janelas e põe os servidores na fila para reconectar.
     fn restore_session(&mut self, store: &SessionStore, state: SessionState) {
         self.documents.set_query_counter(state.query_counter);
+        if let Some(templates) = state.templates.clone() {
+            self.templates.restore(templates);
+        }
+        self.history.filter = state.history_filter.clone();
+        if state.history_open {
+            self.show_query_history();
+        }
         let mut front = None;
         for d in &state.documents {
             let on_disk = d
@@ -332,6 +352,9 @@ impl ShellApp {
             if let Some(doc) = self.documents.get_mut(id) {
                 doc.database = d.database.clone();
                 doc.actual_plan = d.actual_plan;
+                if !d.multi.is_empty() {
+                    doc.multi = Some(crate::multi::Selection::new(d.multi.clone()));
+                }
             }
             if let Some(key) = &d.server {
                 self.doc_servers.insert(id, key.clone());
@@ -441,6 +464,11 @@ impl ShellApp {
                     database: d.database.clone(),
                     server: self.doc_servers.get(&id).cloned(),
                     actual_plan: d.actual_plan,
+                    multi: d
+                        .multi
+                        .as_ref()
+                        .map(|m| m.targets.clone())
+                        .unwrap_or_default(),
                     active: self.active_doc == Some(id),
                 })
             })
@@ -449,6 +477,9 @@ impl ShellApp {
             servers,
             documents,
             query_counter: self.documents.query_counter(),
+            templates: Some(self.templates.session()),
+            history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
+            history_filter: self.history.filter.clone(),
         }
     }
 

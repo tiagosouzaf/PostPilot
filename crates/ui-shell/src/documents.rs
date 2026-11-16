@@ -28,6 +28,9 @@ pub struct Document {
     /// "Include Actual Execution Plan" (Ctrl+M) ligado: o F5 roda os
     /// comandos com `EXPLAIN ANALYZE` e mostra os planos reais.
     pub actual_plan: bool,
+    /// Os servidores em que a janela roda, quando são vários (veja
+    /// [`crate::multi`]); None usa a conexão dela.
+    pub multi: Option<crate::multi::Selection>,
 }
 
 /// A conexão de uma janela de consulta.
@@ -106,6 +109,7 @@ impl Documents {
             execution: None,
             results_mode: Default::default(),
             actual_plan: false,
+            multi: None,
         })
     }
 
@@ -142,6 +146,7 @@ impl Documents {
             execution: None,
             results_mode: Default::default(),
             actual_plan: false,
+            multi: None,
         }))
     }
 
@@ -167,6 +172,7 @@ impl Documents {
             execution: None,
             results_mode: Default::default(),
             actual_plan: false,
+            multi: None,
         })
     }
 

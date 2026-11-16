@@ -587,6 +587,9 @@ impl ResultEditor {
             }
         }
         grid.busy = self.is_busy();
+        // As posições de linha guardadas (gravação em andamento, exclusão
+        // esperando o "Yes") só valem enquanto a ordem e o filtro não mudam.
+        grid.view_locked = self.busy || self.confirm.is_some();
         match &self.status {
             Status::Editable => {
                 if let Some(t) = &self.target {
