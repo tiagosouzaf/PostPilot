@@ -254,7 +254,7 @@ impl ShellApp {
             && self
                 .connect_dialog
                 .as_ref()
-                .is_some_and(|d| !d.is_connecting() && d.password.is_empty())
+                .is_some_and(|d| !d.is_connecting())
             && !self.servers.has_queue()
         {
             self.connect_dialog = None;
