@@ -31,6 +31,7 @@ base64.workspace = true
 zeroize.workspace = true
 chrono.workspace = true
 pgstudio-updater.workspace = true
+tokio.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus.workspace = true

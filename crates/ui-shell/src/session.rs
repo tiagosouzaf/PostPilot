@@ -9,11 +9,19 @@
 //! - os servidores conectados no Object Explorer, na ordem, qual é o ativo
 //!   e os nós expandidos de cada um;
 //! - as janelas de consulta: arquivo, nome, texto não salvo, banco,
-//!   servidor e qual estava na frente;
+//!   servidor, qual estava na frente e o último resultado (em
+//!   `session/result-N.json`; reabrir nunca roda a consulta de novo, veja
+//!   [`crate::execution::SavedExecution`]);
+//! - as janelas de Table Designer, Database Diagram e Edit Top Rows, cada
+//!   uma com o servidor dela; o designer e o diagrama voltam com as
+//!   edições ainda não salvas no banco;
+//! - as pastas recolhidas das árvores de servidores (Object Explorer,
+//!   Registered Servers e Workspace Explorer) e das consultas do workspace;
 //! - o Template Explorer: a pesquisa e as pastas abertas;
 //! - se o Query History estava aberto e o que estava na pesquisa dele (as
 //!   execuções ficam no arquivo do próprio histórico, veja
-//!   [`crate::history`]).
+//!   [`crate::history`]);
+//! - o "Data Compare" aberto: os dois lados e as tabelas desmarcadas.
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -48,6 +56,10 @@ use pgstudio_i18n::tr;
 use serde::{Deserialize, Serialize};
 
 use crate::ShellApp;
+use crate::designer::SavedDesigner;
+use crate::diagrams::SavedDiagram;
+use crate::execution::{Execution, SavedExecution};
+use crate::panels::Panel;
 use crate::servers::server_key;
 
 /// Versão do formato. Mude só numa alteração incompatível; campo novo com
@@ -100,6 +112,45 @@ pub struct SessionDocument {
     pub multi: Vec<crate::multi::TargetId>,
     /// Se era a janela na frente.
     pub active: bool,
+    /// O último resultado, num arquivo da pasta `session/`.
+    pub result: Option<Unsaved>,
+}
+
+/// O que uma janela de documento que não é de consulta mostra.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum WindowKind {
+    TableDesigner(SavedDesigner),
+    Diagram(SavedDiagram),
+    /// Edit Top N Rows da tabela `oid` do banco.
+    EditRows {
+        database: String,
+        oid: u32,
+    },
+}
+
+/// Uma janela de Table Designer, Database Diagram ou Edit Top Rows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionWindow {
+    /// Servidor da janela (`usuario@host:porta`).
+    pub server: String,
+    /// Se era a aba na frente.
+    #[serde(default)]
+    pub front: bool,
+    #[serde(flatten)]
+    pub kind: WindowKind,
+}
+
+/// As pastas recolhidas do workspace aberto.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceTree {
+    /// Pasta do workspace, para não aplicar a outro.
+    pub root: PathBuf,
+    /// Pastas de consultas recolhidas.
+    pub folders: Vec<PathBuf>,
+    /// Pastas de servidores recolhidas, pelo nome de cada nível.
+    pub servers: Vec<Vec<String>>,
 }
 
 /// Tudo o que a sessão guarda. Veja o módulo para acrescentar um campo.
@@ -112,12 +163,21 @@ pub struct SessionState {
     pub documents: Vec<SessionDocument>,
     /// Número da última `SQLQueryN.sql`, para a numeração continuar.
     pub query_counter: u32,
+    /// Janelas de Table Designer, Database Diagram e Edit Top Rows.
+    pub windows: Vec<SessionWindow>,
+    /// Pastas recolhidas do Registered Servers, pelo nome de cada nível.
+    pub collapsed_servers: Vec<Vec<String>>,
+    /// Pastas recolhidas do workspace aberto.
+    pub workspace_tree: Option<WorkspaceTree>,
     /// Template Explorer: pesquisa e pastas abertas.
     pub templates: Option<crate::templates::TemplatesSession>,
     /// A janela Query History estava aberta.
     pub history_open: bool,
     /// O que estava escrito na pesquisa do Query History.
     pub history_filter: String,
+    /// O "Data Compare" aberto: os dois lados e as tabelas desmarcadas (o
+    /// resultado não é guardado; basta comparar de novo).
+    pub data_compare: Option<crate::data_compare::Setup>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -284,12 +344,57 @@ pub struct Session {
     active: Option<String>,
     /// Último layout gravado junto com a sessão.
     layout: Option<crate::layout::SavedLayout>,
+    /// Servidor de cada janela de designer, diagrama e Edit Rows.
+    window_servers: HashMap<Panel, String>,
+    /// Janelas da sessão anterior esperando o servidor delas reconectar.
+    /// Continuam na sessão até lá, como os servidores.
+    waiting_windows: Vec<SessionWindow>,
+    /// Janelas cujo servidor já reconectou, a abrir no próximo frame.
+    opening_windows: Vec<(SessionWindow, WindowSource)>,
+    /// A janela que estava na frente, para voltar a ficar.
+    front_window: Option<Panel>,
+    /// Janelas foram reabertas: falta devolver o foco à aba da frente.
+    refocus: bool,
+    /// A última aba de documento que teve o foco.
+    last_front: Option<Panel>,
+    /// Resultados da sessão anterior, a mostrar no primeiro frame.
+    opening_results: Vec<(u32, SavedExecution)>,
+    /// O resultado de cada janela como vai para o disco, refeito só quando
+    /// a janela executa de novo.
+    results: HashMap<u32, CachedResult>,
+}
+
+/// De onde uma janela reaberta lê: o servidor dela, já conectado.
+struct WindowSource {
+    metadata: std::sync::Arc<dyn pgstudio_core::metadata::MetadataProvider>,
+    queries: std::sync::Arc<dyn pgstudio_core::query::QueryService>,
+}
+
+impl std::fmt::Debug for WindowSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WindowSource")
+    }
+}
+
+/// O resultado de uma janela pronto para gravar.
+#[derive(Debug)]
+struct CachedResult {
+    /// A execução (o começo dela) e quantas mensagens tinha.
+    key: (Instant, usize),
+    json: String,
+    stamp: (usize, u64),
 }
 
 impl Session {
     /// Se há um arquivo de sessão (o app não perde nada ao fechar).
     pub fn is_on(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// Se a sessão guarda esta janela de designer, diagrama ou Edit Rows
+    /// (com as alterações não salvas dela).
+    pub fn keeps(&self, panel: &Panel) -> bool {
+        self.store.is_some() && self.window_servers.contains_key(panel)
     }
 
     /// O arquivo da sessão.
@@ -359,6 +464,14 @@ impl ShellApp {
             if let Some(key) = &d.server {
                 self.doc_servers.insert(id, key.clone());
             }
+            if let Some(saved) = d
+                .result
+                .as_ref()
+                .and_then(|r| store.read_text(r))
+                .and_then(|json| serde_json::from_str::<SavedExecution>(&json).ok())
+            {
+                self.session.opening_results.push((id, saved));
+            }
             self.activate_document(id);
             if d.active {
                 front = Some(id);
@@ -366,6 +479,18 @@ impl ShellApp {
         }
         if let Some(id) = front {
             self.activate_document(id);
+        }
+        if let Some(setup) = state.data_compare.clone() {
+            self.restore_data_compare(setup);
+        }
+        self.registered.collapse_names(&state.collapsed_servers);
+        if let Some(tree) = &state.workspace_tree
+            && self.workspace_panel.workspace().map(|w| w.root()) == Some(tree.root.as_path())
+        {
+            self.workspace_panel.collapse_folders(&tree.folders);
+            if let Some(servers) = self.workspace_panel.servers_mut() {
+                servers.collapse_names(&tree.servers);
+            }
         }
         if self.connector.is_none() || state.servers.is_empty() {
             return;
@@ -383,6 +508,7 @@ impl ShellApp {
             .find(|s| s.active)
             .map(|s| server_key(&s.settings));
         self.session.restoring = state.servers;
+        self.session.waiting_windows = state.windows;
     }
 
     /// Um servidor acabou de conectar e é o ativo: se veio da sessão
@@ -400,6 +526,144 @@ impl ShellApp {
         let server = self.session.restoring.remove(i);
         self.explorer
             .restore_expanded(server.expanded.into_iter().map(NodeId));
+        // As janelas deste servidor abrem no próximo frame, lendo dele.
+        let (Some(metadata), Some(c)) = (self.explorer.provider(), &self.connection) else {
+            return;
+        };
+        let (mine, others) = std::mem::take(&mut self.session.waiting_windows)
+            .into_iter()
+            .partition(|w| w.server == key);
+        self.session.waiting_windows = others;
+        for window in mine {
+            let source = WindowSource {
+                metadata: metadata.clone(),
+                queries: c.queries.clone(),
+            };
+            self.session.opening_windows.push((window, source));
+        }
+    }
+
+    /// Abre as janelas da sessão anterior cujo servidor já reconectou e
+    /// mostra os resultados guardados.
+    fn open_restored(&mut self, ctx: &egui::Context) {
+        for (id, saved) in std::mem::take(&mut self.session.opening_results) {
+            if let Some(doc) = self.documents.get_mut(id)
+                && doc.execution.is_none()
+            {
+                doc.execution = Some(Execution::restore(saved, ctx));
+            }
+        }
+        if self.session.opening_windows.is_empty() {
+            return;
+        }
+        self.session.refocus = true;
+        for (window, source) in std::mem::take(&mut self.session.opening_windows) {
+            let panel = match window.kind {
+                WindowKind::TableDesigner(saved) => {
+                    Panel::TableDesigner(self.designers.restore(source.metadata, saved, ctx))
+                }
+                WindowKind::Diagram(saved) => {
+                    Panel::Diagram(self.diagrams.restore(source.metadata, saved, ctx))
+                }
+                WindowKind::EditRows { database, oid } => {
+                    let session = source.queries.open(&database);
+                    Panel::EditRows(self.open_edit_rows(session, oid, ctx))
+                }
+            };
+            self.workspace.open(panel);
+            self.session.window_servers.insert(panel, window.server);
+            if window.front {
+                self.session.front_window = Some(panel);
+            }
+        }
+    }
+
+    /// As janelas de designer, diagrama e Edit Rows abertas, na ordem das
+    /// abas de cada tipo.
+    fn open_windows(&self) -> Vec<(Panel, WindowKind)> {
+        let mut out = Vec::new();
+        for id in self.designers.ids() {
+            if let Some(d) = self.designers.get(id) {
+                out.push((
+                    Panel::TableDesigner(id),
+                    WindowKind::TableDesigner(d.snapshot()),
+                ));
+            }
+        }
+        for id in self.diagrams.ids() {
+            if let Some(saved) = self.diagrams.get(id).and_then(|d| d.snapshot()) {
+                out.push((Panel::Diagram(id), WindowKind::Diagram(saved)));
+            }
+        }
+        for (id, e) in &self.edit_rows {
+            let (database, oid) = e.target();
+            out.push((Panel::EditRows(*id), WindowKind::EditRows { database, oid }));
+        }
+        out
+    }
+
+    /// A cada frame: liga as janelas novas de designer, diagrama e Edit
+    /// Rows ao servidor ativo (é dele que elas acabaram de abrir) e lembra
+    /// qual aba de documento está na frente.
+    fn track_windows(&mut self) {
+        let open: Vec<Panel> = (self.designers.ids().into_iter().map(Panel::TableDesigner))
+            .chain(self.diagrams.ids().into_iter().map(Panel::Diagram))
+            .chain(self.edit_rows.keys().copied().map(Panel::EditRows))
+            .collect();
+        self.session.window_servers.retain(|p, _| open.contains(p));
+        if open.len() > self.session.window_servers.len()
+            && let Some(key) = self.connection.as_ref().map(|c| server_key(&c.settings))
+        {
+            for panel in open {
+                self.session
+                    .window_servers
+                    .entry(panel)
+                    .or_insert_with(|| key.clone());
+            }
+        }
+        if let Some(
+            panel @ (Panel::Query(_)
+            | Panel::TableDesigner(_)
+            | Panel::Diagram(_)
+            | Panel::EditRows(_)),
+        ) = self.workspace.focused().copied()
+        {
+            self.session.last_front = Some(panel);
+        }
+    }
+
+    /// Antes de tirar o retrato: refaz o resultado guardado das janelas de
+    /// consulta que executaram de novo.
+    fn refresh_session_caches(&mut self) {
+        self.track_windows();
+        let ids = self.documents.ids();
+        self.session.results.retain(|id, _| ids.contains(id));
+        for id in ids {
+            let Some(exec) = self.documents.get(id).and_then(|d| d.execution.as_ref()) else {
+                self.session.results.remove(&id);
+                continue;
+            };
+            if exec.is_running() {
+                // O resultado anterior vale até este terminar.
+                continue;
+            }
+            let key = (exec.started(), exec.messages.len());
+            if self.session.results.get(&id).is_some_and(|c| c.key == key) {
+                continue;
+            }
+            match exec.snapshot() {
+                Some(saved) => {
+                    let json = serde_json::to_string(&saved).expect("results are serializable");
+                    let stamp = stamp(&json);
+                    self.session
+                        .results
+                        .insert(id, CachedResult { key, json, stamp });
+                }
+                None => {
+                    self.session.results.remove(&id);
+                }
+            }
+        }
     }
 
     /// Retrato do que está aberto agora, como seria salvo.
@@ -470,16 +734,48 @@ impl ShellApp {
                         .map(|m| m.targets.clone())
                         .unwrap_or_default(),
                     active: self.active_doc == Some(id),
+                    result: self.session.results.get(&id).map(|c| Unsaved {
+                        file: result_file(id),
+                        stamp: c.stamp,
+                    }),
                 })
             })
             .collect();
+        let focused = self.session.last_front;
+        let mut windows: Vec<SessionWindow> = self
+            .open_windows()
+            .into_iter()
+            .filter_map(|(panel, kind)| {
+                Some(SessionWindow {
+                    server: self.session.window_servers.get(&panel)?.clone(),
+                    front: focused == Some(panel),
+                    kind,
+                })
+            })
+            .collect();
+        // As que ainda vão abrir continuam na sessão.
+        windows.extend(self.session.opening_windows.iter().map(|(w, _)| w.clone()));
+        windows.extend(self.session.waiting_windows.iter().cloned());
+        let workspace_tree = self.workspace_panel.workspace().map(|w| WorkspaceTree {
+            root: w.root().to_path_buf(),
+            folders: self.workspace_panel.collapsed_folders(),
+            servers: self
+                .workspace_panel
+                .servers()
+                .map(|s| s.collapsed_names())
+                .unwrap_or_default(),
+        });
         SessionState {
             servers,
             documents,
             query_counter: self.documents.query_counter(),
+            windows,
+            collapsed_servers: self.registered.collapsed_names(),
+            workspace_tree,
             templates: Some(self.templates.session()),
             history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
             history_filter: self.history.filter.clone(),
+            data_compare: self.data_compare_setup(),
         }
     }
 
@@ -489,6 +785,7 @@ impl ShellApp {
         if self.session.store.is_none() {
             return;
         }
+        self.refresh_session_caches();
         let state = self.session_state();
         let Some(store) = self.session.store.as_mut() else {
             return;
@@ -496,12 +793,19 @@ impl ShellApp {
         if store.changed(&state) {
             let ids = self.documents.ids();
             let files: Vec<(u32, String)> = ids.into_iter().map(|id| (id, text_file(id))).collect();
+            let results: Vec<(String, &str)> = self
+                .session
+                .results
+                .iter()
+                .map(|(id, c)| (result_file(*id), c.json.as_str()))
+                .collect();
             let texts: Vec<(&str, &str)> = files
                 .iter()
                 .filter_map(|(id, file)| {
                     let d = self.documents.get(*id)?;
                     d.is_dirty().then_some((file.as_str(), d.text.as_str()))
                 })
+                .chain(results.iter().map(|(file, json)| (file.as_str(), *json)))
                 .collect();
             if let Err(e) = store.save(&state, &texts) {
                 eprintln!("session: could not save {}: {e}", store.path().display());
@@ -520,11 +824,14 @@ impl ShellApp {
     /// anterior e grava a sessão quando algo mudou (conferindo no máximo
     /// uma vez por [`CHECK_EVERY`]).
     pub(crate) fn session_step(&mut self, ctx: &egui::Context) {
+        self.open_restored(ctx);
+        self.track_windows();
         if !self.session.restoring.is_empty() || self.session.active.is_some() {
             if self.connect_dialog.is_none() && !self.servers.has_queue() {
                 // Todos tiveram a vez: quem não conectou (o usuário cancelou
                 // a senha) sai da sessão, e o ativo de antes volta a ser.
                 self.session.restoring.clear();
+                self.session.waiting_windows.clear();
                 if let Some(key) = self.session.active.take() {
                     self.activate_key(&key);
                     if let Some(id) = self.active_doc {
@@ -534,6 +841,17 @@ impl ShellApp {
             } else if self.connect_dialog.is_none() {
                 // A fila anda um servidor por frame.
                 ctx.request_repaint();
+            }
+        }
+        if self.session.restoring.is_empty()
+            && self.session.active.is_none()
+            && self.session.opening_windows.is_empty()
+            && std::mem::take(&mut self.session.refocus)
+        {
+            // Abrir as janelas não muda a aba que estava na frente.
+            let front = self.session.front_window.take();
+            if let Some(panel) = front.or(self.active_doc.map(Panel::Query)) {
+                self.workspace.open(panel);
             }
         }
         if self.session.store.is_none() {
@@ -551,6 +869,11 @@ impl ShellApp {
             }
         }
     }
+}
+
+/// Nome do arquivo com o último resultado da janela `id`.
+fn result_file(id: u32) -> String {
+    format!("result-{id}.json")
 }
 
 /// Nome do arquivo com o texto não salvo da janela `id`.

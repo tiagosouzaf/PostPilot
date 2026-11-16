@@ -158,6 +158,54 @@ impl History {
     }
 }
 
+/// As edições ainda não salvas de um modelo: o que mudou em relação ao banco
+/// como foi carregado. Serve para guardar o trabalho em andamento (a sessão
+/// do app) e reaplicar sobre o modelo carregado de novo.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Patch {
+    /// Tabelas novas ou mudadas, inteiras.
+    pub tables: Vec<Arc<Table>>,
+    /// Ids das tabelas removidas.
+    pub removed: Vec<Id>,
+    /// Próximo id livre do modelo editado.
+    pub next_id: Id,
+}
+
+impl Patch {
+    /// O que `edited` tem de diferente de `base`.
+    pub fn between(base: &Model, edited: &Model) -> Patch {
+        let by_id: std::collections::HashMap<Id, &Arc<Table>> =
+            base.tables.iter().map(|t| (t.id, t)).collect();
+        let tables = edited
+            .tables
+            .iter()
+            .filter(|t| match by_id.get(&t.id) {
+                Some(old) => !Arc::ptr_eq(old, t) && *old != *t,
+                None => true,
+            })
+            .cloned()
+            .collect();
+        let kept: std::collections::HashSet<Id> = edited.tables.iter().map(|t| t.id).collect();
+        let removed = base
+            .tables
+            .iter()
+            .map(|t| t.id)
+            .filter(|id| !kept.contains(id))
+            .collect();
+        Patch {
+            tables,
+            removed,
+            next_id: edited.next_id,
+        }
+    }
+
+    /// Nada mudou.
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty() && self.removed.is_empty()
+    }
+}
+
 /// O modelo e as edições feitas nele.
 #[derive(Clone, Debug, Default)]
 pub struct Document {
@@ -171,6 +219,22 @@ impl Document {
             model,
             history: History::default(),
         }
+    }
+
+    /// Reaplica edições guardadas ([`Patch`]) sobre o modelo, como uma
+    /// edição só (que o Undo desfaz).
+    pub fn apply_patch(&mut self, patch: &Patch) {
+        let _ = self.change(pgstudio_i18n::tr("Restore Unsaved Changes"), |m| {
+            m.tables.retain(|t| !patch.removed.contains(&t.id));
+            for t in &patch.tables {
+                match m.tables.iter_mut().find(|old| old.id == t.id) {
+                    Some(slot) => *slot = Arc::clone(t),
+                    None => m.tables.push(Arc::clone(t)),
+                }
+            }
+            m.next_id = m.next_id.max(patch.next_id);
+            Ok(())
+        });
     }
 
     pub fn undo(&mut self) -> Option<String> {
@@ -766,6 +830,40 @@ fn check_constraint_name(t: &Table, name: &str) -> Result<(), EditError> {
 mod tests {
     use super::*;
     use crate::Action;
+
+    #[test]
+    fn a_patch_brings_unsaved_edits_back_over_a_fresh_model() {
+        let mut d = shop();
+        let base = d.model.clone();
+        d.history.clear();
+        let cliente = d.model.find("public", "cliente").unwrap().id;
+        let pedido = d.model.find("public", "pedido").unwrap().id;
+        d.add_column(
+            cliente,
+            Column {
+                name: "email".into(),
+                ty: "text".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let nova = d.add_table("public", "nova").unwrap();
+        d.drop_table(pedido).unwrap();
+        let patch = Patch::between(&base, &d.model);
+        assert_eq!(patch.tables.len(), 2);
+        assert_eq!(patch.removed, [pedido]);
+        let json = serde_json::to_string(&patch).unwrap();
+        let patch: Patch = serde_json::from_str(&json).unwrap();
+
+        let mut again = Document::new(base.clone());
+        assert!(Patch::between(&base, &again.model).is_empty());
+        again.apply_patch(&patch);
+        assert_eq!(again.model.tables, d.model.tables);
+        assert!(again.model.table(nova).is_some());
+        assert!(again.history.is_dirty());
+        again.undo();
+        assert_eq!(again.model.tables, base.tables);
+    }
 
     fn shop() -> Document {
         let mut d = Document::new(Model::new(Vec::new()));

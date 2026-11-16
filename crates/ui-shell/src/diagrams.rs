@@ -19,13 +19,36 @@ use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{MetadataError, MetadataProvider, Model, NodeId};
 use pgstudio_core::schema::diff::{diff, unsupported};
-use pgstudio_core::schema::edit::{Document, EditError};
+use pgstudio_core::schema::edit::{Document, EditError, Patch};
 use pgstudio_core::schema::{Column, ForeignKey, Id};
 use pgstudio_diagram_engine::{Camera, Diagram, DiagramEvent};
 use serde::{Deserialize, Serialize};
 
 /// Extensão dos arquivos de diagrama.
 pub const EXTENSION: &str = "pgsdiagram";
+
+/// Um diagrama como a sessão guarda: o desenho, o arquivo dele e as edições
+/// ainda não salvas no banco (veja [`crate::session`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedDiagram {
+    /// Tabelas, posições e câmera, como no arquivo `.pgsdiagram`.
+    pub file: DiagramFile,
+    /// Arquivo onde o diagrama está salvo.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Número do `Diagram_N`.
+    #[serde(default)]
+    pub number: u32,
+    /// O desenho mudou desde o último arquivo salvo.
+    #[serde(default)]
+    pub layout_dirty: bool,
+    /// Nó do Object Explorer de onde foi aberto.
+    #[serde(default)]
+    pub node: Option<String>,
+    /// Edições ainda não salvas no banco.
+    #[serde(default)]
+    pub edits: Option<Patch>,
+}
 
 /// Todos os diagramas abertos, por número.
 #[derive(Default)]
@@ -80,6 +103,31 @@ impl Diagrams {
         Ok(id)
     }
 
+    /// Reabre um diagrama da sessão anterior; o desenho e as edições
+    /// guardadas voltam quando o modelo carregar.
+    pub fn restore(
+        &mut self,
+        provider: Arc<dyn MetadataProvider>,
+        saved: SavedDiagram,
+        ctx: &egui::Context,
+    ) -> u32 {
+        let rx = load(&provider, &saved.file.database, Some(ctx));
+        let id = self.open_with(
+            saved.file.database.clone(),
+            Some(provider),
+            State::Loading(rx),
+            false,
+        );
+        self.next_number = self.next_number.max(saved.number + 1);
+        if let Some(d) = self.open.get_mut(&id) {
+            d.number = saved.number;
+            d.path.clone_from(&saved.path);
+            d.node = saved.node.clone().map(NodeId);
+            d.restoring = Some(saved);
+        }
+        id
+    }
+
     /// Abre um diagrama de um modelo já pronto (medição).
     pub fn open_model(&mut self, database: String, model: Model, all_tables: bool) -> u32 {
         let id = self.open_with(database, None, State::Loading(channel().1), all_tables);
@@ -123,6 +171,7 @@ impl Diagrams {
                 log: Vec::new(),
                 node: None,
                 refresh: None,
+                restoring: None,
             },
         );
         self.next_id
@@ -297,6 +346,8 @@ pub struct DiagramView {
     /// salvar).
     node: Option<NodeId>,
     refresh: Option<NodeId>,
+    /// O que a sessão anterior guardou, até o modelo carregar.
+    restoring: Option<SavedDiagram>,
 }
 
 impl DiagramView {
@@ -440,6 +491,17 @@ impl DiagramView {
         self.base = model.clone();
         self.doc = Document::new(model);
         self.state = State::Ready;
+        if let Some(saved) = self.restoring.take() {
+            // As edições da sessão anterior voltam sobre o banco como está
+            // agora, e as tabelas vão para onde estavam.
+            if let Some(patch) = &saved.edits {
+                self.doc.apply_patch(patch);
+            }
+            self.file = None;
+            self.apply_file(&saved.file);
+            self.layout_dirty = saved.layout_dirty;
+            return;
+        }
         if let Some(file) = self.file.take() {
             self.apply_file(&file);
         } else if self.all_tables {
@@ -483,6 +545,41 @@ impl DiagramView {
                 tables = missing.join(", ")
             )));
         }
+    }
+
+    /// O diagrama como a sessão guarda. Enquanto carrega, é o que veio da
+    /// sessão anterior (fechar o app no meio não perde nada).
+    pub fn snapshot(&self) -> Option<SavedDiagram> {
+        if let Some(saved) = &self.restoring {
+            return Some(saved.clone());
+        }
+        match self.state {
+            State::Ready => {}
+            // Um arquivo ainda carregando volta pelo arquivo.
+            State::Loading(_) => {
+                return self.file.clone().map(|file| SavedDiagram {
+                    file,
+                    path: self.path.clone(),
+                    number: self.number,
+                    layout_dirty: false,
+                    node: self.node.as_ref().map(|n| n.0.clone()),
+                    edits: None,
+                });
+            }
+            State::Failed(_) => return None,
+        }
+        Some(SavedDiagram {
+            file: self.to_file(),
+            path: self.path.clone(),
+            number: self.number,
+            layout_dirty: self.layout_dirty,
+            node: self.node.as_ref().map(|n| n.0.clone()),
+            edits: self
+                .doc
+                .history
+                .is_dirty()
+                .then(|| Patch::between(&self.base, &self.doc.model)),
+        })
     }
 
     /// O que vai para o arquivo.

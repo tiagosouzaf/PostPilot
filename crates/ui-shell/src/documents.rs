@@ -252,6 +252,10 @@ pub trait FileDialogs {
     fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
         self.save_path(name, None)
     }
+    /// Pede um arquivo de dados para importar (CSV).
+    fn open_data_path(&mut self) -> Option<PathBuf> {
+        self.open_path()
+    }
     /// Pede uma pasta (New/Open Workspace).
     fn folder_path(&mut self, _title: &str) -> Option<PathBuf> {
         None

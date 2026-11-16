@@ -285,6 +285,16 @@ guardá-las. A extensão escolhe o formato:
 O CSV e o TSV voltam iguais com `COPY`; há um teste que faz isso com 1
 milhão de linhas.
 
+Para importar, o menu de contexto de uma tabela no Pesquisador de Objetos
+tem "Import CSV..." (PostgreSQL e SQL Server). A janela descobre o separador
+(vírgula, ponto e vírgula, tab ou barra vertical), casa as colunas do
+arquivo com as da tabela pelo nome (ou pela ordem, sem linha de nomes),
+mostra uma prévia e carrega tudo numa transação: um erro ou o cancelamento
+desfaz a carga inteira, e a mensagem diz as linhas do arquivo em que o erro
+aconteceu. Um campo vazio é NULL e `""` é texto vazio; arquivo que não é
+UTF-8 é lido como Windows-1252 (o CSV do Excel). Num servidor de um ambiente
+que pede confirmação, como Produção, a janela pergunta antes de carregar.
+
 O layout dos painéis e o tamanho e a posição da janela são salvos ao sair em
 `layout.json`, na mesma pasta de configuração do keymap (abaixo), e restaurados
 ao abrir. Se o arquivo estiver estragado, o PostPilot abre com o layout padrão e

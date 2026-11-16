@@ -2136,6 +2136,118 @@ msgstr "Salvar Resultados Como..."
 msgid "Export to Excel..."
 msgstr "Exportar para o Excel..."
 
+# Importar CSV
+msgid "(computed by the database)"
+msgstr "(calculada pelo banco)"
+
+msgid "(do not import)"
+msgstr "(não importar)"
+
+msgid "(empty field)"
+msgstr "(campo vazio)"
+
+msgid "CSV and text files"
+msgstr "Arquivos CSV e de texto"
+
+msgid "Choose a file column for at least one table column."
+msgstr "Escolha uma coluna do arquivo para pelo menos uma coluna da tabela."
+
+msgid "Column {n}"
+msgstr "Coluna {n}"
+
+msgid "Comma (,)"
+msgstr "Vírgula (,)"
+
+msgid "Connect to a server to import a CSV file."
+msgstr "Conecte-se a um servidor para importar um arquivo CSV."
+
+msgid "Could not read the file: {error}"
+msgstr "Não foi possível ler o arquivo: {error}"
+
+msgid "Delimiter:"
+msgstr "Separador:"
+
+msgid "Do you want to import the file?"
+msgstr "Deseja importar o arquivo?"
+
+msgid "File column"
+msgstr "Coluna do arquivo"
+
+msgid "File:"
+msgstr "Arquivo:"
+
+msgid "Import"
+msgstr "Importar"
+
+msgid "Import CSV"
+msgstr "Importar CSV"
+
+msgid "Import CSV into {table}"
+msgstr "Importar CSV em {table}"
+
+msgid "Import CSV..."
+msgstr "Importar CSV..."
+
+msgid "Import into {table} canceled; nothing was imported."
+msgstr "Importação em {table} cancelada; nada foi importado."
+
+msgid "Import into {table} failed; nothing was imported. {error}"
+msgstr "A importação em {table} falhou; nada foi importado. {error}"
+
+msgid "Imported {n} row(s) from {file} into {table} in {seconds} s."
+msgstr "{n} linha(s) de {file} importada(s) em {table} em {seconds} s."
+
+msgid "Importing... {n} row(s) sent."
+msgstr "Importando... {n} linha(s) enviada(s)."
+
+msgid "Line {line} of the file: {error}"
+msgstr "Linha {line} do arquivo: {error}"
+
+msgid "Lines {from} to {to} of the file: {error}"
+msgstr "Linhas {from} a {to} do arquivo: {error}"
+
+msgid "Pipe (|)"
+msgstr "Barra vertical (|)"
+
+msgid "Preview"
+msgstr "Prévia"
+
+msgid "Reading the file and the table..."
+msgstr "Lendo o arquivo e a tabela..."
+
+msgid "Select a table to import a CSV file into."
+msgstr "Selecione uma tabela para importar um arquivo CSV."
+
+msgid "Semicolon (;)"
+msgstr "Ponto e vírgula (;)"
+
+msgid "Still reading the file and the table."
+msgstr "Ainda lendo o arquivo e a tabela."
+
+msgid "Tab"
+msgstr "Tabulação"
+
+msgid "Table column"
+msgstr "Coluna da tabela"
+
+msgid "Text that means NULL:"
+msgstr "Texto que significa NULL:"
+
+msgid "The connection was lost."
+msgstr "A conexão foi perdida."
+
+msgid "The file has no rows to import."
+msgstr "O arquivo não tem linhas para importar."
+
+msgid "The first row has the column names"
+msgstr "A primeira linha tem os nomes das colunas"
+
+msgid "The table was not found."
+msgstr "A tabela não foi encontrada."
+
+msgid "This server is in {environment}, and the import adds rows to {table}."
+msgstr "Este servidor está em {environment}, e a importação adiciona linhas em {table}."
+
 msgid "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut."
 msgstr "{n} célula(s) com mais de 32.767 caracteres, o limite de uma célula do Excel, foram cortadas."
 
@@ -3153,6 +3265,148 @@ msgstr "Comparação de Esquemas: as alterações foram revertidas ({e})."
 
 msgid "Schema Compare: the script was saved to {path}."
 msgstr "Comparação de Esquemas: o script foi salvo em {path}."
+
+# Data Compare
+msgid "Data Compare…"
+msgstr "Comparação de Dados…"
+
+msgid "Choose a connected server as the source."
+msgstr "Escolha um servidor conectado como origem."
+
+msgid "Choose a connected server as the target."
+msgstr "Escolha um servidor conectado como destino."
+
+msgid "Choose the source database."
+msgstr "Escolha o banco de origem."
+
+msgid "Choose the target database."
+msgstr "Escolha o banco de destino."
+
+msgid "Comparing {table} ({n} of {total}): {source} rows read from the source, {target} from the target"
+msgstr "Comparando {table} ({n} de {total}): {source} linhas lidas da origem, {target} do destino"
+
+msgid "Connect to a server to compare data."
+msgstr "Conecte a um servidor para comparar dados."
+
+msgid "Data Compare"
+msgstr "Comparação de Dados"
+
+msgid "Data Compare: changes that make {target} like {source}."
+msgstr "Comparação de Dados: alterações que deixam {target} igual a {source}."
+
+msgid "Data Compare: the script was opened in a new query window."
+msgstr "Comparação de Dados: o script foi aberto numa nova janela de consulta."
+
+msgid "Data Compare: the script was saved to {path}."
+msgstr "Comparação de Dados: o script foi salvo em {path}."
+
+msgid "Data Compare: {source} to {target}: {differences} different rows in {tables} tables."
+msgstr "Comparação de Dados: {source} para {target}: {differences} linhas diferentes em {tables} tabelas."
+
+msgid "Deletes"
+msgstr "Exclusões"
+
+msgid "Difference"
+msgstr "Diferença"
+
+msgid "In the script:"
+msgstr "No script:"
+
+msgid "Inserts"
+msgstr "Inserções"
+
+msgid "List Tables"
+msgstr "Listar Tabelas"
+
+msgid "Not compared (computed or only on one side): {columns}"
+msgstr "Fora da comparação (calculadas ou só de um lado): {columns}"
+
+msgid "Nothing is changed here: the script opens in a query window for you to review and run."
+msgstr "Nada é alterado aqui: o script abre numa janela de consulta para você revisar e executar."
+
+msgid "Reading the tables..."
+msgstr "Lendo as tabelas..."
+
+msgid "Review the script before running it. It runs in one transaction: if a command fails, nothing is changed (in PostgreSQL, run ROLLBACK afterwards)."
+msgstr "Revise o script antes de executar. Ele roda numa transação só: se um comando falhar, nada é alterado (no PostgreSQL, execute ROLLBACK em seguida)."
+
+msgid "Saving the script..."
+msgstr "Salvando o script..."
+
+msgid "Search tables"
+msgstr "Pesquisar tabelas"
+
+msgid "Select a table to see its differences."
+msgstr "Selecione uma tabela para ver as diferenças."
+
+msgid "Select at least one table with a primary key."
+msgstr "Selecione pelo menos uma tabela com chave primária."
+
+msgid "Showing the first {shown} differences; the script has all of them."
+msgstr "Mostrando as primeiras {shown} diferenças; o script tem todas."
+
+msgid "Tables are in alphabetical order. With foreign keys between them, reorder the commands if the server refuses one."
+msgstr "As tabelas estão em ordem alfabética. Com chaves estrangeiras entre elas, reordene os comandos se o servidor recusar algum."
+
+msgid "Target: {target}\nSource: {source}"
+msgstr "Destino: {target}\nOrigem: {source}"
+
+msgid "The comparison was canceled."
+msgstr "A comparação foi cancelada."
+
+msgid "The key order of {table} could not be reproduced; the table was not compared."
+msgstr "Não foi possível reproduzir a ordem da chave de {table}; a tabela não foi comparada."
+
+msgid "The script ({statements} commands) was saved to {path}."
+msgstr "O script ({statements} comandos) foi salvo em {path}."
+
+msgid "The source has no tables."
+msgstr "A origem não tem tabelas."
+
+msgid "There is nothing to put in the script."
+msgstr "Não há nada para pôr no script."
+
+msgid "This table cannot be compared: {reason}."
+msgstr "Esta tabela não pode ser comparada: {reason}."
+
+msgid "To compare with another server, connect to it in the Object Explorer."
+msgstr "Para comparar com outro servidor, conecte a ele no Pesquisador de Objetos."
+
+msgid "Updates"
+msgstr "Atualizações"
+
+msgid "a key column cannot be compared"
+msgstr "uma coluna da chave não pode ser comparada"
+
+msgid "equal ({rows} rows)"
+msgstr "iguais ({rows} linhas)"
+
+msgid "failed"
+msgstr "falhou"
+
+msgid "no primary key in the source"
+msgstr "sem chave primária na origem"
+
+msgid "no primary key in the target"
+msgstr "sem chave primária no destino"
+
+msgid "not in the target"
+msgstr "não existe no destino"
+
+msgid "the primary keys are different"
+msgstr "as chaves primárias são diferentes"
+
+msgid "{count} commands"
+msgstr "{count} comandos"
+
+msgid "{server} (not connected)"
+msgstr "{server} (não conectado)"
+
+msgid "{table}: {columns} columns will be compared by the primary key."
+msgstr "{table}: {columns} colunas serão comparadas pela chave primária."
+
+msgid "{table}: {only_source} only in the source, {different} different, {only_target} only in the target, {equal} equal"
+msgstr "{table}: {only_source} só na origem, {different} diferentes, {only_target} só no destino, {equal} iguais"
 
 msgid "Schema Compare: {source} to {target}: {differences} differences, {equal} equal."
 msgstr "Comparação de Esquemas: {source} com {target}: {differences} diferenças, {equal} iguais."
@@ -4684,6 +4938,60 @@ msgstr "(sem pasta)"
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
 
+msgid "AI: reads freely"
+msgstr "IA: lê livremente"
+
+msgid "AI: asks first"
+msgstr "IA: pergunta antes"
+
+msgid "AI: blocked"
+msgstr "IA: bloqueada"
+
+msgid "What Claude and the other AI providers may do on servers of this environment. Reads freely: reading is free and changes ask for confirmation. Asks first: reading the schema is free, and anything that runs SQL or brings data asks for confirmation. Blocked: the AI cannot reach these servers."
+msgstr "O que o Claude e os outros provedores de IA podem fazer nos servidores deste ambiente. Lê livremente: ler é livre e alterar pede confirmação. Pergunta antes: ler o esquema é livre, e tudo o que roda SQL ou traz dados pede confirmação. Bloqueada: a IA não chega a esses servidores."
+
+msgid "{what} Servers in {environment} ask before the AI runs anything."
+msgstr "{what} Servidores em {environment} perguntam antes de a IA rodar qualquer coisa."
+
+msgid "{who}: explain_query ({kind}): {sql}"
+msgstr "{who}: explain_query ({kind}): {sql}"
+
+msgid "{who}: explain_query needs your confirmation: {sql}"
+msgstr "{who}: explain_query precisa da sua confirmação: {sql}"
+
+msgid "{safety} The actual plan runs the statement to measure it, then rolls it back."
+msgstr "{safety} O plano real executa o comando para medir e desfaz tudo no fim."
+
+msgid "{who} wants to run SQL for its actual plan"
+msgstr "{who} quer executar SQL para ver o plano real"
+
+msgid "{who}: get_activity needs your confirmation"
+msgstr "{who}: get_activity precisa da sua confirmação"
+
+msgid "{who} wants to read the server activity"
+msgstr "{who} quer ler a atividade do servidor"
+
+msgid "Sessions with their current SQL, locks and who is blocking whom, as the Activity Monitor shows."
+msgstr "Sessões com o SQL que estão rodando, locks e quem está bloqueando quem, como o Monitor de Atividade mostra."
+
+msgid "This only reads the server activity."
+msgstr "Isto só lê a atividade do servidor."
+
+msgid "Read execution plan"
+msgstr "Leu o plano de execução"
+
+msgid "Read server activity"
+msgstr "Leu a atividade do servidor"
+
+msgid "This SQL only reads data."
+msgstr "Este SQL só lê dados."
+
+msgid "This SQL can change the database ({reason})."
+msgstr "Este SQL pode alterar o banco ({reason})."
+
+msgid "PostPilot could not confirm that this SQL only reads data ({reason})."
+msgstr "O PostPilot não conseguiu confirmar que este SQL só lê dados ({reason})."
+
 msgid "Filter rows: text or column:text"
 msgstr "Filtrar linhas: texto ou coluna:texto"
 
@@ -5136,3 +5444,30 @@ msgstr "Usa a sua conta do ChatGPT, pelo Codex. O que o assistente lê é enviad
 
 msgid "ChatGPT by account needs Codex, OpenAI's official program, and it was not found. Open Tools > Options > AI Providers to install it and sign in. If it is installed somewhere else, set PGSTUDIO_CODEX to its path."
 msgstr "O ChatGPT pela conta precisa do Codex, o programa oficial da OpenAI, e ele não foi encontrado. Abra Ferramentas > Opções > Provedores de IA para instalar e entrar. Se estiver instalado em outro lugar, aponte PGSTUDIO_CODEX para o caminho dele."
+
+msgid "Restore Unsaved Changes"
+msgstr "Restaurar alterações não salvas"
+
+msgid "The unsaved changes from the last session were restored."
+msgstr "As alterações não salvas da última sessão foram restauradas."
+
+msgid "less than a minute"
+msgstr "menos de um minuto"
+
+msgid "{n} min"
+msgstr "{n} min"
+
+msgid "{n} h"
+msgstr "{n} h"
+
+msgid "{n} days"
+msgstr "{n} dias"
+
+msgid "Results from the previous session ({age} ago), not run again. Press F5 to refresh."
+msgstr "Resultado da sessão anterior (há {age}), sem executar de novo. F5 atualiza."
+
+msgid "Showing the first {kept} of {total} rows."
+msgstr "Mostrando as primeiras {kept} de {total} linhas."
+
+msgid "The results are read-only: they came from the previous session. Run the query again to edit them."
+msgstr "O resultado é somente leitura: veio da sessão anterior. Execute a consulta de novo para editá-lo."
