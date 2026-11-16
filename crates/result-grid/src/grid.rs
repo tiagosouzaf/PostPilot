@@ -1,6 +1,7 @@
 //! A grade de resultados, como a do SSMS: número da linha, cabeçalho com
 //! largura ajustável, NULL destacado, seleção de células, linhas ou colunas
-//! e cópia com ou sem cabeçalho.
+//! e cópia com ou sem cabeçalho. Um clique no cabeçalho ordena pela coluna
+//! e a caixa acima da grade filtra as linhas já recebidas ([`crate::view`]).
 //!
 //! A rolagem é própria, em linhas (não em pixels), para continuar precisa
 //! com milhões de linhas: só as linhas visíveis são lidas do
@@ -14,6 +15,7 @@ use eframe::egui::{self, Color32, CursorIcon, FontId, Key, Pos2, Rect, Sense, St
 use crate::json;
 use crate::store::ResultStore;
 use crate::text;
+use crate::view::{self, Sort, ViewProgress, ViewSpec};
 
 /// Uma célula: linha e coluna, a partir de 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +111,18 @@ pub struct GridState {
     pub editing: Option<CellEditor>,
     /// Uma alteração está sendo gravada: não começa outra.
     pub busy: bool,
+    /// Ordenação pedida (um clique no cabeçalho).
+    pub sort: Option<Sort>,
+    /// Texto do filtro das linhas.
+    pub filter: String,
+    /// Quem grava as alterações está no meio de uma (ou esperando a
+    /// confirmação de uma exclusão) e guardou posições de linhas: a ordem
+    /// e o filtro só mudam depois.
+    pub view_locked: bool,
+    /// [`ResultStore::view_generation`] visto no último frame.
+    pub view_generation: u64,
+    /// A ordem ou o filtro ainda está sendo aplicado.
+    pub view_working: bool,
 }
 
 /// Edição de uma célula na própria grade.
@@ -264,6 +278,69 @@ impl GridState {
             .collect();
     }
 
+    /// A ordem e o filtro pedidos.
+    pub fn view_spec(&self) -> ViewSpec {
+        ViewSpec {
+            sort: self.sort,
+            filter: self.filter.clone(),
+        }
+    }
+
+    /// Um clique no cabeçalho: crescente, decrescente, sem ordem.
+    pub fn cycle_sort(&mut self, col: usize) {
+        self.sort = match self.sort {
+            Some(s) if s.col == col && !s.descending => Some(Sort {
+                col,
+                descending: true,
+            }),
+            Some(s) if s.col == col => None,
+            _ => Some(Sort {
+                col,
+                descending: false,
+            }),
+        };
+        self.top = 0.0;
+    }
+
+    /// Troca o filtro.
+    pub fn set_filter(&mut self, text: String) {
+        self.filter = text;
+        self.top = 0.0;
+    }
+
+    /// Aplica a ordem e o filtro pedidos, um pouco por frame, e solta a
+    /// seleção quando as linhas mudam de lugar.
+    fn sync_view(&mut self, ctx: &egui::Context, store: &mut ResultStore) -> ViewProgress {
+        let mut progress = ViewProgress {
+            working: false,
+            fraction: 1.0,
+        };
+        let spec = self.view_spec();
+        if !self.view_locked && self.editing.is_none() {
+            progress = store.sync_view(&spec, VIEW_BUDGET);
+        } else if store.view_spec().cloned().unwrap_or_default() != spec {
+            progress.working = true;
+        }
+        if progress.working {
+            ctx.request_repaint();
+        }
+        self.view_working = progress.working;
+        if store.view_generation() != self.view_generation {
+            self.view_generation = store.view_generation();
+            // Colunas inteiras continuam selecionadas (dá para ordenar e
+            // copiar a coluna); o resto apontava para outras linhas.
+            match &mut self.selection {
+                Some(s) if s.mode == Mode::Columns && !store.is_empty() => {
+                    s.anchor.row = 0;
+                    s.cursor.row = store.len() - 1;
+                }
+                s => *s = None,
+            }
+            self.editing = None;
+        }
+        progress
+    }
+
     /// Seleciona tudo.
     pub fn select_all(&mut self, store: &ResultStore) {
         if store.is_empty() || store.columns().is_empty() {
@@ -321,6 +398,72 @@ pub struct GridOutput {
     /// Tentou editar ou excluir num resultado (ou coluna) só leitura; o
     /// motivo está em [`GridState::read_only_reason`].
     pub edit_refused: bool,
+}
+
+/// Tempo por frame para aplicar a ordem e o filtro.
+const VIEW_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
+
+/// Id da caixa de filtro da grade `id`.
+pub fn filter_id(id: egui::Id) -> egui::Id {
+    id.with("filter")
+}
+
+/// Leva o foco para a caixa de filtro da grade `id` (Ctrl+F).
+pub fn focus_filter(ctx: &egui::Context, id: egui::Id) {
+    ctx.memory_mut(|m| m.request_focus(filter_id(id)));
+}
+
+/// A caixa de filtro acima da grade, com quantas linhas passam.
+fn filter_bar(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    store: &ResultStore,
+    state: &mut GridState,
+    progress: ViewProgress,
+) {
+    ui.horizontal(|ui| {
+        let before = state.filter.clone();
+        let edit = ui.add(
+            egui::TextEdit::singleline(&mut state.filter)
+                .id(filter_id(id))
+                .hint_text(tr("Filter rows: text or column:text"))
+                .desired_width(260.0),
+        );
+        if state.filter != before {
+            state.top = 0.0;
+        }
+        if edit.lost_focus() {
+            let (enter, escape) =
+                ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+            if escape {
+                state.set_filter(String::new());
+            }
+            if enter || escape {
+                ui.memory_mut(|m| m.request_focus(id));
+            }
+        }
+        if !state.filter.is_empty()
+            && ui
+                .small_button("×") // i18n-ignore
+                .on_hover_text(tr("Clear the filter"))
+                .clicked()
+        {
+            state.set_filter(String::new());
+        }
+        if progress.working {
+            ui.spinner();
+            if progress.fraction < 1.0 {
+                ui.weak(format!("{:.0}%", progress.fraction * 100.0));
+            }
+        }
+        if store.len() != store.total_len() || !state.filter.trim().is_empty() {
+            ui.weak(trf!(
+                "{shown} of {total} rows",
+                shown = store.len(),
+                total = store.total_len()
+            ));
+        }
+    });
 }
 
 /// Linhas lidas para reconhecer as colunas JSON.
@@ -382,6 +525,10 @@ pub fn show(
 ) -> GridOutput {
     let m = metrics(ui);
     let ncols = store.columns().len();
+    let progress = state.sync_view(ui.ctx(), store);
+    if store.total_len() > 1 || !state.filter.is_empty() {
+        filter_bar(ui, id, store, state, progress);
+    }
     let nrows = store.len();
     if state.widths.len() != ncols {
         state.widths = initial_widths(store, m.char_w);
@@ -520,6 +667,19 @@ pub fn show(
             _ => None,
         });
     if response.secondary_clicked()
+        && nrows > 0
+        && let Some(Hit::Column(c)) = response.interact_pointer_pos().and_then(|p| hit(p, state))
+        && !state
+            .selection
+            .is_some_and(|s| s.mode == Mode::Columns && s.cols(ncols).contains(&c))
+    {
+        // No cabeçalho, o botão direito seleciona a coluna (o menu ordena
+        // por ela).
+        let mut sel = Selection::at(Cell { row: 0, col: c }, Mode::Columns);
+        sel.cursor.row = nrows - 1;
+        state.selection = Some(sel);
+    }
+    if response.secondary_clicked()
         && let Some(cell) = pointer_cell
         && !state
             .selection
@@ -586,6 +746,22 @@ pub fn show(
                 (Mode::Columns, Hit::Column(c))
                 | (Mode::Columns, Hit::Cell(Cell { col: c, .. })) => sel.cursor.col = c,
                 _ => {}
+            }
+        }
+        // Um clique (sem arrastar e sem Shift) no cabeçalho ordena pela
+        // coluna; a borda entre duas colunas é de ajustar a largura.
+        if response.clicked()
+            && !shift
+            && let Some(p) = pos
+            && let Some(Hit::Column(c)) = target
+        {
+            let mut x = cells_x - state.left;
+            let on_border = state.widths.iter().any(|w| {
+                x += w;
+                (p.x - x).abs() <= 4.0
+            });
+            if !on_border {
+                state.cycle_sort(c);
             }
         }
     }
@@ -723,6 +899,54 @@ pub fn show(
             }
             ui.separator();
         }
+        let cursor = state.selection.map(|s| s.cursor).filter(|c| c.col < ncols);
+        for (label, descending) in [(tr("Sort Ascending"), false), (tr("Sort Descending"), true)] {
+            if ui
+                .add_enabled(cursor.is_some(), egui::Button::new(label))
+                .clicked()
+                && let Some(c) = cursor
+            {
+                state.sort = Some(Sort {
+                    col: c.col,
+                    descending,
+                });
+                state.top = 0.0;
+                ui.close();
+            }
+        }
+        if ui
+            .add_enabled(state.sort.is_some(), egui::Button::new(tr("Clear Sort")))
+            .clicked()
+        {
+            state.sort = None;
+            state.top = 0.0;
+            ui.close();
+        }
+        let by_value = cursor.filter(|c| c.row < store.len());
+        if ui
+            .add_enabled(
+                by_value.is_some(),
+                egui::Button::new(tr("Filter by This Value")),
+            )
+            .clicked()
+            && let Some(c) = by_value
+        {
+            let value = store.cell(c.row, c.col).unwrap_or("NULL").to_string();
+            let text = view::filter_for_value(&store.columns()[c.col], &value);
+            state.set_filter(text);
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                !state.filter.is_empty(),
+                egui::Button::new(tr("Clear Filter")),
+            )
+            .clicked()
+        {
+            state.set_filter(String::new());
+            ui.close();
+        }
+        ui.separator();
         if ui.button(tr("Copy")).clicked() {
             copied = state.copy(store, false);
             ui.close();
@@ -979,6 +1203,24 @@ fn paint(
             Rect::from_min_max(cell.min, egui::pos2(badge.left() + PAD, cell.bottom()))
         } else {
             cell
+        };
+        let name_cell = match state.sort.filter(|s| s.col == c) {
+            Some(sort) if name_cell.width() > 28.0 => {
+                // Seta da ordenação, à direita do nome.
+                let center = egui::pos2(name_cell.right() - 9.0, cell.center().y);
+                let d = if sort.descending { 3.0 } else { -3.0 };
+                heads.add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(center.x - 4.0, center.y - d),
+                        egui::pos2(center.x + 4.0, center.y - d),
+                        egui::pos2(center.x, center.y + d),
+                    ],
+                    strong,
+                    Stroke::NONE,
+                ));
+                Rect::from_min_max(name_cell.min, egui::pos2(center.x - 2.0, cell.bottom()))
+            }
+            _ => name_cell,
         };
         cell_text(
             &heads,

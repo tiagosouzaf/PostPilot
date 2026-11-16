@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{Key, Modifiers, PointerButton};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use pgstudio_result_grid::{Cell, GridState, Mode, ResultStore, grid};
 
 struct App {
@@ -522,4 +523,241 @@ fn a_half_scrolled_row_does_not_paint_over_the_header() {
         }
         assert!(seen > 0, "top={top}: nenhum valor desenhado");
     }
+}
+
+fn column(h: &mut Harness<'static, App>, col: usize) -> Vec<Option<String>> {
+    let store = &mut h.state_mut().store;
+    (0..store.len())
+        .map(|r| store.cell(r, col).map(str::to_string))
+        .collect()
+}
+
+fn texts(values: &[&str]) -> Vec<Option<String>> {
+    values.iter().map(|v| Some(v.to_string())).collect()
+}
+
+/// Um clique no cabeçalho ordena: crescente, decrescente e de volta à
+/// ordem em que as linhas chegaram. A coluna continua selecionada, para
+/// copiar.
+#[test]
+fn a_header_click_cycles_the_sort() {
+    let mut s = ResultStore::new(vec!["n".into(), "nome".into()]);
+    for (n, nome) in [("10", "b"), ("9", "c"), ("100", "a")] {
+        s.push(&[Some(n.into()), Some(nome.into())]);
+    }
+    let mut h = harness(s);
+    h.run();
+    let header = h.state().state.header_center(0).unwrap();
+    click(&mut h, header, Modifiers::NONE);
+    h.run();
+    // Números ordenam como números, não como texto.
+    assert_eq!(column(&mut h, 0), texts(&["9", "10", "100"]));
+    assert_eq!(column(&mut h, 1), texts(&["c", "b", "a"]));
+    assert_eq!(h.state().state.selection.unwrap().mode, Mode::Columns);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.run();
+    assert_eq!(h.state().copied.as_deref(), Some("9\n10\n100\n"));
+
+    click(&mut h, header, Modifiers::NONE);
+    h.run();
+    assert_eq!(column(&mut h, 0), texts(&["100", "10", "9"]));
+    click(&mut h, header, Modifiers::NONE);
+    h.run();
+    assert_eq!(column(&mut h, 0), texts(&["10", "9", "100"]));
+    assert_eq!(h.state().state.sort, None);
+
+    // Shift+clique estende a seleção de colunas e não ordena.
+    let other = h.state().state.header_center(1).unwrap();
+    click(&mut h, other, Modifiers::SHIFT);
+    h.run();
+    assert_eq!(h.state().state.sort, None);
+    assert_eq!(h.state().state.selection.unwrap().cols(2), 0..2);
+}
+
+/// O filtro mostra só as linhas com o texto, e a cópia e a seleção passam
+/// a valer para o que está à mostra.
+#[test]
+fn the_filter_keeps_only_matching_rows() {
+    let mut h = harness(small());
+    h.run();
+    h.state_mut().state.set_filter("x".into());
+    h.run();
+    assert_eq!(column(&mut h, 1), texts(&["Ana", "Carla"]));
+    assert_eq!(h.state().store.total_len(), 3);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.run();
+    // O foco ainda não está na grade: clica numa célula e copia tudo.
+    let p = h
+        .state()
+        .state
+        .cell_center(Cell { row: 1, col: 1 })
+        .unwrap();
+    click(&mut h, p, Modifiers::NONE);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.run();
+    assert_eq!(
+        h.state().copied.as_deref(),
+        Some("1\tAna\tana@x\n3\tCarla\tcarla@x\n")
+    );
+    // Trocar o filtro solta a seleção (as linhas mudaram de lugar).
+    h.state_mut().state.set_filter("email:null".into());
+    h.run();
+    assert_eq!(column(&mut h, 1), texts(&["Bruno"]));
+    assert_eq!(h.state().state.selection, None);
+    // Filtro e ordem juntos; sem filtro volta tudo.
+    h.state_mut().state.set_filter("a".into());
+    h.state_mut().state.cycle_sort(1);
+    h.state_mut().state.cycle_sort(1);
+    h.run();
+    assert_eq!(column(&mut h, 1), texts(&["Carla", "Ana"]));
+    h.state_mut().state.set_filter(String::new());
+    h.state_mut().state.sort = None;
+    h.run();
+    assert_eq!(column(&mut h, 1), texts(&["Ana", "Bruno", "Carla"]));
+}
+
+/// Digitar na caixa de filtro filtra; Esc limpa e devolve o foco à grade.
+#[test]
+fn typing_in_the_filter_box_filters_and_escape_clears() {
+    let mut h = harness(small());
+    h.run();
+    h.get_by_role(eframe::egui::accesskit::Role::TextInput)
+        .focus();
+    h.run();
+    h.event(eframe::egui::Event::Text("bru".into()));
+    h.run();
+    assert_eq!(h.state().state.filter, "bru");
+    assert_eq!(column(&mut h, 1), texts(&["Bruno"]));
+    h.get_by_label("1 of 3 rows");
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().state.filter, "");
+    assert_eq!(column(&mut h, 0), texts(&["1", "2", "3"]));
+}
+
+/// Com ordem e filtro, a edição e a exclusão continuam apontando para a
+/// linha que está na tela, e a visão não muda enquanto uma gravação está
+/// em andamento.
+#[test]
+fn editing_and_deleting_follow_the_sorted_rows() {
+    let mut h = edit_harness(vec![true, true, false]);
+    h.state_mut().state.cycle_sort(1);
+    h.state_mut().state.cycle_sort(1);
+    h.run();
+    // Decrescente por nome: Carla, Bruno, Ana.
+    let p = cell_at(&h, 0, 1);
+    double_click(&mut h, p);
+    let editing = h.state().state.editing.clone().expect("editing");
+    assert_eq!(editing.text, "Carla");
+    h.event(eframe::egui::Event::Text("!".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().edits.commits,
+        vec![(Cell { row: 0, col: 1 }, Some("Carla!".into()))]
+    );
+    // Quem grava troca o valor pela mesma posição: é a linha da Carla (a
+    // terceira do resultado).
+    h.state_mut().store.set_cell(0, 1, Some("Carla!".into()));
+    h.state_mut().store.remove_row(1);
+    h.state_mut().state.sort = None;
+    h.run();
+    let store = &mut h.state_mut().store;
+    assert_eq!(store.len(), 2);
+    assert_eq!(store.row(0)[1].as_deref(), Some("Ana"));
+    assert_eq!(store.row(1)[1].as_deref(), Some("Carla!"));
+
+    // Gravação em andamento: a ordem pedida espera.
+    h.state_mut().state.view_locked = true;
+    h.state_mut().state.cycle_sort(0);
+    h.state_mut().state.cycle_sort(0);
+    h.step();
+    h.step();
+    assert_eq!(h.state_mut().store.row(0)[1].as_deref(), Some("Ana"));
+    h.state_mut().state.view_locked = false;
+    h.run();
+    assert_eq!(h.state_mut().store.row(0)[1].as_deref(), Some("Carla!"));
+}
+
+/// 400 mil linhas: ordenar e filtrar não seguram a janela (cada frame
+/// continua curto enquanto a visão é montada) e o resultado sai certo.
+#[test]
+fn sorting_and_filtering_400k_rows_keeps_frames_short() {
+    let n = 400_000u64;
+    let mut store = ResultStore::with_budget(
+        ["id", "cliente", "total", "status"]
+            .map(String::from)
+            .to_vec(),
+        16 * 1024 * 1024,
+    );
+    for i in 0..n {
+        store.push(&[
+            Some(i.to_string()),
+            Some(format!("Cliente número {}", (i * 7919) % 9973)),
+            (i % 17 != 0).then(|| format!("{}.{:02}", (i * 31) % 5000, i % 100)),
+            Some(["aberto", "pago", "enviado"][(i % 3) as usize].into()),
+        ]);
+    }
+    assert!(store.is_spilled());
+    let mut h = harness(store);
+    h.run();
+
+    let settle = |h: &mut Harness<'static, App>| -> (Duration, usize) {
+        let mut worst = Duration::ZERO;
+        let mut frames = 0;
+        let started = Instant::now();
+        loop {
+            let t = Instant::now();
+            h.step();
+            worst = worst.max(t.elapsed());
+            frames += 1;
+            if !h.state().state.view_working {
+                return (worst, frames);
+            }
+            assert!(started.elapsed() < Duration::from_secs(120), "não terminou");
+            // A ordenação roda numa thread: dá tempo a ela.
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+
+    h.state_mut().state.cycle_sort(2);
+    let (sort_worst, sort_frames) = settle(&mut h);
+    assert_eq!(h.state().store.len(), n);
+    let total = |h: &mut Harness<'static, App>, row: u64| -> Option<f64> {
+        h.state_mut().store.cell(row, 2).map(|v| v.parse().unwrap())
+    };
+    let mut last = f64::MIN;
+    for row in (0..n - n / 17 - 1).step_by(997) {
+        let v = total(&mut h, row).expect("os NULLs ficam no fim");
+        assert!(v >= last, "linha {row}: {v} < {last}");
+        last = v;
+    }
+    assert_eq!(total(&mut h, n - 1), None);
+
+    h.state_mut()
+        .state
+        .set_filter("status:pago \"número 42\"".into());
+    let (filter_worst, filter_frames) = settle(&mut h);
+    let shown = h.state().store.len();
+    assert!(shown > 0 && shown < n / 100, "{shown}");
+    for row in [0, shown / 2, shown - 1] {
+        let r = h.state_mut().store.row(row);
+        assert_eq!(r[3].as_deref(), Some("pago"));
+        assert!(r[1].as_deref().unwrap().contains("número 42"), "{r:?}");
+    }
+    eprintln!(
+        "400 mil linhas: ordenar {sort_frames} frames (pior {sort_worst:?}), \
+         filtrar {filter_frames} frames (pior {filter_worst:?}), {shown} linhas no filtro"
+    );
+    // Folgado para build de teste; o trabalho por frame é limitado a 6 ms.
+    assert!(sort_worst < Duration::from_millis(250), "{sort_worst:?}");
+    assert!(
+        filter_worst < Duration::from_millis(250),
+        "{filter_worst:?}"
+    );
 }
