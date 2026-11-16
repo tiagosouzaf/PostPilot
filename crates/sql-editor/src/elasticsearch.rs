@@ -66,7 +66,7 @@ pub const INDEX_APIS: &[&str] = &[
 ];
 
 /// O que vem depois de uma API que tem partes.
-const SUB_APIS: &[(&str, &[&str])] = &[
+pub(crate) const SUB_APIS: &[(&str, &[&str])] = &[
     (
         "_cat",
         &[
@@ -108,7 +108,7 @@ const SUB_APIS: &[(&str, &[&str])] = &[
 ];
 
 /// Parâmetros comuns da query string.
-const PARAMS: &[&str] = &[
+pub(crate) const PARAMS: &[&str] = &[
     "expand_wildcards=",
     "format=",
     "from=",
@@ -124,7 +124,7 @@ const PARAMS: &[&str] = &[
     "v",
 ];
 
-const SEARCH_KEYS: &[&str] = &[
+pub(crate) const SEARCH_KEYS: &[&str] = &[
     "_source",
     "aggs",
     "collapse",
@@ -172,14 +172,14 @@ pub const QUERY_TYPES: &[&str] = &[
     "wildcard",
 ];
 
-const BOOL_KEYS: &[&str] = &[
+pub(crate) const BOOL_KEYS: &[&str] = &[
     "filter",
     "minimum_should_match",
     "must",
     "must_not",
     "should",
 ];
-const RANGE_KEYS: &[&str] = &["format", "gt", "gte", "lt", "lte", "time_zone"];
+pub(crate) const RANGE_KEYS: &[&str] = &["format", "gt", "gte", "lt", "lte", "time_zone"];
 
 pub const AGG_TYPES: &[&str] = &[
     "aggs",
@@ -206,7 +206,7 @@ pub const AGG_TYPES: &[&str] = &[
     "value_count",
 ];
 
-const AGG_KEYS: &[&str] = &[
+pub(crate) const AGG_KEYS: &[&str] = &[
     "calendar_interval",
     "field",
     "fixed_interval",
@@ -219,7 +219,7 @@ const AGG_KEYS: &[&str] = &[
     "size",
 ];
 
-const MAPPING_KEYS: &[&str] = &[
+pub(crate) const MAPPING_KEYS: &[&str] = &[
     "analyzer",
     "copy_to",
     "fields",

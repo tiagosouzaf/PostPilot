@@ -19,6 +19,7 @@
 pub mod buffer;
 pub mod complete;
 pub mod diagnostics;
+pub mod docs;
 pub mod edit;
 pub mod elasticsearch;
 pub mod format;

@@ -153,6 +153,9 @@ struct Popup {
 /// Linhas visíveis da lista de sugestões.
 const POPUP_ROWS: usize = 10;
 const POPUP_WIDTH: f32 = 420.0;
+/// Letra e margem da explicação embaixo da lista.
+const DOC_FONT: f32 = 12.0;
+const DOC_MARGIN: f32 = 6.0;
 
 impl Buffer {
     /// Devolve `true` se o texto mudou por fora do editor.
@@ -1728,7 +1731,27 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
     let y = f.text_rect.top() + (line + 1) as f32 * f.line_h - ed.view.scroll.y;
     let row_h = f.line_h + 4.0;
     let rows = p.completion.items.len().min(POPUP_ROWS);
-    let height = rows as f32 * row_h;
+    let v = ui.visuals().clone();
+    // A explicação da sugestão escolhida, embaixo da lista. O espaço é de
+    // pelo menos duas linhas, para a lista não mudar de tamanho a cada
+    // seta.
+    let doc = p
+        .completion
+        .items
+        .get(p.selected)
+        .and_then(|item| crate::docs::explain(ed.buf.dialect, item, ed.catalog))
+        .map(|text| {
+            ui.painter().layout(
+                text,
+                FontId::proportional(DOC_FONT),
+                v.text_color(),
+                POPUP_WIDTH - 2.0 * DOC_MARGIN,
+            )
+        });
+    let doc_h = doc.as_ref().map_or(0.0, |g| {
+        g.size().y.max(2.0 * (DOC_FONT + 3.0)) + 2.0 * DOC_MARGIN
+    });
+    let height = rows as f32 * row_h + doc_h;
     // Embaixo da linha; se não couber, em cima.
     let screen = ui.ctx().content_rect();
     let pos = if y + height + 8.0 > screen.bottom() {
@@ -1736,7 +1759,6 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
     } else {
         pos2(x, y)
     };
-    let v = ui.visuals().clone();
     let mut clicked = None;
     let mut scroll = 0.0;
     let font = f.font.clone();
@@ -1810,6 +1832,22 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                         if resp.clicked() {
                             clicked = Some(i);
                         }
+                    }
+                    if let Some(doc) = doc {
+                        let (rect, _) =
+                            ui.allocate_exact_size(vec2(POPUP_WIDTH, doc_h), Sense::hover());
+                        ui.painter().hline(
+                            rect.x_range(),
+                            rect.top(),
+                            v.widgets.noninteractive.bg_stroke,
+                        );
+                        ui.put(
+                            Rect::from_min_size(
+                                rect.min + vec2(DOC_MARGIN, DOC_MARGIN),
+                                doc.size(),
+                            ),
+                            egui::Label::new(doc).selectable(false),
+                        );
                     }
                 });
         });

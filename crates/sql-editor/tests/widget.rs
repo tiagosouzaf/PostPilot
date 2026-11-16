@@ -321,6 +321,28 @@ fn clicking_a_suggestion_inserts_it() {
 }
 
 #[test]
+fn the_selected_suggestion_is_explained_under_the_list() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness("");
+    typed(&mut h, "sel");
+    assert_eq!(labels(&h), ["SELECT"]);
+    h.get_by_label("Reads rows: chooses the columns and expressions of the result.");
+    // Uma tabela diz o schema e as colunas dela.
+    let mut h = harness("");
+    typed(&mut h, "select * from cli");
+    h.get_by_label_contains("Table of the schema public.");
+    // A explicação acompanha a seta.
+    let mut h = harness("");
+    typed(&mut h, "select * from pedido where t");
+    h.get_by_label("Column of pedido, of type integer.");
+    key(&mut h, Modifiers::NONE, Key::ArrowDown);
+    assert!(
+        h.query_by_label("Column of pedido, of type integer.")
+            .is_none()
+    );
+}
+
+#[test]
 fn syntax_errors_are_underlined_while_they_last() {
     let mut h = harness("");
     typed(&mut h, "select f(1");

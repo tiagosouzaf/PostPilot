@@ -161,7 +161,7 @@ pub const EXPRESSIONS: &[&str] = &[
 ];
 
 /// Valores que não são JSON puro.
-const VALUES: &[(&str, &str)] = &[
+pub(crate) const VALUES: &[(&str, &str)] = &[
     ("ISODate", "(\"2026-01-31T00:00:00Z\")"),
     ("NumberDecimal", "(\"0.00\")"),
     ("NumberLong", "(0)"),
