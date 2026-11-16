@@ -443,6 +443,11 @@ impl EditRows {
         e
     }
 
+    /// Banco e oid da tabela, para a sessão reabrir a janela.
+    pub fn target(&self) -> (String, u32) {
+        (self.session.database(), self.oid)
+    }
+
     /// Texto da aba, como no SSMS: `banco - schema.tabela`.
     pub fn title(&self) -> String {
         match &self.table {

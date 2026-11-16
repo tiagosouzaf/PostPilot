@@ -4575,6 +4575,30 @@ msgstr "(sem pasta)"
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
 
+msgid "Filter rows: text or column:text"
+msgstr "Filtrar linhas: texto ou coluna:texto"
+
+msgid "Clear the filter"
+msgstr "Limpar o filtro"
+
+msgid "{shown} of {total} rows"
+msgstr "{shown} de {total} linhas"
+
+msgid "Sort Ascending"
+msgstr "Ordenar crescente"
+
+msgid "Sort Descending"
+msgstr "Ordenar decrescente"
+
+msgid "Clear Sort"
+msgstr "Limpar ordenação"
+
+msgid "Filter by This Value"
+msgstr "Filtrar por este valor"
+
+msgid "Clear Filter"
+msgstr "Limpar filtro"
+
 msgid "Save as Snippet..."
 msgstr "Salvar como Trecho..."
 
@@ -5003,6 +5027,33 @@ msgstr "Usa a sua conta do ChatGPT, pelo Codex. O que o assistente lê é enviad
 
 msgid "ChatGPT by account needs Codex, OpenAI's official program, and it was not found. Open Tools > Options > AI Providers to install it and sign in. If it is installed somewhere else, set PGSTUDIO_CODEX to its path."
 msgstr "O ChatGPT pela conta precisa do Codex, o programa oficial da OpenAI, e ele não foi encontrado. Abra Ferramentas > Opções > Provedores de IA para instalar e entrar. Se estiver instalado em outro lugar, aponte PGSTUDIO_CODEX para o caminho dele."
+
+msgid "Restore Unsaved Changes"
+msgstr "Restaurar alterações não salvas"
+
+msgid "The unsaved changes from the last session were restored."
+msgstr "As alterações não salvas da última sessão foram restauradas."
+
+msgid "less than a minute"
+msgstr "menos de um minuto"
+
+msgid "{n} min"
+msgstr "{n} min"
+
+msgid "{n} h"
+msgstr "{n} h"
+
+msgid "{n} days"
+msgstr "{n} dias"
+
+msgid "Results from the previous session ({age} ago), not run again. Press F5 to refresh."
+msgstr "Resultado da sessão anterior (há {age}), sem executar de novo. F5 atualiza."
+
+msgid "Showing the first {kept} of {total} rows."
+msgstr "Mostrando as primeiras {kept} de {total} linhas."
+
+msgid "The results are read-only: they came from the previous session. Run the query again to edit them."
+msgstr "O resultado é somente leitura: veio da sessão anterior. Execute a consulta de novo para editá-lo."
 
 # Redis (Fase N)
 msgid "\"{database}\" is not a Redis database. Use db0, db1..."

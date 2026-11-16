@@ -2770,7 +2770,7 @@ impl ShellApp {
     }
 
     /// Ações do menu de contexto do Object Explorer.
-    fn explorer_event(&mut self, ctx: &egui::Context, event: pgstudio_object_explorer::Event) {
+    pub fn explorer_event(&mut self, ctx: &egui::Context, event: pgstudio_object_explorer::Event) {
         use pgstudio_core::metadata::ScriptAction;
         use pgstudio_object_explorer::{EDIT_TOP_ROWS, Event, SELECT_TOP_ROWS};
         let Some(provider) = self.explorer.provider() else {
@@ -3096,6 +3096,17 @@ impl ShellApp {
                 doc.editor.focus_editor();
             }
             CommandId::QuickFind => {
+                // Com o foco numa grade de resultados, Ctrl+F vai para o
+                // filtro dela.
+                let focused = ctx.memory(|m| m.focused());
+                let results = doc.execution.as_ref().map_or(0, |e| e.results.len());
+                if let Some(grid) = (0..results)
+                    .map(|i| results::grid_id(id, i))
+                    .find(|g| focused == Some(*g))
+                {
+                    pgstudio_result_grid::grid::focus_filter(ctx, grid);
+                    return;
+                }
                 let selected = pgstudio_sql_editor::selected_text(ctx, editor, &doc.text);
                 doc.editor.open_find(selected);
             }
@@ -3573,14 +3584,24 @@ impl ShellApp {
     /// Se há um Table Designer ou diagrama com alterações, traz ele para a
     /// frente e pergunta. Devolve se perguntou.
     fn ask_dirty_designer(&mut self) -> bool {
-        if let Some(id) = self.designers.dirty().first().copied() {
+        // As que a sessão guarda voltam com as alterações na próxima
+        // abertura: sair não pergunta por elas.
+        let designers = self.designers.dirty();
+        let dirty = designers
+            .into_iter()
+            .find(|id| !self.session.keeps(&Panel::TableDesigner(*id)));
+        if let Some(id) = dirty {
             self.workspace.open(Panel::TableDesigner(id));
             if let Some(d) = self.designers.get_mut(id) {
                 d.request_close();
             }
             return true;
         }
-        if let Some(id) = self.diagrams.dirty().first().copied() {
+        let diagrams = self.diagrams.dirty();
+        let dirty = diagrams
+            .into_iter()
+            .find(|id| !self.session.keeps(&Panel::Diagram(*id)));
+        if let Some(id) = dirty {
             self.workspace.open(Panel::Diagram(id));
             if let Some(d) = self.diagrams.get_mut(id) {
                 d.request_close();

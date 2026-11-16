@@ -15,7 +15,7 @@ use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{DesignTarget, MetadataError, MetadataProvider, Model, NodeId};
 use pgstudio_core::schema::diff::{data_loss_warnings, diff, unsupported};
-use pgstudio_core::schema::edit::{Document, EditError};
+use pgstudio_core::schema::edit::{Document, EditError, Patch};
 use pgstudio_core::schema::{Column, Dialect, Id, Identity};
 
 mod dialogs;
@@ -23,6 +23,27 @@ pub use dialogs::{Dialog, DialogKind, Draft, IndexDraft, KeyKind};
 
 /// Altura das linhas da grade de colunas.
 const ROW_HEIGHT: f32 = 22.0;
+
+/// Um Table Designer como a sessão guarda: a tabela e as edições ainda não
+/// salvas, para reabrir igual (veja [`crate::session`]).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SavedDesigner {
+    pub database: String,
+    pub schema: String,
+    /// Id da tabela (o oid); `None` para uma tabela nova.
+    pub table: Option<u64>,
+    /// Nome da tabela no banco, para achá-la se o id mudou.
+    pub name: Option<String>,
+    /// Nó do Object Explorer de onde foi aberto.
+    pub node: Option<String>,
+    /// Número do `Table_N` de uma tabela nova.
+    pub new_number: Option<u32>,
+    /// A tabela nova no modelo editado.
+    pub new_table: Option<Id>,
+    /// Edições ainda não salvas no banco.
+    pub edits: Option<Patch>,
+}
 
 /// Todos os Table Designers abertos, por número.
 #[derive(Default)]
@@ -45,7 +66,10 @@ impl Designers {
     ) -> u32 {
         if target.table.is_some()
             && let Some((id, _)) = self.open.iter().find(|(_, d)| {
-                d.target.database == target.database && d.target.table == target.table
+                // A mesma tabela de outro servidor é outra janela.
+                Arc::ptr_eq(&d.provider, &provider)
+                    && d.target.database == target.database
+                    && d.target.table == target.table
             })
         {
             return *id;
@@ -56,6 +80,32 @@ impl Designers {
         }
         let mut designer = TableDesigner::start(provider, target, self.next_table, ctx);
         designer.node = Some(node);
+        self.open.insert(self.next_id, designer);
+        self.next_id
+    }
+
+    /// Reabre um designer da sessão anterior; as edições guardadas voltam
+    /// quando o modelo carregar.
+    pub fn restore(
+        &mut self,
+        provider: Arc<dyn MetadataProvider>,
+        saved: SavedDesigner,
+        ctx: &egui::Context,
+    ) -> u32 {
+        self.next_id += 1;
+        if let Some(n) = saved.new_number {
+            self.next_table = self.next_table.max(n);
+        }
+        let target = DesignTarget {
+            database: saved.database.clone(),
+            schema: saved.schema.clone(),
+            table: saved.table,
+        };
+        let mut designer =
+            TableDesigner::start(provider, target, saved.new_number.unwrap_or(0), ctx);
+        designer.node = saved.node.clone().map(NodeId);
+        designer.new_number = saved.new_number;
+        designer.restoring = Some(saved);
         self.open.insert(self.next_id, designer);
         self.next_id
     }
@@ -205,6 +255,8 @@ pub struct TableDesigner {
     warnings: Option<Vec<String>>,
     /// O nó a recarregar depois de salvar.
     refresh: Option<NodeId>,
+    /// O que a sessão anterior guardou, até o modelo carregar.
+    restoring: Option<SavedDesigner>,
 }
 
 impl TableDesigner {
@@ -254,6 +306,7 @@ impl TableDesigner {
             refresh: None,
             dialog: None,
             warnings: None,
+            restoring: None,
         }
     }
 
@@ -295,6 +348,36 @@ impl TableDesigner {
         self.base = model.clone();
         self.doc = Document::new(model);
         self.state = State::Ready;
+        // As edições da sessão anterior voltam sobre o banco como está
+        // agora; uma tabela nova volta com elas.
+        let restoring = self.restoring.take();
+        let mut new_table = None;
+        if let Some(saved) = &restoring
+            && saved.new_number.is_none()
+            && self
+                .target
+                .table
+                .is_none_or(|id| self.base.table(id).is_none())
+            && let Some(name) = &saved.name
+            && let Some(t) = self.base.find(&saved.schema, name)
+        {
+            self.target.table = Some(t.id);
+        }
+        if let Some(saved) = &restoring
+            && let Some(patch) = &saved.edits
+        {
+            self.doc.apply_patch(patch);
+            new_table = saved
+                .new_table
+                .filter(|id| self.doc.model.table(*id).is_some());
+            if saved.table.is_none() && new_table.is_some() && patch.tables.len() == 1 {
+                // Só a tabela nova: como criá-la, não é edição que se desfaz.
+                self.doc.history.clear();
+            }
+            self.notice = Some(Notice::Info(
+                tr("The unsaved changes from the last session were restored.").into(),
+            ));
+        }
         match self.target.table {
             Some(id) => match self.doc.model.table(id) {
                 Some(t) => {
@@ -303,6 +386,7 @@ impl TableDesigner {
                 }
                 None => self.state = State::Failed(tr("The table no longer exists.").into()),
             },
+            None if new_table.is_some() => self.table = new_table,
             None => {
                 let n = self.new_number.unwrap_or(1);
                 let name = (n..)
@@ -324,6 +408,27 @@ impl TableDesigner {
             .and_then(|t| self.doc.model.table(t))
             .and_then(|t| t.columns.first())
             .map(|c| c.id);
+    }
+
+    /// O designer como a sessão guarda. Enquanto carrega, é o que veio da
+    /// sessão anterior (fechar o app no meio não perde as edições).
+    pub fn snapshot(&self) -> SavedDesigner {
+        if let Some(saved) = &self.restoring {
+            return saved.clone();
+        }
+        let dirty = self.is_dirty();
+        // A tabela como está no banco (uma nova, só depois de salva).
+        let in_db = self.table.and_then(|t| self.base.table(t));
+        SavedDesigner {
+            database: self.target.database.clone(),
+            schema: in_db.map_or_else(|| self.target.schema.clone(), |t| t.schema.clone()),
+            table: self.target.table,
+            name: in_db.map(|t| t.name.clone()),
+            node: self.node.as_ref().map(|n| n.0.clone()),
+            new_number: self.new_number,
+            new_table: self.table.filter(|_| self.target.table.is_none()),
+            edits: dirty.then(|| Patch::between(&self.base, &self.doc.model)),
+        }
     }
 
     fn saved(&mut self, result: Result<(), MetadataError>, saved: Model, ddl: &[String]) {
