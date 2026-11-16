@@ -13,6 +13,7 @@ pub mod grid;
 pub mod json;
 pub mod store;
 pub mod text;
+pub mod xlsx;
 
 pub use grid::{Cell, GridOutput, GridState, Mode, Selection};
 pub use store::ResultStore;

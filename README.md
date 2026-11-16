@@ -206,6 +206,17 @@ Enter mantém a indentação e Tab com várias linhas selecionadas indenta todas
 (Shift+Tab tira). O editor monta só as linhas visíveis e refaz o realce só do
 trecho mudado, então uma tecla num script de 5 mil linhas leva cerca de 1 ms.
 
+O editor tem vários cursores e seleção em coluna. Alt+arrastar (ou
+Alt+Shift+setas) seleciona um bloco retangular, uma seleção por linha;
+Ctrl+Alt+↑/↓ põe um cursor na linha de cima ou de baixo; Ctrl+clique põe um
+cursor onde você clicar (e tira, se já houver um ali); Shift+Alt+. seleciona
+também a próxima ocorrência do texto selecionado. Digitar, apagar, Enter, Tab,
+recortar, colar e o IntelliSense valem para todos os cursores, e Ctrl+Z desfaz
+em todos de uma vez. Copiar junta as seleções, uma por linha, e colar de volta
+num bloco com o mesmo número de linhas devolve uma linha a cada cursor. Esc (ou
+um clique simples) volta a um cursor só. Executar, comentar e formatar usam a
+seleção principal, a do último cursor.
+
 Format Document (Shift+Alt+F ou Ctrl+Shift+I, como no VS Code, ou Ctrl+K, Ctrl+D,
 como no Visual Studio; também em Edit > Advanced e no menu de contexto do editor)
 formata o SQL: cada cláusula numa linha, colunas do `SELECT` e condições do
@@ -255,8 +266,8 @@ coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
 resultados; no modo texto, as larguras das colunas saem das primeiras mil
 linhas, até 256 caracteres, como no SSMS.
 
-Para exportar, o menu de contexto da grade tem "Save Results As..." e "Copy
-as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
+Para exportar, o menu de contexto da grade tem "Save Results As...",
+"Export to Excel..." e "Copy as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
 perguntarem um arquivo e escreverem as linhas nele direto do servidor, sem
 guardá-las. A extensão escolhe o formato:
 
@@ -265,6 +276,11 @@ guardá-las. A extensão escolhe o formato:
 - `.tsv` ou `.txt`: o formato texto do `COPY` (tab, `\N` para NULL).
 - `.json`: uma lista de objetos.
 - `.sql`: um `INSERT INTO table_name` por linha.
+- `.xlsx`: uma pasta de trabalho do Excel, com o cabeçalho em negrito,
+  congelado e com filtro. Cada resultado é uma planilha, e o que passa de
+  1.048.576 linhas continua na planilha seguinte. Números viram números
+  (menos códigos com zero à esquerda e inteiros com mais de 11 dígitos, que
+  ficam como texto para o Excel não mudar o valor); datas ficam como texto.
 
 O CSV e o TSV voltam iguais com `COPY`; há um teste que faz isso com 1
 milhão de linhas.
