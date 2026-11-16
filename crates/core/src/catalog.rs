@@ -75,9 +75,9 @@ impl Catalog {
             crate::connection::Engine::PostgreSql => normalize_ident(written),
             crate::connection::Engine::SqlServer => normalize_tsql_ident(written),
             // As chaves do Redis diferenciam maiúsculas.
-            crate::connection::Engine::Redis | crate::connection::Engine::MongoDb => {
-                written.to_string()
-            }
+            crate::connection::Engine::Redis
+            | crate::connection::Engine::MongoDb
+            | crate::connection::Engine::Elasticsearch => written.to_string(),
         }
     }
 
@@ -87,7 +87,8 @@ impl Catalog {
         match self.engine {
             crate::connection::Engine::PostgreSql
             | crate::connection::Engine::Redis
-            | crate::connection::Engine::MongoDb => stored == normalized,
+            | crate::connection::Engine::MongoDb
+            | crate::connection::Engine::Elasticsearch => stored == normalized,
             crate::connection::Engine::SqlServer => stored.to_lowercase() == normalized,
         }
     }

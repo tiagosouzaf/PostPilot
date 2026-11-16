@@ -34,7 +34,7 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
 /// [`check`] com tokens do dialeto `dialect`.
 pub fn check_in(text: &str, tokens: &[Token], dialect: Dialect) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    if dialect == Dialect::MongoDb {
+    if matches!(dialect, Dialect::MongoDb | Dialect::Elasticsearch) {
         // Os erros de uma consulta do MongoDB aparecem ao rodar.
         return out;
     }

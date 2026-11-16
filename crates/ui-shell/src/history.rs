@@ -285,7 +285,8 @@ pub fn mask_passwords(sql: &str, engine: Engine) -> String {
         Engine::Redis => return mask_redis_passwords(sql),
         // Uma consulta do MongoDB não leva a senha da conexão; senhas
         // dentro de `createUser` ficam como foram escritas.
-        Engine::MongoDb => return sql.to_string(),
+        // Nem uma requisição do Elasticsearch.
+        Engine::MongoDb | Engine::Elasticsearch => return sql.to_string(),
     };
     let mut out = String::with_capacity(sql.len());
     // Depois de PASSWORD (e do `=`), o próximo texto é a senha.

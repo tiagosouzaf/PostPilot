@@ -155,6 +155,7 @@ fn engine_key(engine: Engine) -> String {
         Engine::SqlServer => "builtin:sqlserver".into(),
         Engine::Redis => "builtin:redis".into(),
         Engine::MongoDb => "builtin:mongodb".into(),
+        Engine::Elasticsearch => "builtin:elasticsearch".into(),
     }
 }
 

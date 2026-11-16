@@ -2428,9 +2428,10 @@ impl ServerDialog {
                         egui::TextEdit::singleline(&mut self.server)
                             .desired_width(300.0)
                             .hint_text(match self.engine {
-                                Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
-                                    tr("host or host,port")
-                                }
+                                Engine::PostgreSql
+                                | Engine::Redis
+                                | Engine::MongoDb
+                                | Engine::Elasticsearch => tr("host or host,port"),
                                 Engine::SqlServer => tr("host, host,port or host\\instance"),
                             }),
                     )
@@ -2444,6 +2445,9 @@ impl ServerDialog {
                             .hint_text(match self.engine {
                                 Engine::Redis => tr("optional (ACL user)"),
                                 Engine::MongoDb => tr("optional (server without authentication)"),
+                                Engine::Elasticsearch => {
+                                    tr("optional (empty: the password is an API key)")
+                                }
                                 _ => "",
                             }),
                     )

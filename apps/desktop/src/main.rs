@@ -441,6 +441,10 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                                 .with(
                                     Engine::MongoDb,
                                     Arc::new(pgstudio_mongodb::MongoConnector::new(runtime)),
+                                )
+                                .with(
+                                    Engine::Elasticsearch,
+                                    Arc::new(pgstudio_elasticsearch::EsConnector::new()),
                                 ),
                         ));
                     }

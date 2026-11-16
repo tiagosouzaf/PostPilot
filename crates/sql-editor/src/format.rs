@@ -72,7 +72,12 @@ impl std::error::Error for FormatError {}
 /// Formata `text` inteiro.
 pub fn format(text: &str, opts: &FormatOptions) -> Result<String, FormatError> {
     // Comandos do Redis não têm o que formatar.
-    if text.trim().is_empty() || matches!(opts.dialect, Dialect::Redis | Dialect::MongoDb) {
+    if text.trim().is_empty()
+        || matches!(
+            opts.dialect,
+            Dialect::Redis | Dialect::MongoDb | Dialect::Elasticsearch
+        )
+    {
         return Ok(text.to_string());
     }
     let tokens = tokenize_in(text, opts.dialect);

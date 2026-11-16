@@ -87,11 +87,13 @@ impl EditTable {
     /// SQL que lê as primeiras `limit` linhas.
     pub fn select_sql(&self, limit: u32) -> String {
         match self.engine {
-            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
-                "SELECT {} FROM {} LIMIT {limit}",
-                self.column_list(),
-                self.name
-            ),
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+                format!(
+                    "SELECT {} FROM {} LIMIT {limit}",
+                    self.column_list(),
+                    self.name
+                )
+            }
             Engine::SqlServer => format!(
                 "SELECT TOP ({limit}) {} FROM {}",
                 self.column_list(),
@@ -155,12 +157,14 @@ impl EditTable {
         }
         let filter = self.key_filter(original);
         Some(match self.engine {
-            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!(
-                "UPDATE {} SET {} WHERE {filter} RETURNING {}",
-                self.name,
-                sets.join(", "),
-                self.column_list()
-            ),
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+                format!(
+                    "UPDATE {} SET {} WHERE {filter} RETURNING {}",
+                    self.name,
+                    sets.join(", "),
+                    self.column_list()
+                )
+            }
             Engine::SqlServer => self.keyed(|output| {
                 format!(
                     "UPDATE {} SET {} {output} WHERE {filter}",

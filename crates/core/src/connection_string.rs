@@ -26,6 +26,8 @@ pub fn looks_like(text: &str) -> bool {
         || t.starts_with("rediss://")
         || t.starts_with("mongodb://")
         || t.starts_with("mongodb+srv://")
+        || t.starts_with("http://")
+        || t.starts_with("https://")
         || t.contains('=')
 }
 
@@ -48,6 +50,13 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
         .or_else(|| text.strip_prefix("mongodb+srv://").map(|r| (r, true)))
     {
         return parse_mongodb(rest, srv);
+    }
+    if let Some((rest, tls)) = text
+        .strip_prefix("http://")
+        .map(|r| (r, false))
+        .or_else(|| text.strip_prefix("https://").map(|r| (r, true)))
+    {
+        return parse_elasticsearch(rest, tls);
     }
     let mut parsed = Parsed {
         settings: ConnectionSettings {
@@ -158,6 +167,33 @@ fn parse_mongodb(rest: &str, srv: bool) -> Result<Parsed, String> {
     if srv {
         parsed.settings.port = Engine::MongoDb.default_port();
     }
+    Ok(parsed)
+}
+
+/// `http[s]://[usuario:senha@]host[:porta]`: o endereço de um
+/// Elasticsearch. Com `https` o certificado é aceito como vier (o de uma
+/// instalação nova é autoassinado); quem quiser conferir escolhe no
+/// diálogo.
+fn parse_elasticsearch(rest: &str, tls: bool) -> Result<Parsed, String> {
+    use crate::connection::Engine;
+    let mut parsed = Parsed {
+        settings: ConnectionSettings::for_engine(Engine::Elasticsearch),
+        password: None,
+    };
+    if tls {
+        parsed.settings.ssl = SslMode::Require;
+    }
+    let database = parsed.settings.database.clone();
+    for (key, value) in parse_uri(rest, &mut parsed)? {
+        match key.as_str() {
+            "user" => parsed.settings.user = value,
+            "password" => parsed.password = Some(value),
+            "host" => parsed.settings.host = value,
+            _ => {}
+        }
+    }
+    // O caminho da URL não é um banco.
+    parsed.settings.database = database;
     Ok(parsed)
 }
 
@@ -353,6 +389,25 @@ fn parse_pairs(text: &str) -> Result<Vec<(String, String)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elasticsearch_urls() {
+        use crate::connection::Engine;
+        let p = parse("https://elastic:s%40nha@es.exemplo.com:9243/").unwrap();
+        assert_eq!(p.settings.engine, Engine::Elasticsearch);
+        assert_eq!(p.settings.host, "es.exemplo.com");
+        assert_eq!(p.settings.port, 9243);
+        assert_eq!(p.settings.user, "elastic");
+        assert_eq!(p.password.as_deref(), Some("s@nha"));
+        assert_eq!(p.settings.ssl, SslMode::Require);
+        assert_eq!(p.settings.database, "cluster");
+        let p = parse("http://localhost:9200").unwrap();
+        assert_eq!((p.settings.port, p.settings.ssl), (9200, SslMode::Disable));
+        assert_eq!(p.settings.user, "");
+        let p = parse("http://localhost").unwrap();
+        assert_eq!(p.settings.port, 9200);
+        assert!(looks_like("https://localhost:9200"));
+    }
 
     #[test]
     fn mongodb_urls() {

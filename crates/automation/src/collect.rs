@@ -80,7 +80,8 @@ impl Collector {
             pgstudio_core::connection::Engine::PostgreSql => self.wrapped(),
             pgstudio_core::connection::Engine::SqlServer
             | pgstudio_core::connection::Engine::Redis
-            | pgstudio_core::connection::Engine::MongoDb => self,
+            | pgstudio_core::connection::Engine::MongoDb
+            | pgstudio_core::connection::Engine::Elasticsearch => self,
         }
     }
 

@@ -28,6 +28,11 @@ pub const REDIS_PORT: u16 = 6379;
 pub const MONGODB_PORT: u16 = 27017;
 /// Como começa o "Server name" de um cluster achado pelo DNS (Atlas).
 pub const MONGODB_SRV: &str = "mongodb+srv://";
+/// Porta padrão do Elasticsearch.
+pub const ELASTICSEARCH_PORT: u16 = 9200;
+/// O "banco" de um Elasticsearch, que não tem bancos: a janela de
+/// consulta fala com o cluster todo.
+pub const ELASTICSEARCH_DATABASE: &str = "cluster";
 
 /// O motor do servidor. Configurações salvas antes do SQL Server não têm
 /// o campo e abrem como PostgreSQL.
@@ -44,6 +49,9 @@ pub enum Engine {
     /// mongosh.
     #[serde(rename = "mongodb")]
     MongoDb,
+    /// Elasticsearch (Fase N): a janela de consulta roda requisições REST
+    /// como no console do Kibana (`GET /indice/_search`).
+    Elasticsearch,
 }
 
 impl Engine {
@@ -62,7 +70,7 @@ impl Engine {
             Engine::PostgreSql => crate::schema::quote_ident(name),
             Engine::SqlServer => format!("[{}]", name.replace(']', "]]")),
             Engine::Redis => redis_argument(name),
-            Engine::MongoDb => name.to_string(),
+            Engine::MongoDb | Engine::Elasticsearch => name.to_string(),
         }
     }
 
@@ -72,7 +80,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => crate::schema::quote_ident(name),
             Engine::Redis => redis_argument(name),
-            Engine::MongoDb => name.to_string(),
+            Engine::MongoDb | Engine::Elasticsearch => name.to_string(),
             Engine::SqlServer => {
                 let mut chars = name.chars();
                 // As palavras reservadas do PostgreSQL servem de lista
@@ -103,16 +111,17 @@ impl Engine {
             (Engine::PostgreSql, Some(v)) => format!("'{}'", v.replace('\'', "''")),
             (Engine::SqlServer, Some(v)) => format!("N'{}'", v.replace('\'', "''")),
             (Engine::Redis, Some(v)) => redis_argument(v),
-            (Engine::MongoDb, Some(v)) => mongodb_string(v),
+            (Engine::MongoDb | Engine::Elasticsearch, Some(v)) => mongodb_string(v),
         }
     }
 
     /// Os motores, na ordem do Connect to Server.
-    pub const ALL: [Engine; 4] = [
+    pub const ALL: [Engine; 5] = [
         Engine::PostgreSql,
         Engine::SqlServer,
         Engine::Redis,
         Engine::MongoDb,
+        Engine::Elasticsearch,
     ];
 
     /// Nome do produto (não se traduz).
@@ -122,6 +131,7 @@ impl Engine {
             Engine::SqlServer => "SQL Server",
             Engine::Redis => "Redis",
             Engine::MongoDb => "MongoDB",
+            Engine::Elasticsearch => "Elasticsearch",
         }
     }
 
@@ -132,6 +142,7 @@ impl Engine {
             Engine::SqlServer => SQL_SERVER_PORT,
             Engine::Redis => REDIS_PORT,
             Engine::MongoDb => MONGODB_PORT,
+            Engine::Elasticsearch => ELASTICSEARCH_PORT,
         }
     }
 
@@ -142,6 +153,7 @@ impl Engine {
             Engine::SqlServer => "master",
             Engine::Redis => "db0",
             Engine::MongoDb => "test",
+            Engine::Elasticsearch => ELASTICSEARCH_DATABASE,
         }
     }
 
@@ -150,7 +162,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => SslMode::Prefer,
             Engine::SqlServer => SslMode::Require,
-            Engine::Redis | Engine::MongoDb => SslMode::Disable,
+            Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => SslMode::Disable,
         }
     }
 
@@ -158,7 +170,10 @@ impl Engine {
     /// (`requirepass`), ou nem ela; um MongoDB sem autenticação não tem
     /// usuário.
     pub fn login_optional(self) -> bool {
-        matches!(self, Engine::Redis | Engine::MongoDb)
+        matches!(
+            self,
+            Engine::Redis | Engine::MongoDb | Engine::Elasticsearch
+        )
     }
 
     /// Prefixo da chave do servidor conectado e da senha no cofre. O
@@ -170,6 +185,7 @@ impl Engine {
             Engine::SqlServer => "sqlserver:",
             Engine::Redis => "redis:",
             Engine::MongoDb => "mongodb:",
+            Engine::Elasticsearch => "elasticsearch:",
         }
     }
 
@@ -178,7 +194,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "postgres",
             Engine::SqlServer => "sa",
-            Engine::Redis | Engine::MongoDb => "",
+            Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => "",
         }
     }
 
@@ -205,6 +221,7 @@ impl Engine {
             // O Redis ganha os seus marco a marco (Fase N do plano).
             Engine::Redis => matches!(feature, Feature::Query | Feature::IntelliSense),
             Engine::MongoDb => matches!(feature, Feature::Query | Feature::IntelliSense),
+            Engine::Elasticsearch => matches!(feature, Feature::Query),
         }
     }
 
@@ -223,7 +240,7 @@ impl Engine {
             // servidor com isto (`db0`... pelo `CONFIG GET databases`).
             // As sessões do Redis e do MongoDB respondem a este comando
             // do cliente.
-            Engine::Redis | Engine::MongoDb => REDIS_LIST_DATABASES,
+            Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => REDIS_LIST_DATABASES,
         }
     }
 
@@ -234,7 +251,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "SELECT now() <> statement_timestamp()",
             Engine::SqlServer => "SELECT @@TRANCOUNT",
-            Engine::Redis | Engine::MongoDb => REDIS_IN_TRANSACTION,
+            Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => REDIS_IN_TRANSACTION,
         }
     }
 
@@ -392,7 +409,7 @@ impl SslMode {
     pub fn options(engine: Engine) -> &'static [SslMode] {
         match engine {
             Engine::PostgreSql => &SslMode::ALL,
-            Engine::SqlServer | Engine::Redis | Engine::MongoDb => {
+            Engine::SqlServer | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
                 &[SslMode::Disable, SslMode::Require, SslMode::VerifyFull]
             }
         }
@@ -402,13 +419,14 @@ impl SslMode {
     pub fn label_for(self, engine: Engine) -> &'static str {
         match (engine, self) {
             (Engine::PostgreSql, _) => self.label(),
-            (Engine::Redis | Engine::MongoDb, SslMode::Disable) => {
+            (Engine::Redis | Engine::MongoDb | Engine::Elasticsearch, SslMode::Disable) => {
                 pgstudio_i18n::tr("No encryption")
             }
-            (Engine::Redis | Engine::MongoDb, SslMode::Prefer | SslMode::Require) => {
-                pgstudio_i18n::tr("TLS, trust server certificate")
-            }
-            (Engine::Redis | Engine::MongoDb, SslMode::VerifyFull) => {
+            (
+                Engine::Redis | Engine::MongoDb | Engine::Elasticsearch,
+                SslMode::Prefer | SslMode::Require,
+            ) => pgstudio_i18n::tr("TLS, trust server certificate"),
+            (Engine::Redis | Engine::MongoDb | Engine::Elasticsearch, SslMode::VerifyFull) => {
                 pgstudio_i18n::tr("TLS, verify certificate")
             }
             (Engine::SqlServer, SslMode::Disable) => pgstudio_i18n::tr("Optional (login only)"),
@@ -603,7 +621,7 @@ impl ConnectionSettings {
     pub fn login_label(&self) -> &str {
         match (self.user.is_empty(), self.engine) {
             (true, Engine::Redis) => "default",
-            (true, Engine::MongoDb) => pgstudio_i18n::tr("no login"),
+            (true, Engine::MongoDb | Engine::Elasticsearch) => pgstudio_i18n::tr("no login"),
             _ => &self.user,
         }
     }

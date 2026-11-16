@@ -11,6 +11,7 @@ repository.workspace = true
 pgstudio-core.workspace = true
 pgstudio-redis.workspace = true
 pgstudio-mongodb.workspace = true
+pgstudio-elasticsearch.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true

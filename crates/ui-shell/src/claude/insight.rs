@@ -137,7 +137,7 @@ pub(super) fn plan_batch(
     }
     Some(match engine {
         // Sem plano de execução no Redis.
-        Engine::Redis | Engine::MongoDb => return None,
+        Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => return None,
         Engine::PostgreSql => {
             let options = if analyze {
                 "EXPLAIN (ANALYZE, BUFFERS) "
@@ -232,6 +232,7 @@ pub(super) fn plan_reply(
             Engine::SqlServer => "sqlserver",
             Engine::Redis => "redis",
             Engine::MongoDb => "mongodb",
+                        Engine::Elasticsearch => "elasticsearch",
         },
         "kind": if analyze { "actual" } else { "estimated" },
         "plans": plans,

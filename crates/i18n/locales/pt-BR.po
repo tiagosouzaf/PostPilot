@@ -5825,3 +5825,186 @@ msgstr "{n} documento(s) excluído(s)."
 
 msgid "{n} document(s) inserted."
 msgstr "{n} documento(s) inserido(s)."
+
+msgid "Add Alias"
+msgstr "Adicionar Alias"
+
+msgid "Add Field to Mapping"
+msgstr "Adicionar Campo ao Mapeamento"
+
+msgid "Aggregations"
+msgstr "Agregações"
+
+msgid "Aliases"
+msgstr "Aliases"
+
+msgid "Analyze Text"
+msgstr "Analisar Texto"
+
+msgid "Authentication failed: check the login and the password (or the API key)."
+msgstr "Falha na autenticação: confira o login e a senha (ou a chave de API)."
+
+msgid "Backing indices"
+msgstr "Índices por trás"
+
+msgid "Bulk Index"
+msgstr "Indexar em Lote"
+
+msgid "Cluster"
+msgstr "Cluster"
+
+msgid "Cluster Health"
+msgstr "Saúde do Cluster"
+
+msgid "Count by Value"
+msgstr "Contar por Valor"
+
+msgid "Create Index with Mapping"
+msgstr "Criar Índice com Mapeamento"
+
+msgid "Data Streams"
+msgstr "Data Streams"
+
+msgid "Delete Document"
+msgstr "Excluir Documento"
+
+msgid "Delete Index"
+msgstr "Excluir Índice"
+
+msgid "Delete Index..."
+msgstr "Excluir Índice..."
+
+msgid "Delete by Query"
+msgstr "Excluir por Consulta"
+
+msgid "Deleted documents"
+msgstr "Documentos excluídos"
+
+msgid "Explain a Match"
+msgstr "Explicar um Resultado"
+
+msgid "Filter Indices"
+msgstr "Filtrar Índices"
+
+msgid "Filter Indices..."
+msgstr "Filtrar Índices..."
+
+msgid "Filter, Sort and Page"
+msgstr "Filtrar, Ordenar e Paginar"
+
+msgid "Full-Text Search"
+msgstr "Busca por Texto"
+
+msgid "Get Document by Id"
+msgstr "Buscar Documento pelo Id"
+
+msgid "Health"
+msgstr "Saúde"
+
+msgid "Hidden Indices"
+msgstr "Índices Ocultos"
+
+msgid "Histogram by Date"
+msgstr "Histograma por Data"
+
+msgid "If the server uses HTTPS (the default since Elasticsearch 8), choose an encryption option."
+msgstr "Se o servidor usa HTTPS (o padrão desde o Elasticsearch 8), escolha uma opção de criptografia."
+
+msgid "Index Document"
+msgstr "Indexar Documento"
+
+msgid "Index template"
+msgstr "Modelo de índice"
+
+msgid "Indices"
+msgstr "Índices"
+
+msgid "List Indices"
+msgstr "Listar Índices"
+
+msgid "Missing the path after {method}, as in GET /_search."
+msgstr "Faltou o caminho depois de {method}, como em GET /_search."
+
+msgid "More than {total} document(s) found in {took} ms; showing {shown}."
+msgstr "Mais de {total} documento(s) encontrado(s) em {took} ms; mostrando {shown}."
+
+msgid "Nodes"
+msgstr "Nós"
+
+msgid "Primary shards"
+msgstr "Shards primários"
+
+msgid "Primary storage size"
+msgstr "Tamanho em disco dos primários"
+
+msgid "Reindex"
+msgstr "Reindexar"
+
+msgid "Replicas"
+msgstr "Réplicas"
+
+msgid "Running Tasks"
+msgstr "Tarefas em Execução"
+
+msgid "Script Index as CREATE"
+msgstr "Gerar Script de CREATE do Índice"
+
+msgid "Search"
+msgstr "Busca"
+
+msgid "Search All Documents"
+msgstr "Buscar Todos os Documentos"
+
+msgid "Search done in {took} ms; showing {shown} document(s)."
+msgstr "Busca feita em {took} ms; mostrando {shown} documento(s)."
+
+msgid "Search with SQL"
+msgstr "Buscar com SQL"
+
+msgid "Shards"
+msgstr "Shards"
+
+msgid "Show Mapping and Settings"
+msgstr "Mostrar Mapeamento e Configurações"
+
+msgid "Show only the indices that contain this text. A pattern also works: logs-*"
+msgstr "Mostra só os índices que contêm este texto. Um padrão também vale: logs-*"
+
+msgid "Start each request with the method and the path, as in GET /_cat/indices."
+msgstr "Comece cada requisição com o método e o caminho, como em GET /_cat/indices."
+
+msgid "Statistics of a Field"
+msgstr "Estatísticas de um Campo"
+
+msgid "Text Analysis"
+msgstr "Análise de Texto"
+
+msgid "The search timed out: the results are partial."
+msgstr "A busca passou do tempo limite: os resultados são parciais."
+
+msgid "The server answered, but not like an Elasticsearch."
+msgstr "O servidor respondeu, mas não como um Elasticsearch."
+
+msgid "There are more rows: add a LIMIT or raise fetch_size to see them."
+msgstr "Há mais linhas: ponha um LIMIT ou aumente o fetch_size para ver."
+
+msgid "Update Document Fields"
+msgstr "Atualizar Campos do Documento"
+
+msgid "Update by Query"
+msgstr "Atualizar por Consulta"
+
+msgid "optional (empty: the password is an API key)"
+msgstr "opcional (vazio: a senha é uma chave de API)"
+
+msgid "{n} operation(s) done."
+msgstr "{n} operação(ões) feita(s)."
+
+msgid "{n} operation(s), {failed} with an error (see the error column)."
+msgstr "{n} operação(ões), {failed} com erro (veja a coluna error)."
+
+msgid "{n} shard(s) failed: the results are partial."
+msgstr "{n} shard(s) falharam: os resultados são parciais."
+
+msgid "{total} document(s) found in {took} ms; showing {shown}."
+msgstr "{total} documento(s) encontrado(s) em {took} ms; mostrando {shown}."

@@ -3007,6 +3007,7 @@ impl ShellApp {
                 Some(Engine::SqlServer) => pgstudio_sql_editor::lexer::Dialect::TSql,
                 Some(Engine::Redis) => pgstudio_sql_editor::lexer::Dialect::Redis,
                 Some(Engine::MongoDb) => pgstudio_sql_editor::lexer::Dialect::MongoDb,
+                Some(Engine::Elasticsearch) => pgstudio_sql_editor::lexer::Dialect::Elasticsearch,
                 _ => pgstudio_sql_editor::lexer::Dialect::Postgres,
             };
             if let Some(doc) = self.documents.get_mut(id) {

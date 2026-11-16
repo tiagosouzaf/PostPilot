@@ -110,6 +110,16 @@ pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Saf
                 Some(reason) => Safety::Writes { reason },
             }
         }
+        // Elasticsearch: pelo método e pela API de cada requisição.
+        pgstudio_core::connection::Engine::Elasticsearch => {
+            match pgstudio_elasticsearch::console::parse(sql) {
+                Err(e) => Safety::Unknown { reason: e.message },
+                Ok(_) => match pgstudio_elasticsearch::console::first_write(sql) {
+                    None => Safety::ReadOnly,
+                    Some(reason) => Safety::Writes { reason },
+                },
+            }
+        }
         pgstudio_core::connection::Engine::PostgreSql => classify(sql),
         pgstudio_core::connection::Engine::SqlServer => {
             let without_go: String = sql
@@ -296,9 +306,9 @@ pub fn read_only_batch(sql: &str) -> String {
 pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str) -> String {
     match engine {
         // Sem transação só de leitura no Redis: vale o classificador.
-        pgstudio_core::connection::Engine::Redis | pgstudio_core::connection::Engine::MongoDb => {
-            sql.to_string()
-        }
+        pgstudio_core::connection::Engine::Redis
+        | pgstudio_core::connection::Engine::MongoDb
+        | pgstudio_core::connection::Engine::Elasticsearch => sql.to_string(),
         pgstudio_core::connection::Engine::PostgreSql => read_only_batch(sql),
         pgstudio_core::connection::Engine::SqlServer => format!(
             "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION; {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;"
@@ -309,6 +319,28 @@ pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elasticsearch_requests_are_read_or_write_by_method_and_api() {
+        use pgstudio_core::connection::Engine::Elasticsearch;
+        assert_eq!(
+            classify_for(
+                Elasticsearch,
+                "GET /_cat/indices\nPOST /a/_search\n{ \"size\": 1 }"
+            ),
+            Safety::ReadOnly
+        );
+        assert_eq!(
+            classify_for(Elasticsearch, "GET /a/_count\nDELETE /a"),
+            Safety::Writes {
+                reason: "DELETE /a".into()
+            }
+        );
+        assert!(matches!(
+            classify_for(Elasticsearch, "{ \"size\": 1 }"),
+            Safety::Unknown { .. }
+        ));
+    }
 
     #[test]
     fn redis_commands_are_read_or_write_by_name() {
