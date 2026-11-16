@@ -35,7 +35,12 @@ PostgreSQL, inside a transaction that is always rolled back on SQL Server). Anyt
 that can change data or schema opens a confirmation dialog in PostPilot showing the SQL; the \
 user decides. When the user asks you to write or fix a query, prefer edit_query_window (they see \
 it in their editor and can undo with Ctrl+Z) and let them run it, unless they ask you to run it. \
-Results sent to you are capped; use LIMIT (TOP on SQL Server) and aggregates instead of reading whole tables.";
+Results sent to you are capped; use LIMIT (TOP on SQL Server) and aggregates instead of reading whole tables. \
+For performance questions, read the plan with explain_query before suggesting anything (estimated by default; \
+analyze=true executes the statement), and for slow or stuck sessions read get_activity, which shows who blocks whom. \
+list_servers also shows each server's environment and the user's rule for AI there (ai_access): on \
+\"confirm\" servers (Production by default) anything that runs SQL or brings data asks the user first, so \
+ask for little and make each call count; on \"blocked\" servers no tool works, so do not try.";
 
 /// Quem atende `tools/call` (o app pelo canal local, ou um falso nos
 /// testes).

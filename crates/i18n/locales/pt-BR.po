@@ -2027,6 +2027,118 @@ msgstr "Salvar Resultados Como..."
 msgid "Export to Excel..."
 msgstr "Exportar para o Excel..."
 
+# Importar CSV
+msgid "(computed by the database)"
+msgstr "(calculada pelo banco)"
+
+msgid "(do not import)"
+msgstr "(não importar)"
+
+msgid "(empty field)"
+msgstr "(campo vazio)"
+
+msgid "CSV and text files"
+msgstr "Arquivos CSV e de texto"
+
+msgid "Choose a file column for at least one table column."
+msgstr "Escolha uma coluna do arquivo para pelo menos uma coluna da tabela."
+
+msgid "Column {n}"
+msgstr "Coluna {n}"
+
+msgid "Comma (,)"
+msgstr "Vírgula (,)"
+
+msgid "Connect to a server to import a CSV file."
+msgstr "Conecte-se a um servidor para importar um arquivo CSV."
+
+msgid "Could not read the file: {error}"
+msgstr "Não foi possível ler o arquivo: {error}"
+
+msgid "Delimiter:"
+msgstr "Separador:"
+
+msgid "Do you want to import the file?"
+msgstr "Deseja importar o arquivo?"
+
+msgid "File column"
+msgstr "Coluna do arquivo"
+
+msgid "File:"
+msgstr "Arquivo:"
+
+msgid "Import"
+msgstr "Importar"
+
+msgid "Import CSV"
+msgstr "Importar CSV"
+
+msgid "Import CSV into {table}"
+msgstr "Importar CSV em {table}"
+
+msgid "Import CSV..."
+msgstr "Importar CSV..."
+
+msgid "Import into {table} canceled; nothing was imported."
+msgstr "Importação em {table} cancelada; nada foi importado."
+
+msgid "Import into {table} failed; nothing was imported. {error}"
+msgstr "A importação em {table} falhou; nada foi importado. {error}"
+
+msgid "Imported {n} row(s) from {file} into {table} in {seconds} s."
+msgstr "{n} linha(s) de {file} importada(s) em {table} em {seconds} s."
+
+msgid "Importing... {n} row(s) sent."
+msgstr "Importando... {n} linha(s) enviada(s)."
+
+msgid "Line {line} of the file: {error}"
+msgstr "Linha {line} do arquivo: {error}"
+
+msgid "Lines {from} to {to} of the file: {error}"
+msgstr "Linhas {from} a {to} do arquivo: {error}"
+
+msgid "Pipe (|)"
+msgstr "Barra vertical (|)"
+
+msgid "Preview"
+msgstr "Prévia"
+
+msgid "Reading the file and the table..."
+msgstr "Lendo o arquivo e a tabela..."
+
+msgid "Select a table to import a CSV file into."
+msgstr "Selecione uma tabela para importar um arquivo CSV."
+
+msgid "Semicolon (;)"
+msgstr "Ponto e vírgula (;)"
+
+msgid "Still reading the file and the table."
+msgstr "Ainda lendo o arquivo e a tabela."
+
+msgid "Tab"
+msgstr "Tabulação"
+
+msgid "Table column"
+msgstr "Coluna da tabela"
+
+msgid "Text that means NULL:"
+msgstr "Texto que significa NULL:"
+
+msgid "The connection was lost."
+msgstr "A conexão foi perdida."
+
+msgid "The file has no rows to import."
+msgstr "O arquivo não tem linhas para importar."
+
+msgid "The first row has the column names"
+msgstr "A primeira linha tem os nomes das colunas"
+
+msgid "The table was not found."
+msgstr "A tabela não foi encontrada."
+
+msgid "This server is in {environment}, and the import adds rows to {table}."
+msgstr "Este servidor está em {environment}, e a importação adiciona linhas em {table}."
+
 msgid "{n} cell(s) longer than the 32,767 characters an Excel cell holds were cut."
 msgstr "{n} célula(s) com mais de 32.767 caracteres, o limite de uma célula do Excel, foram cortadas."
 
@@ -4716,6 +4828,60 @@ msgstr "(sem pasta)"
 
 msgid "The last session could not be read; starting with an empty one."
 msgstr "Não foi possível ler a última sessão; começando com uma vazia."
+
+msgid "AI: reads freely"
+msgstr "IA: lê livremente"
+
+msgid "AI: asks first"
+msgstr "IA: pergunta antes"
+
+msgid "AI: blocked"
+msgstr "IA: bloqueada"
+
+msgid "What Claude and the other AI providers may do on servers of this environment. Reads freely: reading is free and changes ask for confirmation. Asks first: reading the schema is free, and anything that runs SQL or brings data asks for confirmation. Blocked: the AI cannot reach these servers."
+msgstr "O que o Claude e os outros provedores de IA podem fazer nos servidores deste ambiente. Lê livremente: ler é livre e alterar pede confirmação. Pergunta antes: ler o esquema é livre, e tudo o que roda SQL ou traz dados pede confirmação. Bloqueada: a IA não chega a esses servidores."
+
+msgid "{what} Servers in {environment} ask before the AI runs anything."
+msgstr "{what} Servidores em {environment} perguntam antes de a IA rodar qualquer coisa."
+
+msgid "{who}: explain_query ({kind}): {sql}"
+msgstr "{who}: explain_query ({kind}): {sql}"
+
+msgid "{who}: explain_query needs your confirmation: {sql}"
+msgstr "{who}: explain_query precisa da sua confirmação: {sql}"
+
+msgid "{safety} The actual plan runs the statement to measure it, then rolls it back."
+msgstr "{safety} O plano real executa o comando para medir e desfaz tudo no fim."
+
+msgid "{who} wants to run SQL for its actual plan"
+msgstr "{who} quer executar SQL para ver o plano real"
+
+msgid "{who}: get_activity needs your confirmation"
+msgstr "{who}: get_activity precisa da sua confirmação"
+
+msgid "{who} wants to read the server activity"
+msgstr "{who} quer ler a atividade do servidor"
+
+msgid "Sessions with their current SQL, locks and who is blocking whom, as the Activity Monitor shows."
+msgstr "Sessões com o SQL que estão rodando, locks e quem está bloqueando quem, como o Monitor de Atividade mostra."
+
+msgid "This only reads the server activity."
+msgstr "Isto só lê a atividade do servidor."
+
+msgid "Read execution plan"
+msgstr "Leu o plano de execução"
+
+msgid "Read server activity"
+msgstr "Leu a atividade do servidor"
+
+msgid "This SQL only reads data."
+msgstr "Este SQL só lê dados."
+
+msgid "This SQL can change the database ({reason})."
+msgstr "Este SQL pode alterar o banco ({reason})."
+
+msgid "PostPilot could not confirm that this SQL only reads data ({reason})."
+msgstr "O PostPilot não conseguiu confirmar que este SQL só lê dados ({reason})."
 
 msgid "Filter rows: text or column:text"
 msgstr "Filtrar linhas: texto ou coluna:texto"

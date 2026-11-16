@@ -17,9 +17,10 @@ o que ele pode fazer sem perguntar.
 ### 1. Um conjunto de ferramentas, três portas
 
 As ferramentas ficam numa crate sem GUI, `pgstudio-automation`
-(`tools.rs`): 12 ferramentas com esquema JSON (`list_servers`,
+(`tools.rs`): 14 ferramentas com esquema JSON (`list_servers`,
 `list_databases`, `list_objects`, `describe_table`, `describe_function`,
-`run_query`, `list_query_windows`, `get_query_window`, `edit_query_window`,
+`run_query`, `explain_query`, `get_activity`, `list_query_windows`,
+`get_query_window`, `edit_query_window`,
 `open_query_window`, `execute_query_window`, `get_query_results`). O app as
 atende num único lugar (`ui-shell/src/claude.rs`), no frame do egui, pelo
 mesmo estado que a interface usa. Quem chama não importa:
