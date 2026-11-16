@@ -33,33 +33,50 @@ pub struct VaultSlot {
 /// senhas.
 pub type SharedVault = Arc<Mutex<VaultSlot>>;
 
-/// O cofre que a casca usa para "Remember password": o do workspace (para
-/// os servidores dele, destrancado) e o do sistema.
+/// Os cofres de todos os workspaces abertos, na ordem deles.
+pub type SharedVaults = Arc<Mutex<Vec<SharedVault>>>;
+
+/// O cofre que a casca usa para "Remember password": os dos workspaces
+/// abertos (cada um para os servidores dele, destrancado) e o do sistema.
 pub struct WorkspaceSecrets {
     system: Option<Arc<dyn SecretStore>>,
-    slot: SharedVault,
+    slots: SharedVaults,
     /// Toda chave é de um servidor do workspace (o painel do workspace usa
     /// assim: um servidor recém-registrado ainda não está em `keys`).
     all_ours: bool,
 }
 
 impl WorkspaceSecrets {
-    pub fn new(system: Option<Arc<dyn SecretStore>>, slot: SharedVault) -> Self {
+    pub fn new(system: Option<Arc<dyn SecretStore>>, slots: SharedVaults) -> Self {
         WorkspaceSecrets {
             system,
-            slot,
+            slots,
             all_ours: false,
         }
     }
 
-    /// O cofre dos servidores do próprio workspace: grava no cofre do
-    /// workspace sempre que ele estiver destrancado.
+    /// O cofre dos servidores de um workspace: grava no cofre dele sempre
+    /// que ele estiver destrancado.
     pub fn workspace_only(system: Option<Arc<dyn SecretStore>>, slot: SharedVault) -> Self {
         WorkspaceSecrets {
             system,
-            slot,
+            slots: Arc::new(Mutex::new(vec![slot])),
             all_ours: true,
         }
+    }
+
+    /// Os cofres, com os que têm um servidor com esta chave na frente.
+    fn slots_for(&self, key: &str) -> Vec<(SharedVault, bool)> {
+        let slots = self.slots.lock().expect("vaults lock").clone();
+        let mut out: Vec<(SharedVault, bool)> = slots
+            .into_iter()
+            .map(|slot| {
+                let ours = self.all_ours || slot.lock().expect("vault lock").keys.contains(key);
+                (slot, ours)
+            })
+            .collect();
+        out.sort_by_key(|(_, ours)| !ours);
+        out
     }
 }
 
@@ -69,8 +86,8 @@ fn no_system() -> SecretError {
 
 impl SecretStore for WorkspaceSecrets {
     fn get(&self, key: &str) -> Result<Option<String>, SecretError> {
-        {
-            let mut slot = self.slot.lock().expect("vault lock");
+        for (slot, _) in self.slots_for(key) {
+            let mut slot = slot.lock().expect("vault lock");
             if let Some(v) = slot.vault.as_mut().filter(|v| v.is_unlocked()) {
                 match v.get(key) {
                     Ok(Some(s)) => return Ok(Some(s)),
@@ -86,12 +103,18 @@ impl SecretStore for WorkspaceSecrets {
     }
 
     fn set(&self, key: &str, secret: &str) -> Result<(), SecretError> {
-        {
-            let mut slot = self.slot.lock().expect("vault lock");
-            let ours = self.all_ours || slot.keys.contains(key);
+        // O mesmo servidor pode estar em mais de um workspace: a senha vai
+        // para o cofre de cada um.
+        let mut saved = false;
+        for (slot, ours) in self.slots_for(key) {
+            let mut slot = slot.lock().expect("vault lock");
             if let Some(v) = slot.vault.as_mut().filter(|v| ours && v.is_unlocked()) {
-                return v.set(key, secret).map_err(|e| SecretError(e.to_string()));
+                v.set(key, secret).map_err(|e| SecretError(e.to_string()))?;
+                saved = true;
             }
+        }
+        if saved {
+            return Ok(());
         }
         match &self.system {
             Some(s) => s.set(key, secret),
@@ -100,9 +123,8 @@ impl SecretStore for WorkspaceSecrets {
     }
 
     fn delete(&self, key: &str) -> Result<(), SecretError> {
-        {
-            let mut slot = self.slot.lock().expect("vault lock");
-            let ours = self.all_ours || slot.keys.contains(key);
+        for (slot, ours) in self.slots_for(key) {
+            let mut slot = slot.lock().expect("vault lock");
             if let Some(v) = slot.vault.as_mut().filter(|v| ours && v.exists()) {
                 v.delete(key).map_err(|e| SecretError(e.to_string()))?;
             }
@@ -433,45 +455,63 @@ impl Passwords {
             return;
         }
         let (exists, unlocked, count) = (self.exists(), self.is_unlocked(), self.count());
-        ui.horizontal(|ui| {
-            if !exists {
-                ui.weak(format!(
-                    "{} {}", // i18n-ignore
-                    icon::KEY,
-                    tr("Passwords stay on this computer.")
-                ));
-                if ui
-                    .small_button(tr("Save in workspace..."))
-                    .on_hover_text(tr("Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"))
-                    .clicked()
-                {
-                    self.open_dialog(DialogKind::Create);
-                }
-            } else if !unlocked {
-                ui.label(format!("{} {}", icon::LOCK, tr("Passwords locked"))); // i18n-ignore
-                if ui.small_button(tr("Unlock...")).clicked() {
-                    self.open_dialog(DialogKind::Unlock);
-                }
-            } else {
-                let text = match count {
-                    0 => tr("Master password set, no server passwords saved yet").to_string(),
-                    1 => tr("1 server password in the workspace").to_string(),
-                    n => trf!("{n} server passwords in the workspace", n = n),
-                };
-                ui.label(format!("{} {text}", icon::LOCK_OPEN)) // i18n-ignore
-                    .on_hover_text(tr("The master password is set and unlocked. The passwords of this workspace's servers are saved here, encrypted with it, when you register or connect to a server with Remember password checked, or import the connections from this computer."));
-                ui.menu_button(icon::DOTS_THREE, |ui| {
-                    if ui.button(tr("Change Master Password...")).clicked() {
-                        self.open_dialog(DialogKind::Change);
-                        ui.close();
+        // O botão fica à direita e o texto encurta para caber no painel.
+        let mut open = None;
+        let mut lock = false;
+        crate::fit::ends(
+            ui,
+            |ui| {
+                if !exists {
+                    let text = format!("{} {}", icon::KEY, tr("Passwords stay on this computer."));
+                    crate::fit::text(ui, egui::RichText::new(text).weak());
+                } else if !unlocked {
+                    let text = format!("{} {}", icon::LOCK, tr("Passwords locked"));
+                    crate::fit::text(ui, text);
+                } else {
+                    let text = match count {
+                        0 => tr("Master password set, no server passwords saved yet").to_string(),
+                        1 => tr("1 server password in the workspace").to_string(),
+                        n => trf!("{n} server passwords in the workspace", n = n),
+                    };
+                    let text = format!("{} {text}", icon::LOCK_OPEN); // i18n-ignore
+                    if let Some(label) = crate::fit::text(ui, text) {
+                        label.on_hover_text(tr("The master password is set and unlocked. The passwords of this workspace's servers are saved here, encrypted with it, when you register or connect to a server with Remember password checked, or import the connections from this computer."));
                     }
-                    if ui.button(tr("Lock")).clicked() {
-                        self.lock();
-                        ui.close();
+                }
+            },
+            |ui| {
+                if !exists {
+                    if ui
+                        .small_button(tr("Save in workspace..."))
+                        .on_hover_text(tr("Set a master password and save the remembered passwords of this workspace's servers, encrypted, in secrets.json"))
+                        .clicked()
+                    {
+                        open = Some(DialogKind::Create);
                     }
-                });
-            }
-        });
+                } else if !unlocked {
+                    if ui.small_button(tr("Unlock...")).clicked() {
+                        open = Some(DialogKind::Unlock);
+                    }
+                } else {
+                    ui.menu_button(icon::DOTS_THREE, |ui| {
+                        if ui.button(tr("Change Master Password...")).clicked() {
+                            open = Some(DialogKind::Change);
+                            ui.close();
+                        }
+                        if ui.button(tr("Lock")).clicked() {
+                            lock = true;
+                            ui.close();
+                        }
+                    });
+                }
+            },
+        );
+        if let Some(kind) = open {
+            self.open_dialog(kind);
+        }
+        if lock {
+            self.lock();
+        }
     }
 
     /// Desenha o diálogo aberto. Devolve uma mensagem para a status bar.

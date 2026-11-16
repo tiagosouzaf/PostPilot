@@ -121,8 +121,8 @@ pub struct SavedConnection {
     pub folder: String,
     /// Ambiente (nome e cor), para a etiqueta na frente do nome.
     pub environment: Option<(String, crate::registered::Rgb)>,
-    /// Veio do workspace aberto (senão, dos Registered Servers).
-    pub workspace: bool,
+    /// Nome do workspace de onde veio (`None`: dos Registered Servers).
+    pub workspace: Option<String>,
     pub settings: ConnectionSettings,
 }
 
@@ -500,20 +500,36 @@ impl ConnectDialog {
             .corner_radius(4.0)
             .inner_margin(4.0)
             .show(ui, |ui| {
+                // Com vários workspaces a lista é maior: mais linhas à vista.
+                let mut sections: Vec<&Option<String>> =
+                    saved.iter().map(|c| &c.workspace).collect();
+                sections.dedup();
+                let height = if sections.len() > 2 { 176.0 } else { 132.0 };
                 egui::ScrollArea::vertical()
                     .id_salt("connect_saved")
-                    .max_height(132.0)
+                    .max_height(crate::fit::dialog_height(ui, height, 420.0))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                        // Com mais de um workspace aberto, cada seção leva o
+                        // nome do workspace.
+                        let mut names: Vec<&str> = saved
+                            .iter()
+                            .filter_map(|c| c.workspace.as_deref())
+                            .collect();
+                        names.dedup();
+                        let several = names.len() > 1;
                         let mut section = None;
                         for c in saved {
-                            if section != Some(c.workspace) {
-                                section = Some(c.workspace);
-                                ui.weak(if c.workspace {
-                                    tr("Workspace")
-                                } else {
-                                    tr("Registered Servers")
-                                });
+                            if section != Some(&c.workspace) {
+                                section = Some(&c.workspace);
+                                match &c.workspace {
+                                    Some(name) if several => ui.weak(format!(
+                                        "{} {name}", // i18n-ignore
+                                        egui_phosphor::regular::BRIEFCASE
+                                    )),
+                                    Some(_) => ui.weak(tr("Workspace")),
+                                    None => ui.weak(tr("Registered Servers")),
+                                };
                             }
                             ui.horizontal(|ui| {
                                 if let Some((name, color)) = &c.environment {

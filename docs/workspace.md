@@ -44,15 +44,48 @@ ficam só neste computador, na pasta de configuração do PostPilot.
 
 ## Começar
 
-- **File > New > Workspace...** escolhe uma pasta e cria o workspace nela.
-- **File > Open > Workspace...** abre um workspace que já existe.
-- **Clone Workspace...** fica no Workspace Explorer (View > Workspace
-  Explorer, Ctrl+Alt+L). Você cola a URL do repositório
-  (`git@github.com:voce/sql.git` ou https) e escolhe a pasta. O git usa suas
-  chaves SSH e o credential helper de sempre. Se o repositório estiver vazio,
-  ele vira um workspace.
+O Workspace Explorer (View > Workspace Explorer, Ctrl+Alt+L) e o botão com a
+maleta na barra de ferramentas têm **Adicionar**, com duas formas:
 
-O PostPilot reabre o último workspace ao iniciar.
+- **Clonar um repositório**: você cola o endereço
+  (`git@github.com:voce/sql.git` ou https) e confere a pasta onde ele fica
+  (`~/PostPilot` por padrão). O git usa suas chaves SSH e o credential helper
+  de sempre. Se o repositório estiver vazio, ele vira um workspace.
+- **Usar uma pasta deste computador**: abre o workspace que está na pasta ou,
+  se ela ainda não é um, cria um nela.
+
+**File > New > Workspace...**, **File > Open > Workspace...** e **File > Open >
+Clone Workspace...** continuam no menu.
+
+## Vários workspaces
+
+Dá para ter vários workspaces abertos ao mesmo tempo, por exemplo um por
+cliente ou por time. Cada um continua sendo uma pasta com o seu próprio git e a
+sua própria senha mestra; abrir outro não fecha os que já estão abertos.
+
+- O Workspace Explorer mostra um cartão por workspace, com o estado do
+  repositório em uma frase: **Em dia**, **3 alterações · 1 para enviar**,
+  **2 para receber**, **Só neste computador** (sem git ou sem remoto) ou
+  **Conflito para resolver**. Um cadeado avisa que as senhas daquele workspace
+  estão trancadas.
+- Clicar num cartão torna aquele workspace o **ativo**: os servidores e as
+  consultas dele aparecem embaixo, e é nele que entra o que você registra ou
+  importa. O botão da maleta na barra de ferramentas e a lista **Workspace:**
+  do Object Explorer fazem a mesma troca.
+- O cartão do ativo tem **Salvar alterações...** (Commit) e **Sincronizar**
+  (Pull e depois Push). Pull, Push, Remote... e **Fechar Workspace** ficam no
+  menu `...` de cada cartão. Fechar só tira o workspace da lista; os arquivos
+  continuam na pasta.
+- As conexões de todos os workspaces abertos aparecem no **Connect to
+  Server**, separadas pelo nome do workspace, e como destinos de "executar em
+  vários servidores". Os trechos de todos aparecem no Template Explorer
+  ("Trechos de <workspace>").
+- Uma consulta salva num workspace é ligada ao servidor daquele workspace,
+  mesmo que ele não seja o ativo. A senha lembrada de um servidor vai para o
+  cofre do workspace em que ele está.
+
+Ao iniciar, o PostPilot reabre todos os workspaces que estavam abertos e o
+mesmo ativo (a lista fica em `<config>/PostPilot/workspace.txt`).
 
 ## Servidores
 

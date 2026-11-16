@@ -797,16 +797,26 @@ impl ShellApp {
     pub fn multi_targets(&self) -> Vec<Target> {
         let mut out: Vec<Target> = Vec::new();
         let mut seen: HashSet<TargetId> = HashSet::new();
-        let workspace = self.workspace_panel.servers().map(|p| p.servers());
-        let sources = workspace
+        // Com mais de um workspace aberto, o nome do workspace entra na
+        // frente da pasta, para dizer de onde é cada servidor.
+        let several = self.workspace_panel.count() > 1;
+        let sources = self
+            .workspace_panel
+            .all_servers()
             .into_iter()
-            .map(|r| (r, true))
-            .chain([(self.registered.servers(), false)]);
-        for (servers, workspace) in sources {
+            .map(|(name, p)| (p.servers(), Some(name)))
+            .chain([(self.registered.servers(), None)]);
+        for (servers, from) in sources {
+            let workspace = from.is_some();
             for (path, folder, s) in servers.servers_with_folders() {
                 if !seen.insert(TargetId::of(&s.settings)) {
                     continue;
                 }
+                let folder = match from {
+                    Some(name) if several && folder.is_empty() => name.to_string(),
+                    Some(name) if several => format!("{name} / {folder}"),
+                    _ => folder,
+                };
                 out.push(Target {
                     name: s.name.clone(),
                     short: s.name.clone(),

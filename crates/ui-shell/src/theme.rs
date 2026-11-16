@@ -258,6 +258,18 @@ fn base_of(theme: Theme) -> Base {
     }
 }
 
+/// A cor de destaque em uso e a cor do texto sobre ela, para um botão
+/// principal preenchido.
+pub fn accent_pair(ui: &egui::Ui) -> (Color32, Color32) {
+    let theme = if ui.visuals().dark_mode {
+        Theme::Dark
+    } else {
+        Theme::Light
+    };
+    let p = palette(theme);
+    (p.accent, p.on_accent)
+}
+
 /// Cores do tema (as do sistema, quando em uso).
 pub fn palette(theme: Theme) -> Palette {
     match system_colors() {

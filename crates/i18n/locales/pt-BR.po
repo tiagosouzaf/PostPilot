@@ -6199,3 +6199,120 @@ msgstr "Sugerir o que fazer com a consulta no editor:"
 
 msgid "The AI reads the query under the cursor and the names in the catalog (tables, columns, keys and indexes) and proposes joins, filters, indexes, fixes and more; the list opens in Edit > IntelliSense > AI Suggestions. The data in the tables is not sent and nothing runs on the server."
 msgstr "A IA lê a consulta que está no cursor e os nomes do catálogo (tabelas, colunas, chaves e índices) e propõe junções, filtros, índices, consertos e mais; a lista abre em Editar > IntelliSense > Sugestões da IA. Os dados das tabelas não são enviados e nada roda no servidor."
+
+msgid "{n} to send"
+msgstr "{n} para enviar"
+
+msgid "{n} to receive"
+msgstr "{n} para receber"
+
+msgid "Up to date"
+msgstr "Em dia"
+
+msgid "Only on this computer"
+msgstr "Só neste computador"
+
+msgid "Git problem"
+msgstr "Problema no Git"
+
+msgid "Conflict to resolve"
+msgstr "Conflito para resolver"
+
+msgid "Synchronize"
+msgstr "Sincronizar"
+
+msgid "Synchronized."
+msgstr "Sincronizado."
+
+msgid "Save changes..."
+msgstr "Salvar alterações..."
+
+msgid "Connect to a repository..."
+msgstr "Ligar a um repositório..."
+
+msgid "A workspace keeps your connections, queries and snippets together in a folder, usually a Git repository, so that you have them on every computer and can share them with your team. You can open several at the same time, for example one per client."
+msgstr "Um workspace guarda as suas conexões, consultas e trechos juntos numa pasta, normalmente um repositório Git, para você ter tudo em qualquer computador e dividir com o seu time. Dá para abrir vários ao mesmo tempo, por exemplo um por cliente."
+
+msgid "Add Workspace"
+msgstr "Adicionar Workspace"
+
+msgid "Add another workspace: clone a repository or use a folder on this computer. The ones already open stay open."
+msgstr "Adicionar outro workspace: clonar um repositório ou usar uma pasta deste computador. Os que já estão abertos continuam abertos."
+
+msgid "Choose the folder where the clone is saved."
+msgstr "Escolha a pasta onde o clone será salvo."
+
+msgid "Choose..."
+msgstr "Escolher..."
+
+msgid "Clone a repository"
+msgstr "Clonar um repositório"
+
+msgid "Closed workspace {name}. Its files are still in the folder."
+msgstr "Workspace {name} fechado. Os arquivos dele continuam na pasta."
+
+msgid "Describe what you changed and save it in the history (Commit). You can send it to the repository in the same step."
+msgstr "Descreva o que você mudou e salve no histórico (Commit). Dá para enviar ao repositório no mesmo passo."
+
+msgid "Download a workspace from GitHub, GitLab or another Git server, using its address."
+msgstr "Baixe um workspace do GitHub, do GitLab ou de outro servidor Git, pelo endereço dele."
+
+msgid "Open the workspace that is in a folder, or start a new one in it."
+msgstr "Abra o workspace que está numa pasta, ou comece um novo nela."
+
+msgid "Receive what is new in the repository and send what you saved (Pull, then Push)."
+msgstr "Recebe o que há de novo no repositório e envia o que você salvou (Pull e depois Push)."
+
+msgid "Repository address:"
+msgstr "Endereço do repositório:"
+
+msgid "Save in:"
+msgstr "Salvar em:"
+
+msgid "Set the address of the repository (GitHub, GitLab...) where this workspace is sent."
+msgstr "Informe o endereço do repositório (GitHub, GitLab...) para onde este workspace é enviado."
+
+msgid "Snippets of {name}"
+msgstr "Trechos de {name}"
+
+msgid "Start keeping the history of this workspace with Git, to send it to a repository later."
+msgstr "Começa a guardar o histórico deste workspace com o Git, para enviar a um repositório depois."
+
+msgid "Switch to {name} ({folder})"
+msgstr "Trocar para {name} ({folder})"
+
+msgid "Takes the workspace out of this list. Its files stay in the folder."
+msgstr "Tira o workspace desta lista. Os arquivos dele continuam na pasta."
+
+msgid "The clone goes into a new folder there, named after the repository. Git uses your SSH keys and credential helper."
+msgstr "O clone vai para uma pasta nova ali dentro, com o nome do repositório. O Git usa as suas chaves SSH e o seu gerenciador de credenciais."
+
+msgid "The saved connections below are the ones of this workspace. Choose another open workspace to see its connections."
+msgstr "As conexões guardadas abaixo são as deste workspace. Escolha outro workspace aberto para ver as conexões dele."
+
+msgid "The workspaces that are already open stay open. Each one keeps its own connections, queries, snippets and passwords."
+msgstr "Os workspaces que já estão abertos continuam abertos. Cada um guarda as suas próprias conexões, consultas, trechos e senhas."
+
+msgid "Use a folder on this computer"
+msgstr "Usar uma pasta deste computador"
+
+msgid "Workspace Folder"
+msgstr "Pasta do Workspace"
+
+msgid "Workspace {name} is now the active one."
+msgstr "O workspace {name} agora é o ativo."
+
+msgid "Workspace:"
+msgstr "Workspace:"
+
+msgid "Workspaces"
+msgstr "Workspaces"
+
+msgid "Workspaces ({n})"
+msgstr "Workspaces ({n})"
+
+msgid "Add Workspace..."
+msgstr "Adicionar Workspace..."
+
+msgid "Workspaces: your connections, queries and snippets in Git repositories. Switch between the open ones or add another."
+msgstr "Workspaces: as suas conexões, consultas e trechos em repositórios Git. Troque entre os abertos ou adicione outro."

@@ -109,8 +109,8 @@ enum Dialog {
 pub struct TemplatesPanel {
     /// Pasta dos trechos deste computador.
     local: Option<PathBuf>,
-    /// Nome e pasta de trechos do workspace aberto.
-    workspace: Option<(String, PathBuf)>,
+    /// Nome e pasta de trechos de cada workspace aberto, o ativo primeiro.
+    workspaces: Vec<(String, PathBuf)>,
     roots: Vec<Root>,
     /// Texto de cada trecho do usuário, para a pesquisa e a prévia.
     texts: HashMap<PathBuf, String>,
@@ -134,7 +134,7 @@ impl Default for TemplatesPanel {
     fn default() -> Self {
         TemplatesPanel {
             local: None,
-            workspace: None,
+            workspaces: Vec::new(),
             roots: Vec::new(),
             texts: HashMap::new(),
             read_at: None,
@@ -214,9 +214,20 @@ impl TemplatesPanel {
     /// Passa a mostrar (ou deixa de mostrar) os trechos de um workspace:
     /// o nome dele e a raiz.
     pub fn set_workspace(&mut self, workspace: Option<(&str, &Path)>) {
-        let new = workspace.map(|(name, root)| (name.to_string(), root.join(SNIPPETS)));
-        if new != self.workspace {
-            self.workspace = new;
+        let list: Vec<(&str, &Path)> = workspace.into_iter().collect();
+        self.set_workspaces(&list);
+    }
+
+    /// Os workspaces abertos (nome e raiz), o ativo primeiro: os trechos de
+    /// todos aparecem, cada um com o nome do workspace, e um trecho novo
+    /// vai por padrão para o ativo.
+    pub fn set_workspaces(&mut self, workspaces: &[(&str, &Path)]) {
+        let new: Vec<(String, PathBuf)> = workspaces
+            .iter()
+            .map(|(name, root)| (name.to_string(), root.join(SNIPPETS)))
+            .collect();
+        if new != self.workspaces {
+            self.workspaces = new;
             self.reload();
         }
     }
@@ -226,14 +237,20 @@ impl TemplatesPanel {
         self.read_at = Some(Instant::now());
         self.roots.clear();
         self.texts.clear();
-        if let Some((_, dir)) = &self.workspace {
+        let several = self.workspaces.len() > 1;
+        for (name, dir) in &self.workspaces {
+            let label = if several {
+                trf!("Snippets of {name}", name = name)
+            } else {
+                tr("Workspace Snippets").to_string()
+            };
             self.roots.push(Root {
-                label: tr("Workspace Snippets").to_string(),
+                label,
                 tree: Folder::read(dir, String::new()),
             });
         }
         if let Some(dir) = &self.local {
-            let label = if self.workspace.is_some() {
+            let label = if !self.workspaces.is_empty() {
                 tr("My Snippets (this computer)")
             } else {
                 tr("My Snippets")
@@ -559,7 +576,7 @@ impl TemplatesPanel {
                     ui.weak(tr(
                         "Open a workspace to keep your own snippets and take them to your other computers through Git.",
                     ));
-                } else if self.workspace.is_none() && !searching {
+                } else if self.workspaces.is_empty() && !searching {
                     ui.add_space(2.0);
                     ui.label(
                         egui::RichText::new(tr(
@@ -1093,12 +1110,14 @@ impl ShellApp {
 
     /// Workspace e servidor atuais, para o painel.
     fn sync_templates(&mut self) {
-        let workspace = self
-            .workspace_panel
-            .workspace()
-            .map(|w| (w.name().to_string(), w.root().to_path_buf()));
-        self.templates
-            .set_workspace(workspace.as_ref().map(|(n, r)| (n.as_str(), r.as_path())));
+        // O ativo primeiro: é o destino padrão de um trecho novo.
+        let mut list = self.workspace_panel.list();
+        list.sort_by_key(|w| !w.active);
+        let list: Vec<(&str, &Path)> = list
+            .iter()
+            .map(|w| (w.name.as_str(), w.root.as_path()))
+            .collect();
+        self.templates.set_workspaces(&list);
         self.templates.engine = self.connection.as_ref().map(|c| c.settings.engine);
     }
 

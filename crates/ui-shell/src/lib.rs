@@ -322,6 +322,10 @@ struct Picked {
     opened: bool,
     /// Escolheu um banco.
     database: Option<String>,
+    /// Escolheu um workspace no menu da toolbar.
+    workspace: Option<usize>,
+    /// "Add Workspace..." no menu da toolbar.
+    add_workspace: bool,
 }
 
 /// Troca do banco de uma janela de consulta, esperando resposta.
@@ -2043,7 +2047,7 @@ impl ShellApp {
             CommandId::OpenWorkspace => self.ask_open_workspace(),
             CommandId::CloseWorkspace => self.close_workspace(),
             CommandId::CloneWorkspace => {
-                self.workspace_panel.open_clone();
+                self.workspace_panel.open_add();
                 self.workspace.open(Panel::WorkspaceExplorer);
             }
             CommandId::RefreshLocalCache => {
@@ -3443,6 +3447,13 @@ impl ShellApp {
         if let (Some(database), Some(id)) = (picked.database, self.active_doc) {
             self.request_database(&ctx, id, database);
         }
+        if let Some(index) = picked.workspace {
+            self.activate_workspace(index);
+        }
+        if picked.add_workspace {
+            self.workspace_panel.open_add();
+            self.workspace.open(Panel::WorkspaceExplorer);
+        }
         egui::Panel::bottom("status_bar")
             .frame(
                 egui::Frame::new()
@@ -4575,7 +4586,55 @@ impl ShellApp {
                     }
                 }
             }
+            ui.separator();
+            self.workspace_menu(ui, clicked, picked);
         });
+    }
+
+    /// O menu dos workspaces na toolbar: sempre à vista, diz qual é o
+    /// ativo, troca entre os abertos e adiciona outro.
+    fn workspace_menu(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>, picked: &mut Picked) {
+        use egui_phosphor::regular as icon;
+        let list = self.workspace_panel.list();
+        let caption = match list.iter().find(|w| w.active) {
+            Some(w) => format!("{} {} {}", icon::BRIEFCASE, w.name, icon::CARET_DOWN),
+            None => format!(
+                "{} {} {}",
+                icon::BRIEFCASE,
+                tr("Workspaces"),
+                icon::CARET_DOWN
+            ),
+        };
+        let caption = egui::Button::new(caption).truncate();
+        let menu = egui::containers::menu::MenuButton::from_button(caption).ui(ui, |ui| {
+            for (i, w) in list.iter().enumerate() {
+                if ui
+                    .radio(w.active, &w.name)
+                    .on_hover_text(w.root.display().to_string())
+                    .clicked()
+                {
+                    picked.workspace = Some(i);
+                    ui.close();
+                }
+            }
+            if !list.is_empty() {
+                ui.separator();
+            }
+            if ui
+                .button(format!("{} {}", icon::PLUS, tr("Add Workspace...")))
+                .clicked()
+            {
+                picked.add_workspace = true;
+                ui.close();
+            }
+            if ui.button(CommandId::WorkspaceExplorer.label()).clicked() {
+                clicked.push(CommandId::WorkspaceExplorer);
+                ui.close();
+            }
+        });
+        menu.0.on_hover_text(tr(
+            "Workspaces: your connections, queries and snippets in Git repositories. Switch between the open ones or add another.",
+        ));
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -4602,11 +4661,8 @@ impl ShellApp {
             },
             |ui| {
                 let full = ui.available_width();
-                // i18n-ignore
-                fit::text(
-                    ui,
-                    RichText::new(format!("{APP_NAME} {VERSION}")).color(color),
-                );
+                let version = format!("{APP_NAME} {VERSION}"); // i18n-ignore
+                fit::text(ui, RichText::new(version).color(color));
                 fit::separator(ui);
                 self.updater.status_badge(ui, color);
                 let registered = connection != host;

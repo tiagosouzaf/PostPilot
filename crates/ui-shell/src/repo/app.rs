@@ -34,23 +34,42 @@ fn ssh_secret_keys(group: &registered::ServerGroup) -> Vec<String> {
 }
 
 impl ShellApp {
-    /// Lembra o último workspace aberto neste arquivo e reabre o que
-    /// estiver lá.
+    /// Lembra os workspaces abertos neste arquivo e reabre os que
+    /// estiverem lá: uma pasta por linha, com `* ` na frente da ativa. (Até
+    /// a 0.2.41 o arquivo tinha só a pasta do único workspace aberto.)
     pub fn with_workspace_memory(mut self, file: impl Into<PathBuf>) -> Self {
         let file = file.into();
-        let last = std::fs::read_to_string(&file)
-            .ok()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
         self.workspace_memory = Some(file);
-        if let Some(root) = last {
-            let root = PathBuf::from(root);
-            if let Ok(ws) = Workspace::open(&root) {
-                self.workspace_panel.open(ws);
-                self.after_workspace_opened();
+        let mut active = None;
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let (root, is_active) = match line.strip_prefix("* ") {
+                Some(root) => (root.trim(), true),
+                None => (line, false),
+            };
+            // Uma pasta que sumiu (um disco fora, por exemplo) só fica de
+            // fora desta vez.
+            let Ok(ws) = Workspace::open(Path::new(root)) else {
+                continue;
+            };
+            let root = ws.root().to_path_buf();
+            self.workspace_panel.open(ws);
+            self.after_workspace_opened();
+            if is_active {
+                active = Some(root);
             }
         }
+        if let Some(i) = active.and_then(|r| self.workspace_panel.index_of_root(&r)) {
+            self.workspace_panel.activate(i);
+        }
+        self.workspace_panel.take_changed();
         self
+    }
+
+    /// O cofre do "Remember password": os dos workspaces abertos e o do
+    /// sistema.
+    pub fn secret_store(&self) -> Option<std::sync::Arc<dyn crate::secrets::SecretStore>> {
+        self.secrets.clone()
     }
 
     /// Workspace Explorer.
@@ -63,12 +82,13 @@ impl ShellApp {
         &mut self.workspace_panel
     }
 
-    /// O workspace aberto.
+    /// O workspace ativo (o que o painel mostra por inteiro).
     pub fn current_workspace(&self) -> Option<&Workspace> {
         self.workspace_panel.workspace()
     }
 
-    /// Abre o workspace da pasta e mostra o Workspace Explorer.
+    /// Abre o workspace da pasta, ao lado dos que já estão abertos, e
+    /// mostra o Workspace Explorer.
     pub fn open_workspace(&mut self, root: &Path) -> bool {
         match Workspace::open(root) {
             Ok(ws) => {
@@ -121,7 +141,7 @@ impl ShellApp {
     fn after_workspace_opened(&mut self) {
         if self.secrets.is_none() {
             self.secrets = Some(std::sync::Arc::new(
-                super::passwords::WorkspaceSecrets::new(None, self.workspace_panel.vault_slot()),
+                super::passwords::WorkspaceSecrets::new(None, self.workspace_panel.vault_slots()),
             ));
         }
         let store = self.secrets.clone();
@@ -130,7 +150,8 @@ impl ShellApp {
         }
     }
 
-    /// File > Close Workspace. As janelas de consulta continuam abertas.
+    /// File > Close Workspace: fecha o workspace ativo. Os outros e as
+    /// janelas de consulta continuam abertos.
     pub fn close_workspace(&mut self) {
         if self.workspace_panel.workspace().is_none() {
             self.status = tr("No workspace is open.").to_string();
@@ -141,9 +162,37 @@ impl ShellApp {
         self.status = tr("Workspace closed.").to_string();
     }
 
+    /// Passa a trabalhar no workspace de índice `index` (o cartão dele no
+    /// painel, o seletor do Object Explorer).
+    pub fn activate_workspace(&mut self, index: usize) {
+        self.workspace_panel.activate(index);
+        if let Some(ws) = self.workspace_panel.workspace() {
+            self.status = trf!("Workspace {name} is now the active one.", name = ws.name());
+        }
+        self.remember_workspace();
+    }
+
+    /// "Use a folder on this computer": abre o workspace da pasta ou, se
+    /// ela ainda não é um, cria um nela.
+    pub fn add_workspace_folder(&mut self, root: &Path) -> bool {
+        if root.join(super::MANIFEST).exists() {
+            self.open_workspace(root)
+        } else {
+            self.create_workspace(root)
+        }
+    }
+
     /// Clona `url` numa pasta nova dentro de `parent` (com o nome do
     /// repositório) numa thread separada; ao terminar, abre o workspace.
     pub fn clone_workspace(&mut self, url: &str, parent: &Path) {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            self.status = trf!(
+                "Could not create {folder}: {e}",
+                folder = parent.display(),
+                e = e
+            );
+            return;
+        }
         let dest = parent.join(super::git::repo_name(url));
         let busy = std::fs::read_dir(&dest).is_ok_and(|mut d| d.next().is_some());
         if busy {
@@ -183,6 +232,18 @@ impl ShellApp {
         });
     }
 
+    /// "Use a folder on this computer": pergunta a pasta.
+    pub(crate) fn ask_workspace_folder(&mut self) {
+        let question = Question::Folder {
+            title: tr("Workspace Folder").into(),
+        };
+        self.ask_path(question, |app, _, root| {
+            if let Some(root) = root {
+                app.add_workspace_folder(&root);
+            }
+        });
+    }
+
     pub(crate) fn ask_open_workspace(&mut self) {
         let question = Question::Folder {
             title: tr("Open Workspace").into(),
@@ -198,11 +259,15 @@ impl ShellApp {
         let Some(file) = &self.workspace_memory else {
             return;
         };
-        let text = self
+        let text: String = self
             .workspace_panel
-            .workspace()
-            .map(|w| w.root().display().to_string())
-            .unwrap_or_default();
+            .list()
+            .iter()
+            .map(|w| {
+                let mark = if w.active { "* " } else { "" };
+                format!("{mark}{}\n", w.root.display())
+            })
+            .collect();
         if let Some(dir) = file.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -230,16 +295,15 @@ impl ShellApp {
     /// janela, se ele estiver no workspace, e o banco dela. `None` fora do
     /// workspace ou quando o servidor não é do workspace.
     pub fn query_link(&self, id: u32, path: &Path) -> Option<QueryLink> {
-        let ws = self.workspace_panel.workspace()?;
-        if !ws.contains(path.parent().unwrap_or(path)) {
-            return None;
-        }
+        let index = self
+            .workspace_panel
+            .index_of_path(path.parent().unwrap_or(path))?;
         let key = self
             .doc_servers
             .get(&id)
             .cloned()
             .or_else(|| self.connection.as_ref().map(|c| server_key(&c.settings)))?;
-        let servers = self.workspace_panel.servers()?.servers().root();
+        let servers = self.workspace_panel.servers_at(index)?.servers().root();
         let server = find_server_by_key(servers, &key)?;
         let database = self
             .documents
@@ -267,13 +331,13 @@ impl ShellApp {
     /// Depois de salvar: atualiza o Workspace Explorer e explica quando a
     /// consulta ficou sem ligação.
     pub(crate) fn after_save(&mut self, path: &Path, link: Option<QueryLink>) {
-        let Some(ws) = self.workspace_panel.workspace() else {
+        let Some(index) = self
+            .workspace_panel
+            .index_of_path(path.parent().unwrap_or(path))
+        else {
             return;
         };
-        if !ws.contains(path.parent().unwrap_or(path)) {
-            return;
-        }
-        self.workspace_panel.refresh();
+        self.workspace_panel.refresh_at(index);
         self.status = match link {
             Some(l) => match l.database {
                 Some(db) => trf!(
@@ -293,19 +357,20 @@ impl ShellApp {
     /// Ao abrir uma consulta do workspace com ligação: a janela fica no
     /// banco dela e o servidor dela conecta (ou vem para a frente).
     pub(crate) fn connect_linked_query(&mut self, id: u32) {
-        let Some(ws) = self.workspace_panel.workspace() else {
-            return;
-        };
         let Some(doc) = self.documents.get(id) else {
             return;
         };
-        if !doc.path().is_some_and(|p| ws.contains(p)) {
+        // O workspace da consulta: pode não ser o ativo.
+        let Some(index) = doc
+            .path()
+            .and_then(|p| self.workspace_panel.index_of_path(p))
+        else {
             return;
-        }
+        };
         let Some(link) = QueryLink::read(&doc.text) else {
             return;
         };
-        let Some(servers) = self.workspace_panel.servers() else {
+        let Some(servers) = self.workspace_panel.servers_at(index) else {
             return;
         };
         let Some(settings) = link_settings(servers.servers().root(), &link) else {
@@ -328,8 +393,9 @@ impl ShellApp {
     /// servidor ativo, se ele for do workspace) e abre.
     pub fn new_workspace_query(&mut self, folder: &Path) {
         let path = Workspace::new_query_path(folder);
+        let index = self.workspace_panel.index_of_path(folder);
         let link = self.connection.as_ref().and_then(|c| {
-            let servers = self.workspace_panel.servers()?.servers().root();
+            let servers = self.workspace_panel.servers_at(index?)?.servers().root();
             let server = find_server_by_key(servers, &server_key(&c.settings))?;
             Some(QueryLink {
                 server: server.name.clone(),
@@ -584,7 +650,8 @@ impl ShellApp {
 
     /// Uma vez por frame: trata os pedidos e os diálogos do Workspace
     /// Explorer.
-    pub(crate) fn workspace_step(&mut self, ctx: &eframe::egui::Context, actions: Vec<Action>) {
+    pub(crate) fn workspace_step(&mut self, ctx: &eframe::egui::Context, mut actions: Vec<Action>) {
+        actions.extend(self.workspace_panel.take_add_actions());
         if let Some(panel) = self.workspace_panel.servers_mut() {
             panel.current = self.connection.as_ref().map(|c| c.settings.clone());
         }
@@ -610,6 +677,17 @@ impl ShellApp {
             match action {
                 Action::New => self.ask_new_workspace(),
                 Action::Open => self.ask_open_workspace(),
+                Action::AddFolder => self.ask_workspace_folder(),
+                Action::BrowseCloneFolder => {
+                    let question = Question::Folder {
+                        title: tr("Clone Workspace into").into(),
+                    };
+                    self.ask_path(question, |app, _, parent| {
+                        if let Some(parent) = parent {
+                            app.workspace_panel.set_clone_folder(&parent);
+                        }
+                    });
+                }
                 Action::OpenQuery(path) => {
                     self.open_file(&path);
                 }
@@ -690,15 +768,11 @@ impl ShellApp {
         {
             self.status = status;
         }
-        if let Some(url) = self.workspace_panel.take_clone_request() {
-            let question = Question::Folder {
-                title: tr("Clone Workspace into").into(),
-            };
-            self.ask_path(question, move |app, _, parent| {
-                if let Some(parent) = parent {
-                    app.clone_workspace(&url, &parent);
-                }
-            });
+        if let Some((url, parent)) = self.workspace_panel.take_clone_request() {
+            self.clone_workspace(&url, &parent);
+        }
+        if self.workspace_panel.take_changed() {
+            self.remember_workspace();
         }
         if let Some(result) = self.workspace_panel.take_cloned() {
             self.finish_clone(result);

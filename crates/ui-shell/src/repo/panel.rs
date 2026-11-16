@@ -1,6 +1,10 @@
-//! Workspace Explorer: o painel do workspace, como o Solution Explorer do
-//! SSMS. Em cima, os servidores do workspace (a mesma árvore do Registered
-//! Servers, gravada em `servers.json`); embaixo, as consultas de `queries/`.
+//! Workspace Explorer: o painel dos workspaces, como o Solution Explorer do
+//! SSMS. Vários workspaces ficam abertos ao mesmo tempo (um por cliente ou
+//! por time, por exemplo), cada um com o seu git e o seu cofre de senhas.
+//! Em cima, um cartão por workspace, com o estado do repositório em uma
+//! frase; o cartão do workspace ativo tem os botões dele. Embaixo, os
+//! servidores do workspace ativo (a mesma árvore do Registered Servers,
+//! gravada em `servers.json`) e as consultas de `queries/`.
 
 use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::HashSet;
@@ -11,9 +15,9 @@ use eframe::egui;
 use egui_phosphor::regular as icon;
 
 use super::git::{Done, Git, GitError, Job};
-use super::passwords::{Passwords, SharedVault, WorkspaceSecrets};
+use super::passwords::{Passwords, SharedVault, SharedVaults, WorkspaceSecrets};
 use super::search::{self, Hits, Search};
-use super::source_control::SourceControl;
+use super::source_control::{SourceControl, SyncKind};
 use super::{Folder, Workspace};
 use crate::registered::{self, RegisteredPanel};
 use crate::secrets::SecretStore;
@@ -45,6 +49,11 @@ pub enum Action {
     ImportRegistered,
     /// Pôr no workspace o servidor conectado agora (com a senha em uso).
     AddCurrent,
+    /// "Use a folder on this computer": escolher a pasta; ela abre se já
+    /// é um workspace, senão vira um.
+    AddFolder,
+    /// "Choose..." do destino do clone: escolher a pasta.
+    BrowseCloneFolder,
 }
 
 /// Senhas a copiar para o cofre do workspace assim que ele for destrancado.
@@ -81,12 +90,84 @@ struct Opened {
     selected: Option<PathBuf>,
     git: SourceControl,
     passwords: Passwords,
+    /// Cofre de senhas deste workspace, dividido com o "Remember
+    /// password".
+    vault: SharedVault,
+    /// Senhas esperando o cofre ser criado ou destrancado.
+    pending_copy: Option<PendingCopy>,
 }
 
-/// "Clone Workspace" esperando a URL.
-struct CloneDialog {
+impl Opened {
+    fn new(workspace: Workspace) -> Opened {
+        let vault = SharedVault::default();
+        Opened {
+            servers: RegisteredPanel::new(workspace.servers()),
+            queries: workspace.queries(),
+            search: Search::default(),
+            collapsed: HashSet::new(),
+            selected: None,
+            git: SourceControl::new(workspace.root()),
+            passwords: Passwords::new(workspace.root(), vault.clone()),
+            vault,
+            pending_copy: None,
+            workspace,
+        }
+    }
+
+    /// Lê de novo as consultas e os servidores do disco.
+    fn reload_files(&mut self) {
+        self.queries = self.workspace.queries();
+        self.search.invalidate();
+        if !self.servers.has_dialog() {
+            let current = self.servers.current.take();
+            let collapsed = self.servers.collapsed_names();
+            self.servers = RegisteredPanel::new(self.workspace.servers());
+            self.servers.collapse_names(&collapsed);
+            self.servers.current = current;
+        }
+    }
+
+    /// Chaves dos servidores do workspace: o "Remember password" deles vai
+    /// para o cofre do workspace.
+    fn sync_vault_keys(&self) {
+        let keys = self
+            .servers
+            .servers()
+            .all_servers()
+            .into_iter()
+            .flat_map(|s| {
+                // Com túnel SSH, o segredo dele também é do workspace.
+                let ssh = s.settings.ssh.as_ref().map(|ssh| ssh.secret_key());
+                std::iter::once(crate::secrets::password_key(&s.settings)).chain(ssh)
+            })
+            .collect();
+        self.vault.lock().expect("vault lock").keys = keys;
+    }
+}
+
+/// "Add Workspace": clonar um repositório (URL e pasta de destino) ou usar
+/// uma pasta deste computador.
+struct AddDialog {
     url: String,
+    /// Pasta onde o clone fica (dentro dela, uma pasta com o nome do
+    /// repositório).
+    dest: String,
     error: Option<String>,
+}
+
+/// Onde os clones ficam quando o usuário não escolhe: `~/PostPilot`.
+fn default_clone_folder() -> String {
+    std::env::home_dir()
+        .map(|h| h.join("PostPilot").display().to_string())
+        .unwrap_or_default()
+}
+
+/// Um workspace aberto, para quem lista (menus, o Object Explorer).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceInfo {
+    pub name: String,
+    pub root: PathBuf,
+    pub active: bool,
 }
 
 /// "New Folder" esperando o nome.
@@ -99,20 +180,25 @@ struct NewFolder {
 /// O painel Workspace Explorer.
 #[derive(Default)]
 pub struct WorkspacePanel {
-    opened: Option<Opened>,
+    /// Os workspaces abertos, na ordem em que aparecem.
+    workspaces: Vec<Opened>,
+    /// Índice do workspace ativo: o que o painel mostra por inteiro e o
+    /// destino do que é registrado ou importado.
+    active: usize,
+    /// Os cofres dos workspaces abertos, para o "Remember password".
+    vaults: SharedVaults,
     new_folder: Option<NewFolder>,
     message: Option<String>,
-    clone: Option<CloneDialog>,
+    add: Option<AddDialog>,
     clone_job: Option<Job>,
-    /// URL confirmada no "Clone Workspace", esperando a pasta.
-    pending_clone: Option<String>,
-    /// Cofre de senhas do workspace aberto, dividido com o "Remember
-    /// password".
-    vault: SharedVault,
+    /// "Clone" confirmado: a URL e a pasta onde o clone fica.
+    pending_clone: Option<(String, PathBuf)>,
+    /// O workspace ativo mudou (a casca grava a lista).
+    changed: bool,
+    /// Pedidos de "Add Workspace", que é desenhado fora do painel.
+    add_actions: Vec<Action>,
     /// Cópia das senhas do cofre do sistema para o do workspace, rodando.
     copying: Option<std::thread::JoinHandle<Result<usize, String>>>,
-    /// Senhas esperando o cofre ser criado ou destrancado.
-    pending_copy: Option<PendingCopy>,
     /// "Trazer as conexões deste computador?", com quantas são, logo depois
     /// de criar o workspace.
     offer_import: Option<usize>,
@@ -126,35 +212,190 @@ pub struct WorkspacePanel {
 }
 
 impl WorkspacePanel {
-    /// Passa a mostrar este workspace.
-    pub fn open(&mut self, workspace: Workspace) {
-        let servers = RegisteredPanel::new(workspace.servers());
-        let queries = workspace.queries();
-        let git = SourceControl::new(workspace.root());
-        let passwords = Passwords::new(workspace.root(), self.vault.clone());
-        self.opened = Some(Opened {
-            workspace,
-            servers,
-            queries,
-            search: Search::default(),
-            collapsed: HashSet::new(),
-            selected: None,
-            git,
-            passwords,
-        });
-        self.new_folder = None;
+    fn opened(&self) -> Option<&Opened> {
+        self.workspaces.get(self.active)
     }
 
-    /// Fecha o workspace.
-    pub fn close(&mut self) {
-        self.opened = None;
-        let mut slot = self.vault.lock().expect("vault lock");
-        slot.vault = None;
-        slot.keys.clear();
-        drop(slot);
+    fn opened_mut(&mut self) -> Option<&mut Opened> {
+        self.workspaces.get_mut(self.active)
+    }
+
+    fn sync_vaults(&self) {
+        *self.vaults.lock().expect("vaults lock") =
+            self.workspaces.iter().map(|o| o.vault.clone()).collect();
+    }
+
+    /// Abre este workspace ao lado dos que já estão abertos e o torna o
+    /// ativo. Um que já está aberto só vem para a frente.
+    pub fn open(&mut self, workspace: Workspace) {
         self.new_folder = None;
-        self.pending_copy = None;
-        self.offer_import = None;
+        if let Some(i) = self.index_of_root(workspace.root()) {
+            self.activate(i);
+            return;
+        }
+        self.workspaces.push(Opened::new(workspace));
+        self.active = self.workspaces.len() - 1;
+        self.sync_vaults();
+        self.changed = true;
+    }
+
+    /// Fecha o workspace ativo. Os arquivos continuam na pasta.
+    pub fn close(&mut self) {
+        self.close_at(self.active);
+    }
+
+    /// Fecha o workspace de índice `index`.
+    pub fn close_at(&mut self, index: usize) {
+        if index >= self.workspaces.len() {
+            return;
+        }
+        let was_active = index == self.active;
+        self.workspaces.remove(index);
+        if index < self.active || self.active >= self.workspaces.len() {
+            self.active = self.active.saturating_sub(1);
+        }
+        self.sync_vaults();
+        self.changed = true;
+        if was_active {
+            self.new_folder = None;
+            self.offer_import = None;
+        }
+    }
+
+    /// Torna ativo o workspace de índice `index`.
+    pub fn activate(&mut self, index: usize) {
+        if index < self.workspaces.len() && index != self.active {
+            self.active = index;
+            self.new_folder = None;
+            self.offer_import = None;
+            self.changed = true;
+        }
+    }
+
+    /// Se a lista ou o workspace ativo mudou desde a última pergunta.
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
+    /// Quantos workspaces estão abertos.
+    pub fn count(&self) -> usize {
+        self.workspaces.len()
+    }
+
+    /// Índice do workspace ativo.
+    pub fn active_index(&self) -> usize {
+        self.active
+    }
+
+    /// Os workspaces abertos, na ordem.
+    pub fn list(&self) -> Vec<WorkspaceInfo> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .map(|(i, o)| WorkspaceInfo {
+                name: o.workspace.name().to_string(),
+                root: o.workspace.root().to_path_buf(),
+                active: i == self.active,
+            })
+            .collect()
+    }
+
+    /// Índice do workspace desta pasta.
+    pub fn index_of_root(&self, root: &Path) -> Option<usize> {
+        let same = |a: &Path| {
+            a == root
+                || matches!(
+                    (std::fs::canonicalize(a), std::fs::canonicalize(root)),
+                    (Ok(a), Ok(b)) if a == b
+                )
+        };
+        self.workspaces
+            .iter()
+            .position(|o| same(o.workspace.root()))
+    }
+
+    /// O workspace aberto que tem `path` dentro da pasta dele.
+    pub fn workspace_of(&self, path: &Path) -> Option<&Workspace> {
+        self.index_of_path(path)
+            .map(|i| &self.workspaces[i].workspace)
+    }
+
+    /// Índice do workspace que tem `path` dentro (o ativo primeiro).
+    pub fn index_of_path(&self, path: &Path) -> Option<usize> {
+        if self.opened().is_some_and(|o| o.workspace.contains(path)) {
+            return Some(self.active);
+        }
+        self.workspaces
+            .iter()
+            .position(|o| o.workspace.contains(path))
+    }
+
+    /// Os servidores do workspace de índice `index`.
+    pub fn servers_at(&self, index: usize) -> Option<&RegisteredPanel> {
+        self.workspaces.get(index).map(|o| &o.servers)
+    }
+
+    /// Os servidores de todos os workspaces abertos, o ativo primeiro, com
+    /// o nome do workspace.
+    pub fn all_servers(&self) -> Vec<(&str, &RegisteredPanel)> {
+        let rest = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != self.active)
+            .map(|(_, o)| o);
+        self.opened()
+            .into_iter()
+            .chain(rest)
+            .map(|o| (o.workspace.name(), &o.servers))
+            .collect()
+    }
+
+    /// O git do workspace de índice `index`.
+    pub fn source_control_at(&self, index: usize) -> Option<&SourceControl> {
+        self.workspaces.get(index).map(|o| &o.git)
+    }
+
+    /// O git do workspace de índice `index`, mutável.
+    pub fn source_control_at_mut(&mut self, index: usize) -> Option<&mut SourceControl> {
+        self.workspaces.get_mut(index).map(|o| &mut o.git)
+    }
+
+    /// As senhas do workspace de índice `index`, mutável.
+    pub fn passwords_at_mut(&mut self, index: usize) -> Option<&mut Passwords> {
+        self.workspaces.get_mut(index).map(|o| &mut o.passwords)
+    }
+
+    /// Se algum cofre está conferindo a senha mestra agora.
+    pub fn is_unlocking(&self) -> bool {
+        self.workspaces.iter().any(|o| o.passwords.is_busy())
+    }
+
+    /// As pastas recolhidas de cada workspace aberto (para a sessão): a
+    /// pasta dele, as pastas de consultas e as de servidores.
+    pub fn trees(&self) -> Vec<(PathBuf, Vec<PathBuf>, Vec<Vec<String>>)> {
+        self.workspaces
+            .iter()
+            .map(|o| {
+                let mut folders: Vec<PathBuf> = o.collapsed.iter().cloned().collect();
+                folders.sort();
+                (
+                    o.workspace.root().to_path_buf(),
+                    folders,
+                    o.servers.collapsed_names(),
+                )
+            })
+            .collect()
+    }
+
+    /// Recolhe estas pastas no workspace de pasta `root`, se ele está
+    /// aberto.
+    pub fn collapse_tree(&mut self, root: &Path, folders: &[PathBuf], servers: &[Vec<String>]) {
+        if let Some(i) = self.index_of_root(root) {
+            let o = &mut self.workspaces[i];
+            o.collapsed.extend(folders.iter().cloned());
+            o.servers.collapse_names(servers);
+        }
     }
 
     /// Pergunta se as `count` conexões deste computador devem vir para o
@@ -182,37 +423,34 @@ impl WorkspacePanel {
 
     /// Guarda senhas para copiar quando o cofre for destrancado.
     pub fn copy_when_unlocked(&mut self, pending: PendingCopy) {
-        self.pending_copy
-            .get_or_insert_with(PendingCopy::default)
-            .merge(pending);
+        if let Some(o) = self.opened_mut() {
+            o.pending_copy
+                .get_or_insert_with(PendingCopy::default)
+                .merge(pending);
+        }
     }
 
     /// Se há senhas esperando o cofre.
     pub fn has_pending_copy(&self) -> bool {
-        self.pending_copy.is_some()
+        self.opened().is_some_and(|o| o.pending_copy.is_some())
     }
 
     /// As senhas que esperavam o cofre, se ele já está destrancado e
     /// nenhuma cópia está rodando.
     pub fn take_pending_copy(&mut self) -> Option<PendingCopy> {
-        let ready = self.copying.is_none()
-            && self
-                .opened
-                .as_ref()
-                .is_some_and(|o| o.passwords.is_unlocked());
-        if ready {
-            self.pending_copy.take()
-        } else {
-            None
+        if self.copying.is_some() {
+            return None;
         }
+        let o = self.opened_mut().filter(|o| o.passwords.is_unlocked())?;
+        o.pending_copy.take()
     }
 
     /// As pastas de consultas recolhidas do workspace aberto, em ordem
     /// (para a sessão).
     pub fn collapsed_folders(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = self
-            .opened
-            .iter()
+            .opened()
+            .into_iter()
             .flat_map(|o| o.collapsed.iter().cloned())
             .collect();
         out.sort();
@@ -221,84 +459,116 @@ impl WorkspacePanel {
 
     /// Recolhe estas pastas de consultas.
     pub fn collapse_folders(&mut self, folders: &[PathBuf]) {
-        if let Some(o) = &mut self.opened {
+        if let Some(o) = self.opened_mut() {
             o.collapsed.extend(folders.iter().cloned());
         }
     }
 
     /// O workspace aberto.
     pub fn workspace(&self) -> Option<&Workspace> {
-        self.opened.as_ref().map(|o| &o.workspace)
+        self.opened().map(|o| &o.workspace)
     }
 
     /// A árvore de servidores do workspace.
     pub fn servers(&self) -> Option<&RegisteredPanel> {
-        self.opened.as_ref().map(|o| &o.servers)
+        self.opened().map(|o| &o.servers)
     }
 
     /// A árvore de servidores do workspace, mutável.
     pub fn servers_mut(&mut self) -> Option<&mut RegisteredPanel> {
-        self.opened.as_mut().map(|o| &mut o.servers)
+        self.opened_mut().map(|o| &mut o.servers)
     }
 
     /// Se a pesquisa nas consultas ainda está lendo os arquivos.
     pub fn is_searching(&self) -> bool {
-        self.opened
-            .as_ref()
-            .is_some_and(|o| o.search.is_searching())
+        self.opened().is_some_and(|o| o.search.is_searching())
     }
 
     /// As consultas, como lidas da última vez.
     pub fn queries(&self) -> Option<&Folder> {
-        self.opened.as_ref().map(|o| &o.queries)
+        self.opened().map(|o| &o.queries)
     }
 
     /// Lê de novo as consultas e os servidores do disco (depois de salvar,
     /// de um pull do git ou de mudanças fora do PostPilot).
     pub fn refresh(&mut self) {
-        if let Some(o) = &mut self.opened {
+        if let Some(o) = self.opened_mut() {
             o.git.refresh();
-            o.queries = o.workspace.queries();
-            o.search.invalidate();
-            if !o.servers.has_dialog() {
-                let current = o.servers.current.take();
-                o.servers = RegisteredPanel::new(o.workspace.servers());
-                o.servers.current = current;
-            }
+            o.reload_files();
         }
     }
 
-    /// O cofre do workspace, dividido com o "Remember password".
+    /// Como [`Self::refresh`], no workspace de índice `index`.
+    pub fn refresh_at(&mut self, index: usize) {
+        if let Some(o) = self.workspaces.get_mut(index) {
+            o.git.refresh();
+            o.reload_files();
+        }
+    }
+
+    /// O cofre do workspace ativo (vazio sem workspace aberto).
     pub fn vault_slot(&self) -> SharedVault {
-        self.vault.clone()
+        self.opened().map(|o| o.vault.clone()).unwrap_or_default()
+    }
+
+    /// Os cofres de todos os workspaces abertos, divididos com o "Remember
+    /// password".
+    pub fn vault_slots(&self) -> SharedVaults {
+        self.vaults.clone()
     }
 
     /// As senhas do workspace.
     pub fn passwords(&self) -> Option<&Passwords> {
-        self.opened.as_ref().map(|o| &o.passwords)
+        self.opened().map(|o| &o.passwords)
     }
 
     /// As senhas do workspace, mutável.
     pub fn passwords_mut(&mut self) -> Option<&mut Passwords> {
-        self.opened.as_mut().map(|o| &mut o.passwords)
+        self.opened_mut().map(|o| &mut o.passwords)
     }
 
     /// O git do workspace.
     pub fn source_control(&self) -> Option<&SourceControl> {
-        self.opened.as_ref().map(|o| &o.git)
+        self.opened().map(|o| &o.git)
     }
 
     /// O git do workspace, mutável.
     pub fn source_control_mut(&mut self) -> Option<&mut SourceControl> {
-        self.opened.as_mut().map(|o| &mut o.git)
+        self.opened_mut().map(|o| &mut o.git)
     }
 
-    /// Abre "Clone Workspace".
-    pub fn open_clone(&mut self) {
-        self.clone = Some(CloneDialog {
+    /// Abre "Add Workspace" (clonar um repositório ou usar uma pasta).
+    pub fn open_add(&mut self) {
+        self.add = Some(AddDialog {
             url: String::new(),
+            dest: default_clone_folder(),
             error: None,
         });
+    }
+
+    /// Se "Add Workspace" está aberto.
+    pub fn is_adding(&self) -> bool {
+        self.add.is_some()
+    }
+
+    /// Fecha "Add Workspace".
+    pub fn close_add(&mut self) {
+        self.add = None;
+    }
+
+    /// Preenche "Add Workspace" (a pasta escolhida em "Choose..." e os
+    /// testes).
+    pub fn set_clone_folder(&mut self, folder: &Path) {
+        if let Some(d) = &mut self.add {
+            d.dest = folder.display().to_string();
+        }
+    }
+
+    /// A URL do repositório em "Add Workspace" (testes e capturas).
+    pub fn set_clone_url(&mut self, url: &str) {
+        if let Some(d) = &mut self.add {
+            d.url = url.to_string();
+        }
     }
 
     /// Clona `url` em `dest` numa thread separada; o fim chega por
@@ -314,8 +584,8 @@ impl WorkspacePanel {
         }));
     }
 
-    /// URL confirmada no "Clone Workspace" (a casca pede a pasta).
-    pub fn take_clone_request(&mut self) -> Option<String> {
+    /// "Clone" confirmado: a URL e a pasta onde o clone fica.
+    pub fn take_clone_request(&mut self) -> Option<(String, PathBuf)> {
         self.pending_clone.take()
     }
 
@@ -394,7 +664,7 @@ impl WorkspacePanel {
     /// de `from` para o cofre do workspace, que precisa estar destrancado.
     /// Senhas que já estão no cofre não mudam.
     pub fn copy_passwords(&mut self, pending: PendingCopy, from: Arc<dyn SecretStore>) {
-        let slot = self.vault.clone();
+        let slot = self.vault_slot();
         let PendingCopy { keys, known } = pending;
         self.copying = Some(std::thread::spawn(move || {
             let mut copied = 0;
@@ -481,7 +751,7 @@ impl WorkspacePanel {
         store.map(|s| {
             Arc::new(WorkspaceSecrets::workspace_only(
                 Some(s.clone()),
-                self.vault.clone(),
+                self.vault_slot(),
             )) as Arc<dyn SecretStore>
         })
     }
@@ -493,7 +763,7 @@ impl WorkspacePanel {
         store: Option<&Arc<dyn SecretStore>>,
     ) -> Option<(&mut RegisteredPanel, Option<Arc<dyn SecretStore>>)> {
         let store = self.workspace_store(store);
-        let o = self.opened.as_mut()?;
+        let o = self.opened_mut()?;
         Some((&mut o.servers, store))
     }
 
@@ -501,7 +771,7 @@ impl WorkspacePanel {
     /// como o menu de contexto dela.
     pub fn new_server(&mut self, store: Option<&Arc<dyn SecretStore>>) {
         let store = self.workspace_store(store);
-        if let Some(o) = &mut self.opened {
+        if let Some(o) = self.opened_mut() {
             o.servers.new_server(&[], store.as_ref());
         }
     }
@@ -515,7 +785,7 @@ impl WorkspacePanel {
         store: Option<&Arc<dyn SecretStore>>,
     ) -> Option<&mut RegisteredPanel> {
         let store = self.workspace_store(store);
-        let o = self.opened.as_mut()?;
+        let o = self.opened_mut()?;
         o.servers.register_or_edit(settings, store.as_ref());
         Some(&mut o.servers)
     }
@@ -525,58 +795,16 @@ impl WorkspacePanel {
         let mut actions = Vec::new();
         let workspace_store = self.workspace_store(store);
         let store = workspace_store.as_ref();
-        let Some(o) = &mut self.opened else {
-            ui.add_space(6.0);
-            ui.weak(tr("No workspace is open. A workspace is a folder, usually a git repository, with your servers and queries."));
-            ui.add_space(6.0);
-            if ui
-                .button(format!("{} {}", icon::FOLDER_PLUS, tr("New Workspace...")))
-                .clicked()
-            {
-                actions.push(Action::New);
-            }
-            if ui
-                .button(format!("{} {}", icon::FOLDER_OPEN, tr("Open Workspace...")))
-                .clicked()
-            {
-                actions.push(Action::Open);
-            }
-            if ui
-                .button(format!("{} {}", icon::GIT_BRANCH, tr("Clone Workspace...")))
-                .clicked()
-            {
-                self.open_clone();
-            }
-            if let Some(job) = &self.clone_job {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.weak(tr(job.label));
-                });
-            }
+        if self.workspaces.is_empty() {
+            self.welcome(ui, &mut actions);
+            return actions;
+        }
+        let mut refresh = false;
+        self.cards(ui, &mut refresh);
+        let Some(o) = self.workspaces.get_mut(self.active) else {
             return actions;
         };
-        let mut refresh = false;
-        crate::fit::ends(
-            ui,
-            |ui| {
-                let name = format!("{} {}", icon::BRIEFCASE, o.workspace.name());
-                if let Some(name) = crate::fit::text(ui, egui::RichText::new(name).strong()) {
-                    name.on_hover_text(o.workspace.root().display().to_string());
-                }
-            },
-            |ui| {
-                if ui
-                    .add(egui::Button::new(icon::ARROWS_CLOCKWISE).frame(false))
-                    .on_hover_text(tr("Refresh"))
-                    .clicked()
-                {
-                    refresh = true;
-                }
-            },
-        );
-        o.git.show(ui);
-        o.passwords.show(ui);
-        ui.separator();
+        ui.add_space(2.0);
 
         // Servidores em cima, num retângulo próprio: a árvore do Registered
         // Servers tem rolagem que ocupa todo o espaço que recebe.
@@ -597,14 +825,18 @@ impl WorkspacePanel {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(
+                        // Num painel estreito fica só o ícone, para não
+                        // passar por cima do título.
+                        egui::Button::new(if panel_width < 230.0 {
+                            egui::RichText::new(icon::DOWNLOAD_SIMPLE)
+                        } else {
                             egui::RichText::new(format!(
                                 "{} {}",
                                 icon::DOWNLOAD_SIMPLE,
                                 tr("Import from this computer")
                             ))
-                            .small(),
-                        )
+                            .small()
+                        })
                         .frame(false),
                     )
                     .on_hover_text(tr(
@@ -712,40 +944,45 @@ impl WorkspacePanel {
         ai: Option<&pgstudio_automation::llm::Backend>,
     ) -> Option<String> {
         let mut status = self.message.take();
-        if let Some(o) = &mut self.opened
-            && let Some(s) = o.servers.show_windows(ctx)
-        {
-            status = Some(s);
-        }
-        if let Some(o) = &mut self.opened {
-            if let Some(s) = o.git.show_windows(ctx, ai) {
-                status = Some(s);
-            }
-            if let Some(s) = o.passwords.show_windows(ctx, store) {
-                status = Some(s);
-            }
-            // Chaves dos servidores do workspace: o "Remember password"
-            // deles vai para o cofre do workspace.
-            let keys = o
-                .servers
-                .servers()
-                .all_servers()
-                .into_iter()
-                .flat_map(|s| {
-                    // Com túnel SSH, o segredo dele também é do workspace.
-                    let ssh = s.settings.ssh.as_ref().map(|ssh| ssh.secret_key());
-                    std::iter::once(crate::secrets::password_key(&s.settings)).chain(ssh)
-                })
-                .collect();
-            self.vault.lock().expect("vault lock").keys = keys;
-            if o.git.take_files_changed() {
-                o.queries = o.workspace.queries();
-                o.search.invalidate();
-                if !o.servers.has_dialog() {
-                    let current = o.servers.current.take();
-                    o.servers = RegisteredPanel::new(o.workspace.servers());
-                    o.servers.current = current;
+        let active = self.active;
+        let several = self.workspaces.len() > 1;
+        for (i, o) in self.workspaces.iter_mut().enumerate() {
+            let mut said = None;
+            if i == active {
+                // Os diálogos são os do workspace ativo.
+                if let Some(s) = o.servers.show_windows(ctx) {
+                    said = Some(s);
                 }
+                if let Some(s) = o.git.show_windows(ctx, ai) {
+                    said = Some(s);
+                }
+                if let Some(s) = o.passwords.show_windows(ctx, store) {
+                    said = Some(s);
+                }
+            } else {
+                // Os outros continuam trabalhando (um Pull pedido antes de
+                // trocar de workspace, a senha mestra lembrada).
+                if o.git.poll() {
+                    said = o.git.take_message();
+                }
+                if o.passwords.poll(store) {
+                    said = o.passwords.take_message().or(said);
+                }
+                if o.git.is_busy() || o.passwords.is_busy() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
+            }
+            if let Some(s) = said {
+                // Com vários abertos, a mensagem diz de qual workspace é.
+                status = Some(if several {
+                    format!("{}: {s}", o.workspace.name()) // i18n-ignore
+                } else {
+                    s
+                });
+            }
+            o.sync_vault_keys();
+            if o.git.take_files_changed() {
+                o.reload_files();
             }
         }
         if self.copying.as_ref().is_some_and(|h| h.is_finished()) {
@@ -756,46 +993,7 @@ impl WorkspacePanel {
         if self.clone_job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
-        let mut clone_ok = None;
-        let mut clone_cancel = false;
-        if let Some(dialog) = &mut self.clone {
-            crate::theme::modal(egui::Id::new("workspace_clone")).show(ctx, |ui| {
-                crate::fit::dialog_width(ui, 460.0);
-                ui.heading(tr("Clone Workspace"));
-                ui.label(tr("Repository URL, for example git@github.com:you/sql.git:"));
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut dialog.url).desired_width(f32::INFINITY),
-                );
-                if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    clone_ok = Some(dialog.url.clone());
-                }
-                ui.weak(tr("Next you choose the folder where the clone goes. Git uses your SSH keys and credential helper."));
-                if let Some(e) = &dialog.error {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
-                }
-                ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("Cancel")).clicked() {
-                        clone_cancel = true;
-                    }
-                    if ui.button(tr("Clone")).clicked() {
-                        clone_ok = Some(dialog.url.clone());
-                    }
-                });
-            });
-        }
-        if clone_cancel {
-            self.clone = None;
-        } else if let Some(url) = clone_ok
-            && let Some(dialog) = &mut self.clone
-        {
-            if url.trim().is_empty() {
-                dialog.error = Some(tr("Enter the repository URL.").into());
-            } else {
-                self.clone = None;
-                self.pending_clone = Some(url.trim().to_string());
-            }
-        }
+        self.add_window(ctx);
         if let Some(count) = self.offer_import {
             let mut answer = None;
             crate::theme::modal(egui::Id::new("workspace_offer_import")).show(ctx, |ui| {
@@ -858,6 +1056,587 @@ impl WorkspacePanel {
             status = Some(trf!("Created {path}.", path = path.display()));
         }
         status
+    }
+}
+
+/// A largura visível do painel: uma linha larga pode ter alargado o
+/// painel além do que aparece.
+fn visible_width(ui: &egui::Ui) -> f32 {
+    ui.available_width()
+        .min(ui.clip_rect().right() - ui.cursor().left() - 4.0)
+        .max(120.0)
+}
+
+/// Um botão principal, preenchido com a cor de destaque.
+fn primary_button(ui: &egui::Ui, text: String) -> egui::Button<'static> {
+    let (accent, on_accent) = crate::theme::accent_pair(ui);
+    egui::Button::new(egui::RichText::new(text).color(on_accent)).fill(accent)
+}
+
+/// Uma opção grande e clicável: ícone, título e uma frase que explica.
+fn option_card(ui: &mut egui::Ui, glyph: &str, title: &str, text: &str) -> egui::Response {
+    let (accent, _) = crate::theme::accent_pair(ui);
+    let scope = ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt(("workspace_option", title))
+            .sense(egui::Sense::click()),
+        |ui| {
+            let over = ui.response().hovered() || ui.response().has_focus();
+            let v = ui.visuals();
+            let (fill, stroke) = if over {
+                (
+                    v.widgets.hovered.weak_bg_fill,
+                    egui::Stroke::new(1.0, accent),
+                )
+            } else {
+                (v.faint_bg_color, v.widgets.noninteractive.bg_stroke)
+            };
+            egui::Frame::new()
+                .fill(fill)
+                .stroke(stroke)
+                .corner_radius(6.0)
+                .inner_margin(10.0)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(glyph).size(24.0).color(accent));
+                        ui.vertical(|ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(title).strong())
+                                    .selectable(false)
+                                    .wrap(),
+                            );
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).weak())
+                                    .selectable(false)
+                                    .wrap(),
+                            );
+                        });
+                    });
+                });
+        },
+    );
+    scope
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// O que foi pedido num cartão de workspace.
+#[derive(Default)]
+struct CardEvents {
+    activate: Option<usize>,
+    close: Option<usize>,
+    refresh: bool,
+}
+
+/// O cartão de um workspace: o nome, o estado do repositório em uma frase
+/// e, no ativo, os botões e a linha das senhas.
+fn card(ui: &mut egui::Ui, o: &mut Opened, index: usize, active: bool, events: &mut CardEvents) {
+    let summary = o.git.summary();
+    let (accent, _) = crate::theme::accent_pair(ui);
+    let scope = ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt(("workspace_card", index))
+            .sense(egui::Sense::click()),
+        |ui| {
+            let over = ui.response().hovered();
+            let v = ui.visuals();
+            let (fill, stroke) = if active {
+                (
+                    v.selection.bg_fill.gamma_multiply(0.22),
+                    egui::Stroke::new(1.5, accent),
+                )
+            } else if over {
+                (v.widgets.hovered.weak_bg_fill, v.widgets.hovered.bg_stroke)
+            } else {
+                (v.faint_bg_color, v.widgets.noninteractive.bg_stroke)
+            };
+            egui::Frame::new()
+                .fill(fill)
+                .stroke(stroke)
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    card_body(ui, o, index, active, &summary, events);
+                });
+        },
+    );
+    let response = scope.response;
+    if !active {
+        let response = response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(trf!(
+                "Switch to {name} ({folder})",
+                name = o.workspace.name(),
+                folder = o.workspace.root().display()
+            ));
+        if response.clicked() {
+            events.activate = Some(index);
+        }
+    }
+}
+
+fn card_body(
+    ui: &mut egui::Ui,
+    o: &mut Opened,
+    index: usize,
+    active: bool,
+    summary: &super::source_control::Summary,
+    events: &mut CardEvents,
+) {
+    let status = o.git.status().cloned();
+    let is_repo = status.is_some();
+    let has_remote = status.as_ref().is_some_and(|s| s.remote.is_some());
+    let changes = status.as_ref().map_or(0, |s| s.changes.len());
+    let mut open_changes = false;
+    crate::fit::ends(
+        ui,
+        |ui| {
+            let mut name =
+                egui::RichText::new(format!("{} {}", icon::BRIEFCASE, o.workspace.name())).strong();
+            if active {
+                name = name.size(egui::TextStyle::Body.resolve(ui.style()).size + 1.5);
+            }
+            if let Some(name) = crate::fit::text(ui, name) {
+                name.on_hover_text(o.workspace.root().display().to_string());
+            }
+        },
+        |ui| {
+            ui.menu_button(icon::DOTS_THREE, |ui| {
+                if is_repo {
+                    if ui
+                        .button(format!("{} {}", icon::ARROW_DOWN, tr("Pull")))
+                        .on_hover_text(tr("Bring the changes from the remote"))
+                        .clicked()
+                    {
+                        o.git.pull();
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} {}", icon::ARROW_UP, tr("Push")))
+                        .on_hover_text(tr("Send your commits to the remote"))
+                        .clicked()
+                    {
+                        o.git.push();
+                        ui.close();
+                    }
+                }
+                // Os diálogos são os do workspace ativo.
+                if is_repo && active {
+                    if ui
+                        .add_enabled(
+                            changes > 0,
+                            egui::Button::new(format!("{} {}", icon::CHECK, tr("Commit..."))),
+                        )
+                        .clicked()
+                    {
+                        o.git.open_commit();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(changes > 0, egui::Button::new(tr("Changes and Discard...")))
+                        .clicked()
+                    {
+                        open_changes = true;
+                        ui.close();
+                    }
+                    if ui.button(tr("Remote...")).clicked() {
+                        o.git.open_remote();
+                        ui.close();
+                    }
+                }
+                if ui.button(tr("Refresh")).clicked() {
+                    if active {
+                        events.refresh = true;
+                    } else {
+                        o.git.refresh();
+                    }
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .button(format!("{} {}", icon::X, tr("Close Workspace")))
+                    .on_hover_text(tr(
+                        "Takes the workspace out of this list. Its files stay in the folder.",
+                    ))
+                    .clicked()
+                {
+                    events.close = Some(index);
+                    ui.close();
+                }
+            });
+        },
+    );
+    // O estado em uma frase, com a cor dizendo se há algo a fazer.
+    crate::fit::ends(
+        ui,
+        |ui| {
+            if let Some(busy) = &summary.busy {
+                ui.spinner();
+                crate::fit::text(ui, egui::RichText::new(busy).weak());
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            let v = ui.visuals();
+            let color = match summary.kind {
+                SyncKind::Synced => egui::Color32::from_rgb(0x4C, 0xAF, 0x50),
+                SyncKind::Pending => v.warn_fg_color,
+                SyncKind::Problem => v.error_fg_color,
+                SyncKind::Local | SyncKind::Reading => v.weak_text_color(),
+            };
+            let glyph = match summary.kind {
+                SyncKind::Synced => icon::CHECK_CIRCLE,
+                SyncKind::Pending => icon::ARROWS_DOWN_UP,
+                SyncKind::Problem => icon::WARNING,
+                SyncKind::Local => icon::DESKTOP,
+                SyncKind::Reading => icon::CIRCLE_DASHED,
+            };
+            ui.label(egui::RichText::new(glyph).color(color));
+            // Na dica: o branch, o remoto e os arquivos alterados.
+            if let Some(text) = crate::fit::text(ui, &summary.text)
+                && let Some(s) = &status
+            {
+                let branch = if s.branch.is_empty() {
+                    tr("(detached)").to_string()
+                } else {
+                    s.branch.clone()
+                };
+                let remote = s.remote.clone().unwrap_or_else(|| tr("No remote").into());
+                let mut lines = vec![format!("{} {branch}  {remote}", icon::GIT_BRANCH)]; // i18n-ignore
+                lines.extend(s.changes.iter().map(|c| format!("{} {}", c.kind(), c.path)));
+                text.on_hover_text(lines.join("\n"));
+            }
+        },
+        |ui| {
+            // Nos outros cartões, o cadeado avisa que as senhas daquele
+            // workspace ainda estão trancadas.
+            if !active && o.passwords.exists() && !o.passwords.is_unlocked() {
+                ui.label(egui::RichText::new(icon::LOCK).weak())
+                    .on_hover_text(tr("Passwords locked"));
+            }
+        },
+    );
+    if !active {
+        return;
+    }
+    match o.git.state() {
+        Some(Err(GitError::NotRepo)) | None => {}
+        Some(Err(e)) => {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(e.to_string()).color(ui.visuals().warn_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        Some(Ok(s)) if !s.conflicts.is_empty() => {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(trf!("Conflicts: {files}", files = s.conflicts.join(", ")))
+                        .color(ui.visuals().error_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        Some(Ok(_)) => {}
+    }
+    let busy = summary.busy.is_some();
+    ui.horizontal_wrapped(|ui| {
+        if matches!(o.git.state(), Some(Err(GitError::NotRepo))) {
+            if ui
+                .add_enabled(!busy, egui::Button::new(tr("Initialize Git")))
+                .on_hover_text(tr(
+                    "Start keeping the history of this workspace with Git, to send it to a repository later.",
+                ))
+                .clicked()
+            {
+                o.git.init();
+            }
+            return;
+        }
+        if !is_repo {
+            return;
+        }
+        // O que há para fazer agora vem preenchido: salvar as alterações
+        // ou, sem nenhuma, sincronizar.
+        let save = format!("{} {}", icon::CHECK, tr("Save changes..."));
+        let sync = format!("{} {}", icon::ARROWS_CLOCKWISE, tr("Synchronize"));
+        if changes > 0
+            && ui
+                .add_enabled(!busy, primary_button(ui, save))
+                .on_hover_text(tr(
+                    "Describe what you changed and save it in the history (Commit). You can send it to the repository in the same step.",
+                ))
+                .clicked()
+        {
+            o.git.open_commit();
+        }
+        if has_remote {
+            let button = if changes > 0 {
+                egui::Button::new(sync)
+            } else {
+                primary_button(ui, sync)
+            };
+            if ui
+                .add_enabled(!busy, button)
+                .on_hover_text(tr(
+                    "Receive what is new in the repository and send what you saved (Pull, then Push).",
+                ))
+                .clicked()
+            {
+                o.git.sync();
+            }
+        } else if ui
+            .add_enabled(!busy, egui::Button::new(tr("Connect to a repository...")))
+            .on_hover_text(tr(
+                "Set the address of the repository (GitHub, GitLab...) where this workspace is sent.",
+            ))
+            .clicked()
+        {
+            o.git.open_remote();
+        }
+    });
+    if open_changes {
+        o.git.open_changes();
+    }
+    o.passwords.show(ui);
+}
+
+impl WorkspacePanel {
+    /// Sem workspace aberto: o que é um workspace e as duas formas de
+    /// começar, em botões grandes.
+    fn welcome(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        let width = visible_width(ui);
+        ui.scope(|ui| {
+            ui.set_max_width(width);
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(format!("{} {}", icon::BRIEFCASE, tr("Workspaces")))
+                    .heading()
+                    .strong(),
+            );
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(egui::RichText::new(tr("A workspace keeps your connections, queries and snippets together in a folder, usually a Git repository, so that you have them on every computer and can share them with your team. You can open several at the same time, for example one per client.")).weak()).wrap());
+            ui.add_space(8.0);
+            self.add_options(ui, actions);
+        });
+    }
+
+    /// As duas formas de adicionar um workspace e o clone em andamento.
+    fn add_options(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        if option_card(
+            ui,
+            icon::CLOUD_ARROW_DOWN,
+            tr("Clone a repository"),
+            tr("Download a workspace from GitHub, GitLab or another Git server, using its address."),
+        )
+        .clicked()
+        {
+            self.open_add();
+        }
+        ui.add_space(4.0);
+        if option_card(
+            ui,
+            icon::FOLDER_OPEN,
+            tr("Use a folder on this computer"),
+            tr("Open the workspace that is in a folder, or start a new one in it."),
+        )
+        .clicked()
+        {
+            actions.push(Action::AddFolder);
+        }
+        if let Some(job) = &self.clone_job {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak(tr(job.label));
+            });
+        }
+    }
+
+    /// O cabeçalho "Workspaces", com o botão de adicionar, e um cartão por
+    /// workspace aberto.
+    fn cards(&mut self, ui: &mut egui::Ui, refresh: &mut bool) {
+        let width = visible_width(ui);
+        let mut add = false;
+        let mut events = CardEvents::default();
+        let active = self.active;
+        ui.scope(|ui| {
+            ui.set_max_width(width);
+            crate::fit::ends(
+                ui,
+                |ui| {
+                    let title = match self.workspaces.len() {
+                        1 => tr("Workspace").to_string(),
+                        n => trf!("Workspaces ({n})", n = n),
+                    };
+                    crate::fit::text(ui, egui::RichText::new(title).small().weak());
+                },
+                |ui| {
+                    if ui
+                        .button(format!("{} {}", icon::PLUS, tr("Add")))
+                        .on_hover_text(tr(
+                            "Add another workspace: clone a repository or use a folder on this computer. The ones already open stay open.",
+                        ))
+                        .clicked()
+                    {
+                        add = true;
+                    }
+                },
+            );
+            // Muitos workspaces rolam aqui, sem tirar o lugar dos
+            // servidores e das consultas.
+            let max = (ui.available_height() * 0.6).max(150.0);
+            egui::ScrollArea::vertical()
+                .id_salt("workspace_cards")
+                .max_height(max)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, o) in self.workspaces.iter_mut().enumerate() {
+                        card(ui, o, i, i == active, &mut events);
+                    }
+                    if let Some(job) = &self.clone_job {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak(tr(job.label));
+                        });
+                    }
+                });
+        });
+        if add {
+            self.open_add();
+        }
+        if let Some(i) = events.activate {
+            self.activate(i);
+        }
+        if let Some(i) = events.close {
+            let name = self.workspaces[i].workspace.name().to_string();
+            self.close_at(i);
+            self.message = Some(trf!(
+                "Closed workspace {name}. Its files are still in the folder.",
+                name = name
+            ));
+        }
+        *refresh |= events.refresh;
+    }
+
+    /// O diálogo "Add Workspace".
+    fn add_window(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.add else {
+            return;
+        };
+        let mut clone = false;
+        let mut close = false;
+        let mut browse = false;
+        let mut folder = false;
+        crate::theme::modal(egui::Id::new("workspace_add")).show(ctx, |ui| {
+            crate::fit::dialog_width(ui, 500.0);
+            ui.heading(tr("Add Workspace"));
+            ui.add(egui::Label::new(egui::RichText::new(tr("The workspaces that are already open stay open. Each one keeps its own connections, queries, snippets and passwords.")).weak()).wrap());
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {}",
+                    icon::CLOUD_ARROW_DOWN,
+                    tr("Clone a repository")
+                ))
+                .strong(),
+            );
+            let label = ui.label(tr("Repository address:"));
+            let edit = ui
+                .add(
+                    egui::TextEdit::singleline(&mut dialog.url)
+                        .hint_text("git@github.com:you/sql.git") // i18n-ignore
+                        .desired_width(f32::INFINITY),
+                )
+                .labelled_by(label.id);
+            if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                clone = true;
+            }
+            let label = ui.label(tr("Save in:"));
+            crate::fit::ends(
+                ui,
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.dest)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .labelled_by(label.id);
+                },
+                |ui| {
+                    if ui.button(tr("Choose...")).clicked() {
+                        browse = true;
+                    }
+                },
+            );
+            ui.add(egui::Label::new(egui::RichText::new(tr("The clone goes into a new folder there, named after the repository. Git uses your SSH keys and credential helper.")).weak()).wrap());
+            if let Some(e) = &dialog.error {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            ui.add_space(4.0);
+            let text = format!("{} {}", icon::CLOUD_ARROW_DOWN, tr("Clone"));
+            if ui.add(primary_button(ui, text)).clicked() {
+                clone = true;
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+            if option_card(
+                ui,
+                icon::FOLDER_OPEN,
+                tr("Use a folder on this computer"),
+                tr("Open the workspace that is in a folder, or start a new one in it."),
+            )
+            .clicked()
+            {
+                folder = true;
+            }
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if browse {
+            self.add_actions.push(Action::BrowseCloneFolder);
+        }
+        if folder {
+            self.add = None;
+            self.add_actions.push(Action::AddFolder);
+        } else if close {
+            self.add = None;
+        } else if clone {
+            self.confirm_clone();
+        }
+    }
+
+    /// Confirma o clone de "Add Workspace" (o botão e os testes). Sem a
+    /// URL ou a pasta, o diálogo fica aberto com o erro.
+    pub fn confirm_clone(&mut self) -> bool {
+        let Some(dialog) = &mut self.add else {
+            return false;
+        };
+        let (url, dest) = (dialog.url.trim(), dialog.dest.trim());
+        if url.is_empty() {
+            dialog.error = Some(tr("Enter the repository URL.").into());
+            return false;
+        }
+        if dest.is_empty() {
+            dialog.error = Some(tr("Choose the folder where the clone is saved.").into());
+            return false;
+        }
+        self.pending_clone = Some((url.to_string(), PathBuf::from(dest)));
+        self.add = None;
+        true
+    }
+
+    /// Pedidos feitos dentro de "Add Workspace" (a casca trata junto com
+    /// os do painel).
+    pub fn take_add_actions(&mut self) -> Vec<Action> {
+        std::mem::take(&mut self.add_actions)
     }
 }
 
