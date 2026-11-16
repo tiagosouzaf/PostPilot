@@ -1000,6 +1000,9 @@ msgid "Encryption:"
 msgstr "Criptografia:"
 
 # Túnel SSH da conexão.
+msgid "Could not start the SSH tunnel."
+msgstr "Não foi possível iniciar o túnel SSH."
+
 msgid "Choose the key file"
 msgstr "Escolher o arquivo da chave"
 

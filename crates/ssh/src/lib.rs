@@ -188,8 +188,7 @@ fn target_host(host: &str) -> &str {
 }
 
 /// O túnel de `settings`, se a conexão passa por um: abre (ou reaproveita)
-/// e devolve. Sem túnel nas configurações, `None`. Chame de dentro da
-/// runtime Tokio que vai manter as conexões.
+/// e devolve. Sem túnel nas configurações, `None`.
 pub async fn open(settings: &ConnectionSettings) -> Result<Option<Arc<Tunnel>>, ConnectError> {
     match &settings.ssh {
         None => Ok(None),
@@ -199,8 +198,38 @@ pub async fn open(settings: &ConnectionSettings) -> Result<Option<Arc<Tunnel>>, 
     }
 }
 
+/// A runtime dos túneis. O túnel é dividido por quem conecta ao mesmo
+/// banco, e cada um pode ter a sua runtime: se a sessão SSH e a porta local
+/// vivessem na de quem abriu primeiro, cairiam junto com ela e levariam as
+/// conexões dos outros.
+fn runtime() -> Result<&'static tokio::runtime::Runtime, ConnectError> {
+    static RT: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("ssh-tunnel")
+            .enable_all()
+            .build()
+            .ok()
+    })
+    .as_ref()
+    .ok_or_else(|| ConnectError::Other(pgstudio_i18n::tr("Could not start the SSH tunnel.").into()))
+}
+
 /// Abre (ou reaproveita) o túnel por `ssh` até `host:port`.
 pub async fn open_to(
+    ssh: &SshSettings,
+    host: &str,
+    port: u16,
+) -> Result<Arc<Tunnel>, ConnectError> {
+    let (ssh, host) = (ssh.clone(), host.to_string());
+    runtime()?
+        .spawn(async move { open_on_runtime(&ssh, &host, port).await })
+        .await
+        .map_err(|e| ConnectError::Other(e.to_string()))?
+}
+
+async fn open_on_runtime(
     ssh: &SshSettings,
     host: &str,
     port: u16,
