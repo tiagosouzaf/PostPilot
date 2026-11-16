@@ -78,7 +78,8 @@ impl Collector {
     pub fn wrapped_for(self, engine: pgstudio_core::connection::Engine) -> Self {
         match engine {
             pgstudio_core::connection::Engine::PostgreSql => self.wrapped(),
-            pgstudio_core::connection::Engine::SqlServer => self,
+            pgstudio_core::connection::Engine::SqlServer
+            | pgstudio_core::connection::Engine::Redis => self,
         }
     }
 

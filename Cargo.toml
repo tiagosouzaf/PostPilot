@@ -17,6 +17,7 @@ members = [
     "crates/updater",
     "crates/i18n",
     "crates/mssql",
+    "crates/redis",
     "xtask",
 ]
 exclude = ["spikes", "vendor"]
@@ -44,6 +45,7 @@ pgstudio-automation = { path = "crates/automation" }
 pgstudio-updater = { path = "crates/updater" }
 pgstudio-i18n = { path = "crates/i18n" }
 pgstudio-mssql = { path = "crates/mssql" }
+pgstudio-redis = { path = "crates/redis" }
 # egui fica na 0.36 enquanto o egui_dock (marco 1.4) não acompanhar a 0.37.
 eframe = "0.36"
 egui_kittest = "0.36"
@@ -65,6 +67,8 @@ tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
+# TLS do Redis (Fase N): o mesmo rustls com ring, sem aws-lc.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 # SQL Server (Fase S, ADR 0004): tiberius no repositório, com o patch que
 # devolve mensagens, contagens e todos os erros do lote (Client::batch).
 tiberius = { path = "vendor/tiberius", default-features = false, features = ["tds80", "rustls", "sql-browser-tokio", "winauth"] }

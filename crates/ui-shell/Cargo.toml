@@ -38,6 +38,7 @@ egui_kittest.workspace = true
 pgstudio-pg-client.workspace = true
 pgstudio-pg-metadata.workspace = true
 pgstudio-mssql.workspace = true
+pgstudio-redis.workspace = true
 
 [lints]
 workspace = true

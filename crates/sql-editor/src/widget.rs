@@ -180,7 +180,8 @@ impl Editing<'_> {
         if self.buf.popup.is_none() && !open {
             return;
         }
-        if !self.range().is_empty() {
+        // Sem lista de palavras do SQL num texto que não é SQL.
+        if !self.range().is_empty() || self.buf.dialect == Dialect::Redis {
             self.buf.popup = None;
             return;
         }

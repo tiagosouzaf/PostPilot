@@ -1,0 +1,19 @@
+[package]
+name = "pgstudio-redis"
+description = "Conexão do PostPilot com o Redis (RESP2 e RESP3, cliente próprio)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pgstudio-core.workspace = true
+pgstudio-i18n.workspace = true
+pgstudio-pg-client.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+
+[lints]
+workspace = true

@@ -41,6 +41,10 @@ pub enum Dialect {
     Postgres,
     /// `[Nome]`, `N'texto'`, `@variavel`, `@@ROWCOUNT`, `#temporaria`.
     TSql,
+    /// Comandos do Redis, um por linha: a primeira palavra é o comando,
+    /// `"..."` e `'...'` são textos, `#`, `--` e `//` no começo da linha
+    /// são comentários.
+    Redis,
 }
 
 /// Um pedaço do texto, em bytes.
@@ -635,6 +639,14 @@ pub fn retokenize_in(
         None => tokens.last().map_or(0, |t| t.range.end),
     };
     let edit_end = at + inserted;
+    // No Redis a primeira palavra da linha é o comando: o que vem depois
+    // da edição, na mesma linha, pode mudar de tipo.
+    let sync_from = match dialect {
+        Dialect::Redis => text[edit_end..]
+            .find('\n')
+            .map_or(text.len(), |i| edit_end + i),
+        _ => edit_end,
+    };
     let old_edit_end = at + removed;
     let shift = |p: usize| p + removed - inserted; // posição nova -> antiga
     let mut fresh = Vec::new();
@@ -646,7 +658,7 @@ pub fn retokenize_in(
     let mut k = first;
     let mut synced = false;
     while lexer.pos < text.len() {
-        if lexer.pos >= edit_end {
+        if lexer.pos >= sync_from {
             let old = shift(lexer.pos);
             while k < tokens.len() && tokens[k].range.start < old {
                 k += 1;
@@ -711,6 +723,9 @@ impl Lexer<'_> {
 
     fn next_kind(&mut self) -> TokenKind {
         let c = self.peek().expect("not at end");
+        if self.dialect == Dialect::Redis {
+            return self.redis_kind(c);
+        }
         if self.dialect == Dialect::TSql
             && let Some(kind) = self.tsql_kind(c)
         {
@@ -796,6 +811,46 @@ impl Lexer<'_> {
                 self.bump();
                 TokenKind::Other
             }
+        }
+    }
+
+    /// Um pedaço de um comando do Redis. Só olha o texto da própria
+    /// linha para trás (para saber se é a primeira palavra), então o
+    /// [`retokenize_in`] continua valendo.
+    fn redis_kind(&mut self, c: char) -> TokenKind {
+        if c.is_whitespace() {
+            self.eat_while(char::is_whitespace);
+            return TokenKind::Whitespace;
+        }
+        let line_start = self.text[..self.pos].rfind('\n').map_or(0, |i| i + 1);
+        let first = self.text[line_start..self.pos]
+            .chars()
+            .all(char::is_whitespace);
+        let rest = self.rest();
+        if first && (c == '#' || rest.starts_with("--") || rest.starts_with("//")) {
+            self.eat_while(|c| c != '\n');
+            return TokenKind::Comment;
+        }
+        if c == '"' || c == '\'' {
+            self.bump();
+            while let Some(d) = self.bump() {
+                if d == '\\' {
+                    self.bump();
+                } else if d == c {
+                    break;
+                }
+            }
+            return TokenKind::String;
+        }
+        let start = self.pos;
+        self.eat_while(|c| !c.is_whitespace() && c != '"' && c != '\'');
+        let word = &self.text[start..self.pos];
+        if first {
+            TokenKind::Keyword
+        } else if word.parse::<f64>().is_ok() {
+            TokenKind::Number
+        } else {
+            TokenKind::Identifier
         }
     }
 
@@ -949,6 +1004,41 @@ mod tests {
 
     use super::*;
     use TokenKind::*;
+
+    #[test]
+    fn redis_commands_strings_and_comments() {
+        let text =
+            "# começo\nSET nome \"João \\\" Silva\" EX 60\n  hgetall user:1 'it\\'s'\n-- fim";
+        let got: Vec<(TokenKind, &str)> = tokenize_in(text, Dialect::Redis)
+            .into_iter()
+            .filter(|t| t.kind != Whitespace)
+            .map(|t| (t.kind, &text[t.range]))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Comment, "# começo"),
+                (Keyword, "SET"),
+                (Identifier, "nome"),
+                (String, "\"João \\\" Silva\""),
+                (Identifier, "EX"),
+                (Number, "60"),
+                (Keyword, "hgetall"),
+                (Identifier, "user:1"),
+                (String, "'it\\'s'"),
+                (Comment, "-- fim"),
+            ]
+        );
+        // Editar no meio dá os mesmos tokens que reler tudo.
+        let mut text = "GET a\nSET b 1\nGET c".to_string();
+        let mut tokens = tokenize_in(&text, Dialect::Redis);
+        text.insert(6, 'H');
+        retokenize_in(&text, &mut tokens, 6, 0, 1, Dialect::Redis);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::Redis));
+        text.insert_str(0, "x ");
+        retokenize_in(&text, &mut tokens, 0, 0, 2, Dialect::Redis);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::Redis));
+    }
 
     fn kinds(text: &str) -> Vec<(TokenKind, &str)> {
         tokenize(text)

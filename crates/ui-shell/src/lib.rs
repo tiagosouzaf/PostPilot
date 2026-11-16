@@ -516,7 +516,7 @@ impl ShellApp {
                     name = name,
                     engine = connected.settings.engine.label(),
                     version = connected.server_version,
-                    user = connected.settings.user
+                    user = connected.settings.login_label()
                 ));
                 self.status = trf!("Connected to {name}.", name = name);
                 let settings = connected.settings.clone();
@@ -556,7 +556,11 @@ impl ShellApp {
     /// Texto da conexão na status bar.
     pub fn connection_label(&self) -> String {
         match &self.connection {
-            Some(c) => format!("{} ({})", c.settings.server_name(), c.settings.user),
+            Some(c) => format!(
+                "{} ({})",
+                c.settings.server_name(),
+                c.settings.login_label()
+            ),
             None if self.explorer.is_connected() => tr("Demo server").to_string(),
             None => tr("Not connected").to_string(),
         }
@@ -2800,6 +2804,7 @@ impl ShellApp {
         for id in self.documents.ids() {
             let dialect = match self.document_engine(id) {
                 Some(Engine::SqlServer) => pgstudio_sql_editor::lexer::Dialect::TSql,
+                Some(Engine::Redis) => pgstudio_sql_editor::lexer::Dialect::Redis,
                 _ => pgstudio_sql_editor::lexer::Dialect::Postgres,
             };
             if let Some(doc) = self.documents.get_mut(id) {
@@ -4206,7 +4211,7 @@ impl ShellApp {
             .as_ref()
             .and_then(|c| {
                 let name = self.registered_name(&servers::server_key(&c.settings))?;
-                Some(format!("{name} ({})", c.settings.user))
+                Some(format!("{name} ({})", c.settings.login_label()))
             })
             .unwrap_or_else(|| host.clone());
         let cursor = self

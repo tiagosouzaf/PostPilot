@@ -34,6 +34,20 @@ pub fn check(text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
 /// [`check`] com tokens do dialeto `dialect`.
 pub fn check_in(text: &str, tokens: &[Token], dialect: Dialect) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    if dialect == Dialect::Redis {
+        // Num comando do Redis só dá para ver as aspas sem fechar.
+        if let Some(last) = tokens.last()
+            && last.kind == TokenKind::String
+            && last.range.end == text.len()
+            && unterminated(&text[last.range.clone()], dialect)
+        {
+            out.push(Diagnostic {
+                range: last.range.clone(),
+                message: tr("Unclosed quotation mark in the command.").to_string(),
+            });
+        }
+        return out;
+    }
     if let Some(last) = tokens.last()
         && last.range.end == text.len()
     {
@@ -122,6 +136,15 @@ pub fn server_range(text: &str, tokens: &[Token], at: usize) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_only_flags_unclosed_quotes() {
+        let check = |sql: &str| check_in(sql, &tokenize_in(sql, Dialect::Redis), Dialect::Redis);
+        assert!(check("SET a \"(um) it's\"\nGET a )").is_empty());
+        assert!(check("SET a 'x\\''").is_empty());
+        assert_eq!(check("SET a \"sem fim").len(), 1);
+        assert_eq!(check("SET a \"fim escapado\\\"").len(), 1);
+    }
     use crate::lexer::tokenize;
 
     fn errors(sql: &str) -> Vec<(String, String)> {

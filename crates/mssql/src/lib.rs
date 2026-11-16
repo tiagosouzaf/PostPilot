@@ -303,25 +303,6 @@ impl Connector for MssqlConnector {
     }
 }
 
-/// Escolhe o conector pelo motor das configurações.
-pub struct EngineConnector {
-    pub postgres: Arc<dyn Connector>,
-    pub sql_server: Arc<dyn Connector>,
-}
-
-impl Connector for EngineConnector {
-    fn connect(
-        &self,
-        settings: &ConnectionSettings,
-        password: &str,
-    ) -> Result<Connected, ConnectError> {
-        match settings.engine {
-            Engine::PostgreSql => self.postgres.connect(settings, password),
-            Engine::SqlServer => self.sql_server.connect(settings, password),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

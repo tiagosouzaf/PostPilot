@@ -22,6 +22,9 @@ pub const DEFAULT_DATABASE: &str = "postgres";
 /// Porta padrão do SQL Server.
 pub const SQL_SERVER_PORT: u16 = 1433;
 
+/// Porta padrão do Redis.
+pub const REDIS_PORT: u16 = 6379;
+
 /// O motor do servidor. Configurações salvas antes do SQL Server não têm
 /// o campo e abrem como PostgreSQL.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,15 +34,26 @@ pub enum Engine {
     #[serde(rename = "postgresql")]
     PostgreSql,
     SqlServer,
+    /// Redis (Fase N): não é SQL; a janela de consulta roda comandos.
+    Redis,
 }
 
 impl Engine {
+    /// Se o motor fala SQL. Os que não falam (Redis) só têm os recursos
+    /// que [`Engine::supports`] lista; o resto do app nem monta SQL para
+    /// eles.
+    pub fn is_sql(self) -> bool {
+        matches!(self, Engine::PostgreSql | Engine::SqlServer)
+    }
+
     /// Nome de tabela ou coluna no SQL do motor: `"Nome"` no PostgreSQL,
-    /// `[Nome]` no SQL Server (só quando precisa, no PostgreSQL).
+    /// `[Nome]` no SQL Server (só quando precisa, no PostgreSQL). No
+    /// Redis, a chave como argumento de um comando.
     pub fn quote_ident(self, name: &str) -> String {
         match self {
             Engine::PostgreSql => crate::schema::quote_ident(name),
             Engine::SqlServer => format!("[{}]", name.replace(']', "]]")),
+            Engine::Redis => redis_argument(name),
         }
     }
 
@@ -48,6 +62,7 @@ impl Engine {
     pub fn ident(self, name: &str) -> String {
         match self {
             Engine::PostgreSql => crate::schema::quote_ident(name),
+            Engine::Redis => redis_argument(name),
             Engine::SqlServer => {
                 let mut chars = name.chars();
                 // As palavras reservadas do PostgreSQL servem de lista
@@ -77,17 +92,19 @@ impl Engine {
             }
             (Engine::PostgreSql, Some(v)) => format!("'{}'", v.replace('\'', "''")),
             (Engine::SqlServer, Some(v)) => format!("N'{}'", v.replace('\'', "''")),
+            (Engine::Redis, Some(v)) => redis_argument(v),
         }
     }
 
     /// Os motores, na ordem do Connect to Server.
-    pub const ALL: [Engine; 2] = [Engine::PostgreSql, Engine::SqlServer];
+    pub const ALL: [Engine; 3] = [Engine::PostgreSql, Engine::SqlServer, Engine::Redis];
 
     /// Nome do produto (não se traduz).
     pub fn label(self) -> &'static str {
         match self {
             Engine::PostgreSql => "PostgreSQL",
             Engine::SqlServer => "SQL Server",
+            Engine::Redis => "Redis",
         }
     }
 
@@ -96,6 +113,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => DEFAULT_PORT,
             Engine::SqlServer => SQL_SERVER_PORT,
+            Engine::Redis => REDIS_PORT,
         }
     }
 
@@ -104,6 +122,33 @@ impl Engine {
         match self {
             Engine::PostgreSql => DEFAULT_DATABASE,
             Engine::SqlServer => "master",
+            Engine::Redis => "db0",
+        }
+    }
+
+    /// Criptografia de um servidor novo.
+    pub fn default_ssl(self) -> SslMode {
+        match self {
+            Engine::PostgreSql => SslMode::Prefer,
+            Engine::SqlServer => SslMode::Require,
+            Engine::Redis => SslMode::Disable,
+        }
+    }
+
+    /// Se o login pode ficar vazio: no Redis sem ACL só existe a senha
+    /// (`requirepass`), ou nem ela.
+    pub fn login_optional(self) -> bool {
+        self == Engine::Redis
+    }
+
+    /// Prefixo da chave do servidor conectado e da senha no cofre. O
+    /// PostgreSQL não tem, para achar as senhas guardadas antes dos
+    /// outros motores.
+    pub fn key_prefix(self) -> &'static str {
+        match self {
+            Engine::PostgreSql => "",
+            Engine::SqlServer => "sqlserver:",
+            Engine::Redis => "redis:",
         }
     }
 
@@ -112,6 +157,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "postgres",
             Engine::SqlServer => "sa",
+            Engine::Redis => "",
         }
     }
 
@@ -135,6 +181,8 @@ impl Engine {
                     | Feature::SchemaCompare
                     | Feature::Claude
             ),
+            // O Redis ganha os seus marco a marco (Fase N do plano).
+            Engine::Redis => matches!(feature, Feature::Query),
         }
     }
 
@@ -149,6 +197,9 @@ impl Engine {
                 "SELECT name FROM sys.databases \
                  WHERE HAS_DBACCESS(name) = 1 AND state = 0 ORDER BY name"
             }
+            // Comando do cliente: a sessão do Redis responde sem ir ao
+            // servidor com isto (`db0`... pelo `CONFIG GET databases`).
+            Engine::Redis => REDIS_LIST_DATABASES,
         }
     }
 
@@ -159,6 +210,7 @@ impl Engine {
         match self {
             Engine::PostgreSql => "SELECT now() <> statement_timestamp()",
             Engine::SqlServer => "SELECT @@TRANCOUNT",
+            Engine::Redis => REDIS_IN_TRANSACTION,
         }
     }
 
@@ -167,6 +219,57 @@ impl Engine {
     pub fn is_postgres(&self) -> bool {
         *self == Engine::PostgreSql
     }
+}
+
+/// Comando do cliente do Redis que lista os bancos (`db0`, `db1`...), um
+/// por linha. Não vai ao servidor com este nome.
+pub const REDIS_LIST_DATABASES: &str = "POSTPILOT DATABASES";
+
+/// Comando do cliente do Redis que responde `1` quando a sessão está
+/// dentro de um `MULTI`.
+pub const REDIS_IN_TRANSACTION: &str = "POSTPILOT INTRANSACTION";
+
+/// Um argumento de comando do Redis como o redis-cli lê: como está quando
+/// é simples, entre aspas duplas com escapes quando tem espaço, aspas ou
+/// caracteres de controle.
+pub fn redis_argument(text: &str) -> String {
+    let plain = !text.is_empty()
+        && !text.starts_with(['#', '-', '/'])
+        && text
+            .chars()
+            .all(|c| !c.is_whitespace() && !c.is_control() && !matches!(c, '"' | '\'' | '\\'));
+    if plain {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Número do banco do Redis a partir do nome (`db3`, `3` ou vazio, que é
+/// o 0).
+pub fn redis_database_index(name: &str) -> Option<u32> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Some(0);
+    }
+    let digits = name
+        .strip_prefix("db")
+        .or_else(|| name.strip_prefix("DB"))
+        .unwrap_or(name);
+    digits.parse().ok()
 }
 
 /// O que o app sabe fazer num servidor, recurso a recurso. Serve para a
@@ -230,7 +333,9 @@ impl SslMode {
     pub fn options(engine: Engine) -> &'static [SslMode] {
         match engine {
             Engine::PostgreSql => &SslMode::ALL,
-            Engine::SqlServer => &[SslMode::Disable, SslMode::Require, SslMode::VerifyFull],
+            Engine::SqlServer | Engine::Redis => {
+                &[SslMode::Disable, SslMode::Require, SslMode::VerifyFull]
+            }
         }
     }
 
@@ -238,6 +343,11 @@ impl SslMode {
     pub fn label_for(self, engine: Engine) -> &'static str {
         match (engine, self) {
             (Engine::PostgreSql, _) => self.label(),
+            (Engine::Redis, SslMode::Disable) => pgstudio_i18n::tr("No encryption"),
+            (Engine::Redis, SslMode::Prefer | SslMode::Require) => {
+                pgstudio_i18n::tr("TLS, trust server certificate")
+            }
+            (Engine::Redis, SslMode::VerifyFull) => pgstudio_i18n::tr("TLS, verify certificate"),
             (Engine::SqlServer, SslMode::Disable) => pgstudio_i18n::tr("Optional (login only)"),
             (Engine::SqlServer, SslMode::Prefer | SslMode::Require) => {
                 pgstudio_i18n::tr("Mandatory, trust server certificate")
@@ -292,10 +402,7 @@ impl ConnectionSettings {
     pub fn for_engine(engine: Engine) -> Self {
         ConnectionSettings {
             engine,
-            ssl: match engine {
-                Engine::PostgreSql => SslMode::Prefer,
-                Engine::SqlServer => SslMode::Require,
-            },
+            ssl: engine.default_ssl(),
             port: engine.default_port(),
             database: engine.default_database().into(),
             user: engine.default_user().into(),
@@ -319,10 +426,20 @@ impl ConnectionSettings {
         if self.user.is_empty() || self.user == old.default_user() {
             self.user = engine.default_user().into();
         }
-        if !SslMode::options(engine).contains(&self.ssl) {
-            self.ssl = SslMode::Require;
+        if !SslMode::options(engine).contains(&self.ssl) || self.ssl == old.default_ssl() {
+            self.ssl = engine.default_ssl();
         }
         self.engine = engine;
+    }
+
+    /// O login para mostrar: no Redis sem usuário, o `default` do
+    /// servidor.
+    pub fn login_label(&self) -> &str {
+        if self.user.is_empty() && self.engine == Engine::Redis {
+            "default"
+        } else {
+            &self.user
+        }
     }
 
     /// "Server name" como no SSMS: o host, mais a porta quando não é a
@@ -469,6 +586,38 @@ pub trait Connector: Send + Sync {
     ) -> Result<Connected, ConnectError>;
 }
 
+/// Escolhe o conector pelo motor das configurações. O `main` registra um
+/// por motor.
+#[derive(Default)]
+pub struct EngineConnector {
+    connectors: Vec<(Engine, Arc<dyn Connector>)>,
+}
+
+impl EngineConnector {
+    /// Registra o conector de `engine`.
+    pub fn with(mut self, engine: Engine, connector: Arc<dyn Connector>) -> Self {
+        self.connectors.retain(|(e, _)| *e != engine);
+        self.connectors.push((engine, connector));
+        self
+    }
+}
+
+impl Connector for EngineConnector {
+    fn connect(
+        &self,
+        settings: &ConnectionSettings,
+        password: &str,
+    ) -> Result<Connected, ConnectError> {
+        match self.connectors.iter().find(|(e, _)| *e == settings.engine) {
+            Some((_, connector)) => connector.connect(settings, password),
+            None => Err(ConnectError::Other(pgstudio_i18n::trf!(
+                "This build of PostPilot cannot connect to {engine}.",
+                engine = settings.engine.label()
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +728,42 @@ mod tests {
         assert!(Engine::SqlServer.supports(Feature::Security));
         assert!(Engine::SqlServer.supports(Feature::Backup));
         assert!(Engine::SqlServer.supports(Feature::SchemaCompare));
+    }
+
+    #[test]
+    fn redis_defaults_and_arguments() {
+        let s = ConnectionSettings::for_engine(Engine::Redis);
+        assert_eq!(
+            (s.port, s.database.as_str(), s.user.as_str(), s.ssl),
+            (6379, "db0", "", SslMode::Disable)
+        );
+        assert!(
+            serde_json::to_string(&s)
+                .unwrap()
+                .contains(r#""engine":"redis""#)
+        );
+        assert!(!Engine::Redis.is_sql());
+        assert!(Engine::Redis.supports(Feature::Query));
+        assert!(!Engine::Redis.supports(Feature::Designers));
+        assert_eq!(redis_argument("user:1"), "user:1");
+        assert_eq!(redis_argument("a b"), "\"a b\"");
+        assert_eq!(redis_argument("a\"b\n"), "\"a\\\"b\\n\"");
+        assert_eq!(redis_argument(""), "\"\"");
+        assert_eq!(redis_database_index("db3"), Some(3));
+        assert_eq!(redis_database_index("7"), Some(7));
+        assert_eq!(redis_database_index(""), Some(0));
+        assert_eq!(redis_database_index("vendas"), None);
+        let mut s = ConnectionSettings::default();
+        s.set_engine(Engine::Redis);
+        assert_eq!(
+            (s.port, s.ssl, s.user.as_str()),
+            (6379, SslMode::Disable, "")
+        );
+        s.set_engine(Engine::SqlServer);
+        assert_eq!(
+            (s.port, s.ssl, s.user.as_str()),
+            (1433, SslMode::Require, "sa")
+        );
     }
 
     #[test]

@@ -74,6 +74,8 @@ impl Catalog {
         match self.engine {
             crate::connection::Engine::PostgreSql => normalize_ident(written),
             crate::connection::Engine::SqlServer => normalize_tsql_ident(written),
+            // As chaves do Redis diferenciam maiúsculas.
+            crate::connection::Engine::Redis => written.to_string(),
         }
     }
 
@@ -81,7 +83,9 @@ impl Catalog {
     /// [`Catalog::normalize`]).
     fn same(&self, stored: &str, normalized: &str) -> bool {
         match self.engine {
-            crate::connection::Engine::PostgreSql => stored == normalized,
+            crate::connection::Engine::PostgreSql | crate::connection::Engine::Redis => {
+                stored == normalized
+            }
             crate::connection::Engine::SqlServer => stored.to_lowercase() == normalized,
         }
     }

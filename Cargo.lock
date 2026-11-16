@@ -3038,6 +3038,7 @@ version = "0.2.14"
 dependencies = [
  "getrandom 0.3.4",
  "pgstudio-core",
+ "pgstudio-redis",
  "rustls",
  "rustls-native-certs",
  "serde",
@@ -3066,6 +3067,7 @@ dependencies = [
  "pgstudio-i18n",
  "pgstudio-mssql",
  "pgstudio-pg-metadata",
+ "pgstudio-redis",
  "pgstudio-ui-shell",
  "rfd",
 ]
@@ -3161,6 +3163,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgstudio-redis"
+version = "0.2.14"
+dependencies = [
+ "pgstudio-core",
+ "pgstudio-i18n",
+ "pgstudio-pg-client",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "pgstudio-result-grid"
 version = "0.2.14"
 dependencies = [
@@ -3210,6 +3224,7 @@ dependencies = [
  "pgstudio-object-explorer",
  "pgstudio-pg-client",
  "pgstudio-pg-metadata",
+ "pgstudio-redis",
  "pgstudio-result-grid",
  "pgstudio-sql-editor",
  "pgstudio-updater",
