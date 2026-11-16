@@ -111,6 +111,8 @@ pub const MENUS: &[Menu] = &[
                     I(FormatDocument),
                 ],
             ),
+            SEP,
+            I(SaveAsSnippet),
         ],
     },
     Menu {
