@@ -56,7 +56,9 @@ fn connector(engine: Engine) -> Arc<dyn Connector> {
     match engine {
         Engine::PostgreSql => Arc::new(pgstudio_pg_metadata::PgConnector::new(runtime)),
         Engine::SqlServer => Arc::new(pgstudio_mssql::MssqlConnector::new(runtime)),
-        Engine::Redis | Engine::MongoDb => unreachable!("este teste só roda nos bancos SQL"),
+        Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+            unreachable!("este teste só roda nos bancos SQL")
+        }
     }
 }
 

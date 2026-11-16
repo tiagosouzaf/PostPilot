@@ -71,7 +71,7 @@ pub struct Table {
 /// tabela, coluna, tipo, posição na chave, calculada, identidade.
 pub fn tables_sql(engine: Engine) -> &'static str {
     match engine {
-        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
             "SELECT n.nspname, c.relname, a.attname, \
                     CASE WHEN t.typtype = 'b' THEN t.typname ELSE '' END, \
                     COALESCE((SELECT p.ord FROM pg_catalog.pg_index i, \
@@ -201,7 +201,7 @@ pub struct Plan {
 
 fn same_name(engine: Engine, a: &str, b: &str) -> bool {
     match engine {
-        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => a == b,
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => a == b,
         Engine::SqlServer => a.to_lowercase() == b.to_lowercase(),
     }
 }
@@ -215,7 +215,9 @@ pub fn find_table<'a>(engine: Engine, tables: &'a [Table], like: &Table) -> Opti
 
 fn key_kind(engine: Engine, type_name: &str) -> KeyKind {
     let ints: &[&str] = match engine {
-        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => &["int2", "int4", "int8"],
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+            &["int2", "int4", "int8"]
+        }
         Engine::SqlServer => &["tinyint", "smallint", "int", "bigint"],
     };
     if ints.contains(&type_name) {
@@ -311,7 +313,9 @@ impl Plan {
         };
         let q = self.engine.quote_ident(name);
         match self.engine {
-            Engine::PostgreSql | Engine::Redis | Engine::MongoDb => format!("({q}::text)"),
+            Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+                format!("({q}::text)")
+            }
             Engine::SqlServer => match column.type_name.as_str() {
                 "uniqueidentifier" => format!("CONVERT(nchar(36), {q})"),
                 "date" | "datetime" | "datetime2" | "smalldatetime" | "time" | "datetimeoffset" => {
@@ -346,7 +350,10 @@ impl Plan {
                     let alias = self.engine.quote_ident(&format!("pp_key_{}", n + 1));
                     list.push(format!("{text} AS {alias}"));
                     order.push(match self.engine {
-                        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
+                        Engine::PostgreSql
+                        | Engine::Redis
+                        | Engine::MongoDb
+                        | Engine::Elasticsearch => {
                             format!("{text} COLLATE \"C\"")
                         }
                         Engine::SqlServer => format!("{text} COLLATE Latin1_General_100_BIN2"),
@@ -386,9 +393,10 @@ impl Plan {
                     let (x, y) = (t(a)?, t(b)?);
                     text += 1;
                     match self.engine {
-                        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => {
-                            x.as_bytes().cmp(y.as_bytes())
-                        }
+                        Engine::PostgreSql
+                        | Engine::Redis
+                        | Engine::MongoDb
+                        | Engine::Elasticsearch => x.as_bytes().cmp(y.as_bytes()),
                         Engine::SqlServer => cmp_utf16_padded(&x, &y),
                     }
                 }
@@ -843,7 +851,9 @@ pub fn write_script(
     }
     writeln!(out)?;
     match engine {
-        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => writeln!(out, "BEGIN;")?,
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+            writeln!(out, "BEGIN;")?
+        }
         Engine::SqlServer => writeln!(
             out,
             "SET XACT_ABORT ON;\nSET NOCOUNT ON;\nSET DATEFORMAT ymd;\nBEGIN TRANSACTION;"
@@ -886,7 +896,9 @@ pub fn write_script(
         }
     }
     match engine {
-        Engine::PostgreSql | Engine::Redis | Engine::MongoDb => writeln!(out, "\nCOMMIT;")?,
+        Engine::PostgreSql | Engine::Redis | Engine::MongoDb | Engine::Elasticsearch => {
+            writeln!(out, "\nCOMMIT;")?
+        }
         Engine::SqlServer => writeln!(out, "\nCOMMIT TRANSACTION;")?,
     }
     out.flush()?;

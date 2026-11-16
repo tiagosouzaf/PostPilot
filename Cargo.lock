@@ -4046,6 +4046,7 @@ version = "0.2.32"
 dependencies = [
  "getrandom 0.3.4",
  "pgstudio-core",
+ "pgstudio-elasticsearch",
  "pgstudio-mongodb",
  "pgstudio-redis",
  "rustls",
@@ -4073,6 +4074,7 @@ dependencies = [
  "eframe",
  "pgstudio-automation",
  "pgstudio-core",
+ "pgstudio-elasticsearch",
  "pgstudio-i18n",
  "pgstudio-mongodb",
  "pgstudio-mssql",
@@ -4101,6 +4103,19 @@ dependencies = [
  "pgstudio-i18n",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pgstudio-elasticsearch"
+version = "0.2.32"
+dependencies = [
+ "pgstudio-core",
+ "pgstudio-i18n",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
@@ -4255,6 +4270,7 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-diagram-engine",
  "pgstudio-docking",
+ "pgstudio-elasticsearch",
  "pgstudio-execution-plan",
  "pgstudio-i18n",
  "pgstudio-mongodb",

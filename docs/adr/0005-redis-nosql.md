@@ -62,5 +62,5 @@ escrita e pede confirmação.
 
 - Arquivos de conexão ganham `"engine": "redis"`; os de PostgreSQL não
   mudam. A chave do servidor e da senha no cofre tem o prefixo `redis:`.
-- MongoDB (ver `docs/mongodb.md`) e Elasticsearch seguem o mesmo caminho (driver oficial do MongoDB;
+- MongoDB (`docs/mongodb.md`) e Elasticsearch (`docs/elasticsearch.md`) seguem o mesmo caminho (driver oficial do MongoDB;
   HTTP com o `ureq` no Elasticsearch).

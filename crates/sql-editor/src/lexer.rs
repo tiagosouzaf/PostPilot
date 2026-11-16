@@ -49,7 +49,14 @@ pub enum Dialect {
     /// textos entre aspas simples, duplas ou crases, `//` e `/* */`,
     /// `$operadores` e `/regex/`.
     MongoDb,
+    /// Requisições do Elasticsearch como no console do Kibana: uma linha
+    /// `GET /caminho` e o corpo em JSON; `#` e `//` no começo da linha
+    /// são comentários.
+    Elasticsearch,
 }
+
+/// Os métodos que começam uma requisição do Elasticsearch.
+pub const ELASTICSEARCH_METHODS: &[&str] = &["DELETE", "GET", "HEAD", "PATCH", "POST", "PUT"];
 
 /// Palavras e tipos que o realce do MongoDB destaca.
 pub const MONGODB_KEYWORDS: &[&str] = &[
@@ -669,7 +676,8 @@ pub fn retokenize_in(
     // No Redis a primeira palavra da linha é o comando: o que vem depois
     // da edição, na mesma linha, pode mudar de tipo.
     let sync_from = match dialect {
-        Dialect::Redis => text[edit_end..]
+        // No Elasticsearch, a linha do método também.
+        Dialect::Redis | Dialect::Elasticsearch => text[edit_end..]
             .find('\n')
             .map_or(text.len(), |i| edit_end + i),
         _ => edit_end,
@@ -756,6 +764,9 @@ impl Lexer<'_> {
         if self.dialect == Dialect::MongoDb {
             return self.mongodb_kind(c);
         }
+        if self.dialect == Dialect::Elasticsearch {
+            return self.elasticsearch_kind(c);
+        }
         if self.dialect == Dialect::TSql
             && let Some(kind) = self.tsql_kind(c)
         {
@@ -841,6 +852,81 @@ impl Lexer<'_> {
                 self.bump();
                 TokenKind::Other
             }
+        }
+    }
+
+    /// Um pedaço de uma requisição do Elasticsearch: o método
+    /// (palavra-chave) e o caminho (nome) na primeira linha, depois JSON.
+    fn elasticsearch_kind(&mut self, c: char) -> TokenKind {
+        if c.is_whitespace() {
+            self.eat_while(char::is_whitespace);
+            return TokenKind::Whitespace;
+        }
+        let line_start = self.text[..self.pos].rfind('\n').map_or(0, |i| i + 1);
+        let before = &self.text[line_start..self.pos];
+        let rest = self.rest();
+        if before.trim().is_empty() {
+            if c == '#' || rest.starts_with("//") {
+                self.eat_while(|c| c != '\n');
+                return TokenKind::Comment;
+            }
+            let word: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
+            let after = rest[word.len()..].chars().next();
+            if ELASTICSEARCH_METHODS.contains(&word.to_ascii_uppercase().as_str())
+                && after.is_none_or(|c| c == ' ' || c == '\t')
+            {
+                self.pos += word.len();
+                return TokenKind::Keyword;
+            }
+        } else if ELASTICSEARCH_METHODS.contains(&before.trim().to_ascii_uppercase().as_str()) {
+            // O caminho: até o fim da linha.
+            self.eat_while(|c| !c.is_whitespace());
+            return TokenKind::Identifier;
+        }
+        if let Some(inside) = rest.strip_prefix("\"\"\"") {
+            self.pos = match inside.find("\"\"\"") {
+                Some(i) => self.pos + i + 6,
+                None => self.text.len(),
+            };
+            return TokenKind::String;
+        }
+        if c == '"' {
+            self.bump();
+            while let Some(d) = self.bump() {
+                if d == '\\' {
+                    self.bump();
+                } else if d == '"' || d == '\n' {
+                    break;
+                }
+            }
+            // A chave de um campo (`"nome":`) é um nome; o resto, texto.
+            return if self.rest().trim_start_matches([' ', '\t']).starts_with(':') {
+                TokenKind::QuotedIdentifier
+            } else {
+                TokenKind::String
+            };
+        }
+        if c.is_ascii_digit() || (c == '-' && rest[1..].starts_with(|d: char| d.is_ascii_digit())) {
+            self.bump();
+            self.eat_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'));
+            return TokenKind::Number;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let start = self.pos;
+            self.eat_while(|c| c == '_' || c.is_alphanumeric());
+            return match &self.text[start..self.pos] {
+                "true" | "false" | "null" => TokenKind::Keyword,
+                _ => TokenKind::Identifier,
+            };
+        }
+        self.bump();
+        if "{}[],:".contains(c) {
+            TokenKind::Punctuation
+        } else {
+            TokenKind::Operator
         }
     }
 
@@ -1115,6 +1201,48 @@ mod tests {
 
     use super::*;
     use TokenKind::*;
+
+    #[test]
+    fn elasticsearch_requests_are_highlighted() {
+        let text = "# busca\nGET /pedidos/_search?size=1\n{ \"query\": { \"term\": { \"pago\": true } }, \"size\": -1.5, \"q\": \"get x\" }\npost _bulk";
+        let got: Vec<(TokenKind, &str)> = tokenize_in(text, Dialect::Elasticsearch)
+            .into_iter()
+            .filter(|t| t.kind != TokenKind::Whitespace && t.kind != TokenKind::Punctuation)
+            .map(|t| (t.kind, &text[t.range.clone()]))
+            .collect();
+        use TokenKind::*;
+        assert_eq!(
+            got,
+            [
+                (Comment, "# busca"),
+                (Keyword, "GET"),
+                (Identifier, "/pedidos/_search?size=1"),
+                (QuotedIdentifier, "\"query\""),
+                (QuotedIdentifier, "\"term\""),
+                (QuotedIdentifier, "\"pago\""),
+                (Keyword, "true"),
+                (QuotedIdentifier, "\"size\""),
+                (Number, "-1.5"),
+                (QuotedIdentifier, "\"q\""),
+                (String, "\"get x\""),
+                (Keyword, "post"),
+                (Identifier, "_bulk"),
+            ]
+        );
+        // Editar a linha do método relê o caminho.
+        let mut text = "GE /a/_search\n{ \"a\": \"\"\"x\ny\"\"\" }".to_string();
+        let mut tokens = tokenize_in(&text, Dialect::Elasticsearch);
+        text.insert(2, 'T');
+        retokenize_in(&text, &mut tokens, 2, 0, 1, Dialect::Elasticsearch);
+        assert_eq!(tokens, tokenize_in(&text, Dialect::Elasticsearch));
+        assert_eq!(tokens[2].kind, Identifier);
+        // O texto de três aspas é um token só.
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.kind == String && text[t.range.clone()].contains('\n'))
+        );
+    }
 
     #[test]
     fn mongodb_queries_are_highlighted() {

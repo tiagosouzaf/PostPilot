@@ -236,6 +236,12 @@ pub trait MetadataProvider: Send + Sync {
         true
     }
 
+    /// Se o que guarda os documentos se chama índice (Elasticsearch) e
+    /// não coleção: muda só os nomes nos menus.
+    fn search_indices(&self) -> bool {
+        false
+    }
+
     /// O filtro dos filhos de um nó (as chaves de um banco do Redis):
     /// `Some("")` quando o nó aceita filtro e não tem nenhum, None quando
     /// não filtra.

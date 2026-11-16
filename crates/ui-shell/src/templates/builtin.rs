@@ -54,6 +54,15 @@ const fn mg(folder: &'static str, name: &'static str, sql: &'static str) -> Buil
     }
 }
 
+const fn es(folder: &'static str, name: &'static str, sql: &'static str) -> Builtin {
+    Builtin {
+        engine: Engine::Elasticsearch,
+        folder,
+        name,
+        sql,
+    }
+}
+
 /// Todos os modelos, na ordem em que aparecem.
 pub const ALL: &[Builtin] = &[
     // ---------------------------------------------------------------
@@ -938,6 +947,268 @@ show collections
         "db.adminCommand({ currentOp: 1, active: true })
 ",
     ),
+    // ---------------------------------------------------------------
+    // Elasticsearch
+    // ---------------------------------------------------------------
+    es(
+        tr_noop("Search"),
+        tr_noop("Search All Documents"),
+        "GET /index_name/_search
+{
+  \"size\": 100,
+  \"query\": { \"match_all\": {} }
+}
+",
+    ),
+    es(
+        tr_noop("Search"),
+        tr_noop("Full-Text Search"),
+        "GET /index_name/_search
+{
+  \"query\": { \"match\": { \"field\": \"text to find\" } }
+}
+",
+    ),
+    es(
+        tr_noop("Search"),
+        tr_noop("Filter, Sort and Page"),
+        "GET /index_name/_search
+{
+  \"from\": 0,
+  \"size\": 50,
+  \"_source\": [\"field_a\", \"field_b\"],
+  \"query\": {
+    \"bool\": {
+      \"filter\": [
+        { \"term\": { \"status\": \"open\" } },
+        { \"range\": { \"created_at\": { \"gte\": \"now-7d\" } } }
+      ]
+    }
+  },
+  \"sort\": [{ \"created_at\": \"desc\" }]
+}
+",
+    ),
+    es(
+        tr_noop("Search"),
+        tr_noop("Count Documents"),
+        "GET /index_name/_count
+{
+  \"query\": { \"term\": { \"field\": \"value\" } }
+}
+",
+    ),
+    es(
+        tr_noop("Search"),
+        tr_noop("Search with SQL"),
+        "POST /_sql?format=json
+{
+  \"query\": \"SELECT * FROM index_name WHERE field = 'value' LIMIT 100\"
+}
+",
+    ),
+    es(
+        tr_noop("Aggregations"),
+        tr_noop("Count by Value"),
+        "GET /index_name/_search
+{
+  \"size\": 0,
+  \"aggs\": {
+    \"by_value\": { \"terms\": { \"field\": \"field.keyword\", \"size\": 20 } }
+  }
+}
+",
+    ),
+    es(
+        tr_noop("Aggregations"),
+        tr_noop("Histogram by Date"),
+        "GET /index_name/_search
+{
+  \"size\": 0,
+  \"aggs\": {
+    \"by_day\": {
+      \"date_histogram\": { \"field\": \"created_at\", \"calendar_interval\": \"day\" },
+      \"aggs\": { \"total\": { \"sum\": { \"field\": \"amount\" } } }
+    }
+  }
+}
+",
+    ),
+    es(
+        tr_noop("Aggregations"),
+        tr_noop("Statistics of a Field"),
+        "GET /index_name/_search
+{
+  \"size\": 0,
+  \"aggs\": { \"numbers\": { \"stats\": { \"field\": \"amount\" } } }
+}
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Get Document by Id"),
+        "GET /index_name/_doc/document_id
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Index Document"),
+        "PUT /index_name/_doc/document_id
+{
+  \"field\": \"value\",
+  \"created_at\": \"2026-01-31T12:00:00Z\"
+}
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Update Document Fields"),
+        "POST /index_name/_update/document_id
+{
+  \"doc\": { \"field\": \"new value\" }
+}
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Delete Document"),
+        "DELETE /index_name/_doc/document_id
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Bulk Index"),
+        "POST /index_name/_bulk
+{ \"index\": { \"_id\": \"1\" } }
+{ \"field\": \"first\" }
+{ \"index\": { \"_id\": \"2\" } }
+{ \"field\": \"second\" }
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Update by Query"),
+        "POST /index_name/_update_by_query
+{
+  \"query\": { \"term\": { \"status\": \"open\" } },
+  \"script\": { \"source\": \"ctx._source.status = 'closed'\" }
+}
+",
+    ),
+    es(
+        tr_noop("Documents"),
+        tr_noop("Delete by Query"),
+        "POST /index_name/_delete_by_query
+{
+  \"query\": { \"range\": { \"created_at\": { \"lt\": \"now-90d\" } } }
+}
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Create Index with Mapping"),
+        "PUT /index_name
+{
+  \"settings\": { \"number_of_shards\": 1, \"number_of_replicas\": 1 },
+  \"mappings\": {
+    \"properties\": {
+      \"name\": { \"type\": \"text\", \"fields\": { \"keyword\": { \"type\": \"keyword\" } } },
+      \"amount\": { \"type\": \"double\" },
+      \"created_at\": { \"type\": \"date\" }
+    }
+  }
+}
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Add Field to Mapping"),
+        "PUT /index_name/_mapping
+{
+  \"properties\": { \"new_field\": { \"type\": \"keyword\" } }
+}
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Show Mapping and Settings"),
+        "GET /index_name
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Reindex"),
+        "POST /_reindex
+{
+  \"source\": { \"index\": \"old_index\" },
+  \"dest\": { \"index\": \"new_index\" }
+}
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Add Alias"),
+        "POST /_aliases
+{
+  \"actions\": [{ \"add\": { \"index\": \"index_name\", \"alias\": \"alias_name\" } }]
+}
+",
+    ),
+    es(
+        tr_noop("Indices"),
+        tr_noop("Delete Index"),
+        "DELETE /index_name
+",
+    ),
+    es(
+        tr_noop("Cluster"),
+        tr_noop("Cluster Health"),
+        "GET /_cluster/health
+",
+    ),
+    es(
+        tr_noop("Cluster"),
+        tr_noop("List Indices"),
+        "GET /_cat/indices?s=index
+",
+    ),
+    es(
+        tr_noop("Cluster"),
+        tr_noop("Nodes"),
+        "GET /_cat/nodes?h=name,ip,node.role,heap.percent,ram.percent,cpu,load_1m
+",
+    ),
+    es(
+        tr_noop("Cluster"),
+        tr_noop("Shards"),
+        "GET /_cat/shards?s=index
+",
+    ),
+    es(
+        tr_noop("Cluster"),
+        tr_noop("Running Tasks"),
+        "GET /_tasks?detailed=true&actions=*search*,*byquery*,*reindex*
+",
+    ),
+    es(
+        tr_noop("Text Analysis"),
+        tr_noop("Analyze Text"),
+        "POST /_analyze
+{
+  \"analyzer\": \"standard\",
+  \"text\": \"Text to analyze\"
+}
+",
+    ),
+    es(
+        tr_noop("Text Analysis"),
+        tr_noop("Explain a Match"),
+        "GET /index_name/_explain/document_id
+{
+  \"query\": { \"match\": { \"field\": \"text to find\" } }
+}
+",
+    ),
 ];
 
 /// As pastas de um servidor, na ordem em que aparecem.
@@ -966,6 +1237,31 @@ mod tests {
         for t in ALL.iter().filter(|t| t.engine == Engine::MongoDb) {
             let parsed = pgstudio_mongodb::shell::parse(t.sql);
             assert!(parsed.is_ok_and(|p| !p.is_empty()), "{}: {}", t.name, t.sql);
+        }
+    }
+
+    #[test]
+    fn elasticsearch_templates_are_valid_requests() {
+        for t in ALL.iter().filter(|t| t.engine == Engine::Elasticsearch) {
+            let parsed = pgstudio_elasticsearch::console::parse(t.sql).unwrap();
+            assert_eq!(parsed.len(), 1, "{}", t.name);
+            // O corpo é JSON (ou um JSON por linha).
+            if let Some((body, kind)) = pgstudio_elasticsearch::console::body(&parsed[0]) {
+                for line in body.lines().filter(|_| kind != "application/json") {
+                    assert!(
+                        pgstudio_elasticsearch::json::Json::parse(line).is_ok(),
+                        "{}: {line}",
+                        t.name
+                    );
+                }
+                if kind == "application/json" {
+                    assert!(
+                        pgstudio_elasticsearch::json::Json::parse(&body).is_ok(),
+                        "{}: {body}",
+                        t.name
+                    );
+                }
+            }
         }
     }
 

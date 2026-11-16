@@ -553,6 +553,8 @@ impl ObjectExplorer {
         let provider = self.provider.clone();
         // Banco relacional: Tasks, Design, Script as, Activity Monitor.
         let relational = provider.as_ref().is_none_or(|p| p.relational());
+        // Elasticsearch: os menus falam de índices.
+        let indices = provider.as_ref().is_some_and(|p| p.search_indices());
         let mut filter: Option<(NodeId, String)> = None;
         let mut clear_filter: Option<NodeId> = None;
         let range = range.start.min(rows.len())..range.end.min(rows.len());
@@ -641,7 +643,12 @@ impl ObjectExplorer {
                             if let Some(current) =
                                 provider.as_ref().and_then(|p| p.filter(&node.id))
                             {
-                                if ui.button(tr("Filter Keys...")).clicked() {
+                                let text = if indices {
+                                    tr("Filter Indices...")
+                                } else {
+                                    tr("Filter Keys...")
+                                };
+                                if ui.button(text).clicked() {
                                     filter = Some((node.id.clone(), current.clone()));
                                     ui.close();
                                 }
@@ -778,12 +785,17 @@ impl ObjectExplorer {
                                     events.push(Event::SelectTop(node.id.clone()));
                                     ui.close();
                                 }
-                                if ui.button(tr("Script Collection as CREATE")).clicked() {
+                                let (create, drop) = if indices {
+                                    (tr("Script Index as CREATE"), tr("Delete Index..."))
+                                } else {
+                                    (tr("Script Collection as CREATE"), tr("Drop Collection..."))
+                                };
+                                if ui.button(create).clicked() {
                                     events
                                         .push(Event::Script(node.id.clone(), ScriptAction::Create));
                                     ui.close();
                                 }
-                                if ui.button(tr("Drop Collection...")).clicked() {
+                                if ui.button(drop).clicked() {
                                     events.push(Event::Script(node.id.clone(), ScriptAction::Drop));
                                     ui.close();
                                 }
@@ -956,19 +968,31 @@ impl ObjectExplorer {
         let mut apply = false;
         let mut open = true;
         let mut cancel = false;
-        egui::Window::new(tr("Filter Keys"))
+        let indices = self.provider.as_ref().is_some_and(|p| p.search_indices());
+        let (title, help, hint) = if indices {
+            (
+                tr("Filter Indices"),
+                tr("Show only the indices that contain this text. A pattern also works: logs-*"),
+                "logs-*",
+            )
+        } else {
+            (
+                tr("Filter Keys"),
+                tr("Show only the keys that contain this text. A pattern also works: user:*"),
+                "user:*",
+            )
+        };
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label(tr(
-                    "Show only the keys that contain this text. A pattern also works: user:*",
-                ));
+                ui.label(help);
                 let field = ui.add(
                     egui::TextEdit::singleline(&mut text)
                         .desired_width(320.0)
-                        .hint_text("user:*"), // i18n-ignore
+                        .hint_text(hint),
                 );
                 if !field.has_focus() && !field.lost_focus() {
                     field.request_focus();
