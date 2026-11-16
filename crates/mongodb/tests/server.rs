@@ -13,6 +13,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use pgstudio_core::catalog::RelationKind;
 use pgstudio_core::connection::{
     ConnectError, Connected, ConnectionSettings, Connector, Engine, REDIS_LIST_DATABASES,
 };
@@ -442,6 +443,59 @@ fn explorer_lists_databases_collections_and_indexes() {
         "{props:?}"
     );
     assert!(meta.properties(&collections[0].id).unwrap().is_empty());
+
+    run(session.as_ref(), "db.dropDatabase()");
+}
+
+/// O catálogo do IntelliSense: coleções com os campos de uma amostra.
+#[test]
+fn catalog_has_collections_and_sampled_fields() {
+    let Some(connected) = connect() else { return };
+    let session = connected.queries.open("pptest_catalogo");
+    let seed = "db.dropDatabase()\n\
+        db.pedidos.insertMany([\
+            { numero: 1, cliente: { nome: 'Ana', cidade: 'Recife' }, cupom: null },\
+            { numero: 2, total: NumberDecimal('9.90'), itens: [{ sku: 'a' }], cupom: 'X' }])\n\
+        db.createCollection('vazia')\n\
+        db.createCollection('pagos', { viewOn: 'pedidos', pipeline: [] })";
+    assert_eq!(errors(&run(session.as_ref(), seed)), Vec::<String>::new());
+
+    let catalog = connected.metadata.catalog("pptest_catalogo").unwrap();
+    assert_eq!(catalog.engine, Engine::MongoDb);
+    let relations = &catalog.schemas[0].relations;
+    assert_eq!(
+        relations
+            .iter()
+            .map(|r| (r.name.as_str(), r.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("pagos", RelationKind::View),
+            ("pedidos", RelationKind::Table),
+            ("vazia", RelationKind::Table),
+        ]
+    );
+    let fields: Vec<(&str, &str)> = relations[1]
+        .columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.ty.as_str()))
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            ("_id", "objectId"),
+            ("cliente", "object"),
+            ("cliente.cidade", "string"),
+            ("cliente.nome", "string"),
+            // O tipo vem do primeiro documento em que o campo tem valor.
+            ("cupom", "string"),
+            ("itens", "array"),
+            ("numero", "int"),
+            ("total", "decimal"),
+        ]
+    );
+    assert!(relations[2].columns.is_empty());
+    // A view tem os campos do que ela mostra.
+    assert_eq!(relations[0].columns.len(), 8);
 
     run(session.as_ref(), "db.dropDatabase()");
 }

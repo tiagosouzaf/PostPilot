@@ -10,7 +10,8 @@
 
 use mongodb::Client;
 use mongodb::bson::{Bson, Document, doc};
-use pgstudio_core::connection::{ConnectionSettings, mongodb_collection, mongodb_string};
+use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
+use pgstudio_core::connection::{ConnectionSettings, Engine, mongodb_collection, mongodb_string};
 use pgstudio_core::metadata::{
     MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property, ScriptAction,
 };
@@ -163,6 +164,61 @@ impl MongoExplorer {
     }
 }
 
+/// Coleções que o IntelliSense guarda de cada banco.
+const CATALOG_COLLECTIONS: usize = 300;
+/// Documentos lidos de cada coleção para saber os campos.
+const CATALOG_SAMPLE: i32 = 50;
+/// Campos guardados de cada coleção.
+const CATALOG_FIELDS: usize = 500;
+/// Até onde desce nos documentos de dentro.
+const CATALOG_DEPTH: usize = 3;
+
+/// O tipo de um valor como o `$type` chama.
+fn type_name(value: &Bson) -> &'static str {
+    match value {
+        Bson::Double(_) => "double",
+        Bson::String(_) => "string",
+        Bson::Array(_) => "array",
+        Bson::Document(_) => "object",
+        Bson::Boolean(_) => "bool",
+        Bson::Null => "null",
+        Bson::RegularExpression(_) => "regex",
+        Bson::Int32(_) => "int",
+        Bson::Int64(_) => "long",
+        Bson::Timestamp(_) => "timestamp",
+        Bson::Binary(_) => "binData",
+        Bson::ObjectId(_) => "objectId",
+        Bson::DateTime(_) => "date",
+        Bson::Decimal128(_) => "decimal",
+        _ => "",
+    }
+}
+
+/// Junta em `fields` os campos de `document` (nome com o caminho e tipo
+/// da primeira vez que apareceu com valor).
+fn collect_fields(
+    document: &Document,
+    path: &str,
+    depth: usize,
+    fields: &mut Vec<(String, String)>,
+) {
+    for (key, value) in document {
+        let name = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{path}.{key}")
+        };
+        match fields.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, ty)) if ty == "null" => *ty = type_name(value).to_string(),
+            Some(_) => {}
+            None => fields.push((name.clone(), type_name(value).to_string())),
+        }
+        if let (Bson::Document(inner), true) = (value, depth + 1 < CATALOG_DEPTH) {
+            collect_fields(inner, &name, depth + 1, fields);
+        }
+    }
+}
+
 fn hex(text: &str) -> String {
     text.bytes().map(|b| format!("{b:02x}")).collect()
 }
@@ -245,6 +301,54 @@ impl MetadataProvider for MongoExplorer {
 
     fn relational(&self) -> bool {
         false
+    }
+
+    /// As coleções do banco para o IntelliSense, com os campos de uma
+    /// amostra de documentos de cada uma (`cliente.cidade` para os de
+    /// dentro) e o tipo de cada campo.
+    fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
+        let mut relations = Vec::new();
+        for node in self
+            .collections(database)?
+            .into_iter()
+            .take(CATALOG_COLLECTIONS)
+        {
+            // Uma coleção que não dá para ler entra sem campos.
+            let sample = self
+                .list(
+                    database,
+                    doc! { "find": &node.name, "limit": CATALOG_SAMPLE, "maxTimeMS": 3000 },
+                )
+                .unwrap_or_default();
+            let mut fields: Vec<(String, String)> = Vec::new();
+            for document in &sample {
+                collect_fields(document, "", 0, &mut fields);
+            }
+            fields.sort();
+            fields.truncate(CATALOG_FIELDS);
+            relations.push(Relation {
+                name: node.name,
+                kind: if node.kind == NodeKind::View {
+                    RelationKind::View
+                } else {
+                    RelationKind::Table
+                },
+                columns: fields
+                    .into_iter()
+                    .map(|(name, ty)| Column { name, ty })
+                    .collect(),
+            });
+        }
+        Ok(Catalog {
+            engine: Engine::MongoDb,
+            database: database.to_string(),
+            search_path: vec![String::new()],
+            schemas: vec![Schema {
+                name: String::new(),
+                relations,
+                functions: Vec::new(),
+            }],
+        })
     }
 
     fn database_of(&self, node: &NodeId) -> Option<String> {

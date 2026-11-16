@@ -79,6 +79,26 @@ comando do servidor.
 - Num servidor de um ambiente que pede confirmação (Produção), um texto com
   qualquer comando que escreve pede o "Execute" antes de rodar.
 
+## Sugestões no editor
+
+A lista abre enquanto você escreve (ou com Ctrl+Espaço):
+
+- depois de `db.`, as coleções e views do banco e os métodos do `db`
+  (uma coleção com nome fora do padrão entra como `getCollection("...")`);
+- depois da coleção, os métodos (`find`, `aggregate`, `updateMany`...),
+  com os argumentos ao lado; depois de um `find(...)`, `sort`, `limit`,
+  `skip` e os outros;
+- ao digitar `$`, os operadores que cabem ali: de filtro num `find`, de
+  atualização no segundo argumento de um `updateOne`/`updateMany`,
+  estágios e expressões num `aggregate`;
+- onde vai um campo, os campos da coleção com o tipo, inclusive os de
+  dentro (`"cliente.cidade"`), e dentro de `"$..."` num `aggregate`;
+- `ObjectId`, `ISODate`, `NumberLong`, `NumberDecimal`, `true`, `false` e
+  `null` onde vai um valor.
+
+O MongoDB não tem schema: os campos vêm dos primeiros 50 documentos de
+cada coleção, lidos uma vez por banco. Ctrl+Shift+R lê de novo.
+
 ## Pesquisador de Objetos
 
 Servidor, bancos, coleções e views de cada banco, e os índices de cada
