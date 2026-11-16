@@ -728,8 +728,10 @@ fn auto_hide_all_moves_tool_windows_to_the_edges() {
         .strip_button_rect(Panel::Properties)
         .unwrap();
     let bottom = harness.state().strip_button_rect(Panel::Output).unwrap();
+    // A janela de 1280 tem menos pontos com o zoom da interface.
+    let width = harness.ctx.content_rect().width();
     assert!(left.center().x < 40.0);
-    assert!(right.center().x > 1240.0);
+    assert!(right.center().x > width - 40.0);
     assert!(bottom.center().y > left.center().y && bottom.height() < 30.0);
 }
 
@@ -805,7 +807,11 @@ fn pin_button_docks_the_panel_again() {
     assert!(harness.state().is_panel_open(Panel::Properties));
     assert_eq!(harness.state().flyout_panel(), None);
     let props = harness.state().panel_rect(Panel::Properties).unwrap();
-    assert!(props.right() > 1200.0, "voltou para a direita: {props:?}");
+    let width = harness.ctx.content_rect().width();
+    assert!(
+        props.right() > width - 80.0,
+        "voltou para a direita: {props:?}"
+    );
 }
 
 #[test]
