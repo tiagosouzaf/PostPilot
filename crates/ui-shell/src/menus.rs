@@ -126,6 +126,7 @@ pub const MENUS: &[Menu] = &[
             I(TemplateExplorer),
             I(PropertiesWindow),
             I(Output),
+            I(QueryHistory),
             SEP,
             I(ActivityMonitor),
             SEP,

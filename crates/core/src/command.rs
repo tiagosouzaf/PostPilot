@@ -88,6 +88,7 @@ commands! {
     TemplateExplorer => "View.TemplateExplorer", "Template Explorer";
     PropertiesWindow => "View.PropertiesWindow", "Properties Window";
     Output => "View.Output", "Output";
+    QueryHistory => "View.QueryHistory", "Query History";
     ActivityMonitor => "View.ActivityMonitor", "Activity Monitor";
     ThemeSystem => "View.ThemeSystem", "Same as system";
     ThemeLight => "View.ThemeLight", "Light";

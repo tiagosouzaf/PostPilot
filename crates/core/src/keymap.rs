@@ -303,6 +303,7 @@ const DEFAULTS: &[(CommandId, &str)] = &[
     (CommandId::TemplateExplorer, "Ctrl+Alt+T"),
     (CommandId::PropertiesWindow, "F4"),
     (CommandId::Output, "Ctrl+Alt+O"),
+    (CommandId::QueryHistory, "Ctrl+Alt+H"),
     (CommandId::ActivityMonitor, "Ctrl+Alt+A"),
     (CommandId::ZoomIn, "Ctrl++"),
     (CommandId::ZoomOut, "Ctrl+-"),
