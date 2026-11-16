@@ -16,7 +16,11 @@
 //!   uma com o servidor dela; o designer e o diagrama voltam com as
 //!   edições ainda não salvas no banco;
 //! - as pastas recolhidas das árvores de servidores (Object Explorer,
-//!   Registered Servers e Workspace Explorer) e das consultas do workspace.
+//!   Registered Servers e Workspace Explorer) e das consultas do workspace;
+//! - o Template Explorer: a pesquisa e as pastas abertas;
+//! - se o Query History estava aberto e o que estava na pesquisa dele (as
+//!   execuções ficam no arquivo do próprio histórico, veja
+//!   [`crate::history`]).
 //!
 //! **Senhas nunca entram aqui.** Um servidor é guardado como
 //! [`ConnectionSettings`], que não tem senha; ao reabrir, a senha vem do
@@ -164,6 +168,12 @@ pub struct SessionState {
     pub collapsed_servers: Vec<Vec<String>>,
     /// Pastas recolhidas do workspace aberto.
     pub workspace_tree: Option<WorkspaceTree>,
+    /// Template Explorer: pesquisa e pastas abertas.
+    pub templates: Option<crate::templates::TemplatesSession>,
+    /// A janela Query History estava aberta.
+    pub history_open: bool,
+    /// O que estava escrito na pesquisa do Query History.
+    pub history_filter: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -414,6 +424,13 @@ impl ShellApp {
     /// Reabre as janelas e põe os servidores na fila para reconectar.
     fn restore_session(&mut self, store: &SessionStore, state: SessionState) {
         self.documents.set_query_counter(state.query_counter);
+        if let Some(templates) = state.templates.clone() {
+            self.templates.restore(templates);
+        }
+        self.history.filter = state.history_filter.clone();
+        if state.history_open {
+            self.show_query_history();
+        }
         let mut front = None;
         for d in &state.documents {
             let on_disk = d
@@ -748,6 +765,9 @@ impl ShellApp {
             windows,
             collapsed_servers: self.registered.collapsed_names(),
             workspace_tree,
+            templates: Some(self.templates.session()),
+            history_open: self.workspace.is_open(&crate::panels::Panel::QueryHistory),
+            history_filter: self.history.filter.clone(),
         }
     }
 

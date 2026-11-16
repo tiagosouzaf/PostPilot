@@ -26,6 +26,9 @@
 //! - `PGSTUDIO_OPTIONS=1`: abre Tools > Options (para screenshots).
 //! - `PGSTUDIO_EXPAND=srv;srv/Databases`: expande esses nós do Object Explorer
 //!   ao abrir (para demonstrações e screenshots).
+//! - `PGSTUDIO_HISTORY=arquivo.jsonl`: usa outro arquivo para o histórico de
+//!   consultas executadas no lugar de `<config>/PostPilot/history.jsonl`
+//!   (também nos modos de screenshot e de medição, que sem ela não gravam).
 //! - `PGSTUDIO_LAYOUT=arquivo.json`: usa outro arquivo de layout no lugar de
 //!   `<config>/PostPilot/layout.json`. Sem ela, o modo screenshot e o de
 //!   medição usam sempre o layout padrão.
@@ -398,6 +401,15 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                         .join("workspace.txt"),
                 );
             }
+            // Os trechos do usuário que ficam só neste computador (os do
+            // workspace ficam na pasta dele).
+            if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                app = app
+                    .with_snippets_dir(dir.join(pgstudio_core::CONFIG_DIR_NAME).join("snippets"));
+            }
             if !demo {
                 match DbRuntime::new() {
                     Ok(runtime) => {
@@ -427,6 +439,16 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
             };
             if let Some(file) = session_file {
                 app = app.with_session(pgstudio_ui_shell::session::SessionStore::open(file));
+            }
+            // O histórico de consultas executadas, só neste computador.
+            let history_file = match std::env::var_os("PGSTUDIO_HISTORY") {
+                Some(file) => Some(PathBuf::from(file)),
+                None if screenshot.is_none() && !bench => config_dir()
+                    .map(|d| d.join(pgstudio_core::CONFIG_DIR_NAME).join("history.jsonl")),
+                None => None,
+            };
+            if let Some(file) = history_file {
+                app = app.with_history(pgstudio_ui_shell::history::HistoryStore::open(file));
             }
             for file in &files {
                 app.open_file(file);
