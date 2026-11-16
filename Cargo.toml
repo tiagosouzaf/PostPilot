@@ -22,7 +22,7 @@ members = [
 exclude = ["spikes", "vendor"]
 
 [workspace.package]
-version = "0.2.20"
+version = "0.2.21"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"

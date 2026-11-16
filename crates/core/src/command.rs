@@ -78,6 +78,7 @@ commands! {
     MakeUppercase => "Edit.MakeUppercase", "Make Uppercase";
     MakeLowercase => "Edit.MakeLowercase", "Make Lowercase";
     FormatDocument => "Edit.FormatDocument", "Format Document";
+    SaveAsSnippet => "Edit.SaveAsSnippet", "Save as Snippet...";
     // View
     ObjectExplorer => "View.ObjectExplorer", "Object Explorer";
     ObjectExplorerDetails => "View.ObjectExplorerDetails", "Object Explorer Details";

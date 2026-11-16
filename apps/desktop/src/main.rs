@@ -401,6 +401,15 @@ fn run(launch: &renderer::Launch) -> eframe::Result {
                         .join("workspace.txt"),
                 );
             }
+            // Os trechos do usuário que ficam só neste computador (os do
+            // workspace ficam na pasta dele).
+            if screenshot.is_none()
+                && !bench
+                && let Some(dir) = config_dir()
+            {
+                app = app
+                    .with_snippets_dir(dir.join(pgstudio_core::CONFIG_DIR_NAME).join("snippets"));
+            }
             if !demo {
                 match DbRuntime::new() {
                     Ok(runtime) => {

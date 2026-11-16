@@ -32,6 +32,8 @@ pub enum Panel {
     WorkspaceExplorer,
     /// Conversa com o Claude (marco 7.4).
     Claude,
+    /// Template Explorer (Ctrl+Alt+T).
+    TemplateExplorer,
     /// Histórico de consultas executadas (Ctrl+Alt+H), uma aba entre os
     /// documentos.
     QueryHistory,
@@ -57,6 +59,7 @@ impl Panel {
             Panel::RegisteredServers => "Registered Servers",
             Panel::WorkspaceExplorer => "Workspace Explorer",
             Panel::Claude => "Claude",
+            Panel::TemplateExplorer => "Template Explorer",
             Panel::QueryHistory => "Query History",
         }
     }
@@ -68,7 +71,7 @@ impl Pane for Panel {
             Panel::ObjectExplorer | Panel::RegisteredServers | Panel::WorkspaceExplorer => {
                 Area::Left
             }
-            Panel::Properties | Panel::Claude => Area::Right,
+            Panel::Properties | Panel::Claude | Panel::TemplateExplorer => Area::Right,
             Panel::Output => Area::Bottom,
             Panel::Query(_)
             | Panel::TableDesigner(_)
@@ -154,6 +157,10 @@ pub struct Viewer<'a> {
     pub claude_panel: &'a mut crate::claude_panel::ClaudePanel,
     /// Pedidos do painel do Claude.
     pub claude_actions: Vec<crate::claude_panel::PanelAction>,
+    /// Template Explorer.
+    pub templates: &'a mut crate::templates::TemplatesPanel,
+    /// Pedidos do Template Explorer.
+    pub template_actions: Vec<crate::templates::Action>,
     /// Histórico de consultas executadas.
     pub history: &'a mut crate::history::History,
     /// Execuções do histórico a reabrir numa janela de consulta.
@@ -303,6 +310,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
             Panel::Claude => {
                 let actions = self.claude_panel.show(ui);
                 self.claude_actions.extend(actions);
+            }
+            Panel::TemplateExplorer => {
+                let actions = self.templates.show(ui);
+                self.template_actions.extend(actions);
             }
             Panel::QueryHistory => self.history_open.extend(self.history.show(ui)),
             Panel::Properties => match self.explorer.selected().cloned() {
