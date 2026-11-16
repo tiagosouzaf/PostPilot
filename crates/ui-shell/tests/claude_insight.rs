@@ -55,6 +55,7 @@ fn connector(engine: Engine) -> Arc<dyn Connector> {
     match engine {
         Engine::PostgreSql => Arc::new(pgstudio_pg_metadata::PgConnector::new(runtime)),
         Engine::SqlServer => Arc::new(pgstudio_mssql::MssqlConnector::new(runtime)),
+        Engine::Redis => unreachable!("este teste não roda no Redis"),
     }
 }
 
