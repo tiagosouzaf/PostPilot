@@ -212,6 +212,12 @@ fn save(h: &mut Harness<'static, ShellApp>, name: &str) {
 }
 
 #[test]
+fn main_window() {
+    let mut h = start();
+    save(&mut h, "janela");
+}
+
+#[test]
 fn main_window_with_a_menu_open() {
     let mut h = start();
     h.get_by_label("Exibir").click();
@@ -239,4 +245,40 @@ fn options_general_page() {
     h.run_steps(2);
     h.state_mut().options_mut().expect("options").page = pgstudio_ui_shell::options::Page::General;
     save(&mut h, "opcoes");
+}
+
+/// Cada diálogo, painel e ferramenta aberto por um comando, para conferir
+/// se cabe na janela (use com `PGSTUDIO_SHOT_SIZE` pequeno ou
+/// `PGSTUDIO_SHOT_STEPS` grande).
+#[test]
+fn every_command_window() {
+    let commands = [
+        CommandId::ConnectObjectExplorer,
+        CommandId::SchemaCompare,
+        CommandId::DataCompare,
+        CommandId::MultiServer,
+        CommandId::JsonGuide,
+        CommandId::About,
+        CommandId::CheckForUpdates,
+        CommandId::QueryHistory,
+        CommandId::TemplateExplorer,
+        CommandId::ActivityMonitor,
+        CommandId::RegisteredServers,
+        CommandId::WorkspaceExplorer,
+        CommandId::ClaudePanel,
+        CommandId::DesignQuery,
+        CommandId::AiProviders,
+        CommandId::CloneWorkspace,
+        CommandId::QueryOptions,
+        CommandId::ObjectInfo,
+    ];
+    for command in commands {
+        let mut h = start();
+        let ctx = h.ctx.clone();
+        h.state_mut().execute(&ctx, command);
+        h.run_steps(8);
+        std::thread::sleep(Duration::from_millis(100));
+        h.run_steps(8);
+        save(&mut h, &format!("cmd-{}", command.name()));
+    }
 }

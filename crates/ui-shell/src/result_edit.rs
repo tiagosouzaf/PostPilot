@@ -854,7 +854,7 @@ impl ResultEditor {
         let table = self.editing().unwrap_or_default();
         let mut answer = None;
         let modal = crate::theme::modal(id.with("delete_rows")).show(ctx, |ui| {
-            ui.set_width(420.0);
+            crate::fit::dialog_width(ui, 420.0);
             ui.heading(if count == 1 {
                 tr("Delete Row")
             } else {

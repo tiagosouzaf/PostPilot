@@ -5,6 +5,7 @@
 //! Os resultados aparecem na grade do `pgstudio-result-grid` ou, com
 //! "Results to Text" (Ctrl+T), como texto de largura fixa.
 
+use crate::fit;
 use crate::registered::ServerTag;
 use eframe::egui::{self, Color32, RichText};
 use egui_phosphor::regular as icons;
@@ -142,16 +143,53 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
 /// Faixa de status de uma janela de consulta que ainda não executou:
 /// o servidor e o banco dela.
 pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str, tag: Option<&ServerTag>) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10)));
-        ui.label(tr("Connected."));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(database);
-            ui.separator();
-            ui.label(server);
-            environment(ui, tag);
-        });
+    let icon = RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10));
+    strip(ui, icon, tr("Connected."), server, tag, |ui| {
+        fit::text(ui, database);
     });
+}
+
+/// Uma faixa de status que cabe em qualquer largura. Da direita para a
+/// esquerda: os itens de `fixed`, o servidor, a etiqueta do ambiente e,
+/// no que sobrar à esquerda, o ícone com a mensagem. Quando falta espaço
+/// o servidor encurta primeiro (o nome inteiro fica na dica), depois a
+/// mensagem; nada é desenhado por cima do vizinho.
+fn strip(
+    ui: &mut egui::Ui,
+    icon: RichText,
+    message: &str,
+    server: &str,
+    tag: Option<&ServerTag>,
+    fixed: impl FnOnce(&mut egui::Ui),
+) {
+    fit::ends(
+        ui,
+        |ui| {
+            ui.label(icon.clone());
+            fit::text(ui, message);
+        },
+        |ui| {
+            fixed(ui);
+            fit::separator(ui);
+            let spacing = ui.spacing().item_spacing.x;
+            let badge = match tag {
+                Some(ServerTag {
+                    environment: Some(name),
+                    ..
+                }) => crate::registered::environment_badge_width(ui, name) + spacing,
+                _ => 0.0,
+            };
+            // A mensagem inteira tem preferência sobre o nome do servidor,
+            // que ainda assim fica com pelo menos 40% do espaço.
+            let left = fit::text_width(ui, icon.clone()) + fit::text_width(ui, message);
+            let free = ui.available_width() - badge;
+            let server_max = (free - left - 3.0 * spacing).max(free * 0.4);
+            fit::text_within(ui, server, server_max);
+            if badge > 0.0 && ui.available_width() >= badge - spacing {
+                environment(ui, tag);
+            }
+        },
+    );
 }
 
 /// Fundo da faixa de status: tingido com a cor do ambiente (ou da pasta)
@@ -187,24 +225,21 @@ fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str, tag: Option<&
         Outcome::Failed => (icons::X_CIRCLE, ui.visuals().error_fg_color),
         Outcome::Canceled => (icons::PROHIBIT, ui.visuals().warn_fg_color),
     };
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(icon).color(color));
-        ui.label(outcome.label());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let rows = exec.total_rows();
-            ui.label(if rows == 1 {
+    let icon = RichText::new(icon).color(color);
+    strip(ui, icon, outcome.label(), server, tag, |ui| {
+        let rows = exec.total_rows();
+        fit::text(
+            ui,
+            if rows == 1 {
                 tr("1 row").to_string()
             } else {
                 trf!("{rows} rows", rows = rows)
-            });
-            ui.separator();
-            ui.label(format_elapsed(exec.elapsed(), false));
-            ui.separator();
-            ui.label(&exec.database);
-            ui.separator();
-            ui.label(server);
-            environment(ui, tag);
-        });
+            },
+        );
+        fit::separator(ui);
+        fit::text(ui, format_elapsed(exec.elapsed(), false));
+        fit::separator(ui);
+        fit::text(ui, exec.database.as_str());
     });
 }
 

@@ -671,7 +671,7 @@ impl SchemaCompare {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("schema_compare")).show(ctx, |ui| {
-            ui.set_width(980.0);
+            crate::fit::dialog_width(ui, 980.0);
             ui.heading(tr("Schema Compare"));
             ui.separator();
             let idle = !self.is_busy();
@@ -701,9 +701,12 @@ impl SchemaCompare {
                 }
             });
             ui.separator();
-            let body = egui::vec2(ui.available_width(), 360.0);
+            // Numa janela baixa o miolo encolhe para o título e os botões
+            // continuarem na tela.
+            let height = crate::fit::dialog_height(ui, 360.0, 270.0);
+            let body = egui::vec2(ui.available_width(), height);
             ui.allocate_ui_with_layout(body, Layout::top_down(Align::Min), |ui| {
-                ui.set_height(360.0);
+                ui.set_height(height);
                 self.body(ui);
             });
             ui.separator();
@@ -926,10 +929,11 @@ impl SchemaCompare {
         });
         let h = ui.available_height();
         ui.horizontal_top(|ui| {
-            let list = egui::vec2(430.0, h);
+            let list = egui::vec2(crate::fit::side_width(ui, 430.0, 0.45), h);
             ui.allocate_ui_with_layout(list, Layout::top_down(Align::Min), |ui| {
                 ui.set_min_size(list);
-                egui::ScrollArea::vertical()
+                ui.set_max_width(list.x);
+                egui::ScrollArea::both()
                     .id_salt("compare_items")
                     .max_height(h)
                     .auto_shrink([false, false])

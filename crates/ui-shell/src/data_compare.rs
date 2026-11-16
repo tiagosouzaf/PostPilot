@@ -654,16 +654,20 @@ impl DataCompare {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
         let mut open = true;
+        // Numa janela pequena do app (ou com zoom grande) a ferramenta
+        // encolhe para caber inteira.
+        let screen = ctx.content_rect().size() - egui::vec2(32.0, 80.0);
         egui::Window::new(tr("Data Compare"))
             .id(egui::Id::new("data_compare"))
             .open(&mut open)
             .collapsible(false)
             .resizable([true, false])
             .frame(crate::theme::dialog_frame(&ctx.global_style()))
-            .default_width(1040.0)
+            .default_width(screen.x.min(1040.0))
+            .max_width(screen.x.max(240.0))
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
-            .min_size([640.0, 360.0])
+            .min_size([screen.x.clamp(240.0, 640.0), screen.y.clamp(160.0, 360.0)])
             .show(ctx, |ui| {
                 if let Some(r) = self.ui(ui, ctx) {
                     request = Some(r);
@@ -719,13 +723,14 @@ impl DataCompare {
         ui.separator();
         // A altura do miolo é fixa (pelo tamanho da janela do app): uma
         // área de rolagem que ocupa "o que sobrar" faria a janela crescer.
-        let h = (ctx.content_rect().height() - 330.0).clamp(180.0, 460.0);
+        let h = (ctx.content_rect().height() - 330.0).clamp(100.0, 460.0);
         let body = egui::vec2(ui.available_width(), h);
         ui.allocate_ui_with_layout(body, Layout::left_to_right(Align::Min), |ui| {
             ui.set_height(h);
-            let list = egui::vec2(360.0, h);
+            let list = egui::vec2(crate::fit::side_width(ui, 360.0, 0.4), h);
             ui.allocate_ui_with_layout(list, Layout::top_down(Align::Min), |ui| {
                 ui.set_min_size(list);
+                ui.set_max_width(list.x);
                 ui.set_max_height(h);
                 self.tables_ui(ui, h);
             });
@@ -835,8 +840,10 @@ impl DataCompare {
             },
             |(_, label)| label.clone(),
         );
+        // As listas encolhem com a janela do app para a linha caber.
+        let screen = ui.ctx().content_rect().width();
         egui::ComboBox::from_id_salt(format!("data_compare_{id}_server"))
-            .width(300.0)
+            .width((screen * 0.38).clamp(110.0, 300.0))
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 for (key, label) in &servers {
@@ -851,7 +858,7 @@ impl DataCompare {
                 }
             });
         egui::ComboBox::from_id_salt(format!("data_compare_{id}_database"))
-            .width(220.0)
+            .width((screen * 0.26).clamp(90.0, 220.0))
             .selected_text(side.database.as_str())
             .show_ui(ui, |ui| {
                 for d in &databases {
@@ -859,9 +866,13 @@ impl DataCompare {
                 }
             });
         if servers.len() < 2 && which == Which::Target {
-            ui.weak(tr(
-                "To compare with another server, connect to it in the Object Explorer.",
-            ));
+            let hint = tr("To compare with another server, connect to it in the Object Explorer.");
+            if screen >= 1100.0 {
+                ui.weak(hint);
+            } else {
+                // Sem largura para a frase, ela vai para a dica de um ícone.
+                ui.weak(egui_phosphor::regular::INFO).on_hover_text(hint);
+            }
         }
     }
 

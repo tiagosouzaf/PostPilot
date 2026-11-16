@@ -435,7 +435,7 @@ impl ConnectDialog {
         }
         let connecting = self.pending.is_some() || action != DialogAction::None;
         let modal = crate::theme::modal(egui::Id::new("connect_to_server")).show(ctx, |ui| {
-            ui.set_width(440.0);
+            crate::fit::dialog_width(ui, 440.0);
             ui.heading(tr("Connect to Server"));
             ui.add_space(4.0);
             ui.add_enabled_ui(!connecting, |ui| {

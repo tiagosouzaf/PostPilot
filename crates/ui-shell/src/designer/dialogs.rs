@@ -423,7 +423,7 @@ impl TableDesigner {
             return;
         };
         let modal = crate::theme::modal(egui::Id::new(("designer_dialog", id))).show(ctx, |ui| {
-            ui.set_width(640.0);
+            crate::fit::dialog_width(ui, 640.0);
             ui.heading(kind.title());
             ui.separator();
             ui.horizontal_top(|ui| {

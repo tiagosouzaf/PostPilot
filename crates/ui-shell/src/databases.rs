@@ -521,7 +521,7 @@ impl crate::ShellApp {
         let database = pending.database.clone();
         let mut answer: Option<bool> = None;
         let modal = crate::theme::modal(egui::Id::new("change_database_tx")).show(ctx, |ui| {
-            ui.set_width(440.0);
+            crate::fit::dialog_width(ui, 440.0);
             ui.heading(tr("Change Database"));
             ui.label(trf!(
                 "{name} has an open transaction. Changing to {database} closes this \

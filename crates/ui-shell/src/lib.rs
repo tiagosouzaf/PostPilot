@@ -26,6 +26,7 @@ pub mod documents;
 pub mod edit_rows;
 pub mod execution;
 pub mod file_dialogs;
+pub mod fit;
 pub mod history;
 pub mod intellisense;
 pub mod json_guide;
@@ -2455,7 +2456,7 @@ impl ShellApp {
         };
         let mut answer: Option<bool> = None;
         let modal = crate::theme::modal(egui::Id::new("environment_confirm")).show(ctx, |ui| {
-            ui.set_width(440.0);
+            crate::fit::dialog_width(ui, 440.0);
             ui.horizontal(|ui| {
                 ui.heading(tr("Confirm Changes"));
                 registered::environment_badge(ui, &pending.environment, pending.color);
@@ -2524,7 +2525,7 @@ impl ShellApp {
         }
         let mut answer: Option<Option<bool>> = None;
         let modal = crate::theme::modal(egui::Id::new("actual_plan_dml")).show(ctx, |ui| {
-            ui.set_width(440.0);
+            crate::fit::dialog_width(ui, 440.0);
             ui.heading(tr("Include Actual Execution Plan"));
             ui.label(tr(
                 "The actual plan is collected with EXPLAIN ANALYZE, which runs the statements. \
@@ -3293,7 +3294,7 @@ impl ShellApp {
             .collect();
         let mut answer = None;
         let modal = crate::theme::modal(egui::Id::new("save_changes")).show(ctx, |ui| {
-            ui.set_width(380.0);
+            crate::fit::dialog_width(ui, 380.0);
             ui.heading(APP_NAME);
             ui.label(tr("Save changes to the following items?"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -4505,7 +4506,7 @@ impl ShellApp {
     /// Toolbar padrão do SSMS.
     fn toolbar(&self, ui: &mut egui::Ui, clicked: &mut Vec<CommandId>, picked: &mut Picked) {
         let picker = self.database_picker();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for tool in TOOLBAR {
                 match *tool {
                     Tool::Button {
@@ -4593,16 +4594,28 @@ impl ShellApp {
             .active_doc
             .and_then(|id| self.documents.get(id))
             .and_then(|d| d.cursor);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&self.status).color(color));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let status = self.status.clone();
+        fit::ends(
+            ui,
+            |ui| {
+                fit::text(ui, RichText::new(status).color(color));
+            },
+            |ui| {
+                let full = ui.available_width();
                 // i18n-ignore
-                ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).color(color));
-                ui.separator();
+                fit::text(
+                    ui,
+                    RichText::new(format!("{APP_NAME} {VERSION}")).color(color),
+                );
+                fit::separator(ui);
                 self.updater.status_badge(ui, color);
                 let registered = connection != host;
-                let label = ui.label(RichText::new(connection).color(color));
-                if registered {
+                // O servidor encurta para sobrar lugar para a mensagem.
+                let label =
+                    fit::text_within(ui, RichText::new(connection).color(color), full * 0.4);
+                if let Some(label) = label
+                    && registered
+                {
                     label.on_hover_text(host);
                 }
                 if let Some(registered::ServerTag {
@@ -4610,19 +4623,22 @@ impl ShellApp {
                     color: env,
                     ..
                 }) = self.active_tag()
+                    && ui.available_width() >= registered::environment_badge_width(ui, &name)
                 {
                     registered::environment_badge(ui, &name, env);
                 }
                 self.claude_status(ui, color);
-                if let Some((line, col)) = cursor {
+                if let Some((line, col)) = cursor
+                    && ui.available_width() >= 110.0
+                {
                     ui.separator();
                     ui.label(
                         RichText::new(trf!("Ln {line}   Col {col}", line = line, col = col))
                             .color(color),
                     );
                 }
-            });
-        });
+            },
+        );
     }
 
     fn screenshot_step(&mut self, ctx: &egui::Context) {

@@ -1928,7 +1928,7 @@ impl RegisteredPanel {
             };
             let mut answer = None;
             let modal = crate::theme::modal(egui::Id::new("registered_delete")).show(ctx, |ui| {
-                ui.set_width(360.0);
+                crate::fit::dialog_width(ui, 360.0);
                 ui.heading(tr("Delete"));
                 ui.add_space(4.0);
                 ui.label(question);
@@ -2053,6 +2053,11 @@ pub fn environment_badge(ui: &mut egui::Ui, name: &str, color: Rgb) -> egui::Res
             ui.label(egui::RichText::new(name).strong().color(text))
         })
         .response
+}
+
+/// A largura que [`environment_badge`] ocupa com este nome.
+pub fn environment_badge_width(ui: &egui::Ui, name: &str) -> f32 {
+    crate::fit::text_width(ui, egui::RichText::new(name).strong()) + 10.0
 }
 
 /// Ícone colorido seguido do nome, para as linhas da árvore.
@@ -2374,7 +2379,7 @@ impl ServerDialog {
             tr("New Server Registration")
         };
         let modal = crate::theme::modal(egui::Id::new("registered_server")).show(ctx, |ui| {
-            ui.set_width(460.0);
+            crate::fit::dialog_width(ui, 460.0);
             ui.heading(title);
             ui.add_space(4.0);
             egui::Grid::new("registered_server_fields")
@@ -2647,7 +2652,7 @@ impl EnvironmentsDialog {
     fn show(&mut self, ctx: &egui::Context) -> Reply {
         let mut reply = Reply::None;
         let modal = crate::theme::modal(egui::Id::new("registered_environments")).show(ctx, |ui| {
-            ui.set_width(600.0);
+            crate::fit::dialog_width(ui, 600.0);
             ui.heading(tr("Environments"));
             ui.add_space(4.0);
             ui.weak(tr(
@@ -2760,7 +2765,7 @@ impl GroupDialog {
             tr("New Server Group Properties")
         };
         let modal = crate::theme::modal(egui::Id::new("registered_group")).show(ctx, |ui| {
-            ui.set_width(400.0);
+            crate::fit::dialog_width(ui, 400.0);
             ui.heading(title);
             ui.add_space(4.0);
             egui::Grid::new("registered_group_fields")

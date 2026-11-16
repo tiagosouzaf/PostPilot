@@ -629,7 +629,7 @@ impl BackupDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step();
         let modal = crate::theme::modal(egui::Id::new("backup_mssql")).show(ctx, |ui| {
-            ui.set_width(640.0);
+            crate::fit::dialog_width(ui, 640.0);
             ui.heading(trf!(
                 "Back Up Database - {database}",
                 database = self.options.database
@@ -979,7 +979,7 @@ impl RestoreDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Request> {
         let mut request = self.step(ctx);
         let modal = crate::theme::modal(egui::Id::new("restore_mssql")).show(ctx, |ui| {
-            ui.set_width(660.0);
+            crate::fit::dialog_width(ui, 660.0);
             ui.heading(tr("Restore Database"));
             ui.separator();
             let editing = matches!(self.progress.phase, Phase::Editing);
