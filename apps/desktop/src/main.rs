@@ -713,6 +713,18 @@ impl FileDialogs for NativeDialogs {
         self.remember(path)
     }
 
+    fn open_data_path(&mut self) -> Option<PathBuf> {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(tr("Import CSV"))
+            .add_filter(tr("CSV and text files"), &["csv", "txt", "tsv", "tab"])
+            .add_filter(tr("All Files (*.*)"), &["*"]);
+        if let Some(dir) = &self.last_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let path = dialog.pick_file();
+        self.remember(path)
+    }
+
     fn save_results_path(&mut self, name: &str) -> Option<PathBuf> {
         let path = self
             .dialog()

@@ -15,6 +15,8 @@ pub mod bench;
 pub mod claude;
 pub mod claude_panel;
 pub mod connect;
+pub mod csv_import;
+pub mod csv_import_dialog;
 pub mod databases;
 pub mod designer;
 pub mod diagrams;
@@ -126,6 +128,8 @@ pub struct ShellApp {
     /// "Back Up Database" e "Restore Database" do SQL Server.
     backup_mssql: Option<backup_mssql::BackupDialog>,
     restore_mssql: Option<backup_mssql::RestoreDialog>,
+    /// "Import CSV" aberta.
+    csv_import: Option<csv_import_dialog::ImportDialog>,
     compare: Option<schema_compare::SchemaCompare>,
     /// Origem e destino que o Schema Compare já compara ao abrir
     /// (screenshots).
@@ -377,6 +381,7 @@ impl Default for ShellApp {
             restore_file: None,
             backup_mssql: None,
             restore_mssql: None,
+            csv_import: None,
             query_on_open: None,
             active_doc: None,
             focus_editor: None,
@@ -2196,6 +2201,7 @@ impl ShellApp {
         confirmed: bool,
     ) {
         if !confirmed
+            && !self.claude.confirmed_run()
             && ask == Ask::Run
             && let Some(tag) = self.document_tag(id).filter(|t| t.confirm_changes)
         {
@@ -2891,6 +2897,18 @@ impl ShellApp {
                 }
                 return;
             }
+            Event::ImportCsv(node) => {
+                let table = provider
+                    .design_target(&node)
+                    .and_then(|t| Some((t.database, t.table?)));
+                match table {
+                    Some((database, table)) => self.ask_csv_import(database, table),
+                    None => {
+                        self.status = tr("Select a table to import a CSV file into.").to_string()
+                    }
+                }
+                return;
+            }
             Event::SelectTop(node) => (node, ScriptAction::SelectTop(SELECT_TOP_ROWS), true, false),
             Event::EditTop(node) => {
                 // Tabela com conexão de verdade: a grade editável. View (ou
@@ -3318,6 +3336,7 @@ impl ShellApp {
             || self.restore.is_some()
             || self.backup_mssql.is_some()
             || self.restore_mssql.is_some()
+            || self.csv_import.is_some()
             || self.compare.is_some()
         {
             // Com um diálogo aberto só o tamanho da interface responde ao
@@ -3533,6 +3552,7 @@ impl ShellApp {
         self.backup_window(&ctx);
         self.restore_window(&ctx);
         self.backup_mssql_windows(&ctx);
+        self.csv_import_window(&ctx);
         self.compare_window(&ctx);
         self.connect_window(&ctx);
         self.follow_system_theme(&ctx);
@@ -3918,6 +3938,69 @@ impl ShellApp {
     /// "Restore Database" do SQL Server, mutável (testes).
     pub fn restore_mssql_mut(&mut self) -> Option<&mut backup_mssql::RestoreDialog> {
         self.restore_mssql.as_mut()
+    }
+
+    /// "Import CSV..." numa tabela: pergunta o arquivo (fora da thread da
+    /// interface) e abre a janela.
+    fn ask_csv_import(&mut self, database: String, table: u64) {
+        self.ask_path(file_dialogs::Question::OpenData, move |app, ctx, path| {
+            if let Some(path) = path {
+                app.open_csv_import(ctx, database, table, path);
+            }
+        });
+    }
+
+    /// Abre "Import CSV" para a tabela `table` (o id dela) de `database`
+    /// no servidor ativo.
+    pub fn open_csv_import(
+        &mut self,
+        ctx: &egui::Context,
+        database: String,
+        table: u64,
+        path: PathBuf,
+    ) {
+        let Some(c) = &self.connection else {
+            self.status = tr("Connect to a server to import a CSV file.").to_string();
+            return;
+        };
+        let session = c.queries.open(&database);
+        // Num ambiente que pede confirmação (Produção), a janela pergunta
+        // antes de carregar.
+        let environment = self
+            .server_tag(&servers::server_key(&c.settings))
+            .filter(|t| t.confirm_changes)
+            .map(|t| (t.environment.unwrap_or_default(), t.color));
+        self.csv_import = Some(csv_import_dialog::ImportDialog::open(
+            session,
+            table,
+            path,
+            environment,
+            ctx,
+        ));
+    }
+
+    /// "Import CSV" aberta (testes).
+    pub fn csv_import_mut(&mut self) -> Option<&mut csv_import_dialog::ImportDialog> {
+        self.csv_import.as_mut()
+    }
+
+    fn csv_import_window(&mut self, ctx: &egui::Context) {
+        use csv_import_dialog::Request;
+        let Some(dialog) = &mut self.csv_import else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(Request::Log(lines)) => {
+                self.status = lines.last().cloned().unwrap_or_default();
+                self.output.extend(lines);
+            }
+            Some(Request::Imported(lines)) => {
+                self.status = lines.last().cloned().unwrap_or_default();
+                self.output.extend(lines);
+            }
+            Some(Request::Closed) => self.csv_import = None,
+            None => {}
+        }
     }
 
     /// As janelas de backup e restore do SQL Server.

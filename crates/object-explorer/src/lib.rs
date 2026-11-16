@@ -56,6 +56,8 @@ pub enum Event {
     /// "Edit Top 200 Rows": grade editável numa tabela, só leitura numa
     /// view.
     EditTop(NodeId),
+    /// "Import CSV..." numa tabela: carregar um arquivo CSV nela.
+    ImportCsv(NodeId),
     /// "Script as" > CREATE ou DROP numa janela de consulta nova.
     Script(NodeId, ScriptAction),
     /// "New Table..." na pasta Tables: abre o Table Designer vazio.
@@ -733,6 +735,12 @@ impl ObjectExplorer {
                                 let edit = trf!("Edit Top {n} Rows", n = EDIT_TOP_ROWS);
                                 if ui.button(edit).clicked() {
                                     events.push(Event::EditTop(node.id.clone()));
+                                    ui.close();
+                                }
+                                if node.kind == NodeKind::Table
+                                    && ui.button(tr("Import CSV...")).clicked()
+                                {
+                                    events.push(Event::ImportCsv(node.id.clone()));
                                     ui.close();
                                 }
                                 let ask = format!(
