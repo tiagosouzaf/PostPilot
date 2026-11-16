@@ -59,6 +59,10 @@ mesmo banco pelo mesmo bastion dividem um túnel; ele fecha quando a última
 conexão é solta e, se a sessão SSH cair, entra de novo na próxima conexão.
 O `pg_dump` e o `pg_restore` do Backup/Restore usam a mesma porta local.
 
+A porta local só escuta em `127.0.0.1` e existe enquanto houver conexão
+aberta pelo túnel. Como no `ssh -L`, outro programa deste computador pode
+conectar nela; o banco continua pedindo o login dele.
+
 ## Testes
 
 `scripts/ssh-tunnel-test.sh` sobe um bastion (sshd) e, numa rede que só ele
