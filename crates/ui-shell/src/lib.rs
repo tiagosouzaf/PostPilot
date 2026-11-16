@@ -17,6 +17,7 @@ pub mod claude_panel;
 pub mod connect;
 pub mod csv_import;
 pub mod csv_import_dialog;
+pub mod data_compare;
 pub mod databases;
 pub mod designer;
 pub mod diagrams;
@@ -131,6 +132,8 @@ pub struct ShellApp {
     /// "Import CSV" aberta.
     csv_import: Option<csv_import_dialog::ImportDialog>,
     compare: Option<schema_compare::SchemaCompare>,
+    /// "Data Compare" aberto.
+    data_compare: Option<data_compare::DataCompare>,
     /// Origem e destino que o Schema Compare já compara ao abrir
     /// (screenshots).
     compare_target: Option<(String, String)>,
@@ -372,6 +375,7 @@ impl Default for ShellApp {
             backup: None,
             restore: None,
             compare: None,
+            data_compare: None,
             compare_target: None,
             query_designer: None,
             json_viewer: None,
@@ -1750,6 +1754,7 @@ impl ShellApp {
                 | DesignQuery
                 | ActivityMonitor
                 | SchemaCompare
+                | DataCompare
                 | ObjectInfo
                 | JsonGuide
         )
@@ -1817,6 +1822,7 @@ impl ShellApp {
             CommandId::PropertiesWindow => self.workspace.open(Panel::Properties),
             CommandId::ActivityMonitor => self.open_activity_monitor(ctx),
             CommandId::SchemaCompare => self.open_compare(ctx, None),
+            CommandId::DataCompare => self.open_data_compare(),
             CommandId::ClaudeCodeAccess => {
                 let on = !self.claude.is_listening();
                 self.set_claude_code_access(ctx, on);
@@ -3554,6 +3560,7 @@ impl ShellApp {
         self.backup_mssql_windows(&ctx);
         self.csv_import_window(&ctx);
         self.compare_window(&ctx);
+        self.data_compare_window(&ctx);
         self.connect_window(&ctx);
         self.follow_system_theme(&ctx);
         self.options_window(&ctx);

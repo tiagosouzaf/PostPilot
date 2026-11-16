@@ -3269,6 +3269,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser",
+ "tokio",
  "zbus 5.13.2",
  "zeroize",
 ]
