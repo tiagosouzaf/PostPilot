@@ -79,6 +79,28 @@ struct Shared {
 }
 
 impl Shared {
+    /// Deixa em `guard` uma conexão que serve: abre a primeira e troca a
+    /// que caiu ou ficou fora de sincronia.
+    async fn ready(
+        &self,
+        guard: &mut Option<Session>,
+        settings: &ConnectionSettings,
+        password: &str,
+    ) -> Result<(), String> {
+        if guard.as_ref().is_some_and(|s| !s.is_broken()) {
+            return Ok(());
+        }
+        *guard = None;
+        let session = Session::connect(settings, password)
+            .await
+            .map_err(|e| e.message().to_string())?;
+        if let Ok(mut c) = self.cancel.lock() {
+            *c = Some(session.cancel_handle());
+        }
+        *guard = Some(session);
+        Ok(())
+    }
+
     /// Uma execução parada à espera de mais linhas segura a conexão: quem
     /// precisa dela (outra execução, um cancelamento) faz a parada
     /// desistir do resto. Devolve se havia uma.
@@ -115,20 +137,10 @@ impl MssqlQuerySession {
         let password = self.password.clone();
         self.runtime.handle().spawn(async move {
             let mut guard = shared.session.lock().await;
-            if guard.is_none() {
-                match Session::connect(&settings, &password).await {
-                    Ok(session) => {
-                        if let Ok(mut c) = shared.cancel.lock() {
-                            *c = Some(session.cancel_handle());
-                        }
-                        *guard = Some(session);
-                    }
-                    Err(e) => {
-                        sink(QueryEvent::Error(ServerMessage::error(e.message())));
-                        sink(QueryEvent::Finished { canceled: false });
-                        return;
-                    }
-                }
+            if let Err(e) = shared.ready(&mut guard, &settings, &password).await {
+                sink(QueryEvent::Error(ServerMessage::error(e)));
+                sink(QueryEvent::Finished { canceled: false });
+                return;
             }
             let Some(session) = guard.as_mut() else {
                 return;
@@ -136,10 +148,22 @@ impl MssqlQuerySession {
             session.cancel_handle().reset();
             // Desistir de uma consulta parada cancela o lote; dentro de
             // uma transação o resultado vem inteiro, como sempre.
-            let pace = match pace {
-                Some(p) if !in_transaction(session).await => Some(p),
-                _ => None,
+            let mut open_transaction = in_transaction(session).await;
+            if session.is_broken() {
+                // A conexão caiu enquanto estava parada (nada do script
+                // foi enviado ainda): abre outra e segue.
+                *guard = None;
+                if let Err(e) = shared.ready(&mut guard, &settings, &password).await {
+                    sink(QueryEvent::Error(ServerMessage::error(e)));
+                    sink(QueryEvent::Finished { canceled: false });
+                    return;
+                }
+                open_transaction = false;
+            }
+            let Some(session) = guard.as_mut() else {
+                return;
             };
+            let pace = pace.filter(|_| !open_transaction);
             if let Ok(mut p) = shared.pace.lock() {
                 *p = pace.clone();
             }
@@ -197,16 +221,8 @@ impl QuerySession for MssqlQuerySession {
         let password = self.password.clone();
         self.runtime.handle().spawn(async move {
             let mut guard = shared.session.lock().await;
-            if guard.is_none() {
-                match Session::connect(&settings, &password).await {
-                    Ok(session) => {
-                        if let Ok(mut c) = shared.cancel.lock() {
-                            *c = Some(session.cancel_handle());
-                        }
-                        *guard = Some(session);
-                    }
-                    Err(e) => return done(Err(e.message().to_string())),
-                }
+            if let Err(e) = shared.ready(&mut guard, &settings, &password).await {
+                return done(Err(e));
             }
             let Some(session) = guard.as_mut() else {
                 return;

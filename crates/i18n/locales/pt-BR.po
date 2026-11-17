@@ -6855,3 +6855,9 @@ msgstr "A conexão falhou durante o download, depois de {attempts} tentativas. C
 
 msgid "The download of {version} failed; trying again ({attempt} of {max})…"
 msgstr "O download da {version} falhou; tentando de novo ({attempt} de {max})…"
+
+msgid "The server took too long to answer and the connection was closed. Try again: PostPilot opens a new connection by itself."
+msgstr "O servidor demorou demais para responder e a conexão foi fechada. Tente de novo: o PostPilot abre uma conexão nova sozinho."
+
+msgid "The connection to the server was lost. Try again: PostPilot opens a new connection by itself."
+msgstr "A conexão com o servidor caiu. Tente de novo: o PostPilot abre uma conexão nova sozinho."

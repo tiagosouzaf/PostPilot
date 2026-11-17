@@ -765,3 +765,128 @@ fn a_paced_query_fetches_only_the_allowed_rows_and_gives_up_cleanly() {
         "{after:?}"
     );
 }
+
+#[test]
+fn the_explorer_opens_a_new_connection_after_a_timeout() {
+    let Some((s, pw)) = settings() else { return };
+    let c = connector()
+        .with_metadata_timeout(Duration::from_secs(2))
+        .connect(&s, &pw)
+        .expect("connect");
+    let admin = c.queries.open("master");
+    run(
+        &*admin,
+        "IF DB_ID('pp_timeout') IS NULL CREATE DATABASE pp_timeout",
+    );
+    let roots = c.metadata.roots().unwrap();
+    let databases = child(&*c.metadata, &roots[0].id, "Databases");
+    let db = child(&*c.metadata, &databases.id, "pp_timeout");
+    let tables = child(&*c.metadata, &db.id, "Tables");
+    assert!(c.metadata.children(&tables.id).is_ok());
+
+    // Uma tabela criada numa transação aberta prende o catálogo: a
+    // listagem das tabelas fica esperando e estoura o limite.
+    let blocker = c.queries.open("pp_timeout");
+    run(
+        &*blocker,
+        "BEGIN TRANSACTION; CREATE TABLE dbo.presa (id int)",
+    );
+    let started = Instant::now();
+    let error = c.metadata.children(&tables.id).unwrap_err().0;
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert!(error.contains("took too long"), "{error}");
+    assert!(!error.contains("out of sync"), "{error}");
+
+    // Antes, toda leitura seguinte falhava com "connection was left out of
+    // sync"; agora a próxima já vai numa conexão nova.
+    run(&*blocker, "ROLLBACK TRANSACTION");
+    let again = c.metadata.children(&tables.id);
+    assert!(again.is_ok(), "{again:?}");
+    assert!(c.metadata.children(&databases.id).is_ok());
+    run(&*admin, "DROP DATABASE pp_timeout");
+}
+
+#[test]
+fn a_dropped_connection_is_reopened_and_the_read_repeated() {
+    let Some((s, pw)) = settings() else { return };
+    let other = connector().connect(&s, &pw).expect("connect");
+    let admin = other.queries.open("master");
+    // Um login só deste teste, para derrubar só as conexões dele.
+    let created = run(
+        &*admin,
+        "IF SUSER_ID('pp_queda') IS NULL \
+             CREATE LOGIN pp_queda WITH PASSWORD = 'Queda!2026x', CHECK_POLICY = OFF",
+    );
+    assert!(
+        !created.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{created:?}"
+    );
+    let mut login = s.clone();
+    login.user = "pp_queda".into();
+    let c = connector().connect(&login, "Queda!2026x").expect("connect");
+    let roots = c.metadata.roots().unwrap();
+    let databases = child(&*c.metadata, &roots[0].id, "Databases");
+    let window = c.queries.open("master");
+    run(&*window, "SELECT 1");
+
+    let killed = run(
+        &*admin,
+        "DECLARE @k nvarchar(max) = N''; \
+         SELECT @k += N'KILL ' + CAST(session_id AS nvarchar(10)) + N'; ' \
+           FROM sys.dm_exec_sessions WHERE login_name = N'pp_queda'; \
+         EXEC (@k)",
+    );
+    assert!(
+        !killed.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{killed:?}"
+    );
+
+    // A árvore lê de novo sozinha, sem mostrar erro.
+    let dbs = c.metadata.children(&databases.id);
+    assert!(dbs.is_ok(), "{dbs:?}");
+    // A janela de consulta troca a conexão antes de mandar o script.
+    let events = run(&*window, "SELECT 7 AS x");
+    assert!(
+        events.contains(&QueryEvent::Row(vec![Some("7".into())])),
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{events:?}"
+    );
+    drop(c);
+    run(&*admin, "DROP LOGIN pp_queda");
+}
+
+/// As janelas de consulta não têm limite de tempo (como no SSMS): o
+/// driver desistia depois de 30 s sem resposta.
+#[test]
+fn a_query_slower_than_thirty_seconds_finishes() {
+    let Some((s, pw)) = settings() else { return };
+    if std::env::var("MSSQL_TEST_SLOW").is_err() {
+        eprintln!("MSSQL_TEST_SLOW not set; skipping the 35 s query");
+        return;
+    }
+    let c = connector().connect(&s, &pw).expect("connect");
+    let session = c.queries.open("master");
+    let (tx, rx) = mpsc::channel();
+    session.execute(
+        "WAITFOR DELAY '00:00:35'; SELECT 5 AS x".into(),
+        Box::new(move |e| {
+            let _ = tx.send(e);
+        }),
+    );
+    let mut events = Vec::new();
+    loop {
+        let e = rx.recv_timeout(Duration::from_secs(60)).expect("event");
+        let end = matches!(e, QueryEvent::Finished { .. });
+        events.push(e);
+        if end {
+            break;
+        }
+    }
+    assert!(
+        events.contains(&QueryEvent::Row(vec![Some("5".into())])),
+        "{events:?}"
+    );
+}

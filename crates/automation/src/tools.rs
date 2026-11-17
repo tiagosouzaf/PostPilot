@@ -134,7 +134,7 @@ pub fn all() -> Vec<ToolSpec> {
                 rows as JSON. Read-only SQL (SELECT, WITH; on PostgreSQL also EXPLAIN without \
                 ANALYZE and SHOW) runs right away: on PostgreSQL inside a READ ONLY \
                 transaction with a 60 s timeout, on SQL Server inside a transaction that is \
-                always rolled back. Anything that \
+                always rolled back, canceled after 60 s. Anything that \
                 can change data, schema or the session (INSERT, UPDATE, DELETE, DDL, EXPLAIN \
                 ANALYZE of a change, ...) shows a confirmation dialog in PostPilot with the full \
                 SQL, and runs only if the user clicks Run; if they decline, you get an error \

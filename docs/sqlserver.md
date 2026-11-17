@@ -90,3 +90,16 @@ PGSTUDIO_CONNECT='sqlserver:127.0.0.1,14330' PGUSER=sa PGPASSWORD='PostPilot!202
 
 `PGSTUDIO_CONNECT=dialog:sqlserver` abre o Connect to Server já com o SQL
 Server escolhido.
+
+## Tempo de espera e conexão que cai
+
+- As janelas de consulta não têm limite de tempo, como no SSMS: uma consulta
+  demorada roda até o fim ou até o Cancelar.
+- A árvore e os outros metadados esperam até 60 s por resposta. Se o servidor
+  não responder, a leitura falha com um aviso e a conexão é descartada: a
+  leitura seguinte já abre uma conexão nova.
+- Uma conexão que caiu (rede, `KILL`, servidor reiniciado) é trocada sozinha.
+  Leituras da árvore são repetidas; comandos que alteram dados nunca são
+  repetidos.
+- As leituras do assistente (`run_query` só de leitura) são canceladas depois
+  de 60 s, como no PostgreSQL.
