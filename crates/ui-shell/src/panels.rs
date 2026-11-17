@@ -131,6 +131,9 @@ pub struct Viewer<'a> {
     /// Servidor de cada janela de consulta, para a faixa de status dela
     /// (o ativo pode ser outro).
     pub doc_servers: std::collections::HashMap<u32, String>,
+    /// Endereço do servidor das janelas cuja faixa mostra o nome do
+    /// registro: vai para a dica.
+    pub doc_hosts: std::collections::HashMap<u32, String>,
     /// Ambiente e cor do servidor de cada janela de consulta.
     pub doc_tags: std::collections::HashMap<u32, crate::registered::ServerTag>,
     /// Catálogos do IntelliSense.
@@ -419,6 +422,10 @@ impl PaneViewer<Panel> for Viewer<'_> {
                     doc.editor.focus_editor();
                 }
                 let server = self.doc_servers.get(id).unwrap_or(&self.server);
+                let strip_server = crate::results::Server {
+                    label: server,
+                    host: self.doc_hosts.get(id).map(String::as_str),
+                };
                 let tag = self.doc_tags.get(id);
                 if let Some(tag) = tag {
                     // Uma faixa da cor do ambiente em cima da janela, como
@@ -438,7 +445,9 @@ impl PaneViewer<Panel> for Viewer<'_> {
                         // fica com pelo menos umas linhas e a faixa de
                         // status não sai para fora da janela.
                         .size_range(crate::fit::pane_range(height, 90.0, 60.0))
-                        .show(ui, |ui| crate::results::show(ui, *id, exec, server, tag))
+                        .show(ui, |ui| {
+                            crate::results::show(ui, *id, exec, strip_server, tag)
+                        })
                         .inner;
                     if let Some((i, extension)) = action.save_results {
                         self.save_results.push((*id, i, extension));
@@ -471,7 +480,7 @@ impl PaneViewer<Panel> for Viewer<'_> {
                                 crate::results::connected_strip(
                                     ui,
                                     db.as_deref().unwrap_or(""),
-                                    server,
+                                    strip_server,
                                     tag,
                                 )
                             }
