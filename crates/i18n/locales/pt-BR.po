@@ -1956,8 +1956,41 @@ msgstr "Copiar Como"
 msgid "Copy as:"
 msgstr "Copiar como:"
 
-msgid "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Sorting and filtering apply to the whole result. Without pages, the grid scrolls through every row."
-msgstr "Cada resultado abre na primeira página; a faixa embaixo da grade troca de página e muda o tamanho dela. Ordenar e filtrar valem para o resultado inteiro. Sem páginas, a grade rola por todas as linhas."
+msgid "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Without pages, the grid scrolls through every row."
+msgstr "Cada resultado abre na primeira página; a faixa embaixo da grade troca de página e muda o tamanho dela. Sem páginas, a grade rola por todas as linhas."
+
+msgid "Fetch only the page shown from the server"
+msgstr "Buscar do servidor só a página à mostra"
+
+msgid "Close a query left waiting after"
+msgstr "Encerrar a consulta parada depois de"
+
+msgid "minutes (0 never closes it)"
+msgstr "minutos (0 não encerra nunca)"
+
+msgid "On PostgreSQL and SQL Server, a single SELECT brings only the first page; the query stays open on the server and the next pages come when you ask for them (the last page, \"All rows\" and saving the results fetch everything). Sorting and filtering then apply to the rows already fetched. A query left waiting holds its locks, so it is closed after the time above. Scripts, statements that change data, queries inside an open transaction and the other engines always fetch everything."
+msgstr "No PostgreSQL e no SQL Server, um SELECT sozinho traz só a primeira página; a consulta fica aberta no servidor e as páginas seguintes vêm quando você pede (a última página, \"Todas as linhas\" e salvar os resultados buscam tudo). Ordenar e filtrar valem então para as linhas já buscadas. Uma consulta parada segura os bloqueios dela, por isso é encerrada depois do tempo acima. Scripts, comandos que alteram dados, consultas dentro de uma transação aberta e os outros motores sempre buscam tudo."
+
+msgid "Only the rows shown so far came from the server; the query is still open there. The next page fetches more, and the last page fetches everything. Sorting and filtering apply to the rows already fetched."
+msgstr "Só as linhas mostradas até agora vieram do servidor; a consulta continua aberta lá. A página seguinte busca mais, e a última página busca tudo. Ordenar e filtrar valem para as linhas já buscadas."
+
+msgid "Last page (fetches all the rows)"
+msgstr "Última página (busca todas as linhas)"
+
+msgid "{rows}+ rows"
+msgstr "{rows}+ linhas"
+
+msgid "The query waited {minutes} minute(s) for the next page and was closed on the server. The rows already fetched are kept; run it again to see the rest."
+msgstr "A consulta esperou {minutes} minuto(s) pela próxima página e foi encerrada no servidor. As linhas já buscadas continuam aqui; execute de novo para ver o resto."
+
+msgid "The results are read-only while part of the rows is still on the server. Go to the last page to fetch them all, then edit."
+msgstr "Os resultados ficam só leitura enquanto parte das linhas ainda está no servidor. Vá para a última página para buscar todas e então edite."
+
+msgid "The remaining rows were not fetched from the server."
+msgstr "As linhas restantes não foram buscadas do servidor."
+
+msgid "Fetching the remaining rows before saving..."
+msgstr "Buscando as linhas restantes antes de salvar..."
 
 msgid "First page"
 msgstr "Primeira página"

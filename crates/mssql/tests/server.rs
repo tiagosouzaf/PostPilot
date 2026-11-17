@@ -667,3 +667,101 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
         "ALTER DATABASE pp_explorer SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE pp_explorer",
     );
 }
+
+#[test]
+fn a_paced_query_fetches_only_the_allowed_rows_and_gives_up_cleanly() {
+    let Some(session) = session("master") else {
+        return;
+    };
+    run(&*session, "SELECT 1");
+    let big = "SELECT TOP (2000000) a.object_id, REPLICATE(N'x', 200) AS texto \
+               FROM sys.all_columns a CROSS JOIN sys.all_columns b";
+    let paced = |sql: &str, rows: u64| {
+        let (tx, rx) = mpsc::channel();
+        let (paused_tx, paused) = mpsc::channel();
+        let paused_tx = std::sync::Mutex::new(paused_tx);
+        let pace = pgstudio_core::query::Pace::new(rows, move || {
+            let _ = paused_tx.lock().unwrap().send(());
+        });
+        session.execute_paced(
+            sql.to_string(),
+            Box::new(move |e| {
+                let _ = tx.send(e);
+            }),
+            pace.clone(),
+        );
+        (pace, rx, paused)
+    };
+    let rows = |rx: &mpsc::Receiver<QueryEvent>| {
+        rx.try_iter()
+            .filter(|e| matches!(e, QueryEvent::Row(_)))
+            .count()
+    };
+    let finish = |rx: &mpsc::Receiver<QueryEvent>| {
+        let mut events = Vec::new();
+        loop {
+            let e = rx.recv_timeout(Duration::from_secs(30)).expect("finish");
+            let end = matches!(e, QueryEvent::Finished { .. });
+            events.push(e);
+            if end {
+                return events;
+            }
+        }
+    };
+
+    let (pace, rx, paused) = paced(big, 100);
+    paused.recv_timeout(Duration::from_secs(30)).expect("pause");
+    assert_eq!(rows(&rx), 100);
+    pace.allow(50);
+    paused
+        .recv_timeout(Duration::from_secs(30))
+        .expect("pauses again");
+    assert_eq!(rows(&rx), 50);
+    // Desistir cancela o lote e a sessão segue servindo.
+    let start = Instant::now();
+    pace.abandon();
+    assert_eq!(finish(&rx), [QueryEvent::Finished { canceled: true }]);
+    assert!(start.elapsed() < Duration::from_secs(10));
+    let again = run(&*session, "SELECT 5 AS x");
+    assert!(
+        again.contains(&QueryEvent::Row(vec![Some("5".into())])),
+        "{again:?}"
+    );
+
+    // O que cabe no limite termina sem parar; liberar tudo traz o resto.
+    let (_pace, rx, paused) = paced("SELECT TOP (100) object_id FROM sys.all_columns", 100);
+    let events = finish(&rx);
+    assert!(events.contains(&QueryEvent::CommandComplete { rows: 100 }));
+    assert!(paused.try_recv().is_err());
+    let (pace, rx, paused) = paced("SELECT TOP (3000) object_id FROM sys.all_columns", 100);
+    paused.recv_timeout(Duration::from_secs(30)).expect("pause");
+    pace.allow_all();
+    let events = finish(&rx);
+    assert!(events.contains(&QueryEvent::CommandComplete { rows: 3000 }));
+    assert_eq!(
+        events.last(),
+        Some(&QueryEvent::Finished { canceled: false })
+    );
+
+    // A execução seguinte faz a parada desistir.
+    let (_pace, rx, paused) = paced(big, 10);
+    paused.recv_timeout(Duration::from_secs(30)).expect("pause");
+    let next = run(&*session, "SELECT 6 AS x");
+    assert!(next.contains(&QueryEvent::Row(vec![Some("6".into())])));
+    assert_eq!(
+        finish(&rx).last(),
+        Some(&QueryEvent::Finished { canceled: true })
+    );
+
+    // Dentro de uma transação vem tudo, e ela continua aberta.
+    run(&*session, "BEGIN TRANSACTION");
+    let (_pace, rx, paused) = paced("SELECT TOP (1000) object_id FROM sys.all_columns", 10);
+    let events = finish(&rx);
+    assert!(events.contains(&QueryEvent::CommandComplete { rows: 1000 }));
+    assert!(paused.try_recv().is_err());
+    let after = run(&*session, "SELECT @@TRANCOUNT; ROLLBACK");
+    assert!(
+        after.contains(&QueryEvent::Row(vec![Some("1".into())])),
+        "{after:?}"
+    );
+}

@@ -176,11 +176,18 @@ pub struct ResultsPrefs {
     pub copy_format: CopyFormat,
     /// Nomes das colunas na primeira linha do que é copiado (TSV e CSV).
     pub copy_headers: bool,
+    /// Buscar do servidor só a página pedida (PostgreSQL e SQL Server).
+    pub fetch_on_demand: bool,
+    /// Minutos que a consulta espera aberta no servidor pela próxima
+    /// página antes de ser encerrada; 0 é sem limite.
+    pub idle_minutes: u32,
 }
 
 impl ResultsPrefs {
     /// Maior página aceita (um arquivo editado à mão não passa disso).
     pub const MAX_PAGE_SIZE: u32 = 1_000_000;
+    /// Maior espera aceita, em minutos (um dia).
+    pub const MAX_IDLE_MINUTES: u32 = 24 * 60;
 
     /// Como a grade usa.
     pub fn grid(&self) -> GridPrefs {
@@ -189,6 +196,8 @@ impl ResultsPrefs {
             page_size: self.page_size.clamp(1, Self::MAX_PAGE_SIZE),
             copy_format: self.copy_format,
             copy_headers: self.copy_headers,
+            fetch_on_demand: self.fetch_on_demand,
+            idle_minutes: self.idle_minutes.min(Self::MAX_IDLE_MINUTES),
         }
     }
 }
@@ -200,6 +209,8 @@ impl From<GridPrefs> for ResultsPrefs {
             page_size: g.page_size.clamp(1, Self::MAX_PAGE_SIZE),
             copy_format: g.copy_format,
             copy_headers: g.copy_headers,
+            fetch_on_demand: g.fetch_on_demand,
+            idle_minutes: g.idle_minutes.min(Self::MAX_IDLE_MINUTES),
         }
     }
 }
@@ -336,12 +347,14 @@ mod tests {
                 page_size: 1000,
                 copy_format: CopyFormat::CsvSemicolon,
                 copy_headers: true,
+                fetch_on_demand: false,
+                idle_minutes: 30,
             },
         })
         .unwrap();
         assert_eq!(
             json,
-            r#"{"language":"pt-BR","theme":"light","ui_scale":130,"auto_connect":false,"results":{"paginate":false,"page_size":1000,"copy_format":"csv-semicolon","copy_headers":true}}"#
+            r#"{"language":"pt-BR","theme":"light","ui_scale":130,"auto_connect":false,"results":{"paginate":false,"page_size":1000,"copy_format":"csv-semicolon","copy_headers":true,"fetch_on_demand":false,"idle_minutes":30}}"#
         );
         let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Dark);
@@ -353,7 +366,7 @@ mod tests {
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Light);
         assert_eq!(
             serde_json::to_string(&Preferences::default()).unwrap(),
-            r#"{"language":"system","theme":"system","ui_scale":100,"auto_connect":true,"results":{"paginate":true,"page_size":500,"copy_format":"tsv","copy_headers":false}}"#
+            r#"{"language":"system","theme":"system","ui_scale":100,"auto_connect":true,"results":{"paginate":true,"page_size":500,"copy_format":"tsv","copy_headers":false,"fetch_on_demand":true,"idle_minutes":10}}"#
         );
     }
 

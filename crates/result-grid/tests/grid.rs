@@ -965,3 +965,73 @@ fn ctrl_c_copies_in_the_chosen_format() {
         "'linha 0', 'linha 1', 'linha 2'\n"
     );
 }
+
+/// Com linhas ainda no servidor, a faixa mostra o total como "pelo menos",
+/// a página seguinte e a última pedem as linhas a quem desenha, e a grade
+/// vai para a página quando elas chegam.
+#[test]
+fn the_footer_asks_for_the_rows_still_on_the_server() {
+    use egui_phosphor::regular as icons;
+    use pgstudio_result_grid::grid::{Fetch, Turn};
+    let push = |h: &mut Harness<'static, App>, range: std::ops::Range<u64>| {
+        for i in range {
+            let row = [Some(i.to_string()), Some(format!("linha {i}"))];
+            h.state_mut().store.push(&row);
+        }
+    };
+    let mut h = paged_harness(500);
+    h.state_mut().state.more = true;
+    h.run();
+    h.get_by_label("1–500 of 500+");
+
+    // Próxima página: não há linhas ainda; a grade pede e espera.
+    // (Com a troca de página à espera, o indicador gira: frames contados.)
+    h.get_by_label(icons::CARET_RIGHT).click();
+    h.run_steps(3);
+    assert_eq!(h.state_mut().state.fetch.take(), Some(Fetch::Page));
+    assert_eq!(h.state().state.turn, Some(Turn::To(1)));
+    assert_eq!(h.state().state.shown, 0..500);
+    h.state_mut().state.loading = true;
+    h.run_steps(3);
+    // As linhas chegam: vai para a página pedida.
+    push(&mut h, 500..1000);
+    h.state_mut().state.loading = false;
+    h.run();
+    assert_eq!(h.state().state.shown, 500..1000);
+    assert_eq!(h.state().state.turn, None);
+    h.get_by_label("501–1000 of 1000+");
+
+    // Alt+PageDown também pede.
+    let p = h
+        .state()
+        .state
+        .cell_center(Cell { row: 500, col: 0 })
+        .unwrap();
+    click(&mut h, p, Modifiers::NONE);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageDown);
+    h.run_steps(3);
+    assert_eq!(h.state_mut().state.fetch.take(), Some(Fetch::Page));
+    // Não veio nada (a consulta foi encerrada): fica onde estava.
+    h.state_mut().state.more = false;
+    h.run();
+    assert_eq!(h.state().state.turn, None);
+    assert_eq!(h.state().state.shown, 500..1000);
+    h.get_by_label("501–1000 of 1000");
+
+    // A última página pede tudo e só vai quando o resultado acaba.
+    h.state_mut().state.more = true;
+    h.run();
+    h.get_by_label(icons::CARET_DOUBLE_RIGHT).click();
+    h.run_steps(3);
+    assert_eq!(h.state_mut().state.fetch.take(), Some(Fetch::All));
+    h.state_mut().state.loading = true;
+    push(&mut h, 1000..1800);
+    h.run_steps(3);
+    assert_eq!(h.state().state.shown, 500..1000);
+    push(&mut h, 1800..2300);
+    h.state_mut().state.more = false;
+    h.state_mut().state.loading = false;
+    h.run();
+    assert_eq!(h.state().state.shown, 2000..2300);
+    h.get_by_label("2001–2300 of 2300");
+}

@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use futures_util::StreamExt;
 use pgstudio_core::connection::ConnectionSettings;
 use pgstudio_core::query::{
-    ColumnSource, DescribeDone, QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage,
+    ColumnSource, DescribeDone, Pace, QueryEvent, QueryService, QuerySession, QuerySink,
+    ServerMessage,
 };
 use tokio_postgres::SimpleQueryMessage;
 use tokio_postgres::error::{DbError, ErrorPosition, SqlState};
@@ -63,10 +64,29 @@ struct Shared {
     /// Fora do lock, para cancelar com a sessão ocupada.
     canceller: Mutex<Option<Canceller>>,
     cancel_requested: AtomicBool,
+    /// A execução em andamento busca as linhas aos poucos.
+    pace: Mutex<Option<Pace>>,
 }
 
-impl QuerySession for PgQuerySession {
-    fn execute(&self, sql: String, mut sink: QuerySink) {
+impl Shared {
+    /// Uma execução parada à espera de mais linhas segura a conexão: quem
+    /// precisa dela (outra execução, um cancelamento) faz a parada
+    /// desistir do resto. Devolve se havia uma.
+    fn give_up_paused(&self) -> bool {
+        let pace = self.pace.lock().ok().and_then(|p| p.clone());
+        match pace {
+            Some(p) if p.is_waiting() => {
+                p.abandon();
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PgQuerySession {
+    fn start(&self, sql: String, mut sink: QuerySink, pace: Option<Pace>) {
+        self.shared.give_up_paused();
         let shared = self.shared.clone();
         let settings = self.settings.clone();
         let password = self.password.clone();
@@ -90,14 +110,63 @@ impl QuerySession for PgQuerySession {
                 }
             }
             let canceled = match guard.as_ref() {
-                Some(session) => run(session, &sql, &mut sink, &shared.cancel_requested).await,
+                Some(session) => {
+                    // Desistir de uma consulta parada cancela o comando, e
+                    // dentro de uma transação isso a deixaria abortada:
+                    // ali o resultado vem inteiro, como sempre.
+                    let pace = match pace {
+                        Some(p) if !in_transaction(session).await => Some(p),
+                        _ => None,
+                    };
+                    if let Ok(mut p) = shared.pace.lock() {
+                        *p = pace.clone();
+                    }
+                    let canceled = run(
+                        session,
+                        &sql,
+                        &mut sink,
+                        &shared.cancel_requested,
+                        pace.as_ref(),
+                    )
+                    .await;
+                    if let Ok(mut p) = shared.pace.lock() {
+                        *p = None;
+                    }
+                    canceled
+                }
                 None => false,
             };
             sink(QueryEvent::Finished { canceled });
         });
     }
+}
+
+/// Se a sessão está dentro de uma transação aberta por um comando
+/// anterior (uma abortada também conta).
+async fn in_transaction(session: &Session) -> bool {
+    let sql = pgstudio_core::connection::Engine::PostgreSql.in_transaction_sql();
+    match session.client().simple_query(sql).await {
+        Ok(messages) => messages.iter().any(|m| match m {
+            SimpleQueryMessage::Row(row) => row.get(0) != Some("f"),
+            _ => false,
+        }),
+        Err(_) => true,
+    }
+}
+
+impl QuerySession for PgQuerySession {
+    fn execute(&self, sql: String, sink: QuerySink) {
+        self.start(sql, sink, None);
+    }
+
+    fn execute_paced(&self, sql: String, sink: QuerySink, pace: Pace) {
+        self.start(sql, sink, Some(pace));
+    }
 
     fn cancel(&self) {
+        if self.shared.give_up_paused() {
+            return;
+        }
         let canceller = self.shared.canceller.lock().ok().and_then(|c| c.clone());
         if let Some(canceller) = canceller {
             self.shared.cancel_requested.store(true, Ordering::SeqCst);
@@ -113,6 +182,7 @@ impl QuerySession for PgQuerySession {
     }
 
     fn describe(&self, sql: String, done: DescribeDone) {
+        self.shared.give_up_paused();
         let shared = self.shared.clone();
         self.runtime.handle().spawn(async move {
             let guard = shared.session.lock().await;
@@ -142,7 +212,16 @@ impl QuerySession for PgQuerySession {
 }
 
 /// Roda `sql` e manda os eventos. Devolve se a execução foi cancelada.
-async fn run(session: &Session, sql: &str, sink: &mut QuerySink, cancel: &AtomicBool) -> bool {
+async fn run(
+    session: &Session,
+    sql: &str,
+    sink: &mut QuerySink,
+    cancel: &AtomicBool,
+    pace: Option<&Pace>,
+) -> bool {
+    // A interface desistiu do resto do resultado: o comando foi cancelado
+    // e o que ainda chegar é jogado fora.
+    let mut dropped = false;
     let notices = |sink: &mut QuerySink| {
         for n in session.take_notices() {
             sink(QueryEvent::Notice(db_message(&n)));
@@ -169,12 +248,24 @@ async fn run(session: &Session, sql: &str, sink: &mut QuerySink, cancel: &Atomic
                     columns.iter().map(|c| c.name().to_string()).collect(),
                 ));
             }
+            Ok(SimpleQueryMessage::Row(_)) if dropped => {}
             Ok(SimpleQueryMessage::Row(row)) => {
+                if let Some(pace) = pace
+                    && !pace.row().await
+                {
+                    dropped = true;
+                    cancel.store(true, Ordering::SeqCst);
+                    // Se falhar, o resto do resultado só é lido e jogado
+                    // fora.
+                    let _ = session.canceller().cancel().await;
+                    continue;
+                }
                 let values = (0..row.len())
                     .map(|i| row.get(i).map(str::to_string))
                     .collect();
                 sink(QueryEvent::Row(values));
             }
+            Ok(SimpleQueryMessage::CommandComplete(_)) if dropped => {}
             Ok(SimpleQueryMessage::CommandComplete(rows)) => {
                 sink(QueryEvent::CommandComplete { rows });
             }
@@ -186,7 +277,7 @@ async fn run(session: &Session, sql: &str, sink: &mut QuerySink, cancel: &Atomic
         }
     }
     notices(sink);
-    false
+    dropped
 }
 
 /// Erro do driver ou do servidor como mensagem para a interface.

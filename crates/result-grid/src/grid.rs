@@ -133,6 +133,34 @@ pub struct GridState {
     /// O que a última cópia levou, para dizer embaixo da grade, e quando
     /// (tempo do egui, em segundos).
     pub copied_note: Option<(String, f64)>,
+    /// O servidor ainda tem linhas deste resultado que não foram buscadas
+    /// (quem desenha diz a cada frame).
+    pub more: bool,
+    /// As linhas pedidas em [`GridState::fetch`] estão chegando.
+    pub loading: bool,
+    /// Pedido a quem desenha, que o tira daqui: buscar mais linhas do
+    /// servidor.
+    pub fetch: Option<Fetch>,
+    /// Para onde ir quando as linhas pedidas chegarem.
+    pub turn: Option<Turn>,
+}
+
+/// O que a grade pede do servidor quando o resultado veio só em parte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fetch {
+    /// Mais uma página.
+    Page,
+    /// Todo o resto.
+    All,
+}
+
+/// Troca de página à espera das linhas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turn {
+    /// Para esta página (a partir de 0).
+    To(u64),
+    /// Para a última, quando o resultado chegar inteiro.
+    Last,
 }
 
 /// Edição de uma célula na própria grade.
@@ -354,6 +382,47 @@ impl GridState {
             self.selection = None;
         }
         self.top = self.page_rows(prefs, len).start as f64;
+    }
+
+    /// A página seguinte; no fim do que já veio, pede mais uma ao servidor
+    /// e vai para ela quando chegar.
+    pub fn next_page(&mut self, prefs: &GridPrefs, len: u64) {
+        if self.page + 1 < self.page_count(prefs, len) {
+            self.go_to_page(prefs, len, self.page + 1);
+        } else if self.more && self.turn.is_none() {
+            self.fetch = Some(Fetch::Page);
+            self.turn = Some(Turn::To(self.page + 1));
+        }
+    }
+
+    /// A última página; com linhas ainda no servidor, busca todas antes.
+    pub fn last_page(&mut self, prefs: &GridPrefs, len: u64) {
+        if self.more {
+            self.fetch = Some(Fetch::All);
+            self.turn = Some(Turn::Last);
+        } else {
+            self.go_to_page(prefs, len, self.page_count(prefs, len) - 1);
+        }
+    }
+
+    /// Completa a troca de página que esperava linhas do servidor.
+    fn finish_turn(&mut self, prefs: &GridPrefs, len: u64) {
+        let pages = self.page_count(prefs, len);
+        // O pedido ainda não foi atendido nem recolhido: espera.
+        let waiting = self.loading || self.fetch.is_some();
+        match self.turn {
+            Some(Turn::To(page)) if page < pages => {
+                self.turn = None;
+                self.go_to_page(prefs, len, page);
+            }
+            Some(Turn::Last) if !self.more => {
+                self.turn = None;
+                self.go_to_page(prefs, len, pages - 1);
+            }
+            // Não veio mais nada (ou o filtro escondeu o que veio).
+            Some(_) if !waiting => self.turn = None,
+            _ => {}
+        }
     }
 
     /// Aplica a ordem e o filtro pedidos, um pouco por frame, e solta a
@@ -613,6 +682,7 @@ pub fn show(
     ui.allocate_rect(full, Sense::hover());
 
     // A página à mostra: a grade só desenha, rola e seleciona dentro dela.
+    state.finish_turn(&prefs, len);
     state.page = state.page.min(state.page_count(&prefs, len) - 1);
     let shown = state.page_rows(&prefs, len);
     let (first_row, nrows) = (shown.start, shown.end);
@@ -923,9 +993,10 @@ pub fn show(
         // Alt+PageDown e Alt+PageUp trocam de página.
         let turn = if mods.alt { dy.signum() } else { 0 };
         let dy = if mods.alt { 0 } else { dy };
-        if turn != 0 && paging {
-            let page = state.page.saturating_add_signed(turn);
-            state.go_to_page(&prefs, len, page);
+        if turn > 0 && paging {
+            state.next_page(&prefs, len);
+        } else if turn < 0 && paging {
+            state.go_to_page(&prefs, len, state.page.saturating_sub(1));
         }
         if all {
             state.select_all(store);
@@ -1303,6 +1374,7 @@ fn footer(
     let pages = state.page_count(prefs, len);
     let shown = state.page_rows(prefs, len);
     let mut go = None;
+    let (mut next, mut last) = (false, false);
     if prefs.paginate {
         let roomy = bar.width() >= 420.0;
         let button = |ui: &mut egui::Ui, enabled: bool, icon: &str, hint: &str| {
@@ -1335,26 +1407,47 @@ fn footer(
                 "{from}–{to} of {total}",
                 from = shown.start + 1,
                 to = shown.end,
-                total = len
+                // Com linhas ainda no servidor, o total é "pelo menos".
+                total = if state.more {
+                    format!("{len}+")
+                } else {
+                    len.to_string()
+                }
             )
         };
-        ui_left.label(range).on_hover_text(trf!(
-            "Page {page} of {pages}",
-            page = state.page + 1,
-            pages = pages
-        ));
-        let more = state.page + 1 < pages;
-        if button(
+        let range = ui_left.label(range);
+        if state.more {
+            range.on_hover_text(tr(
+                "Only the rows shown so far came from the server; the query is still open there. The next page fetches more, and the last page fetches everything. Sorting and filtering apply to the rows already fetched.",
+            ));
+        } else {
+            range.on_hover_text(trf!(
+                "Page {page} of {pages}",
+                page = state.page + 1,
+                pages = pages
+            ));
+        }
+        if state.turn.is_some() {
+            ui_left.spinner();
+        }
+        let more = state.page + 1 < pages || state.more;
+        next = button(
             ui_left,
             more,
             icons::CARET_RIGHT,
             tr("Next page (Alt+PageDown)"),
-        ) {
-            go = Some(state.page + 1);
-        }
-        if roomy && button(ui_left, more, icons::CARET_DOUBLE_RIGHT, tr("Last page")) {
-            go = Some(pages - 1);
-        }
+        );
+        last = roomy
+            && button(
+                ui_left,
+                more,
+                icons::CARET_DOUBLE_RIGHT,
+                if state.more {
+                    tr("Last page (fetches all the rows)")
+                } else {
+                    tr("Last page")
+                },
+            );
     } else {
         ui_left.label(if len == 1 {
             tr("1 row").to_string()
@@ -1363,7 +1456,14 @@ fn footer(
         });
     }
     if let Some(page) = go {
+        state.turn = None;
         state.go_to_page(prefs, len, page);
+    }
+    if next {
+        state.next_page(prefs, len);
+    }
+    if last {
+        state.last_page(prefs, len);
     }
     ui_left.add_space(6.0);
     // Com o aviso da cópia na faixa, o rótulo cede o lugar a ele.

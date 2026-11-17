@@ -104,8 +104,14 @@ pub fn show<'a>(
                     server: server.label.to_string(),
                     environment: tag.map(|t| (t.environment.clone().unwrap_or_default(), t.color)),
                 };
-                (action.save_results, action.open_json) =
-                    grids(ui, doc, &mut exec.results, &mut log, &place);
+                // O último resultado é o que pode ter linhas no servidor.
+                let more = exec.has_more().then_some(exec.is_fetching());
+                let fetch;
+                (action.save_results, action.open_json, fetch) =
+                    grids(ui, doc, &mut exec.results, more, &mut log, &place);
+                if let Some(what) = fetch {
+                    exec.fetch(what);
+                }
                 for text in log {
                     exec.push_info(text);
                 }
@@ -259,7 +265,10 @@ fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: Server<'_>, tag: Op
         let rows = exec.total_rows();
         fit::text(
             ui,
-            if rows == 1 {
+            if exec.has_more() {
+                // O resto ainda está no servidor.
+                trf!("{rows}+ rows", rows = rows)
+            } else if rows == 1 {
                 tr("1 row").to_string()
             } else {
                 trf!("{rows} rows", rows = rows)
@@ -309,11 +318,18 @@ fn grids(
     ui: &mut egui::Ui,
     doc: u32,
     sets: &mut [ResultSet],
+    more: Option<bool>,
     log: &mut Vec<String>,
     place: &crate::result_edit::Place,
-) -> (Option<SaveRequest>, Option<JsonRequest>) {
+) -> (
+    Option<SaveRequest>,
+    Option<JsonRequest>,
+    Option<grid::Fetch>,
+) {
     let mut save = None;
     let mut json = None;
+    let mut fetch = None;
+    let last = sets.len().saturating_sub(1);
     let gap = ui.spacing().item_spacing.y;
     let n = sets.len() as f32;
     let each = ((ui.available_height() - gap * (n - 1.0)) / n).max(90.0);
@@ -332,12 +348,17 @@ fn grids(
                     // Resultados de consulta vêm em páginas, com a faixa das
                     // páginas e do formato de cópia embaixo.
                     state.paged = true;
+                    state.more = more.is_some() && i == last;
+                    state.loading = more == Some(true) && i == last;
                     let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(editor) = editor.as_mut() {
                         editor.step(&mut store, state);
                         edit_strip(ui, editor);
                     }
                     let out = grid::show(ui, id, &mut store, state);
+                    if let Some(what) = state.fetch.take() {
+                        fetch = Some(what);
+                    }
                     if out.export_excel {
                         save = Some((i, "xlsx"));
                     } else if out.save_as {
@@ -354,7 +375,7 @@ fn grids(
                 });
             }
         });
-    (save, json)
+    (save, json, fetch)
 }
 
 /// Linha acima da grade com a situação da edição: a tabela editável e
