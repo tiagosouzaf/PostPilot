@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use pgstudio_core::connection::Engine;
-use pgstudio_core::query::{QueryEvent, QuerySession, ServerMessage, line_col};
+use pgstudio_core::query::{Pace, QueryEvent, QuerySession, ServerMessage, line_col};
 use pgstudio_execution_plan::{Plan, PlanView};
 use pgstudio_result_grid::export::{Format, Writer};
-use pgstudio_result_grid::grid::INSERT_TABLE;
+use pgstudio_result_grid::grid::{Fetch, INSERT_TABLE};
 use pgstudio_result_grid::xlsx::Workbook;
-use pgstudio_result_grid::{GridState, ResultStore};
+use pgstudio_result_grid::{GridState, ResultStore, prefs};
 
 use crate::result_edit::ResultEditor;
 
@@ -107,6 +107,9 @@ enum Incoming {
     Event(QueryEvent),
     /// Começou um resultado; as linhas vão direto para este buffer.
     Result(Arc<Mutex<ResultStore>>),
+    /// A sessão buscou as linhas liberadas e parou esperando a próxima
+    /// página (veja [`Pace`]).
+    Paused,
 }
 
 /// Uma linha da aba Messages.
@@ -363,6 +366,33 @@ pub struct Execution {
     ctx: egui::Context,
     /// O resultado veio da sessão anterior (não foi rodado agora).
     restored: Option<Restored>,
+    /// O resultado vem do servidor uma página por vez.
+    pace: Option<Pace>,
+    /// Desde quando a sessão espera a próxima página.
+    paused: Option<Instant>,
+    /// A primeira página chegou e a execução já foi dada como pronta
+    /// (histórico, faixa de status), com o resto ainda no servidor.
+    settled: bool,
+    /// Tempo buscando linhas, sem contar as esperas, até a última parada.
+    active: Duration,
+    /// Quando a busca foi retomada pela última vez.
+    resumed: Instant,
+    /// O app desistiu do resto do resultado: o que dizer nas mensagens
+    /// quando a sessão confirmar.
+    stop_note: Option<String>,
+    /// Espera máxima pela próxima página no lugar da das preferências
+    /// (testes).
+    idle_limit: Option<Duration>,
+}
+
+impl Drop for Execution {
+    fn drop(&mut self) {
+        // Fechada ou trocada por outra com linhas ainda no servidor: o
+        // comando é cancelado lá.
+        if let Some(pace) = &self.pace {
+            pace.abandon();
+        }
+    }
 }
 
 impl std::fmt::Debug for Execution {
@@ -386,6 +416,20 @@ impl Execution {
     ) -> Self {
         let batch = Batch::plain(&sql);
         Self::start_batch(session, batch, sql, offset, ctx)
+    }
+
+    /// Como [`Execution::start`], buscando do servidor só `rows` linhas de
+    /// cada vez: o resto vem quando a grade pede a página seguinte. A
+    /// sessão que não sabe esperar traz tudo.
+    pub fn start_paged(
+        session: Arc<dyn QuerySession>,
+        sql: String,
+        offset: usize,
+        rows: u64,
+        ctx: &egui::Context,
+    ) -> Self {
+        let batch = Batch::plain(&sql);
+        Self::start_inner(session, batch, sql, offset, Some(rows), ctx)
     }
 
     /// Ctrl+L: pede o plano estimado de cada comando de `sql`, sem rodar
@@ -418,43 +462,63 @@ impl Execution {
         offset: usize,
         ctx: &egui::Context,
     ) -> Self {
+        Self::start_inner(session, batch, sql, offset, None, ctx)
+    }
+
+    fn start_inner(
+        session: Arc<dyn QuerySession>,
+        batch: Batch,
+        sql: String,
+        offset: usize,
+        paged: Option<u64>,
+        ctx: &egui::Context,
+    ) -> Self {
         let (tx, events) = mpsc::channel();
         let ui_ctx = ctx.clone();
         let ctx = ctx.clone();
         let mut current: Option<Arc<Mutex<ResultStore>>> = None;
         let mut since_repaint = 0;
-        session.execute(
-            batch.sent.clone(),
-            Box::new(move |e| match e {
-                QueryEvent::Row(row) => {
-                    if let Some(store) = &current {
-                        store.lock().unwrap_or_else(|e| e.into_inner()).push(&row);
-                        since_repaint += 1;
-                        if since_repaint == REPAINT_EVERY_ROWS {
-                            since_repaint = 0;
-                            ctx.request_repaint();
-                        }
+        let pace = paged.map(|rows| {
+            let (tx, ctx) = (tx.clone(), ctx.clone());
+            Pace::new(rows, move || {
+                let _ = tx.send(Incoming::Paused);
+                ctx.request_repaint();
+            })
+        });
+        let sink: pgstudio_core::query::QuerySink = Box::new(move |e| match e {
+            QueryEvent::Row(row) => {
+                if let Some(store) = &current {
+                    store.lock().unwrap_or_else(|e| e.into_inner()).push(&row);
+                    since_repaint += 1;
+                    if since_repaint == REPAINT_EVERY_ROWS {
+                        since_repaint = 0;
+                        ctx.request_repaint();
                     }
                 }
-                QueryEvent::Columns(columns) => {
-                    let store = Arc::new(Mutex::new(ResultStore::new(columns)));
-                    current = Some(store.clone());
-                    let _ = tx.send(Incoming::Result(store));
-                    ctx.request_repaint();
+            }
+            QueryEvent::Columns(columns) => {
+                let store = Arc::new(Mutex::new(ResultStore::new(columns)));
+                current = Some(store.clone());
+                let _ = tx.send(Incoming::Result(store));
+                ctx.request_repaint();
+            }
+            other => {
+                if matches!(
+                    other,
+                    QueryEvent::CommandComplete { .. } | QueryEvent::Error(_)
+                ) {
+                    current = None;
                 }
-                other => {
-                    if matches!(
-                        other,
-                        QueryEvent::CommandComplete { .. } | QueryEvent::Error(_)
-                    ) {
-                        current = None;
-                    }
-                    let _ = tx.send(Incoming::Event(other));
-                    ctx.request_repaint();
-                }
-            }),
-        );
+                let _ = tx.send(Incoming::Event(other));
+                ctx.request_repaint();
+            }
+        });
+        match &pace {
+            Some(pace) => session.execute_paced(batch.sent.clone(), sink, pace.clone()),
+            None => session.execute(batch.sent.clone(), sink),
+        }
         Execution {
+            pace,
             events,
             database: session.database(),
             session,
@@ -482,6 +546,12 @@ impl Execution {
             multi: false,
             ctx: ui_ctx,
             restored: None,
+            paused: None,
+            settled: false,
+            active: Duration::ZERO,
+            resumed: Instant::now(),
+            stop_note: None,
+            idle_limit: None,
         }
     }
 
@@ -567,6 +637,7 @@ impl Execution {
             }),
         );
         Ok(Execution {
+            pace: None,
             events,
             database: session.database(),
             session,
@@ -594,6 +665,12 @@ impl Execution {
             multi: false,
             ctx: ui_ctx,
             restored: None,
+            paused: None,
+            settled: false,
+            active: Duration::ZERO,
+            resumed: Instant::now(),
+            stop_note: None,
+            idle_limit: None,
         })
     }
 
@@ -656,8 +733,130 @@ impl Execution {
         }
     }
 
+    /// Se a sessão está ocupada com a execução. Parada à espera da próxima
+    /// página não conta: a janela pode rodar outra coisa (o que encerra a
+    /// consulta parada).
     pub fn is_running(&self) -> bool {
-        !self.finished
+        !self.finished && self.paused.is_none()
+    }
+
+    /// O servidor ainda tem linhas do resultado que não foram buscadas.
+    pub fn has_more(&self) -> bool {
+        self.settled && !self.finished && self.stop_note.is_none()
+    }
+
+    /// Mais linhas estão chegando a pedido da grade.
+    pub fn is_fetching(&self) -> bool {
+        self.has_more() && self.paused.is_none()
+    }
+
+    /// A grade pediu mais linhas do servidor.
+    pub fn fetch(&mut self, what: Fetch) {
+        let Some(pace) = &self.pace else {
+            return;
+        };
+        if self.finished || self.stop_note.is_some() {
+            return;
+        }
+        match what {
+            Fetch::Page => pace.allow(prefs::get(&self.ctx).fetch_rows().unwrap_or(u64::MAX)),
+            Fetch::All => pace.allow_all(),
+        }
+        self.resume();
+    }
+
+    fn fetch_rows(&mut self, rows: u64) {
+        if let Some(pace) = &self.pace {
+            pace.allow(rows);
+            self.resume();
+        }
+    }
+
+    fn resume(&mut self) {
+        if self.paused.take().is_some() {
+            self.resumed = Instant::now();
+            self.elapsed = None;
+        }
+    }
+
+    /// Desiste das linhas que ficaram no servidor: o comando é cancelado
+    /// lá e o que já veio fica na grade. `note` vai para as mensagens.
+    pub fn stop_fetching(&mut self, note: String) {
+        if !self.has_more() {
+            return;
+        }
+        self.stop_note = Some(note);
+        if let Some(pace) = &self.pace {
+            pace.abandon();
+        }
+    }
+
+    /// Troca a espera máxima pela próxima página (testes).
+    pub fn set_idle_limit(&mut self, limit: Duration) {
+        self.idle_limit = Some(limit);
+    }
+
+    /// Com a sessão parada: busca o que as escolhas da grade passaram a
+    /// pedir (sem páginas, tudo; página maior, o que falta para enchê-la)
+    /// e encerra a consulta que esperou demais.
+    fn pace_step(&mut self) {
+        let Some(since) = self.paused else {
+            return;
+        };
+        if self.stop_note.is_some() {
+            return;
+        }
+        let prefs = prefs::get(&self.ctx);
+        let loaded = self.total_rows();
+        match prefs.fetch_rows() {
+            None => return self.fetch(Fetch::All),
+            Some(size) if loaded < size => return self.fetch_rows(size - loaded),
+            Some(_) => {}
+        }
+        if prefs.idle_minutes == 0 && self.idle_limit.is_none() {
+            return;
+        }
+        let limit = self
+            .idle_limit
+            .unwrap_or(Duration::from_secs(u64::from(prefs.idle_minutes) * 60));
+        let waited = since.elapsed();
+        if waited < limit {
+            self.ctx.request_repaint_after(limit - waited);
+            return;
+        }
+        self.stop_fetching(trf!(
+            "The query waited {minutes} minute(s) for the next page and was closed on the server. The rows already fetched are kept; run it again to see the rest.",
+            minutes = prefs.idle_minutes
+        ));
+    }
+
+    /// A primeira página chegou com o resto ainda no servidor: a execução
+    /// conta como pronta. Devolve `true` na primeira vez.
+    fn pause(&mut self) -> bool {
+        if self.finished || self.paused.is_some() {
+            return false;
+        }
+        self.paused = Some(Instant::now());
+        self.active += self.resumed.elapsed();
+        self.elapsed = Some(self.active);
+        if std::mem::replace(&mut self.settled, true) {
+            return false;
+        }
+        if self.outcome == Outcome::Running {
+            self.outcome = Outcome::Succeeded;
+        }
+        // Editar usa a conexão da janela, que está com a consulta aberta.
+        let reason = tr(
+            "The results are read-only while part of the rows is still on the server. Go to the last page to fetch them all, then edit.",
+        );
+        for set in &mut self.results {
+            set.editor = Some(ResultEditor::read_only(
+                self.session.clone(),
+                reason,
+                &self.ctx,
+            ));
+        }
+        true
     }
 
     pub fn outcome(&self) -> Outcome {
@@ -666,7 +865,8 @@ impl Execution {
 
     /// Tempo de execução (até agora, se ainda roda).
     pub fn elapsed(&self) -> Duration {
-        self.elapsed.unwrap_or_else(|| self.started.elapsed())
+        self.elapsed
+            .unwrap_or_else(|| self.active + self.resumed.elapsed())
     }
 
     /// Linhas recebidas em todos os resultados.
@@ -713,8 +913,10 @@ impl Execution {
                     self.open_result = true;
                 }
                 Incoming::Event(event) => finished |= self.apply(event),
+                Incoming::Paused => finished |= self.pause(),
             }
         }
+        self.pace_step();
         finished
     }
 
@@ -798,7 +1000,13 @@ impl Execution {
             }
             QueryEvent::Finished { canceled } => {
                 self.finished = true;
-                self.elapsed = Some(self.started.elapsed());
+                if self.paused.take().is_none() {
+                    self.active += self.resumed.elapsed();
+                }
+                self.elapsed = Some(self.active);
+                if self.settled {
+                    return self.finish_settled(canceled);
+                }
                 if self.rolled_back {
                     // Um erro ou o cancelamento param o lote antes do
                     // ROLLBACK, com a transação ainda aberta.
@@ -840,6 +1048,28 @@ impl Execution {
                 return true;
             }
         }
+        false
+    }
+
+    /// O fim de uma execução que já tinha sido dada como pronta na primeira
+    /// página: o resto chegou, ou ficou no servidor (`canceled`).
+    fn finish_settled(&mut self, canceled: bool) -> bool {
+        if canceled {
+            let note = self.stop_note.take().unwrap_or_else(|| {
+                tr("The remaining rows were not fetched from the server.").into()
+            });
+            self.info(note);
+        } else {
+            self.info(String::new());
+            self.info(trf!(
+                "Total execution time: {time}",
+                time = format_elapsed(self.elapsed(), true)
+            ));
+        }
+        if self.outcome == Outcome::Failed {
+            self.tab = Tab::Messages;
+        }
+        self.start_editors();
         false
     }
 

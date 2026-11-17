@@ -126,6 +126,9 @@ pub struct ShellApp {
     activity: Option<activity::ActivityMonitor>,
     /// "Save Results As" em andamento: a mensagem chega no fim.
     exports: Vec<std::sync::mpsc::Receiver<String>>,
+    /// "Save Results As" de um resultado com linhas ainda no servidor: a
+    /// janela, o resultado e o arquivo, à espera de o resto chegar.
+    pending_saves: Vec<(u32, usize, PathBuf)>,
     /// Janelas Edit Top N Rows, pelo número.
     edit_rows: std::collections::BTreeMap<u32, edit_rows::EditRows>,
     next_edit_rows: u32,
@@ -394,6 +397,7 @@ impl Default for ShellApp {
             password: String::new(),
             activity: None,
             exports: Vec::new(),
+            pending_saves: Vec::new(),
             edit_rows: std::collections::BTreeMap::new(),
             next_edit_rows: 0,
             security: None,
@@ -2412,7 +2416,12 @@ impl ShellApp {
                         }
                     }
                 }
-                None => Some(execution::Execution::start(session, sql, offset, ctx)),
+                None => Some(match page_fetch(ctx, doc, &session, &sql) {
+                    Some(rows) => {
+                        execution::Execution::start_paged(session, sql, offset, rows, ctx)
+                    }
+                    None => execution::Execution::start(session, sql, offset, ctx),
+                }),
             },
             Run::EstimatedPlan => execution::Execution::start_plan(session, sql, offset, ctx),
             Run::ActualPlan { roll_back } => {
@@ -2443,16 +2452,46 @@ impl ShellApp {
         else {
             return;
         };
-        let store = set.shared_store();
-        let rows = set.len();
+        let _ = set;
         let question = file_dialogs::Question::SaveResults {
             name: format!("{}.{extension}", tr("Results")),
         };
         self.ask_path(question, move |app, ctx, path| {
             if let Some(path) = path {
-                app.export_results(ctx, store, rows, path);
+                app.pending_saves.push((doc, i, path));
+                app.pending_saves_step(ctx);
             }
         });
+    }
+
+    /// Grava os resultados pedidos em "Save Results As". Um resultado que
+    /// veio só em parte é buscado inteiro antes: o arquivo leva todas as
+    /// linhas, não só as páginas vistas.
+    fn pending_saves_step(&mut self, ctx: &egui::Context) {
+        let mut waiting = Vec::new();
+        for (doc, i, path) in std::mem::take(&mut self.pending_saves) {
+            let Some(exec) = self
+                .documents
+                .get_mut(doc)
+                .and_then(|d| d.execution.as_mut())
+            else {
+                continue;
+            };
+            if exec.has_more() {
+                if !exec.is_fetching() {
+                    exec.fetch(pgstudio_result_grid::grid::Fetch::All);
+                    self.status = tr("Fetching the remaining rows before saving...").to_string();
+                }
+                waiting.push((doc, i, path));
+                continue;
+            }
+            let Some(set) = exec.results.get(i) else {
+                continue;
+            };
+            let (store, rows) = (set.shared_store(), set.len());
+            self.export_results(ctx, store, rows, path);
+        }
+        self.pending_saves = waiting;
     }
 
     fn export_results(
@@ -2676,17 +2715,23 @@ impl ShellApp {
 
     /// Alt+Break: cancela a execução da janela ativa.
     fn cancel_query(&mut self) {
-        let running = self
+        let exec = self
             .active_doc
-            .and_then(|id| self.documents.get(id))
-            .and_then(|d| d.execution.as_ref())
-            .filter(|e| e.is_running());
-        match running {
-            Some(e) => {
+            .and_then(|id| self.documents.get_mut(id))
+            .and_then(|d| d.execution.as_mut());
+        match exec {
+            Some(e) if e.is_running() => {
                 e.cancel();
                 self.status = tr("Canceling query...").to_string();
             }
-            None => self.status = tr("No query is executing.").to_string(),
+            // Parada à espera da próxima página: encerra no servidor e
+            // fica com o que já veio.
+            Some(e) if e.has_more() => {
+                let note = tr("The remaining rows were not fetched from the server.");
+                e.stop_fetching(note.to_string());
+                self.status = note.to_string();
+            }
+            _ => self.status = tr("No query is executing.").to_string(),
         }
     }
 
@@ -2882,6 +2927,9 @@ impl ShellApp {
         }
         for run in finished_runs {
             self.record_history(run);
+        }
+        if !self.pending_saves.is_empty() {
+            self.pending_saves_step(ctx);
         }
     }
 
@@ -5005,6 +5053,35 @@ impl eframe::App for ShellApp {
 }
 
 /// Escreve uma linha de medição na saída padrão, já descarregada.
+/// Quantas linhas buscar do servidor de cada vez neste F5, ou `None` para
+/// trazer tudo: só um comando que só lê, na grade, num motor que sabe
+/// esperar com a consulta aberta (PostgreSQL e SQL Server), vem em
+/// páginas. O resto (scripts, comandos que alteram, Results to Text,
+/// vários servidores) roda inteiro, como sempre.
+fn page_fetch(
+    ctx: &egui::Context,
+    doc: &documents::Document,
+    session: &Arc<dyn pgstudio_core::query::QuerySession>,
+    sql: &str,
+) -> Option<u64> {
+    let rows = pgstudio_result_grid::prefs::get(ctx).fetch_rows()?;
+    if doc.results_mode != execution::ResultsMode::Grid
+        || doc.multi.is_some()
+        || doc.federated.is_some()
+    {
+        return None;
+    }
+    let engine = session.engine();
+    if !matches!(engine, Engine::PostgreSql | Engine::SqlServer)
+        || pgstudio_sql_editor::lexer::statements(sql).len() != 1
+    {
+        return None;
+    }
+    pgstudio_automation::safety::classify_for(engine, sql)
+        .is_read_only()
+        .then_some(rows)
+}
+
 fn bench_print(line: &str) {
     use std::io::Write;
     let mut out = std::io::stdout().lock();

@@ -755,6 +755,7 @@ impl OptionsDialog {
     /// Páginas e formato de cópia da grade de resultados: o padrão que a
     /// faixa embaixo de cada grade também muda.
     fn results_grid(&mut self, ui: &mut egui::Ui) {
+        use crate::preferences::ResultsPrefs;
         use pgstudio_result_grid::CopyFormat;
         use pgstudio_result_grid::prefs::PAGE_SIZES;
         let weak = |ui: &mut egui::Ui, text: &str| {
@@ -782,7 +783,31 @@ impl OptionsDialog {
         weak(
             ui,
             tr(
-                "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Sorting and filtering apply to the whole result. Without pages, the grid scrolls through every row.",
+                "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Without pages, the grid scrolls through every row.",
+            ),
+        );
+        ui.add_space(10.0);
+        ui.add_enabled_ui(r.paginate, |ui| {
+            ui.checkbox(
+                &mut r.fetch_on_demand,
+                tr("Fetch only the page shown from the server"),
+            );
+            ui.add_enabled_ui(r.fetch_on_demand, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(tr("Close a query left waiting after"));
+                    ui.add(
+                        egui::DragValue::new(&mut r.idle_minutes)
+                            .range(0..=ResultsPrefs::MAX_IDLE_MINUTES)
+                            .speed(0.2),
+                    );
+                    ui.label(tr("minutes (0 never closes it)"));
+                });
+            });
+        });
+        weak(
+            ui,
+            tr(
+                "On PostgreSQL and SQL Server, a single SELECT brings only the first page; the query stays open on the server and the next pages come when you ask for them (the last page, \"All rows\" and saving the results fetch everything). Sorting and filtering then apply to the rows already fetched. A query left waiting holds its locks, so it is closed after the time above. Scripts, statements that change data, queries inside an open transaction and the other engines always fetch everything.",
             ),
         );
         ui.add_space(10.0);

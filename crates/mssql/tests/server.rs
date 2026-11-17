@@ -738,7 +738,10 @@ fn a_paced_query_fetches_only_the_allowed_rows_and_gives_up_cleanly() {
     pace.allow_all();
     let events = finish(&rx);
     assert!(events.contains(&QueryEvent::CommandComplete { rows: 3000 }));
-    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: false }));
+    assert_eq!(
+        events.last(),
+        Some(&QueryEvent::Finished { canceled: false })
+    );
 
     // A execução seguinte faz a parada desistir.
     let (_pace, rx, paused) = paced(big, 10);

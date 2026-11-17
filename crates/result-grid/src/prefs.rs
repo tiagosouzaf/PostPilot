@@ -15,6 +15,9 @@ pub const PAGE_SIZES: [u32; 6] = [50, 100, 500, 1000, 5000, 10_000];
 /// Tamanho de página padrão, o mesmo do DataGrip.
 pub const DEFAULT_PAGE_SIZE: u32 = 500;
 
+/// Quanto uma consulta espera aberta no servidor pela próxima página.
+pub const DEFAULT_IDLE_MINUTES: u32 = 10;
+
 /// As escolhas das grades.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GridPrefs {
@@ -27,6 +30,12 @@ pub struct GridPrefs {
     pub copy_format: CopyFormat,
     /// Nomes das colunas na primeira linha (TSV e CSV).
     pub copy_headers: bool,
+    /// Buscar do servidor só as linhas da página pedida, nos motores que
+    /// sabem esperar (vale com `paginate`).
+    pub fetch_on_demand: bool,
+    /// Minutos que uma consulta pode ficar aberta no servidor esperando a
+    /// próxima página antes de ser encerrada; 0 é sem limite.
+    pub idle_minutes: u32,
 }
 
 impl Default for GridPrefs {
@@ -36,6 +45,8 @@ impl Default for GridPrefs {
             page_size: DEFAULT_PAGE_SIZE,
             copy_format: CopyFormat::Tsv,
             copy_headers: false,
+            fetch_on_demand: true,
+            idle_minutes: DEFAULT_IDLE_MINUTES,
         }
     }
 }
@@ -44,6 +55,11 @@ impl GridPrefs {
     /// Linhas por página em uso; `None` sem paginação.
     pub fn page_rows(&self) -> Option<u64> {
         self.paginate.then(|| u64::from(self.page_size.max(1)))
+    }
+
+    /// Linhas a buscar do servidor de cada vez; `None` busca tudo.
+    pub fn fetch_rows(&self) -> Option<u64> {
+        self.page_rows().filter(|_| self.fetch_on_demand)
     }
 }
 

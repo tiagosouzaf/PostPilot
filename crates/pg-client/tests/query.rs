@@ -229,7 +229,10 @@ fn a_paced_query_fetches_only_the_allowed_rows_and_waits_on_the_server() {
     assert!(start.elapsed() < Duration::from_secs(10));
     let after = run(session.as_ref(), "SELECT 1");
     assert!(after.contains(&QueryEvent::Row(vec![Some("1".into())])));
-    assert_eq!(after.last(), Some(&QueryEvent::Finished { canceled: false }));
+    assert_eq!(
+        after.last(),
+        Some(&QueryEvent::Finished { canceled: false })
+    );
 }
 
 #[test]
@@ -250,7 +253,10 @@ fn a_paced_result_that_fits_ends_without_pausing_and_the_rest_comes_when_allowed
             .count(),
         100
     );
-    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: false }));
+    assert_eq!(
+        events.last(),
+        Some(&QueryEvent::Finished { canceled: false })
+    );
     assert!(paused.try_recv().is_err());
 
     // Uma linha a mais: para, e liberar tudo traz o resto até o fim.
@@ -270,7 +276,10 @@ fn a_paced_result_that_fits_ends_without_pausing_and_the_rest_comes_when_allowed
         5000
     );
     assert!(events.contains(&QueryEvent::CommandComplete { rows: 5000 }));
-    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: false }));
+    assert_eq!(
+        events.last(),
+        Some(&QueryEvent::Finished { canceled: false })
+    );
 }
 
 #[test]
@@ -286,7 +295,10 @@ fn a_paused_query_gives_way_to_the_next_execution() {
     let next = run(session.as_ref(), "SELECT 'next'");
     assert!(next.contains(&QueryEvent::Row(vec![Some("next".into())])));
     let events = collect(&rx);
-    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: true }));
+    assert_eq!(
+        events.last(),
+        Some(&QueryEvent::Finished { canceled: true })
+    );
 }
 
 #[test]
