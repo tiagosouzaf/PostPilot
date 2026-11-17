@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 pgstudio-i18n.workspace = true
 eframe.workspace = true
+egui-phosphor.workspace = true
 flate2.workspace = true
 crc32fast.workspace = true
 

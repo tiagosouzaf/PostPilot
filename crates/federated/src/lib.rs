@@ -11,4 +11,6 @@ pub mod plan;
 pub mod pushdown;
 
 pub use engine::{FederatedSession, Options, Remote};
-pub use plan::{Home, Plan, PlanError, Server, Source, plan, plan_with, written_name};
+pub use plan::{
+    Home, Plan, PlanError, Server, Source, plan, plan_with, server_named, written_name,
+};

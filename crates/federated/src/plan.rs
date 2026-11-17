@@ -273,14 +273,22 @@ pub fn written_name(name: &str) -> String {
 }
 
 fn find_server(servers: &[Server], part: &Part) -> Option<usize> {
-    let wanted = part.name.to_lowercase();
-    servers
+    let names: Vec<&str> = servers.iter().map(|s| s.name.as_str()).collect();
+    server_named(&names, &part.name)
+}
+
+/// Qual dos servidores `names` é o `written` de uma consulta (sem as
+/// aspas): o de mesmo nome, sem diferenciar maiúsculas, ou o de mesmo nome
+/// simples (`pg_vendas` é "PG Vendas").
+pub fn server_named(names: &[&str], written: &str) -> Option<usize> {
+    let wanted = written.to_lowercase();
+    names
         .iter()
-        .position(|s| s.name.to_lowercase() == wanted)
+        .position(|n| n.to_lowercase() == wanted)
         .or_else(|| {
-            let wanted = slug(&part.name);
+            let wanted = slug(written);
             (!wanted.is_empty())
-                .then(|| servers.iter().position(|s| slug(&s.name) == wanted))
+                .then(|| names.iter().position(|n| slug(n) == wanted))
                 .flatten()
         })
 }

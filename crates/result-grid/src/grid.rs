@@ -11,10 +11,12 @@ use pgstudio_i18n::{tr, trf};
 use std::ops::Range;
 
 use eframe::egui::{self, Color32, CursorIcon, FontId, Key, Pos2, Rect, Sense, Stroke, vec2};
+use egui_phosphor::regular as icons;
 
+use crate::copy::{self, CopyFormat};
 use crate::json;
+use crate::prefs::{self, GridPrefs};
 use crate::store::ResultStore;
-use crate::text;
 use crate::view::{self, Sort, ViewProgress, ViewSpec};
 
 /// Uma célula: linha e coluna, a partir de 0.
@@ -52,16 +54,13 @@ impl Selection {
         }
     }
 
-    /// Linhas selecionadas, num resultado de `rows` linhas.
+    /// Linhas selecionadas, num resultado de `rows` linhas. Uma seleção de
+    /// colunas inteiras vai da primeira à última linha à mostra (a página,
+    /// com paginação), que a grade mantém no `anchor` e no `cursor`.
     pub fn rows(&self, rows: u64) -> Range<u64> {
-        match self.mode {
-            Mode::Columns => 0..rows,
-            _ => {
-                let a = self.anchor.row.min(self.cursor.row);
-                let b = self.anchor.row.max(self.cursor.row);
-                a..(b + 1).min(rows)
-            }
-        }
+        let a = self.anchor.row.min(self.cursor.row);
+        let b = self.anchor.row.max(self.cursor.row);
+        a.min(rows)..(b + 1).min(rows)
     }
 
     /// Colunas selecionadas, num resultado de `cols` colunas.
@@ -123,6 +122,17 @@ pub struct GridState {
     pub view_generation: u64,
     /// A ordem ou o filtro ainda está sendo aplicado.
     pub view_working: bool,
+    /// A grade mostra o resultado em páginas (quando [`GridPrefs::paginate`]
+    /// está ligado) e tem embaixo o controle das páginas e do formato de
+    /// cópia. Quem liga é quem desenha resultados de consulta.
+    pub paged: bool,
+    /// Página à mostra, a partir de 0.
+    pub page: u64,
+    /// Linhas à mostra no último frame (a página; sem paginação, todas).
+    pub shown: Range<u64>,
+    /// O que a última cópia levou, para dizer embaixo da grade, e quando
+    /// (tempo do egui, em segundos).
+    pub copied_note: Option<(String, f64)>,
 }
 
 /// Edição de uma célula na própria grade.
@@ -299,13 +309,51 @@ impl GridState {
                 descending: false,
             }),
         };
-        self.top = 0.0;
+        self.first_page();
     }
 
     /// Troca o filtro.
     pub fn set_filter(&mut self, text: String) {
         self.filter = text;
+        self.first_page();
+    }
+
+    /// Volta para o começo do resultado (a ordem ou o filtro mudou).
+    fn first_page(&mut self) {
         self.top = 0.0;
+        self.page = 0;
+    }
+
+    /// Linhas da página à mostra, num resultado de `len` linhas. A página
+    /// pedida além do fim vira a última.
+    pub fn page_rows(&self, prefs: &GridPrefs, len: u64) -> Range<u64> {
+        match prefs.page_rows().filter(|_| self.paged) {
+            Some(size) => {
+                let last = len.saturating_sub(1) / size;
+                let start = self.page.min(last) * size;
+                start..(start + size).min(len)
+            }
+            None => 0..len,
+        }
+    }
+
+    /// Quantas páginas tem um resultado de `len` linhas (pelo menos uma).
+    pub fn page_count(&self, prefs: &GridPrefs, len: u64) -> u64 {
+        match prefs.page_rows().filter(|_| self.paged) {
+            Some(size) => len.div_ceil(size).max(1),
+            None => 1,
+        }
+    }
+
+    /// Vai para a página `page` (a partir de 0), soltando a seleção: ela
+    /// era das linhas da outra página.
+    pub fn go_to_page(&mut self, prefs: &GridPrefs, len: u64, page: u64) {
+        let page = page.min(self.page_count(prefs, len) - 1);
+        if page != self.page {
+            self.page = page;
+            self.selection = None;
+        }
+        self.top = self.page_rows(prefs, len).start as f64;
     }
 
     /// Aplica a ordem e o filtro pedidos, um pouco por frame, e solta a
@@ -329,48 +377,64 @@ impl GridState {
             self.view_generation = store.view_generation();
             // Colunas inteiras continuam selecionadas (dá para ordenar e
             // copiar a coluna); o resto apontava para outras linhas.
-            match &mut self.selection {
-                Some(s) if s.mode == Mode::Columns && !store.is_empty() => {
-                    s.anchor.row = 0;
-                    s.cursor.row = store.len() - 1;
-                }
-                s => *s = None,
+            // As linhas dela são acertadas a cada frame, em `show`.
+            if !self
+                .selection
+                .is_some_and(|s| s.mode == Mode::Columns && !store.is_empty())
+            {
+                self.selection = None;
             }
             self.editing = None;
         }
         progress
     }
 
-    /// Seleciona tudo.
+    /// Seleciona tudo o que está à mostra: o resultado ou, com paginação,
+    /// a página (as outras páginas não estão na tela).
     pub fn select_all(&mut self, store: &ResultStore) {
-        if store.is_empty() || store.columns().is_empty() {
+        let rows = if self.shown.end > self.shown.start && self.shown.end <= store.len() {
+            self.shown.clone()
+        } else {
+            0..store.len()
+        };
+        if rows.is_empty() || store.columns().is_empty() {
             return;
         }
         self.selection = Some(Selection {
-            anchor: Cell { row: 0, col: 0 },
+            anchor: Cell {
+                row: rows.start,
+                col: 0,
+            },
             cursor: Cell {
-                row: store.len() - 1,
+                row: rows.end - 1,
                 col: store.columns().len() - 1,
             },
             mode: Mode::Cells,
         });
     }
 
-    /// Texto da seleção, para a área de transferência.
+    /// Texto da seleção separado por tab, com ou sem cabeçalho.
     pub fn copy(&self, store: &mut ResultStore, headers: bool) -> Option<String> {
+        self.copy_as(store, CopyFormat::Tsv, headers)
+    }
+
+    /// A seleção no formato `format`, para a área de transferência.
+    pub fn copy_as(
+        &self,
+        store: &mut ResultStore,
+        format: CopyFormat,
+        headers: bool,
+    ) -> Option<String> {
         let s = self.selection?;
         let rows = s.rows(store.len());
         let cols = s.cols(store.columns().len());
-        Some(text::copy(store, rows, cols, headers))
+        Some(copy::copy(store, rows, cols, format, headers, INSERT_TABLE))
     }
 
     /// A seleção como comandos INSERT (uma tabela `table_name` para trocar
     /// depois de colar).
     pub fn copy_insert(&self, store: &mut ResultStore) -> Option<String> {
-        let s = self.selection?;
-        let rows = s.rows(store.len());
-        let cols = s.cols(store.columns().len());
-        Some(crate::export::insert_text(store, rows, cols, INSERT_TABLE))
+        self.copy_as(store, CopyFormat::Insert, false)
     }
 }
 
@@ -430,7 +494,7 @@ fn filter_bar(
                 .desired_width(260.0),
         );
         if state.filter != before {
-            state.top = 0.0;
+            state.first_page();
         }
         if edit.lost_focus() {
             let (enter, escape) =
@@ -529,14 +593,47 @@ pub fn show(
     if store.total_len() > 1 || !state.filter.is_empty() {
         filter_bar(ui, id, store, state, progress);
     }
-    let nrows = store.len();
+    let mut prefs = prefs::get(ui.ctx());
+    let len = store.len();
     if state.widths.len() != ncols {
         state.widths = initial_widths(store, m.char_w);
     }
     state.detect_json(store);
-    let rect = ui.available_rect_before_wrap();
+    // O controle das páginas e do formato de cópia fica embaixo da grade;
+    // numa grade baixa demais ele some e as linhas ficam com o espaço.
+    let full = ui.available_rect_before_wrap();
+    let footer_h = ui.spacing().interact_size.y + 6.0;
+    let has_footer = state.paged && full.height() >= footer_h + m.row_h * 2.0;
+    let rect = if has_footer {
+        Rect::from_min_max(full.min, egui::pos2(full.right(), full.bottom() - footer_h))
+    } else {
+        full
+    };
     let response = ui.interact(rect, id, Sense::click_and_drag());
-    ui.allocate_rect(rect, Sense::hover());
+    ui.allocate_rect(full, Sense::hover());
+
+    // A página à mostra: a grade só desenha, rola e seleciona dentro dela.
+    state.page = state.page.min(state.page_count(&prefs, len) - 1);
+    let shown = state.page_rows(&prefs, len);
+    let (first_row, nrows) = (shown.start, shown.end);
+    let page_len = nrows - first_row;
+    let paging = state.paged && prefs.paginate;
+    match &mut state.selection {
+        // Colunas inteiras: da primeira à última linha à mostra.
+        Some(s) if s.mode == Mode::Columns => {
+            s.anchor.row = first_row;
+            s.cursor.row = nrows.saturating_sub(1);
+        }
+        // O tamanho da página mudou e a seleção ficou em outra página.
+        Some(s) if paging => {
+            let (a, b) = (s.anchor.row, s.cursor.row);
+            if a.min(b) < first_row || a.max(b) >= nrows.max(1) {
+                state.selection = None;
+            }
+        }
+        _ => {}
+    }
+    state.shown = shown;
 
     let number_w = m.char_w * nrows.max(1).to_string().len().max(2) as f32 + PAD * 2.0;
     let header = Rect::from_min_size(rect.min, vec2(rect.width() - SCROLLBAR, m.row_h));
@@ -548,7 +645,8 @@ pub fn show(
     let content_w: f32 = state.widths.iter().sum();
     let view_w = (body.right() - cells_x).max(1.0);
     let visible = (body.height() / m.row_h).max(1.0) as f64;
-    let max_top = (nrows as f64 - visible.floor()).max(0.0);
+    let min_top = first_row as f64;
+    let max_top = (nrows as f64 - visible.floor()).max(min_top);
     let max_left = (content_w - view_w).max(0.0);
 
     // Rolagem pela roda do mouse.
@@ -558,7 +656,7 @@ pub fn show(
     if response.hovered() {
         let delta = ui.input(|i| i.smooth_scroll_delta);
         let (top, left) = (state.top, state.left);
-        state.top = (state.top - f64::from(delta.y / m.row_h)).clamp(0.0, max_top);
+        state.top = (state.top - f64::from(delta.y / m.row_h)).clamp(min_top, max_top);
         state.left = (state.left - delta.x).clamp(0.0, max_left);
         ui.input_mut(|i| {
             if state.top != top {
@@ -579,10 +677,10 @@ pub fn show(
         egui::pos2(cells_x, body.bottom()),
         egui::pos2(body.right(), rect.bottom()),
     );
-    let vthumb_h = if nrows == 0 {
+    let vthumb_h = if page_len == 0 {
         vtrack.height()
     } else {
-        (vtrack.height() * (visible / nrows as f64).min(1.0) as f32).max(20.0)
+        (vtrack.height() * (visible / page_len as f64).min(1.0) as f32).max(20.0)
     };
     let hthumb_w = (htrack.width() * (view_w / content_w.max(1.0)).min(1.0)).max(20.0);
     let vbar = ui.interact(vtrack, id.with("vbar"), Sense::click_and_drag());
@@ -592,7 +690,7 @@ pub fn show(
     {
         let t = ((p.y - vtrack.top() - vthumb_h / 2.0) / (vtrack.height() - vthumb_h).max(1.0))
             .clamp(0.0, 1.0);
-        state.top = f64::from(t) * max_top;
+        state.top = min_top + f64::from(t) * (max_top - min_top);
     }
     let hbar = ui.interact(htrack, id.with("hbar"), Sense::click_and_drag());
     if let Some(p) = hbar
@@ -658,6 +756,21 @@ pub fn show(
     if response.clicked() || response.drag_started() || response.secondary_clicked() {
         response.request_focus();
     }
+    if response.has_focus() {
+        // As setas são da grade (andam pelas células): sem isto o egui as
+        // usa para levar o foco aos controles em volta, como a faixa das
+        // páginas.
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..Default::default()
+                },
+            )
+        });
+    }
     let mut open_json = None;
     let pointer_cell = response
         .interact_pointer_pos()
@@ -667,7 +780,7 @@ pub fn show(
             _ => None,
         });
     if response.secondary_clicked()
-        && nrows > 0
+        && page_len > 0
         && let Some(Hit::Column(c)) = response.interact_pointer_pos().and_then(|p| hit(p, state))
         && !state
             .selection
@@ -675,7 +788,13 @@ pub fn show(
     {
         // No cabeçalho, o botão direito seleciona a coluna (o menu ordena
         // por ela).
-        let mut sel = Selection::at(Cell { row: 0, col: c }, Mode::Columns);
+        let mut sel = Selection::at(
+            Cell {
+                row: first_row,
+                col: c,
+            },
+            Mode::Columns,
+        );
         sel.cursor.row = nrows - 1;
         state.selection = Some(sel);
     }
@@ -718,7 +837,13 @@ pub fn show(
                     state.select_all(store);
                     None
                 }
-                Some(Hit::Column(c)) => Some(Selection::at(Cell { row: 0, col: c }, Mode::Columns)),
+                Some(Hit::Column(c)) => Some(Selection::at(
+                    Cell {
+                        row: first_row,
+                        col: c,
+                    },
+                    Mode::Columns,
+                )),
                 Some(Hit::RowHeader(r)) => Some(Selection::at(Cell { row: r, col: 0 }, Mode::Rows)),
                 Some(Hit::Cell(cell)) => Some(Selection::at(cell, Mode::Cells)),
                 None => None,
@@ -795,6 +920,13 @@ pub fn show(
             )
         });
         let (copy, all, dy, dx, (home, end), mods) = keys;
+        // Alt+PageDown e Alt+PageUp trocam de página.
+        let turn = if mods.alt { dy.signum() } else { 0 };
+        let dy = if mods.alt { 0 } else { dy };
+        if turn != 0 && paging {
+            let page = state.page.saturating_add_signed(turn);
+            state.go_to_page(&prefs, len, page);
+        }
         if all {
             state.select_all(store);
         }
@@ -804,18 +936,22 @@ pub fn show(
         {
             open_json = Some(s.cursor);
         }
-        if (dy != 0 || dx != 0 || home || end) && nrows > 0 && ncols > 0 {
-            let cur = state
-                .selection
-                .map_or(Cell { row: 0, col: 0 }, |s| s.cursor);
+        if (dy != 0 || dx != 0 || home || end) && page_len > 0 && ncols > 0 {
+            let cur = state.selection.map_or(
+                Cell {
+                    row: first_row,
+                    col: 0,
+                },
+                |s| s.cursor,
+            );
             let mut next = Cell {
-                row: (cur.row as i64 + dy).clamp(0, nrows as i64 - 1) as u64,
+                row: (cur.row as i64 + dy).clamp(first_row as i64, nrows as i64 - 1) as u64,
                 col: (cur.col as i64 + dx).clamp(0, ncols as i64 - 1) as usize,
             };
             if home {
                 next.col = 0;
                 if mods.command {
-                    next.row = 0;
+                    next.row = first_row;
                 }
             }
             if end {
@@ -832,8 +968,9 @@ pub fn show(
             state.selection = Some(sel);
             scroll_to(state, next, visible, cells_x, view_w);
         }
-        if let Some(headers) = copy {
-            copied = state.copy(store, headers);
+        if let Some(shift) = copy {
+            // Shift pede o cabeçalho mesmo com a opção desligada.
+            copied = copy_selection(state, store, prefs.copy_format, shift || prefs.copy_headers);
         }
         let (f2, delete) = ui.input(|i| {
             (
@@ -947,18 +1084,40 @@ pub fn show(
             ui.close();
         }
         ui.separator();
-        if ui.button(tr("Copy")).clicked() {
-            copied = state.copy(store, false);
+        // "Copy" é o Ctrl+C: sai no formato escolhido embaixo da grade.
+        let format = prefs.copy_format;
+        if ui
+            .button(tr("Copy"))
+            .on_hover_text(trf!(
+                "Copies in the format chosen below the grid: {format}",
+                format = tr(format.label())
+            ))
+            .clicked()
+        {
+            copied = copy_selection(state, store, format, prefs.copy_headers);
             ui.close();
         }
         if ui.button(tr("Copy with Headers")).clicked() {
-            copied = state.copy(store, true);
+            let format = if format.headers_optional() {
+                format
+            } else {
+                CopyFormat::Tsv
+            };
+            copied = copy_selection(state, store, format, true);
             ui.close();
         }
         if ui.button(tr("Copy as INSERT")).clicked() {
-            copied = state.copy_insert(store);
+            copied = copy_selection(state, store, CopyFormat::Insert, false);
             ui.close();
         }
+        ui.menu_button(tr("Copy As"), |ui| {
+            for f in CopyFormat::ALL {
+                if ui.button(tr(f.label())).clicked() {
+                    copied = copy_selection(state, store, f, prefs.copy_headers);
+                    ui.close();
+                }
+            }
+        });
         ui.separator();
         if ui.button(tr("Save Results As...")).clicked() {
             save_as = true;
@@ -977,7 +1136,13 @@ pub fn show(
         ui.ctx().copy_text(text.clone());
     }
 
-    state.top = state.top.clamp(0.0, max_top);
+    if state.page_rows(&prefs, len) == state.shown {
+        state.top = state.top.clamp(min_top, max_top);
+    } else {
+        // A página mudou neste frame (teclado, ordem ou filtro): os
+        // limites acima eram da outra; o próximo frame acerta.
+        ui.ctx().request_repaint();
+    }
     state.left = state.left.clamp(0.0, max_left);
 
     state.layout = Some(Layout {
@@ -998,13 +1163,26 @@ pub fn show(
         response.has_focus(),
         pointer_cell.filter(|_| response.hovered()),
     );
+    let vfraction =
+        (max_top > min_top).then(|| ((state.top - min_top) / (max_top - min_top)) as f32);
     paint_scrollbars(
-        ui, vtrack, htrack, vthumb_h, hthumb_w, state, max_top, max_left,
+        ui, vtrack, htrack, vthumb_h, hthumb_w, state, vfraction, max_left,
     );
     let commit = cell_editor(ui, id, &m, store, state, &response);
+    if has_footer {
+        let bar = Rect::from_min_max(egui::pos2(full.left(), rect.bottom()), full.max);
+        footer(ui, id, bar, len, state, &mut prefs);
+    }
     let on_json = pointer_cell.is_some_and(|c| state.is_json(c.col));
+    let on_corner = response
+        .hover_pos()
+        .is_some_and(|p| hit(p, state) == Some(Hit::Corner));
     let response = if on_json && !response.dragged() {
         response.on_hover_text_at_pointer("Double-click or click {…} to open the JSON Viewer.")
+    } else if on_corner && page_len > 0 {
+        response.on_hover_text_at_pointer(tr(
+            "Click to select everything shown, then Ctrl+C copies it in the format chosen below the grid.",
+        ))
     } else {
         response
     };
@@ -1018,6 +1196,254 @@ pub fn show(
         delete_rows,
         edit_refused,
     }
+}
+
+/// Copia a seleção no formato `format` e guarda o que dizer embaixo da
+/// grade.
+fn copy_selection(
+    state: &mut GridState,
+    store: &mut ResultStore,
+    format: CopyFormat,
+    headers: bool,
+) -> Option<String> {
+    let text = state.copy_as(store, format, headers)?;
+    let rows = state.selection.map_or(0, |s| {
+        let r = s.rows(store.len());
+        r.end - r.start
+    });
+    let note = if rows == 1 {
+        trf!(
+            "1 row copied as {format}",
+            format = tr(format.short_label())
+        )
+    } else {
+        trf!(
+            "{rows} rows copied as {format}",
+            rows = rows,
+            format = tr(format.short_label())
+        )
+    };
+    state.copied_note = Some((note, f64::NAN));
+    Some(text)
+}
+
+/// Por quanto tempo o aviso da cópia fica embaixo da grade, em segundos.
+const NOTE_SECONDS: f64 = 4.0;
+
+/// A faixa embaixo da grade: as páginas à esquerda (ir e voltar, quais
+/// linhas estão à mostra e quantas por página) e o formato do Ctrl+C à
+/// direita. O que não cabe some, da direita da parte esquerda para dentro;
+/// nada é desenhado por cima do vizinho.
+fn footer(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    bar: Rect,
+    len: u64,
+    state: &mut GridState,
+    prefs: &mut GridPrefs,
+) {
+    let before = *prefs;
+    let v = ui.visuals();
+    let line = Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color);
+    ui.painter().rect_filled(bar, 0.0, v.faint_bg_color);
+    ui.painter().hline(bar.x_range(), bar.top(), line);
+    let inner = bar.shrink2(vec2(6.0, 2.0));
+    let wide = bar.width() >= 620.0;
+    let clip = ui.clip_rect();
+
+    // À direita, o formato de cópia.
+    let mut right = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    right.set_clip_rect(clip.intersect(bar));
+    let mut format = prefs.copy_format;
+    let mut headers = prefs.copy_headers;
+    egui::ComboBox::from_id_salt(id.with("copy_format"))
+        .selected_text(tr(format.short_label()))
+        .width(10.0)
+        .height(400.0)
+        .show_ui(&mut right, |ui| {
+            for f in CopyFormat::ALL {
+                ui.selectable_value(&mut format, f, tr(f.label()));
+            }
+            ui.separator();
+            ui.add_enabled(
+                format.headers_optional(),
+                egui::Checkbox::new(&mut headers, tr("Include column headers")),
+            )
+            .on_disabled_hover_text(tr(
+                "This format always carries the column names, or has no place for them.",
+            ));
+        })
+        .response
+        .on_hover_text(tr(
+            "Format of what Ctrl+C copies from the grid. Click the top-left corner to select everything shown, or a column header to select the column.",
+        ));
+    prefs.copy_format = format;
+    prefs.copy_headers = headers;
+    if wide {
+        right.weak(tr("Copy as:"));
+    }
+    let left_end = right.min_rect().left() - 8.0;
+
+    // À esquerda, as páginas.
+    let left_rect = Rect::from_min_max(inner.min, egui::pos2(left_end, inner.bottom()));
+    if left_rect.width() < 24.0 {
+        return apply_prefs(ui, state, before, *prefs, len);
+    }
+    let mut left = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(left_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    left.set_clip_rect(clip.intersect(left_rect));
+    let ui_left = &mut left;
+    let pages = state.page_count(prefs, len);
+    let shown = state.page_rows(prefs, len);
+    let mut go = None;
+    if prefs.paginate {
+        let roomy = bar.width() >= 420.0;
+        let button = |ui: &mut egui::Ui, enabled: bool, icon: &str, hint: &str| {
+            ui.add_enabled(enabled, egui::Button::new(icon).small())
+                .on_hover_text(hint)
+                .clicked()
+        };
+        if roomy
+            && button(
+                ui_left,
+                state.page > 0,
+                icons::CARET_DOUBLE_LEFT,
+                tr("First page"),
+            )
+        {
+            go = Some(0);
+        }
+        if button(
+            ui_left,
+            state.page > 0,
+            icons::CARET_LEFT,
+            tr("Previous page (Alt+PageUp)"),
+        ) {
+            go = Some(state.page.saturating_sub(1));
+        }
+        let range = if shown.is_empty() {
+            "0".to_string()
+        } else {
+            trf!(
+                "{from}–{to} of {total}",
+                from = shown.start + 1,
+                to = shown.end,
+                total = len
+            )
+        };
+        ui_left.label(range).on_hover_text(trf!(
+            "Page {page} of {pages}",
+            page = state.page + 1,
+            pages = pages
+        ));
+        let more = state.page + 1 < pages;
+        if button(
+            ui_left,
+            more,
+            icons::CARET_RIGHT,
+            tr("Next page (Alt+PageDown)"),
+        ) {
+            go = Some(state.page + 1);
+        }
+        if roomy && button(ui_left, more, icons::CARET_DOUBLE_RIGHT, tr("Last page")) {
+            go = Some(pages - 1);
+        }
+    } else {
+        ui_left.label(if len == 1 {
+            tr("1 row").to_string()
+        } else {
+            trf!("{rows} rows", rows = len)
+        });
+    }
+    if let Some(page) = go {
+        state.go_to_page(prefs, len, page);
+    }
+    ui_left.add_space(6.0);
+    // Com o aviso da cópia na faixa, o rótulo cede o lugar a ele.
+    let now = ui_left.input(|i| i.time);
+    let noting = state
+        .copied_note
+        .as_ref()
+        .is_some_and(|(_, at)| at.is_nan() || now - *at < NOTE_SECONDS);
+    if wide && (!noting || bar.width() >= 900.0) {
+        ui_left.weak(tr("Rows per page:"));
+    }
+    let size_text = |p: &GridPrefs| match p.page_rows() {
+        Some(n) => n.to_string(),
+        None => tr("All rows").to_string(),
+    };
+    let mut choice = prefs.page_rows();
+    egui::ComboBox::from_id_salt(id.with("page_size"))
+        .selected_text(size_text(prefs))
+        .width(10.0)
+        .height(400.0)
+        .show_ui(ui_left, |ui| {
+            let mut sizes = prefs::PAGE_SIZES.to_vec();
+            // Um tamanho que veio das opções e não está na lista.
+            if !sizes.contains(&prefs.page_size) {
+                sizes.push(prefs.page_size);
+                sizes.sort_unstable();
+            }
+            for n in sizes {
+                ui.selectable_value(&mut choice, Some(u64::from(n)), n.to_string());
+            }
+            ui.separator();
+            ui.selectable_value(&mut choice, None, tr("All rows"));
+        })
+        .response
+        .on_hover_text(tr(
+            "How many rows each page shows. \"All rows\" turns paging off. The choice is kept for every result and for the next time PostPilot opens.",
+        ));
+    match choice {
+        Some(n) => {
+            prefs.paginate = true;
+            prefs.page_size = n as u32;
+        }
+        None => prefs.paginate = false,
+    }
+    // O aviso da última cópia, por alguns segundos.
+    if let Some((text, at)) = &mut state.copied_note {
+        if at.is_nan() {
+            *at = now;
+        }
+        if now - *at < NOTE_SECONDS {
+            ui_left.add_space(6.0);
+            ui_left.add(egui::Label::new(egui::RichText::new(text.as_str()).weak()).truncate());
+            ui_left
+                .ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(
+                    NOTE_SECONDS - (now - *at) + 0.05,
+                ));
+        } else {
+            state.copied_note = None;
+        }
+    }
+    apply_prefs(ui, state, before, *prefs, len);
+}
+
+/// Guarda as escolhas mudadas na faixa (valem para todas as grades) e
+/// mantém à mostra a primeira linha que estava na tela.
+fn apply_prefs(ui: &egui::Ui, state: &mut GridState, before: GridPrefs, now: GridPrefs, len: u64) {
+    if before == now {
+        return;
+    }
+    prefs::set(ui.ctx(), now);
+    if before.page_rows() != now.page_rows() {
+        let first = (state.top.floor().max(0.0) as u64).min(len.saturating_sub(1));
+        state.page = now.page_rows().map_or(0, |size| first / size);
+        state.top = match now.page_rows() {
+            Some(_) => state.page_rows(&now, len).start as f64,
+            None => first as f64,
+        };
+    }
+    ui.ctx().request_repaint();
 }
 
 /// A caixa de texto da célula em edição, por cima da grade. Enter (ou
@@ -1156,7 +1582,8 @@ fn paint(
     painter.rect_filled(rect, 0.0, v.extreme_bg_color);
 
     let ncols = store.columns().len();
-    let nrows = store.len();
+    // Fim da página à mostra (sem paginação, do resultado).
+    let nrows = state.shown.end;
     let cells_x = body.left() + number_w;
     // O cabeçalho e as linhas têm recortes separados: com rolagem
     // fracionária a primeira linha visível começa acima de `body.top()` e,
@@ -1182,6 +1609,16 @@ fn paint(
         0.0,
         header_bg,
     );
+    if nrows > state.shown.start {
+        // O canto seleciona tudo: um triângulo, como nas planilhas.
+        let c = egui::pos2(cells_x - 3.0, header.bottom() - 3.0);
+        let side = (header.height() * 0.4).clamp(4.0, 8.0);
+        painter.add(egui::Shape::convex_polygon(
+            vec![c, egui::pos2(c.x - side, c.y), egui::pos2(c.x, c.y - side)],
+            weak,
+            Stroke::NONE,
+        ));
+    }
     let mut x = cells_x - state.left;
     let selected_cols = state.selection.map(|s| s.cols(ncols));
     for (c, &w) in state.widths.iter().enumerate() {
@@ -1322,7 +1759,7 @@ fn paint_scrollbars(
     vthumb_h: f32,
     hthumb_w: f32,
     state: &GridState,
-    max_top: f64,
+    vfraction: Option<f32>,
     max_left: f32,
 ) {
     let v = ui.visuals();
@@ -1331,8 +1768,7 @@ fn paint_scrollbars(
     let thumb = v.widgets.inactive.bg_fill;
     painter.rect_filled(vtrack, 0.0, track);
     painter.rect_filled(htrack, 0.0, track);
-    if max_top > 0.0 {
-        let t = (state.top / max_top) as f32;
+    if let Some(t) = vfraction {
         let y = vtrack.top() + (vtrack.height() - vthumb_h) * t;
         painter.rect_filled(
             Rect::from_min_size(

@@ -102,7 +102,15 @@ impl Catalog {
     /// Schema pelo nome como escrito no SQL.
     pub fn schema(&self, written: &str) -> Option<&Schema> {
         let name = self.normalize(written);
-        self.schemas.iter().find(|s| self.same(&s.name, &name))
+        self.schemas
+            .iter()
+            .find(|s| self.same(&s.name, &name))
+            // `Vendas.` sem aspas acha o schema "Vendas" quando não há um
+            // `vendas`: é o que a pessoa quis dizer.
+            .or_else(|| {
+                let name = name.to_lowercase();
+                self.schemas.iter().find(|s| s.name.to_lowercase() == name)
+            })
     }
 
     /// Tabela ou view, com ou sem schema. Sem schema, procura no
