@@ -192,6 +192,18 @@ menu da linha) exclui depois de confirmar. Colunas geradas e de identidade
 `ALWAYS` não são editáveis, e tabela sem chave primária (ou view) fica só
 leitura, com o motivo.
 
+Ao editar uma célula (aqui e na grade de resultados), o editor segue o tipo
+da coluna, como no DataGrip. Data e hora (`date`, `time`, `timestamp`,
+`timestamptz`; no SQL Server `date`, `time`, `datetime`, `smalldatetime`,
+`datetime2` e `datetimeoffset`) abrem um calendário embaixo da célula, com
+as setas de mês e de ano, os campos de hora, minuto, segundo e fração, o fuso
+quando o tipo guarda fuso, e os botões Agora (ou Hoje), NULL (se a coluna
+aceita), Cancelar e OK. O valor continua podendo ser digitado na célula, e
+os dois andam juntos; escolher outro dia não mexe nos microssegundos nem no
+fuso. Booleano (`boolean`, `bit`) e `enum` abrem a lista dos valores, com
+NULL quando a coluna aceita: um clique, ou as setas e Enter, escolhem. Nada
+é gravado sem a confirmação de sempre.
+
 Ctrl+N abre uma janela de consulta, Ctrl+O abre um arquivo, Ctrl+S e
 Ctrl+Shift+S salvam e Ctrl+F4 fecha. A aba mostra `*` quando há alterações, e
 fechar a aba ou o aplicativo pergunta antes de descartar.

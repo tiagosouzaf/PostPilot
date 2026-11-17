@@ -17,6 +17,7 @@ use crate::copy::{self, CopyFormat};
 use crate::json;
 use crate::prefs::{self, GridPrefs};
 use crate::store::ResultStore;
+use crate::typed::{self, ColumnKind, Picker};
 use crate::view::{self, Sort, ViewProgress, ViewSpec};
 
 /// Uma célula: linha e coluna, a partir de 0.
@@ -106,6 +107,10 @@ pub struct GridState {
     pub json_detected: Vec<bool>,
     /// Linhas da amostra quando [`GridState::json_detected`] foi calculado.
     pub json_sampled: u64,
+    /// Como cada coluna é editada (calendário, lista de valores); vazio ou
+    /// [`CellKind::Text`]: caixa de texto. Quem preenche é quem sabe o
+    /// tipo das colunas.
+    pub kinds: Vec<ColumnKind>,
     /// Célula em edição e o texto digitado.
     pub editing: Option<CellEditor>,
     /// Uma alteração está sendo gravada: não começa outra.
@@ -171,6 +176,10 @@ pub struct CellEditor {
     /// A caixa de texto já recebeu o foco (perder o foco depois disso
     /// termina a edição).
     focused: bool,
+    /// O calendário ou a lista de valores, quando a coluna tem.
+    pub picker: Picker,
+    /// A grade já rolou para a linha da célula caber inteira.
+    shown: bool,
 }
 
 /// Onde a grade foi desenhada no último frame.
@@ -246,6 +255,11 @@ impl GridState {
         self.editable.get(col).copied().unwrap_or(false)
     }
 
+    /// O editor da coluna (caixa de texto, se ninguém disse outro).
+    pub fn kind(&self, col: usize) -> ColumnKind {
+        self.kinds.get(col).cloned().unwrap_or_default()
+    }
+
     /// Coluna JSON (duplo clique abre o visualizador).
     pub fn is_json(&self, col: usize) -> bool {
         self.json_columns.get(col).copied().unwrap_or(false)
@@ -272,6 +286,8 @@ impl GridState {
             cell,
             text,
             focused: false,
+            picker: Picker::default(),
+            shown: false,
         });
         self.selection = Some(Selection::at(cell, Mode::Cells));
     }
@@ -967,7 +983,9 @@ pub fn show(
     let mut export_excel = false;
     let mut edit_refused = false;
     let mut delete_rows = None;
-    if response.has_focus() {
+    // Com uma célula em edição, o teclado é do editor dela (a lista de
+    // valores usa as setas e o Enter).
+    if response.has_focus() && state.editing.is_none() {
         let keys = ui.input(|i| {
             let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy))
                 || i.key_pressed(Key::C) && i.modifiers.command;
@@ -1548,7 +1566,8 @@ fn apply_prefs(ui: &egui::Ui, state: &mut GridState, before: GridPrefs, now: Gri
 
 /// A caixa de texto da célula em edição, por cima da grade. Enter (ou
 /// clicar fora) termina e devolve o valor novo; Esc desiste; Ctrl+0 grava
-/// NULL, como na janela Edit Rows.
+/// NULL, como na janela Edit Rows. Numa coluna de data ou hora, abre
+/// junto o calendário; numa de lista fixa (booleano, enum), só a lista.
 fn cell_editor(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -1563,10 +1582,36 @@ fn cell_editor(
         state.editing = None;
         return None;
     }
+    // A linha aparecia só em parte (a última da grade): rola uma vez para
+    // ela caber, e a edição começa no frame seguinte.
+    let first = !std::mem::replace(&mut editor.shown, true);
+    let kind = state.kind(cell.col);
+    if first
+        && state.cell_rect(cell).is_none()
+        && let Some(l) = state.layout
+    {
+        let visible = f64::from((l.body.height() / l.row_h).floor().max(1.0));
+        let row = cell.row as f64;
+        state.top = if row < state.top {
+            row
+        } else {
+            row + 1.0 - visible
+        };
+        ui.ctx().request_repaint();
+        return None;
+    }
     let Some(rect) = state.cell_rect(cell) else {
-        // Rolou para longe: termina a edição como se tivesse clicado fora.
+        // Rolou para longe: termina a edição como se tivesse clicado fora
+        // (a lista de valores não tem o que gravar).
+        if kind.is_choice() {
+            state.editing = None;
+            return None;
+        }
         return finish_edit(store, state);
     };
+    if kind.is_choice() {
+        return choice_editor(ui, id, store, state, grid, rect, &kind);
+    }
     let edit_id = id.with("cell_editor");
     let editor = state.editing.as_mut()?;
     let resp = ui.put(
@@ -1576,6 +1621,16 @@ fn cell_editor(
             .font(m.font.clone())
             .margin(vec2(PAD - 2.0, 2.0)),
     );
+    let popup = kind.is_temporal().then(|| {
+        typed::temporal_popup(
+            ui.ctx(),
+            id.with(("cell_picker", cell.row, cell.col)),
+            rect,
+            &kind,
+            &mut editor.text,
+            &mut editor.picker,
+        )
+    });
     let (enter, escape, null) = ui.input(|i| {
         (
             i.key_pressed(Key::Enter),
@@ -1593,15 +1648,63 @@ fn cell_editor(
         grid.request_focus();
         return (store.cell(cell.row, cell.col).is_some()).then_some((cell, None));
     }
+    match popup.as_ref().and_then(|p| p.action.clone()) {
+        Some(typed::Action::Commit(value)) => {
+            state.editing = None;
+            grid.request_focus();
+            let changed = store.cell(cell.row, cell.col) != value.as_deref();
+            return changed.then_some((cell, value));
+        }
+        Some(typed::Action::Accept) => {
+            grid.request_focus();
+            return finish_edit(store, state);
+        }
+        Some(typed::Action::Cancel) => {
+            state.editing = None;
+            grid.request_focus();
+            return None;
+        }
+        None => {}
+    }
+    let to_end = |text: &str| {
+        let mut s = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+        let end = egui::text::CCursor::new(text.chars().count());
+        s.cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        s.store(ui.ctx(), edit_id);
+    };
     if !editor.focused {
         editor.focused = true;
         resp.request_focus();
         // O cursor vai para o fim do texto.
-        let mut s = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
-        let end = egui::text::CCursor::new(editor.text.chars().count());
-        s.cursor
-            .set_char_range(Some(egui::text::CCursorRange::one(end)));
-        s.store(ui.ctx(), edit_id);
+        to_end(&editor.text);
+        return None;
+    }
+    if let Some(popup) = &popup {
+        // O calendário mudou o texto, ou o campo da hora soltou o foco:
+        // o teclado volta para a célula (Enter grava).
+        if popup.refocus || ui.memory(|m| m.focused().is_none()) && !escape && !enter {
+            resp.request_focus();
+            to_end(&editor.text);
+            return None;
+        }
+        // Um clique fora da célula e do calendário termina a edição.
+        if typed::pressed_outside(ui.ctx(), &[rect, popup.rect]) {
+            return finish_edit(store, state);
+        }
+        if focused {
+            return None;
+        }
+        if escape {
+            state.editing = None;
+            grid.request_focus();
+            return None;
+        }
+        // Enter na célula grava; num campo do calendário, só fecha o campo.
+        if enter && resp.lost_focus() {
+            grid.request_focus();
+            return finish_edit(store, state);
+        }
         return None;
     }
     if !focused {
@@ -1617,6 +1720,57 @@ fn cell_editor(
         return out;
     }
     None
+}
+
+/// A lista de valores de uma célula de lista fixa (booleano, enum): um
+/// clique ou Enter devolve o valor escolhido; Esc ou um clique fora
+/// desistem.
+fn choice_editor(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    store: &mut ResultStore,
+    state: &mut GridState,
+    grid: &egui::Response,
+    rect: Rect,
+    kind: &ColumnKind,
+) -> Option<(Cell, Option<String>)> {
+    let editor = state.editing.as_mut()?;
+    let cell = editor.cell;
+    let current = store.cell(cell.row, cell.col).map(str::to_string);
+    let out = typed::choice_popup(
+        ui.ctx(),
+        id.with(("cell_picker", cell.row, cell.col)),
+        rect,
+        kind,
+        current.as_deref(),
+        &mut editor.picker,
+    );
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.5, ui.visuals().selection.bg_fill),
+        egui::StrokeKind::Inside,
+    );
+    let first = !editor.focused;
+    editor.focused = true;
+    match out.action {
+        Some(typed::Action::Commit(value)) => {
+            state.editing = None;
+            grid.request_focus();
+            (current != value).then_some((cell, value))
+        }
+        Some(_) => {
+            state.editing = None;
+            grid.request_focus();
+            None
+        }
+        None => {
+            if !first && typed::pressed_outside(ui.ctx(), &[rect, out.rect]) {
+                state.editing = None;
+            }
+            None
+        }
+    }
 }
 
 /// Fecha a edição; devolve o valor novo se ele mudou. Texto vazio numa

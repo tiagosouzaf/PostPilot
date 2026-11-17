@@ -54,7 +54,7 @@ pub fn to_text(data: &ColumnData<'_>, ty: ColumnType) -> Option<String> {
         }
         ColumnData::Time(v) => {
             let v = v.as_ref()?;
-            clock(ticks(v.increments(), v.scale()), 7)
+            clock(ticks(v.increments(), v.scale()), v.scale())
         }
         ColumnData::Date(v) => date(i64::from(v.as_ref()?.days())),
         ColumnData::DateTime2(v) => {
