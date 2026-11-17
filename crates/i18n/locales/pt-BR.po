@@ -6753,3 +6753,12 @@ msgstr "O restore altera o banco de dados. Quer executar agora?"
 
 msgid "Delete the selected execution from the history? This cannot be undone."
 msgstr "Apagar do histórico a execução selecionada? Isso não pode ser desfeito."
+
+msgid "GitHub's download server is temporarily unavailable {detail}. The app tried {attempts} times; try again in a few minutes."
+msgstr "O servidor de download do GitHub está fora do ar no momento {detail}. O app tentou {attempts} vezes; tente de novo em alguns minutos."
+
+msgid "The connection failed during the download, after {attempts} tries. Check your internet and try again. {detail}"
+msgstr "A conexão falhou durante o download, depois de {attempts} tentativas. Confira sua internet e tente de novo. {detail}"
+
+msgid "The download of {version} failed; trying again ({attempt} of {max})…"
+msgstr "O download da {version} falhou; tentando de novo ({attempt} de {max})…"

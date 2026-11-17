@@ -17,7 +17,8 @@ use std::time::SystemTime;
 use eframe::egui::{self, RichText};
 use pgstudio_core::{APP_NAME, CommandId, VERSION};
 use pgstudio_updater::{
-    CANCELLED, CHECK_INTERVAL, NOT_AUTHORIZED, Progress, REPOSITORY, aur_helper, find_pkexec,
+    CANCELLED, CHECK_INTERVAL, CONNECTION_FAILED, MAX_ATTEMPTS, NOT_AUTHORIZED, Progress,
+    REPOSITORY, SERVER_UNAVAILABLE, aur_helper, find_pkexec,
 };
 
 pub use pgstudio_updater::{
@@ -320,7 +321,7 @@ impl Updater {
                     ui.spinner();
                     ui.label(text(self.installing_text(r)));
                 } else {
-                    ui.label(text(trf!("Downloading {version}…", version = r.version)));
+                    ui.label(text(self.downloading_text(r)));
                     let bar = match self.progress.fraction() {
                         Some(f) => egui::ProgressBar::new(f).show_percentage(),
                         None => egui::ProgressBar::new(0.0).animate(true),
@@ -363,6 +364,19 @@ impl Updater {
             _ => {}
         });
         action.and_then(|a| self.apply(ctx, a))
+    }
+
+    /// "Baixando…", ou a nova tentativa em curso depois de uma falha.
+    fn downloading_text(&self, r: &Release) -> String {
+        match self.progress.attempt.load(Ordering::Relaxed) {
+            0 => trf!("Downloading {version}…", version = r.version),
+            attempt => trf!(
+                "The download of {version} failed; trying again ({attempt} of {max})…",
+                version = r.version,
+                attempt = attempt,
+                max = MAX_ATTEMPTS - 1
+            ),
+        }
     }
 
     fn installing_text(&self, r: &Release) -> String {
@@ -582,7 +596,7 @@ impl Updater {
                         ui.label(self.installing_text(r));
                     });
                 } else {
-                    ui.label(trf!("Downloading {version}…", version = r.version));
+                    ui.label(self.downloading_text(r));
                     let bar = match self.progress.fraction() {
                         Some(f) => egui::ProgressBar::new(f).show_percentage(),
                         None => egui::ProgressBar::new(0.0).animate(true),
@@ -646,15 +660,32 @@ impl Updater {
 }
 
 /// O erro da instalação, traduzido quando é um dos conhecidos.
-fn error_text(e: &str) -> &str {
+fn error_text(e: &str) -> std::borrow::Cow<'_, str> {
+    // O que vem depois do começo conhecido é o detalhe técnico, " (HTTP 504)".
+    let detail = |rest: &str| rest.trim().to_string();
     if e == CANCELLED {
-        tr("The update was cancelled at the password prompt.")
+        tr("The update was cancelled at the password prompt.").into()
     } else if e == NOT_AUTHORIZED {
         tr(
             "The system did not authorize the installation (wrong password, or no polkit agent is running).",
         )
+        .into()
+    } else if let Some(rest) = e.strip_prefix(SERVER_UNAVAILABLE) {
+        trf!(
+            "GitHub's download server is temporarily unavailable {detail}. The app tried {attempts} times; try again in a few minutes.",
+            detail = detail(rest),
+            attempts = MAX_ATTEMPTS
+        )
+        .into()
+    } else if let Some(rest) = e.strip_prefix(CONNECTION_FAILED) {
+        trf!(
+            "The connection failed during the download, after {attempts} tries. Check your internet and try again. {detail}",
+            attempts = MAX_ATTEMPTS,
+            detail = detail(rest)
+        )
+        .into()
     } else {
-        e
+        e.into()
     }
 }
 

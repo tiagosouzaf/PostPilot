@@ -3,7 +3,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -25,6 +25,9 @@ pub struct Progress {
     /// O download acabou e o pacote está sendo instalado (a janela de senha
     /// do sistema pode estar aberta).
     pub installing: AtomicBool,
+    /// Em qual nova tentativa o download está (0: nenhuma falha até agora),
+    /// de [`MAX_ATTEMPTS`].
+    pub attempt: AtomicU32,
 }
 
 impl Progress {
@@ -112,10 +115,78 @@ pub fn fetch_latest_from_sums(repo: &str, user_agent: &str) -> Result<Release, S
         .ok_or_else(|| "the latest release has no usable SHA256SUMS".to_string())
 }
 
+/// Começo do erro quando o servidor de download respondeu com uma falha
+/// temporária (HTTP 5xx, 408, 429) em todas as tentativas. O código HTTP vem
+/// depois, entre parênteses.
+pub const SERVER_UNAVAILABLE: &str = "GitHub's download server is temporarily unavailable";
+/// Começo do erro quando a conexão caiu ou não respondeu em todas as
+/// tentativas. O detalhe técnico vem depois, entre parênteses.
+pub const CONNECTION_FAILED: &str = "The connection failed during the download";
+
+/// Quantas vezes seguidas o download pode falhar sem avançar nada.
+pub const MAX_ATTEMPTS: u32 = 5;
+/// Limite de tentativas no total, mesmo avançando um pouco a cada uma.
+const MAX_TOTAL_ATTEMPTS: u32 = 20;
+/// Espera antes de cada nova tentativa (a última vale para as seguintes).
+const RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+];
+
+/// Por que um pedido falhou: `Temporary` vale tentar de novo.
+#[derive(Debug)]
+enum Failure {
+    /// Servidor fora do ar por um instante: 5xx, 408, 429.
+    Server(u16),
+    /// Conexão recusada, caída, sem resposta, DNS.
+    Connection(String),
+    /// Não adianta repetir: 404, disco, resposta inesperada.
+    Permanent(String),
+}
+
+impl Failure {
+    fn temporary(&self) -> bool {
+        !matches!(self, Failure::Permanent(_))
+    }
+
+    fn message(self) -> String {
+        match self {
+            Failure::Server(status) => format!("{SERVER_UNAVAILABLE} (HTTP {status})"),
+            Failure::Connection(detail) => format!("{CONNECTION_FAILED} ({detail})"),
+            Failure::Permanent(text) => text,
+        }
+    }
+}
+
+/// As esperas entre tentativas; os testes usam zero.
+#[derive(Clone, Copy)]
+struct Retry {
+    delays: &'static [Duration],
+}
+
+impl Retry {
+    const DEFAULT: Retry = Retry {
+        delays: &RETRY_DELAYS,
+    };
+
+    /// Espera antes da tentativa `attempt` (a segunda é 1).
+    fn wait(self, attempt: u32) {
+        let index = (attempt as usize).saturating_sub(1);
+        if let Some(delay) = self.delays.get(index).or(self.delays.last()) {
+            std::thread::sleep(*delay);
+        }
+    }
+}
+
 /// Baixa `asset` para `dest` e confere o SHA-256 contra o `SHA256SUMS` do
 /// mesmo Release. Sem `SHA256SUMS`, ou sem a linha do arquivo, não baixa.
 /// O arquivo é escrito em `dest` + `.part` e só vira `dest` depois de
 /// conferido; com erro, nada fica no disco.
+///
+/// Falhas temporárias (servidor com 5xx, conexão caída, sem resposta) são
+/// repetidas sozinhas, com espera, continuando de onde o download parou.
 pub fn download_verified(
     release: &Release,
     asset: &Asset,
@@ -123,21 +194,27 @@ pub fn download_verified(
     user_agent: &str,
     progress: &Progress,
 ) -> Result<PathBuf, String> {
+    download_verified_with(release, asset, dest, user_agent, progress, Retry::DEFAULT)
+}
+
+fn download_verified_with(
+    release: &Release,
+    asset: &Asset,
+    dest: &Path,
+    user_agent: &str,
+    progress: &Progress,
+    retry: Retry,
+) -> Result<PathBuf, String> {
     let sums = release
         .checksums()
         .ok_or("This release has no SHA256SUMS file, so the download cannot be verified.")?;
     let agent = agent(user_agent);
-    let text = get(&agent, &sums.url)?
-        .body_mut()
-        .with_config()
-        .limit(MAX_SMALL)
-        .read_to_string()
-        .map_err(|e| format!("could not read SHA256SUMS: {e}"))?;
+    let text = get_text(&agent, &sums.url, progress, retry)?;
     let expected = parse_sha256sums(&text, &asset.name)
         .ok_or_else(|| format!("SHA256SUMS has no line for {}.", asset.name))?;
 
     let part = with_suffix(dest, ".part");
-    let result = download_to(&agent, asset, &part, progress).and_then(|actual| {
+    let result = download_to(&agent, asset, &part, progress, retry).and_then(|actual| {
         if actual == expected {
             std::fs::rename(&part, dest).map_err(|e| format!("{}: {e}", dest.display()))
         } else {
@@ -147,52 +224,148 @@ pub fn download_verified(
             ))
         }
     });
+    progress.attempt.store(0, Ordering::Relaxed);
     if result.is_err() {
         let _ = std::fs::remove_file(&part);
     }
     result.map(|()| dest.to_path_buf())
 }
 
-fn get(agent: &Agent, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
-    let resp = agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("download failed: {e}"))?;
-    if resp.status().is_success() {
-        Ok(resp)
-    } else {
-        Err(format!("download failed: HTTP {}", resp.status().as_u16()))
+/// Um pedido, sem repetir. `from` > 0 pede só o resto do arquivo.
+fn request(
+    agent: &Agent,
+    url: &str,
+    from: u64,
+) -> Result<ureq::http::Response<ureq::Body>, Failure> {
+    let mut req = agent.get(url);
+    if from > 0 {
+        req = req.header("Range", format!("bytes={from}-"));
+    }
+    let resp = req.call().map_err(|e| Failure::Connection(e.to_string()))?;
+    let status = resp.status().as_u16();
+    match status {
+        200..=299 => Ok(resp),
+        // O pedaço pedido não existe (o arquivo mudou no servidor): quem
+        // chamou recomeça do zero.
+        416 if from > 0 => Ok(resp),
+        408 | 429 | 500..=599 => Err(Failure::Server(status)),
+        _ => Err(Failure::Permanent(format!(
+            "download failed: HTTP {status}"
+        ))),
     }
 }
 
-/// Grava o corpo em `path` e devolve o SHA-256 do que gravou.
+/// Um arquivo pequeno de texto, repetindo nas falhas temporárias.
+fn get_text(agent: &Agent, url: &str, progress: &Progress, retry: Retry) -> Result<String, String> {
+    let mut attempt = 0;
+    loop {
+        let result = request(agent, url, 0).and_then(|mut resp| {
+            resp.body_mut()
+                .with_config()
+                .limit(MAX_SMALL)
+                .read_to_string()
+                .map_err(|e| Failure::Connection(e.to_string()))
+        });
+        match result {
+            Ok(text) => return Ok(text),
+            Err(failure) if failure.temporary() && attempt + 1 < MAX_ATTEMPTS => {
+                attempt += 1;
+                progress.attempt.store(attempt, Ordering::Relaxed);
+                retry.wait(attempt);
+            }
+            Err(failure) => return Err(failure.message()),
+        }
+    }
+}
+
+fn get(agent: &Agent, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+    request(agent, url, 0).map_err(Failure::message)
+}
+
+/// Grava o corpo em `path` e devolve o SHA-256 do que gravou. Numa falha
+/// temporária tenta de novo pedindo só o que falta (`Range`); se o servidor
+/// mandar o arquivo inteiro, recomeça do zero.
 fn download_to(
     agent: &Agent,
     asset: &Asset,
     path: &Path,
     progress: &Progress,
+    retry: Retry,
 ) -> Result<[u8; 32], String> {
     let io = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut resp = get(agent, &asset.url)?;
     progress.done.store(0, Ordering::Relaxed);
     progress.total.store(asset.size, Ordering::Relaxed);
-    let mut reader = resp.body_mut().with_config().limit(MAX_DOWNLOAD).reader();
     let mut file = std::fs::File::create(path).map_err(io)?;
     let mut hasher = Sha256::new();
+    let mut done: u64 = 0;
+    // Falhas seguidas sem avançar, e tentativas no total.
+    let (mut stuck, mut total) = (0, 0);
+    loop {
+        let before = done;
+        let failure =
+            match download_piece(agent, asset, &mut file, &mut hasher, &mut done, progress) {
+                Ok(()) => break,
+                Err(Piece::Disk(e)) => return Err(io(e)),
+                Err(Piece::Failed(failure)) => failure,
+            };
+        stuck = if done > before { 1 } else { stuck + 1 };
+        total += 1;
+        if !failure.temporary() || stuck >= MAX_ATTEMPTS || total >= MAX_TOTAL_ATTEMPTS {
+            return Err(failure.message());
+        }
+        progress.attempt.store(stuck, Ordering::Relaxed);
+        retry.wait(stuck);
+    }
+    file.sync_all().map_err(io)?;
+    Ok(hasher.finalize().into())
+}
+
+enum Piece {
+    Failed(Failure),
+    Disk(std::io::Error),
+}
+
+/// Uma tentativa: pede o arquivo a partir de `done` e grava o que chegar.
+fn download_piece(
+    agent: &Agent,
+    asset: &Asset,
+    file: &mut std::fs::File,
+    hasher: &mut Sha256,
+    done: &mut u64,
+    progress: &Progress,
+) -> Result<(), Piece> {
+    use std::io::{Seek, SeekFrom};
+    let mut resp = request(agent, &asset.url, *done).map_err(Piece::Failed)?;
+    let status = resp.status().as_u16();
+    if *done > 0 && status != 206 {
+        // O servidor não continuou de onde parou: recomeça o arquivo.
+        file.set_len(0).map_err(Piece::Disk)?;
+        file.seek(SeekFrom::Start(0)).map_err(Piece::Disk)?;
+        *hasher = Sha256::new();
+        *done = 0;
+        progress.done.store(0, Ordering::Relaxed);
+        if status == 416 {
+            return Err(Piece::Failed(Failure::Connection(
+                "the server refused to resume the download".into(),
+            )));
+        }
+    }
+    let mut reader = resp.body_mut().with_config().limit(MAX_DOWNLOAD).reader();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = reader
             .read(&mut buf)
-            .map_err(|e| format!("download failed: {e}"))?;
+            .map_err(|e| Piece::Failed(Failure::Connection(e.to_string())))?;
         if n == 0 {
-            break;
+            return Ok(());
         }
         hasher.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(io)?;
-        progress.done.fetch_add(n as u64, Ordering::Relaxed);
+        file.write_all(&buf[..n]).map_err(Piece::Disk)?;
+        *done += n as u64;
+        progress.done.store(*done, Ordering::Relaxed);
+        // Chegou dado: a tentativa deu certo até aqui.
+        progress.attempt.store(0, Ordering::Relaxed);
     }
-    file.sync_all().map_err(io)?;
-    Ok(hasher.finalize().into())
 }
 
 /// `arquivo.AppImage` + `.part` = `arquivo.AppImage.part`.
@@ -333,6 +506,182 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("SHA256SUMS"), "{err}");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    const NO_WAIT: Retry = Retry { delays: &[] };
+
+    /// Servidor com roteiro: `answer(pedido, n)` recebe o pedido inteiro
+    /// (linha e cabeçalhos) e quantos pedidos de `/file` já vieram, e devolve
+    /// a resposta crua. `/sums` sempre responde certo. Devolve o endereço e
+    /// os pedidos de `/file` recebidos.
+    fn scripted(
+        sums: String,
+        answer: impl Fn(&str, usize) -> Vec<u8> + Send + 'static,
+    ) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                loop {
+                    let mut h = String::new();
+                    reader.read_line(&mut h).unwrap();
+                    if h == "\r\n" || h.is_empty() {
+                        break;
+                    }
+                    request.push_str(&h);
+                }
+                let response = if request.starts_with("GET /sums") {
+                    ok(sums.as_bytes())
+                } else {
+                    let n = log.lock().unwrap().len();
+                    log.lock().unwrap().push(request.clone());
+                    answer(&request, n)
+                };
+                let _ = stream.write_all(&response);
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn ok(body: &[u8]) -> Vec<u8> {
+        let mut r = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        r.extend_from_slice(body);
+        r
+    }
+
+    fn status(code: u16) -> Vec<u8> {
+        format!("HTTP/1.1 {code} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+    }
+
+    const FILE: &[u8] = b"0123456789abcdefghij";
+
+    fn sums_for(file: &[u8]) -> String {
+        format!("{}  app.AppImage\n", hex(&Sha256::digest(file)))
+    }
+
+    fn fetch(base: &str, dir: &Path, progress: &Progress) -> Result<PathBuf, String> {
+        let r = release(base);
+        download_verified_with(
+            &r,
+            &r.assets[0],
+            &dir.join("app"),
+            "Test/1",
+            progress,
+            NO_WAIT,
+        )
+    }
+
+    #[test]
+    fn retries_a_server_that_is_out_for_a_moment() {
+        let (base, seen) = scripted(sums_for(FILE), |_, n| match n {
+            0 => status(504),
+            1 => status(502),
+            _ => ok(FILE),
+        });
+        let dir = temp("retry-5xx");
+        let progress = Progress::default();
+        let out = fetch(&base, &dir, &progress).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), FILE);
+        assert_eq!(seen.lock().unwrap().len(), 3);
+        assert_eq!(progress.attempt.load(Ordering::Relaxed), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resumes_a_download_cut_in_the_middle() {
+        let (base, seen) = scripted(sums_for(FILE), |request, n| {
+            if n == 0 {
+                // Promete o arquivo inteiro e fecha depois de 8 bytes.
+                let mut r = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    FILE.len()
+                )
+                .into_bytes();
+                r.extend_from_slice(&FILE[..8]);
+                return r;
+            }
+            assert!(request.contains("bytes=8-"), "{request}");
+            let rest = &FILE[8..];
+            let mut r = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\n\
+                 Content-Range: bytes 8-{}/{}\r\nConnection: close\r\n\r\n",
+                rest.len(),
+                FILE.len() - 1,
+                FILE.len()
+            )
+            .into_bytes();
+            r.extend_from_slice(rest);
+            r
+        });
+        let dir = temp("resume");
+        let out = fetch(&base, &dir, &Progress::default()).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), FILE);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn starts_over_when_the_server_does_not_resume() {
+        let (base, seen) = scripted(sums_for(FILE), |_, n| {
+            if n == 0 {
+                let mut r = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    FILE.len()
+                )
+                .into_bytes();
+                r.extend_from_slice(&FILE[..8]);
+                r
+            } else if n == 1 {
+                status(416)
+            } else {
+                // Ignora o Range e manda tudo de novo.
+                ok(FILE)
+            }
+        });
+        let dir = temp("restart");
+        let out = fetch(&base, &dir, &Progress::default()).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), FILE);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert!(seen[1].contains("bytes=8-") && !seen[2].contains("Range"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gives_up_after_a_few_tries_with_a_clear_error() {
+        let (base, seen) = scripted(sums_for(FILE), |_, _| status(504));
+        let dir = temp("give-up");
+        let err = fetch(&base, &dir, &Progress::default()).unwrap_err();
+        assert_eq!(err, format!("{SERVER_UNAVAILABLE} (HTTP 504)"));
+        assert_eq!(seen.lock().unwrap().len(), MAX_ATTEMPTS as usize);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn does_not_retry_what_will_not_change() {
+        let (base, seen) = scripted(sums_for(FILE), |_, _| status(404));
+        let dir = temp("no-retry");
+        let err = fetch(&base, &dir, &Progress::default()).unwrap_err();
+        assert_eq!(err, "download failed: HTTP 404");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        // Porta fechada: erro de conexão, depois das tentativas.
+        let closed = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", l.local_addr().unwrap())
+        };
+        let err = fetch(&closed, &dir, &Progress::default()).unwrap_err();
+        assert!(err.starts_with(CONNECTION_FAILED), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
