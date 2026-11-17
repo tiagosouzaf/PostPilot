@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use futures_util::StreamExt;
 use pgstudio_core::connection::{ConnectionSettings, Engine};
 use pgstudio_core::query::{
-    ColumnSource, DescribeDone, QueryEvent, QueryService, QuerySession, QuerySink, ServerMessage,
+    ColumnSource, DescribeDone, Pace, QueryEvent, QueryService, QuerySession, QuerySink,
+    ServerMessage,
 };
 use pgstudio_pg_client::DbRuntime;
 use tiberius::{BatchItem, BatchMessage, CancelHandle};
@@ -73,10 +74,42 @@ struct Shared {
     session: tokio::sync::Mutex<Option<Session>>,
     /// Fora do lock, para cancelar com a sessão ocupada.
     cancel: Mutex<Option<CancelHandle>>,
+    /// A execução em andamento busca as linhas aos poucos.
+    pace: Mutex<Option<Pace>>,
 }
 
-impl QuerySession for MssqlQuerySession {
-    fn execute(&self, sql: String, mut sink: QuerySink) {
+impl Shared {
+    /// Uma execução parada à espera de mais linhas segura a conexão: quem
+    /// precisa dela (outra execução, um cancelamento) faz a parada
+    /// desistir do resto. Devolve se havia uma.
+    fn give_up_paused(&self) -> bool {
+        let pace = self.pace.lock().ok().and_then(|p| p.clone());
+        match pace {
+            Some(p) if p.is_waiting() => {
+                p.abandon();
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Se a sessão tem uma transação aberta (na dúvida, tem).
+async fn in_transaction(session: &mut Session) -> bool {
+    match session.rows(Engine::SqlServer.in_transaction_sql()).await {
+        Ok(rows) => {
+            rows.first()
+                .and_then(|r| r.first().cloned().flatten())
+                .as_deref()
+                != Some("0")
+        }
+        Err(_) => true,
+    }
+}
+
+impl MssqlQuerySession {
+    fn start(&self, sql: String, mut sink: QuerySink, pace: Option<Pace>) {
+        self.shared.give_up_paused();
         let shared = self.shared.clone();
         let settings = self.settings.clone();
         let password = self.password.clone();
@@ -101,7 +134,19 @@ impl QuerySession for MssqlQuerySession {
                 return;
             };
             session.cancel_handle().reset();
-            let (canceled, broken) = run(session, &sql, &mut sink).await;
+            // Desistir de uma consulta parada cancela o lote; dentro de
+            // uma transação o resultado vem inteiro, como sempre.
+            let pace = match pace {
+                Some(p) if !in_transaction(session).await => Some(p),
+                _ => None,
+            };
+            if let Ok(mut p) = shared.pace.lock() {
+                *p = pace.clone();
+            }
+            let (canceled, broken) = run(session, &sql, &mut sink, pace.as_ref()).await;
+            if let Ok(mut p) = shared.pace.lock() {
+                *p = None;
+            }
             if broken {
                 *guard = None;
             } else if canceled && turns_plans_on(&sql) {
@@ -110,15 +155,28 @@ impl QuerySession for MssqlQuerySession {
                 session.cancel_handle().reset();
                 let mut quiet: QuerySink = Box::new(|_| {});
                 let off = "SET SHOWPLAN_XML OFF\nGO\nSET STATISTICS XML OFF";
-                if run(session, off, &mut quiet).await.1 {
+                if run(session, off, &mut quiet, None).await.1 {
                     *guard = None;
                 }
             }
             sink(QueryEvent::Finished { canceled });
         });
     }
+}
+
+impl QuerySession for MssqlQuerySession {
+    fn execute(&self, sql: String, sink: QuerySink) {
+        self.start(sql, sink, None);
+    }
+
+    fn execute_paced(&self, sql: String, sink: QuerySink, pace: Pace) {
+        self.start(sql, sink, Some(pace));
+    }
 
     fn cancel(&self) {
+        if self.shared.give_up_paused() {
+            return;
+        }
         if let Some(handle) = self.shared.cancel.lock().ok().and_then(|c| c.clone()) {
             handle.cancel();
         }
@@ -133,6 +191,7 @@ impl QuerySession for MssqlQuerySession {
     }
 
     fn describe(&self, sql: String, done: DescribeDone) {
+        self.shared.give_up_paused();
         let shared = self.shared.clone();
         let settings = self.settings.clone();
         let password = self.password.clone();
@@ -212,14 +271,19 @@ fn sources(rows: &[Vec<Option<String>>]) -> Vec<Option<ColumnSource>> {
 }
 
 /// Roda o script. Devolve se foi cancelado e se a conexão não serve mais.
-async fn run(session: &mut Session, sql: &str, sink: &mut QuerySink) -> (bool, bool) {
+async fn run(
+    session: &mut Session,
+    sql: &str,
+    sink: &mut QuerySink,
+    pace: Option<&Pace>,
+) -> (bool, bool) {
     let cancel = session.cancel_handle();
     for batch in script::split(sql) {
         for _ in 0..batch.repeat {
             if cancel.is_requested() {
                 return (true, false);
             }
-            match run_batch(session, &batch, sink).await {
+            match run_batch(session, &batch, sink, pace).await {
                 Ok(true) => return (true, false),
                 Ok(false) => {}
                 Err(message) => {
@@ -238,9 +302,13 @@ async fn run_batch(
     session: &mut Session,
     batch: &Batch,
     sink: &mut QuerySink,
+    pace: Option<&Pace>,
 ) -> Result<bool, String> {
     let cancel = session.cancel_handle();
     let mut canceled = false;
+    // A interface desistiu do resto do resultado: o lote foi cancelado e
+    // o que ainda chegar é jogado fora.
+    let mut dropped = false;
     {
         let mut stream = session
             .client()
@@ -260,7 +328,15 @@ async fn run_batch(
                         columns.iter().map(|c| c.name().to_string()).collect(),
                     ));
                 }
+                BatchItem::Row(_) if dropped => {}
                 BatchItem::Row(row) => {
+                    if let Some(pace) = pace
+                        && !pace.row().await
+                    {
+                        dropped = true;
+                        cancel.cancel();
+                        continue;
+                    }
                     if let Some(n) = open.as_mut() {
                         *n += 1;
                     }
@@ -274,6 +350,7 @@ async fn run_batch(
                 BatchItem::Done {
                     attention: true, ..
                 } => canceled = true,
+                BatchItem::Done { .. } if dropped => {}
                 BatchItem::Done { rows, .. } => {
                     let read = open.take();
                     if let Some(rows) = rows.or(read) {
@@ -300,7 +377,7 @@ async fn run_batch(
             .map_err(|e| describe(&e))?;
         canceled = true;
     }
-    Ok(canceled || cancel.is_requested())
+    Ok(canceled || dropped || cancel.is_requested())
 }
 
 /// A mensagem do servidor como evento: erro com linha, ou aviso só com o

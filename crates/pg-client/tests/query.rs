@@ -158,3 +158,157 @@ fn connection_errors_end_the_execution() {
         Some(&QueryEvent::Finished { canceled: false })
     );
 }
+
+/// Roda `sql` liberando `rows` linhas; devolve o controle, os eventos e o
+/// aviso de que a sessão parou esperando.
+fn run_paced(
+    session: &dyn QuerySession,
+    sql: &str,
+    rows: u64,
+) -> (
+    pgstudio_core::query::Pace,
+    mpsc::Receiver<QueryEvent>,
+    mpsc::Receiver<()>,
+) {
+    let (tx, rx) = mpsc::channel();
+    let (paused_tx, paused) = mpsc::channel();
+    let paused_tx = std::sync::Mutex::new(paused_tx);
+    let pace = pgstudio_core::query::Pace::new(rows, move || {
+        let _ = paused_tx.lock().unwrap().send(());
+    });
+    session.execute_paced(
+        sql.to_string(),
+        Box::new(move |e| drop(tx.send(e))),
+        pace.clone(),
+    );
+    (pace, rx, paused)
+}
+
+fn row_count(rx: &mpsc::Receiver<QueryEvent>) -> usize {
+    rx.try_iter()
+        .filter(|e| matches!(e, QueryEvent::Row(_)))
+        .count()
+}
+
+#[test]
+fn a_paced_query_fetches_only_the_allowed_rows_and_waits_on_the_server() {
+    let Some(service) = service() else { return };
+    let session = service.open("postgres");
+    let sql = "SELECT g, repeat('x', 200) FROM generate_series(1, 3000000) g /* paced-wait */";
+    let (pace, rx, paused) = run_paced(session.as_ref(), sql, 100);
+    paused
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the session pauses");
+    assert_eq!(row_count(&rx), 100);
+
+    // O servidor não terminou: está parado mandando o resto.
+    let other = service.open("postgres");
+    let waiting = run(
+        other.as_ref(),
+        "SELECT wait_event FROM pg_stat_activity \
+          WHERE query LIKE '%/* paced-wait */' AND state = 'active' \
+            AND pid <> pg_backend_pid()",
+    );
+    assert!(
+        waiting.contains(&QueryEvent::Row(vec![Some("ClientWrite".into())])),
+        "{waiting:?}"
+    );
+
+    // A página seguinte.
+    pace.allow(50);
+    paused
+        .recv_timeout(Duration::from_secs(30))
+        .expect("pauses again");
+    assert_eq!(row_count(&rx), 50);
+
+    // Desistir cancela o comando no servidor e a sessão segue servindo.
+    let start = Instant::now();
+    pace.abandon();
+    let events = collect(&rx);
+    assert_eq!(events, [QueryEvent::Finished { canceled: true }]);
+    assert!(start.elapsed() < Duration::from_secs(10));
+    let after = run(session.as_ref(), "SELECT 1");
+    assert!(after.contains(&QueryEvent::Row(vec![Some("1".into())])));
+    assert_eq!(after.last(), Some(&QueryEvent::Finished { canceled: false }));
+}
+
+#[test]
+fn a_paced_result_that_fits_ends_without_pausing_and_the_rest_comes_when_allowed() {
+    let Some(service) = service() else { return };
+    let session = service.open("postgres");
+    // Exatamente o limite: termina sem parar.
+    let (_pace, rx, paused) = run_paced(
+        session.as_ref(),
+        "SELECT g FROM generate_series(1, 100) g",
+        100,
+    );
+    let events = collect(&rx);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, QueryEvent::Row(_)))
+            .count(),
+        100
+    );
+    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: false }));
+    assert!(paused.try_recv().is_err());
+
+    // Uma linha a mais: para, e liberar tudo traz o resto até o fim.
+    let (pace, rx, paused) = run_paced(
+        session.as_ref(),
+        "SELECT g FROM generate_series(1, 5000) g",
+        100,
+    );
+    paused.recv_timeout(Duration::from_secs(30)).expect("pause");
+    pace.allow_all();
+    let events = collect(&rx);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, QueryEvent::Row(_)))
+            .count(),
+        5000
+    );
+    assert!(events.contains(&QueryEvent::CommandComplete { rows: 5000 }));
+    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: false }));
+}
+
+#[test]
+fn a_paused_query_gives_way_to_the_next_execution() {
+    let Some(service) = service() else { return };
+    let session = service.open("postgres");
+    let (_pace, rx, paused) = run_paced(
+        session.as_ref(),
+        "SELECT g, repeat('x', 200) FROM generate_series(1, 3000000) g",
+        10,
+    );
+    paused.recv_timeout(Duration::from_secs(30)).expect("pause");
+    let next = run(session.as_ref(), "SELECT 'next'");
+    assert!(next.contains(&QueryEvent::Row(vec![Some("next".into())])));
+    let events = collect(&rx);
+    assert_eq!(events.last(), Some(&QueryEvent::Finished { canceled: true }));
+}
+
+#[test]
+fn inside_a_transaction_a_paced_query_fetches_everything() {
+    let Some(service) = service() else { return };
+    let session = service.open("postgres");
+    run(session.as_ref(), "BEGIN");
+    let (_pace, rx, paused) = run_paced(
+        session.as_ref(),
+        "SELECT g FROM generate_series(1, 1000) g",
+        10,
+    );
+    let events = collect(&rx);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, QueryEvent::Row(_)))
+            .count(),
+        1000
+    );
+    assert!(paused.try_recv().is_err());
+    // A transação continua boa.
+    let after = run(session.as_ref(), "SELECT 1; COMMIT");
+    assert!(after.contains(&QueryEvent::Row(vec![Some("1".into())])));
+}

@@ -7,7 +7,10 @@
 //! servidor, erro e, sempre por último, [`QueryEvent::Finished`].
 
 use std::fmt;
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context, Poll, Waker};
 
 /// Recebe os eventos de uma execução. É chamado de outra thread.
 pub type QuerySink = Box<dyn FnMut(QueryEvent) + Send>;
@@ -29,6 +32,15 @@ pub trait QuerySession: Send + Sync {
     /// Começa a rodar `sql` (um ou mais comandos) e volta logo. Os eventos
     /// chegam em `sink`, terminando com [`QueryEvent::Finished`].
     fn execute(&self, sql: String, sink: QuerySink);
+
+    /// Como [`QuerySession::execute`], mas buscando do servidor só as
+    /// linhas que `pace` libera: com o limite gasto, a sessão para de ler
+    /// (o servidor espera) até a interface liberar mais ou desistir. A
+    /// sessão que não sabe esperar busca tudo, como o `execute`.
+    fn execute_paced(&self, sql: String, sink: QuerySink, pace: Pace) {
+        let _ = pace;
+        self.execute(sql, sink);
+    }
 
     /// Pede ao servidor para cancelar o comando em andamento, como o
     /// `pg_cancel_backend`. Sem comando em andamento, não faz nada.
@@ -59,6 +71,131 @@ pub trait QuerySession: Send + Sync {
     fn document_edits(&self, text: &str) -> Option<Result<Arc<dyn DocumentEdits>, String>> {
         let _ = text;
         None
+    }
+}
+
+/// Quantas linhas a sessão pode buscar do servidor, para o resultado vir
+/// aos poucos (uma página por vez) em vez de inteiro.
+///
+/// A interface cria com as linhas da primeira página e libera mais com
+/// [`Pace::allow`] quando a pessoa vai para a página seguinte. A sessão
+/// chama [`Pace::row`] a cada linha que chega, antes de entregá-la: com o
+/// limite gasto, a chamada espera (e a sessão deixa de ler a conexão, o
+/// que faz o servidor esperar também). Como a espera só começa com uma
+/// linha na mão, um resultado que cabe no limite termina sem parar.
+#[derive(Clone)]
+pub struct Pace(Arc<PaceShared>);
+
+struct PaceShared {
+    state: Mutex<PaceState>,
+    /// Avisa a interface que a sessão parou esperando. Roda na thread do
+    /// banco.
+    on_pause: Box<dyn Fn() + Send + Sync>,
+}
+
+#[derive(Default)]
+struct PaceState {
+    /// Linhas ainda liberadas; `None` é sem limite.
+    budget: Option<u64>,
+    abandoned: bool,
+    waiting: bool,
+    waker: Option<Waker>,
+}
+
+impl Pace {
+    /// Libera `rows` linhas; `on_pause` é chamado cada vez que a sessão
+    /// para à espera de mais.
+    pub fn new(rows: u64, on_pause: impl Fn() + Send + Sync + 'static) -> Self {
+        Pace(Arc::new(PaceShared {
+            state: Mutex::new(PaceState {
+                budget: Some(rows),
+                ..Default::default()
+            }),
+            on_pause: Box::new(on_pause),
+        }))
+    }
+
+    fn state(&self) -> MutexGuard<'_, PaceState> {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn wake(mut state: MutexGuard<'_, PaceState>) {
+        state.waiting = false;
+        let waker = state.waker.take();
+        drop(state);
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+
+    /// Libera mais `rows` linhas.
+    pub fn allow(&self, rows: u64) {
+        let mut state = self.state();
+        if let Some(budget) = &mut state.budget {
+            *budget = budget.saturating_add(rows);
+        }
+        if rows > 0 {
+            Self::wake(state);
+        }
+    }
+
+    /// Libera o resto do resultado.
+    pub fn allow_all(&self) {
+        let mut state = self.state();
+        state.budget = None;
+        Self::wake(state);
+    }
+
+    /// Desiste do resto: a sessão cancela o comando no servidor e termina.
+    pub fn abandon(&self) {
+        let mut state = self.state();
+        state.abandoned = true;
+        Self::wake(state);
+    }
+
+    pub fn is_abandoned(&self) -> bool {
+        self.state().abandoned
+    }
+
+    /// A sessão está parada esperando liberarem mais linhas.
+    pub fn is_waiting(&self) -> bool {
+        self.state().waiting
+    }
+
+    /// Para a sessão: chegou uma linha. Espera até ela estar liberada e
+    /// devolve `true`, ou `false` se a interface desistiu do resto.
+    pub fn row(&self) -> PaceRow<'_> {
+        PaceRow(self)
+    }
+}
+
+/// A espera de [`Pace::row`].
+pub struct PaceRow<'a>(&'a Pace);
+
+impl Future for PaceRow<'_> {
+    type Output = bool;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<bool> {
+        let pace = self.0;
+        let mut state = pace.state();
+        if state.abandoned {
+            return Poll::Ready(false);
+        }
+        match &mut state.budget {
+            None => return Poll::Ready(true),
+            Some(budget) if *budget > 0 => {
+                *budget -= 1;
+                return Poll::Ready(true);
+            }
+            Some(_) => {}
+        }
+        state.waker = Some(cx.waker().clone());
+        let first = !std::mem::replace(&mut state.waiting, true);
+        drop(state);
+        if first {
+            (pace.0.on_pause)();
+        }
+        Poll::Pending
     }
 }
 
@@ -198,6 +335,49 @@ pub fn line_col(text: &str, char_idx: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pace_lets_the_allowed_rows_through_and_then_waits() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::task::Wake;
+        struct Count(AtomicU32);
+        impl Wake for Count {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let woken = Arc::new(Count(AtomicU32::new(0)));
+        let waker = Waker::from(woken.clone());
+        let mut cx = Context::from_waker(&waker);
+        let pauses = Arc::new(AtomicU32::new(0));
+        let p = pauses.clone();
+        let pace = Pace::new(2, move || {
+            p.fetch_add(1, Ordering::SeqCst);
+        });
+        let mut poll = |pace: &Pace| Pin::new(&mut pace.row()).poll(&mut cx);
+        assert_eq!(poll(&pace), Poll::Ready(true));
+        assert_eq!(poll(&pace), Poll::Ready(true));
+        assert!(!pace.is_waiting());
+        // A terceira linha espera, e a interface é avisada uma vez só.
+        assert_eq!(poll(&pace), Poll::Pending);
+        assert_eq!(poll(&pace), Poll::Pending);
+        assert!(pace.is_waiting());
+        assert_eq!(pauses.load(Ordering::SeqCst), 1);
+
+        pace.allow(1);
+        assert_eq!(woken.0.load(Ordering::SeqCst), 1);
+        assert_eq!(poll(&pace), Poll::Ready(true));
+        assert_eq!(poll(&pace), Poll::Pending);
+        assert_eq!(pauses.load(Ordering::SeqCst), 2);
+
+        pace.allow_all();
+        for _ in 0..10 {
+            assert_eq!(poll(&pace), Poll::Ready(true));
+        }
+        pace.abandon();
+        assert!(pace.is_abandoned());
+        assert_eq!(poll(&pace), Poll::Ready(false));
+    }
 
     #[test]
     fn line_and_column_of_a_position() {
