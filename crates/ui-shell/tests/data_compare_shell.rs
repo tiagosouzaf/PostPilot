@@ -18,7 +18,7 @@ use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::connect::RecentConnections;
 use pgstudio_ui_shell::data_compare::Side;
 use pgstudio_ui_shell::data_compare::engine::tables_sql;
-use pgstudio_ui_shell::secrets::{MemoryStore, password_key};
+use pgstudio_ui_shell::secrets::MemoryStore;
 use pgstudio_ui_shell::session::SessionStore;
 
 const SOURCE: &str = "producao.cliente-a.com.br";
@@ -196,11 +196,11 @@ fn compared(dir: &Path, store: Arc<MemoryStore>) -> Harness<'static, ShellApp> {
     {
         let d = h.state_mut().data_compare_mut().expect("window");
         d.source = Side {
-            server: password_key(&settings(SOURCE)),
+            server: pgstudio_ui_shell::servers::server_key(&settings(SOURCE)),
             database: "vendas".into(),
         };
         d.target = Side {
-            server: password_key(&settings(TARGET)),
+            server: pgstudio_ui_shell::servers::server_key(&settings(TARGET)),
             database: "vendas".into(),
         };
         d.compare(&ctx);
@@ -279,7 +279,7 @@ fn the_script_opens_on_the_target_server_and_the_window_comes_back() {
         let state = h.state().session_state();
         assert_eq!(
             state.documents.last().unwrap().server,
-            Some(password_key(&settings(TARGET)))
+            Some(pgstudio_ui_shell::servers::server_key(&settings(TARGET)))
         );
         let setup = state.data_compare.clone().expect("in the session");
         assert_eq!(setup.source.database, "vendas");

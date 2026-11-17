@@ -15,10 +15,51 @@ use pgstudio_object_explorer::{Event, ObjectExplorer};
 
 use crate::intellisense::Catalogs;
 
-/// Identifica um servidor conectado: usuário, servidor e porta (o banco não
-/// conta, como no SSMS).
+/// Identifica uma conexão: o login no servidor ([`login_key`]) e o banco em
+/// que ela abre, como `usuario@host:porta/banco`. Dois registros do mesmo
+/// servidor e usuário em bancos diferentes são conexões diferentes: cada um
+/// conecta, aparece e desconecta por si.
 pub fn server_key(settings: &ConnectionSettings) -> String {
+    let login = login_key(settings);
+    let database = key_database(settings);
+    if database.is_empty() {
+        login
+    } else {
+        format!("{login}/{database}")
+    }
+}
+
+/// O login no servidor, sem o banco: usuário, servidor, porta e túnel SSH.
+/// É a chave da senha no cofre, e o que junta os bancos de um mesmo
+/// servidor (a consulta em vários servidores usa a conexão de qualquer um
+/// deles).
+pub fn login_key(settings: &ConnectionSettings) -> String {
     crate::secrets::password_key(settings)
+}
+
+/// Se a chave `key` é de uma conexão com o mesmo login no mesmo servidor de
+/// `settings`, em qualquer banco. Aceita também a chave antiga, sem banco,
+/// das sessões e arquivos gravados antes de o banco entrar nela.
+pub fn key_on_server(key: &str, settings: &ConnectionSettings) -> bool {
+    key.strip_prefix(login_key(settings).as_str())
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// O banco como entra na chave: do jeito que o conector deixa depois de
+/// conectar, para o registro e a conexão dele terem a mesma chave.
+fn key_database(settings: &ConnectionSettings) -> String {
+    use pgstudio_core::connection::{Engine, redis_database_index};
+    let database = settings.database.trim();
+    match settings.engine {
+        // Um servidor do Elasticsearch não tem bancos.
+        Engine::Elasticsearch => String::new(),
+        Engine::Redis => match redis_database_index(database) {
+            Some(n) => format!("db{n}"),
+            None => database.to_string(),
+        },
+        Engine::MongoDb if database.is_empty() => Engine::MongoDb.default_database().to_string(),
+        _ => database.to_string(),
+    }
 }
 
 /// Um servidor conectado que não é o ativo.
@@ -830,6 +871,27 @@ impl ShellApp {
         }
     }
 
+    /// A chave da conexão aberta que atende `key`: ela mesma, se está
+    /// conectada; se não, outra conexão do mesmo login no servidor (as
+    /// chaves gravadas por versões antigas não tinham o banco).
+    pub(crate) fn connected_key_for(&self, key: &str) -> Option<String> {
+        let open: Vec<&ConnectionSettings> = self
+            .connection
+            .iter()
+            .chain(
+                self.servers
+                    .parked
+                    .iter()
+                    .filter_map(|p| p.connection.as_ref()),
+            )
+            .map(|c| &c.settings)
+            .collect();
+        open.iter()
+            .find(|s| server_key(s) == key)
+            .or_else(|| open.iter().find(|s| key_on_server(key, s)))
+            .map(|s| server_key(s))
+    }
+
     /// Torna ativo o servidor com essa chave, se conectado. Devolve se ele
     /// é o ativo agora.
     pub fn activate_key(&mut self, key: &str) -> bool {
@@ -907,5 +969,87 @@ impl ShellApp {
         if let Some(status) = self.registered.show_windows(ctx) {
             self.status = status;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pgstudio_core::connection::Engine;
+
+    fn on(database: &str) -> ConnectionSettings {
+        ConnectionSettings {
+            host: "127.0.0.1".into(),
+            user: "webged_novo_user".into(),
+            database: database.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_database_is_part_of_the_connection_key() {
+        // O mesmo usuário no mesmo servidor, um registro por banco: cada um
+        // é uma conexão.
+        assert_eq!(
+            server_key(&on("webged")),
+            "webged_novo_user@127.0.0.1:5432/webged"
+        );
+        assert_ne!(
+            server_key(&on("webged")),
+            server_key(&on("controle_migracao"))
+        );
+        // A senha continua sendo do login, qualquer que seja o banco.
+        assert_eq!(
+            login_key(&on("webged")),
+            login_key(&on("controle_migracao"))
+        );
+        assert_eq!(login_key(&on("webged")), "webged_novo_user@127.0.0.1:5432");
+        // Sem banco, a chave é a do login.
+        assert_eq!(server_key(&on(" ")), login_key(&on("")));
+    }
+
+    #[test]
+    fn the_key_is_the_same_before_and_after_the_connector_fixes_the_database() {
+        // Os conectores acertam o nome do banco ao conectar; o registro e a
+        // conexão dele precisam continuar com a mesma chave.
+        let redis = |database: &str| ConnectionSettings {
+            database: database.into(),
+            ..ConnectionSettings::for_engine(Engine::Redis)
+        };
+        assert_eq!(server_key(&redis("")), server_key(&redis("db0")));
+        assert_eq!(server_key(&redis("3")), server_key(&redis("db3")));
+        assert_ne!(server_key(&redis("3")), server_key(&redis("db0")));
+        let mongo = |database: &str| ConnectionSettings {
+            database: database.into(),
+            ..ConnectionSettings::for_engine(Engine::MongoDb)
+        };
+        assert_eq!(
+            server_key(&mongo("")),
+            server_key(&mongo(Engine::MongoDb.default_database()))
+        );
+        let search = |database: &str| ConnectionSettings {
+            database: database.into(),
+            ..ConnectionSettings::for_engine(Engine::Elasticsearch)
+        };
+        assert_eq!(server_key(&search("")), server_key(&search("qualquer")));
+    }
+
+    #[test]
+    fn a_key_matches_its_server_in_any_database_and_in_the_old_format() {
+        let webged = on("webged");
+        assert!(key_on_server(&server_key(&webged), &webged));
+        assert!(key_on_server(&server_key(&on("outro")), &webged));
+        // A chave antiga, sem banco.
+        assert!(key_on_server("webged_novo_user@127.0.0.1:5432", &webged));
+        // Outra porta que começa igual, outro usuário, ou por um túnel.
+        assert!(!key_on_server(
+            "webged_novo_user@127.0.0.1:54321/webged",
+            &webged
+        ));
+        assert!(!key_on_server("outro@127.0.0.1:5432/webged", &webged));
+        assert!(!key_on_server(
+            "webged_novo_user@127.0.0.1:5432 via ssh@bastion:22/webged",
+            &webged
+        ));
     }
 }

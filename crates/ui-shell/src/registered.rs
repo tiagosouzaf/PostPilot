@@ -493,17 +493,20 @@ impl RegisteredServers {
         }
     }
 
-    /// O que mostrar para uma conexão (`usuario@host:porta`): o primeiro
-    /// servidor registrado com essa chave que tenha ambiente ou cor.
+    /// O que mostrar para a conexão desta chave
+    /// ([`crate::servers::server_key`]): o ambiente e a cor do registro
+    /// dela. Uma conexão num banco sem registro próprio leva os de outro
+    /// registro do mesmo servidor e usuário, para um banco de produção
+    /// aberto por fora não ficar sem a proteção do ambiente.
     pub fn tag_for_key(&self, key: &str) -> Option<ServerTag> {
         fn walk(
             r: &RegisteredServers,
             g: &ServerGroup,
             path: &mut Vec<usize>,
-            key: &str,
+            is: &dyn Fn(&ConnectionSettings) -> bool,
         ) -> Option<ServerTag> {
             for (i, s) in g.servers.iter().enumerate() {
-                if secrets::password_key(&s.settings) == key
+                if is(&s.settings)
                     && let Some(tag) = r.node_tag(&NodePath::server(path, i))
                 {
                     return Some(tag);
@@ -511,7 +514,7 @@ impl RegisteredServers {
             }
             for (i, sub) in g.groups.iter().enumerate() {
                 path.push(i);
-                let found = walk(r, sub, path, key);
+                let found = walk(r, sub, path, is);
                 path.pop();
                 if found.is_some() {
                     return found;
@@ -519,7 +522,13 @@ impl RegisteredServers {
             }
             None
         }
-        walk(self, &self.root, &mut Vec::new(), key)
+        let exact = |s: &ConnectionSettings| crate::servers::server_key(s) == key;
+        let same_server = |s: &ConnectionSettings| crate::servers::key_on_server(key, s);
+        if self.path_for_key(key).is_some() {
+            // Tem registro próprio: vale o dele, mesmo sem ambiente.
+            return walk(self, &self.root, &mut Vec::new(), &exact);
+        }
+        walk(self, &self.root, &mut Vec::new(), &same_server)
     }
 
     /// A cor de um grupo: a dele ou, sem cor, a do grupo de cima mais
@@ -550,14 +559,15 @@ impl RegisteredServers {
         out
     }
 
-    /// Onde está o servidor com esta chave (`usuario@host:porta`), se ele
-    /// está registrado.
+    /// Onde está o registro da conexão desta chave
+    /// ([`crate::servers::server_key`]: usuário, servidor, porta e banco),
+    /// se ela está registrada.
     pub fn path_for_key(&self, key: &str) -> Option<NodePath> {
         fn walk(g: &ServerGroup, path: &mut Vec<usize>, key: &str) -> Option<NodePath> {
             if let Some(i) = g
                 .servers
                 .iter()
-                .position(|s| secrets::password_key(&s.settings) == key)
+                .position(|s| crate::servers::server_key(&s.settings) == key)
             {
                 return Some(NodePath::server(path, i));
             }
@@ -1228,6 +1238,10 @@ pub struct RegisteredPanel {
     pub current: Option<ConnectionSettings>,
     /// O que está escrito no campo de pesquisa.
     pub filter: String,
+    /// Registros que o diálogo acabou de gravar, com a senha que estava no
+    /// campo: o aplicativo conecta em segundo plano os que ainda não estão
+    /// conectados.
+    just_saved: Vec<(ConnectionSettings, String)>,
 }
 
 impl Default for RegisteredPanel {
@@ -1249,7 +1263,14 @@ impl RegisteredPanel {
             message: None,
             current: None,
             filter: String::new(),
+            just_saved: Vec::new(),
         }
+    }
+
+    /// Os registros gravados pelo diálogo desde a última chamada, com a
+    /// senha que estava no campo (vazia quando não havia).
+    pub(crate) fn take_just_saved(&mut self) -> Vec<(ConnectionSettings, String)> {
+        std::mem::take(&mut self.just_saved)
     }
 
     /// A árvore.
@@ -1367,7 +1388,10 @@ impl RegisteredPanel {
         settings: &ConnectionSettings,
         store: Option<&Arc<dyn SecretStore>>,
     ) {
-        match self.servers.path_for_key(&secrets::password_key(settings)) {
+        match self
+            .servers
+            .path_for_key(&crate::servers::server_key(settings))
+        {
             Some(path) => {
                 self.selected = Some(path.clone());
                 self.edit_server(&path, store);
@@ -1845,8 +1869,12 @@ impl RegisteredPanel {
                 Reply::Cancel => self.server_dialog = None,
                 Reply::Ok => {
                     let dialog = self.server_dialog.take().expect("dialog is open");
+                    let password = dialog.password.clone();
                     match dialog.apply(&mut self.servers) {
                         Ok(path) => {
+                            if let Some(s) = self.servers.server(&path) {
+                                self.just_saved.push((s.settings.clone(), password));
+                            }
                             status = Some(trf!(
                                 "Registered server \"{name}\" saved.",
                                 name = self
@@ -2924,6 +2952,59 @@ mod tests {
         r
     }
 
+    #[test]
+    fn registrations_of_the_same_login_are_found_by_their_database() {
+        let mut r = RegisteredServers::default();
+        let prod = r
+            .add_group(
+                &[],
+                ServerGroup {
+                    name: "Produção".into(),
+                    environment: Some(PRODUCTION.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let on = |name: &str, database: &str| {
+            let mut s = server(name, "127.0.0.1");
+            s.settings.user = "webged_novo_user".into();
+            s.settings.database = database.into();
+            s
+        };
+        r.add_server(&prod, on("WebGed", "webged")).unwrap();
+        r.add_server(&prod, on("Migração", "controle_migracao"))
+            .unwrap();
+        // Fora da pasta, sem ambiente.
+        r.add_server(&[], on("Rascunho", "rascunho")).unwrap();
+        let key = |database: &str| crate::servers::server_key(&on("", database).settings);
+        // Cada conexão acha o registro do banco dela, não o primeiro do
+        // mesmo usuário e servidor.
+        assert_eq!(r.name_for_key(&key("webged")), Some("WebGed"));
+        assert_eq!(r.name_for_key(&key("controle_migracao")), Some("Migração"));
+        assert_eq!(
+            r.place_for_key(&key("controle_migracao")),
+            Some((vec!["Produção".to_string()], "Migração".to_string()))
+        );
+        assert_eq!(r.name_for_key(&key("sem_registro")), None);
+        let environment = |k: &str| r.tag_for_key(k).and_then(|t| t.environment);
+        assert_eq!(
+            environment(&key("controle_migracao")).as_deref(),
+            Some("Production")
+        );
+        // Tem registro próprio sem ambiente: não herda o dos vizinhos.
+        assert_eq!(environment(&key("rascunho")), None);
+        // Um banco sem registro, aberto por fora, fica com a proteção do
+        // servidor; a chave antiga (sem banco) também.
+        assert_eq!(
+            environment(&key("sem_registro")).as_deref(),
+            Some("Production")
+        );
+        assert_eq!(
+            environment("webged_novo_user@127.0.0.1:5432").as_deref(),
+            Some("Production")
+        );
+    }
+
     fn found(r: &RegisteredServers, query: &str) -> Vec<String> {
         let hits = r.search(query);
         hits.order
@@ -3135,7 +3216,7 @@ mod tests {
         assert_eq!(tag.color, FOLDER_COLORS[0], "environment color wins");
         assert_eq!(r.node_tag(&loose), None);
         assert_eq!(
-            r.tag_for_key(&secrets::password_key(&r.server(&b).unwrap().settings))
+            r.tag_for_key(&crate::servers::server_key(&r.server(&b).unwrap().settings))
                 .unwrap()
                 .color,
             FOLDER_COLORS[1]

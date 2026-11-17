@@ -222,6 +222,17 @@ impl Lookup {
         }
     }
 
+    /// Uma leitura que já tem a resposta: a senha veio de outro lugar (o
+    /// usuário acabou de digitar).
+    pub fn found(password: String) -> Lookup {
+        let (tx, rx) = mpsc::channel();
+        let _ = tx.send(Some(password));
+        Lookup {
+            key: String::new(),
+            rx,
+        }
+    }
+
     /// Espera a leitura (testes).
     pub fn wait(&self) -> Option<String> {
         self.rx.recv().ok().flatten()

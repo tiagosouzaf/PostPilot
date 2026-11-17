@@ -179,7 +179,8 @@ fn every_execution_is_recorded_with_server_database_and_outcome() {
     assert_eq!(entries.len(), 3);
     let ok = &entries[0];
     assert_eq!(ok.sql, "select * from clientes");
-    assert_eq!(ok.server, "ana@db.cliente-a.com.br:5432");
+    // A chave da conexão: o login no servidor e o banco em que ela abriu.
+    assert_eq!(ok.server, "ana@db.cliente-a.com.br:5432/loja");
     assert!(ok.server_name.contains("db.cliente-a.com.br"), "{ok:?}");
     assert_eq!(ok.database, "loja");
     assert_eq!(ok.status, Status::Succeeded);

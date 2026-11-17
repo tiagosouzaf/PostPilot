@@ -328,7 +328,8 @@ fn several_servers_share_the_object_explorer() {
     let ctx = harness.ctx.clone();
     harness.state_mut().execute(&ctx, CommandId::NewQuery);
     harness.run();
-    assert!(harness.state_mut().activate_key("alice@hr-db:5432"));
+    let hr = pgstudio_ui_shell::servers::server_key(&settings("hr-db"));
+    assert!(harness.state_mut().activate_key(&hr));
     harness.run();
     harness.state_mut().execute(&ctx, CommandId::Execute);
     harness.run();

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::registered::ServerTag;
 use crate::secrets::SecretStore;
-use crate::servers::server_key;
+use crate::servers::login_key;
 use crate::{ShellApp, execution};
 
 /// Conexões abertas ao mesmo tempo, para não disparar centenas de uma vez.
@@ -46,7 +46,7 @@ pub struct TargetId {
 impl TargetId {
     pub fn of(settings: &ConnectionSettings) -> Self {
         TargetId {
-            server: server_key(settings),
+            server: login_key(settings),
             database: settings.database.clone(),
         }
     }
@@ -961,7 +961,7 @@ impl ShellApp {
                         settings: t.settings.clone(),
                         live: live
                             .iter()
-                            .find(|c| server_key(&c.settings) == id.server)
+                            .find(|c| login_key(&c.settings) == id.server)
                             .map(|c| c.queries.clone()),
                         missing: false,
                     },

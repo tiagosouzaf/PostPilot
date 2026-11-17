@@ -61,6 +61,9 @@ struct Job {
     settings: ConnectionSettings,
     /// Veio da sessão anterior: sem senha guardada, o diálogo pede.
     session: bool,
+    /// A senha que o usuário acabou de digitar no registro: não espera o
+    /// cofre, que ainda pode estar gravando.
+    password: Option<String>,
     stage: Stage,
 }
 
@@ -105,9 +108,23 @@ impl Background {
 
     /// Põe o servidor na fila. Devolve se entrou (não estava nela).
     pub(crate) fn enqueue(&mut self, settings: ConnectionSettings, session: bool) -> bool {
+        self.enqueue_with(settings, session, None)
+    }
+
+    /// Põe o servidor na fila; com `password`, conecta com ela em vez de
+    /// ler a do cofre. Devolve se entrou (não estava nela).
+    fn enqueue_with(
+        &mut self,
+        settings: ConnectionSettings,
+        session: bool,
+        password: Option<String>,
+    ) -> bool {
         let key = server_key(&settings);
         if let Some(job) = self.jobs.iter_mut().find(|j| j.key == key) {
             job.session |= session;
+            if matches!(job.stage, Stage::Waiting) && password.is_some() {
+                job.password = password;
+            }
             return false;
         }
         self.states.insert(key.clone(), LinkState::Queued);
@@ -115,6 +132,7 @@ impl Background {
             key,
             settings,
             session,
+            password,
             stage: Stage::Waiting,
         });
         true
@@ -224,8 +242,32 @@ impl ShellApp {
         let unlocked = self.workspace_panel.unlocked_count();
         let more_unlocked = unlocked > self.servers.background.unlocked;
         self.servers.background.unlocked = unlocked;
+        // Os registros que o diálogo acabou de gravar. Só os da árvore que o
+        // Object Explorer mostra conectam.
+        let in_registered = self.registered.take_just_saved();
+        let in_workspace = self
+            .workspace_panel
+            .servers_mut()
+            .map(|p| p.take_just_saved());
+        let just_saved = in_workspace.unwrap_or(in_registered);
         if !self.servers.background.scan || !self.preferences.auto_connect {
             return;
+        }
+        if !just_saved.is_empty() {
+            // Salvar um registro (novo, ou editado depois de uma falha)
+            // conecta na hora, com a senha que estava no diálogo: quem
+            // testou e salvou não precisa de mais um duplo clique.
+            let connected = self.connected_keys();
+            for (settings, password) in just_saved {
+                let key = server_key(&settings);
+                if connected.contains(&key) {
+                    continue;
+                }
+                let password = Some(password).filter(|p| !p.is_empty());
+                self.servers
+                    .background
+                    .enqueue_with(settings, false, password);
+            }
         }
         let (source, list) = self.shown_servers();
         let first = self.servers.background.scanned.is_empty();
@@ -293,11 +335,19 @@ impl ShellApp {
                 background
                     .states
                     .insert(job.key.clone(), LinkState::Connecting);
-                match &self.secrets {
-                    Some(store) => {
-                        job.stage = Stage::Lookup(secrets::lookup(store, job.key.clone()));
+                match (&job.password, &self.secrets) {
+                    (Some(password), _) => {
+                        job.stage = Stage::Lookup(Lookup::found(password.clone()));
                     }
-                    None => {
+                    (None, Some(store)) => {
+                        // A senha é do login no servidor, qualquer que seja
+                        // o banco.
+                        job.stage = Stage::Lookup(secrets::lookup(
+                            store,
+                            secrets::password_key(&job.settings),
+                        ));
+                    }
+                    (None, None) => {
                         finished.push((i, Outcome::NoPassword));
                         continue;
                     }

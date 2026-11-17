@@ -65,8 +65,9 @@ fn settings(host: &str) -> ConnectionSettings {
     }
 }
 
+/// A chave da conexão (com o banco): a do estado de cada servidor.
 fn key(host: &str) -> String {
-    password_key(&settings(host))
+    pgstudio_ui_shell::servers::server_key(&settings(host))
 }
 
 /// Servidores registrados com estes hosts; os de `remembered` têm a senha
@@ -103,7 +104,7 @@ fn start_with_session(
     }
     let store = Arc::new(MemoryStore::default());
     for host in remembered {
-        store.set(&key(host), PASSWORD).unwrap();
+        store.set(&password_key(&settings(host)), PASSWORD).unwrap();
     }
     let mut app = ShellApp::default()
         .with_preferences(None, prefs)
