@@ -22,6 +22,7 @@ use pgstudio_core::connection::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::conn_test::ConnectionTest;
 use crate::secrets::{self, Lookup, SecretStore};
 use crate::ssh_fields::SshFields;
 
@@ -178,6 +179,8 @@ pub struct ConnectDialog {
     saved: bool,
     /// Conectar sozinho se o cofre tiver a senha (Registered Servers).
     auto_connect: bool,
+    /// "Test connection": tenta conectar com os campos, sem abrir nada.
+    pub test: ConnectionTest,
 }
 
 struct Pending {
@@ -213,6 +216,23 @@ impl ConnectDialog {
             lookup: None,
             saved: false,
             auto_connect: false,
+            test: ConnectionTest::default(),
+        }
+    }
+
+    /// Pede o teste de conexão com os campos de agora (o botão "Test
+    /// connection"). Campo faltando vira a mensagem do teste.
+    pub fn request_test(&mut self) {
+        match self.settings() {
+            Ok(settings) => {
+                // O segredo do túnel SSH digitado vale também para o teste.
+                if let Some(ssh) = &settings.ssh {
+                    self.ssh.hand_over(ssh);
+                }
+                self.error = None;
+                self.test.request(settings, self.password.clone());
+            }
+            Err(e) => self.test.invalid(e),
         }
     }
 
@@ -366,6 +386,7 @@ impl ConnectDialog {
     ) {
         let (tx, rx) = mpsc::channel();
         self.error = None;
+        self.test.clear();
         // O segredo do túnel SSH que a pessoa digitou vai para o túnel; com
         // o campo vazio, ele usa o do cofre.
         if let Some(ssh) = &settings.ssh {
@@ -434,6 +455,9 @@ impl ConnectDialog {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
         }
         let connecting = self.pending.is_some() || action != DialogAction::None;
+        let current = self.settings().ok();
+        self.test
+            .keep_for(current.as_ref().map(|s| (s, self.password.as_str())));
         let modal = crate::theme::modal(egui::Id::new("connect_to_server")).show(ctx, |ui| {
             crate::fit::dialog_width(ui, 440.0);
             ui.heading(tr("Connect to Server"));
@@ -464,6 +488,10 @@ impl ConnectDialog {
                     ui.spinner();
                     ui.label(tr("Looking for the saved password…"));
                 });
+            }
+            ui.add_space(8.0);
+            if self.test.show(ui, !connecting && !self.auto_connect) {
+                self.request_test();
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

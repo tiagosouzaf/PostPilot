@@ -304,6 +304,26 @@ impl ShellApp {
         }
     }
 
+    /// Uma vez por frame: o "Test connection" de qualquer dos diálogos de
+    /// conexão começa e recebe o resultado aqui, com o conector do
+    /// aplicativo. A rede fica na thread do teste.
+    pub(crate) fn connection_test_step(&mut self, ctx: &egui::Context) {
+        let connector = self.connector.clone();
+        if let Some(d) = &mut self.connect_dialog {
+            d.test.step(connector.as_ref(), ctx);
+        }
+        if let Some(d) = self.registered.server_dialog_mut() {
+            d.test.step(connector.as_ref(), ctx);
+        }
+        if let Some(d) = self
+            .workspace_panel
+            .servers_mut()
+            .and_then(RegisteredPanel::server_dialog_mut)
+        {
+            d.test.step(connector.as_ref(), ctx);
+        }
+    }
+
     /// Uma vez por frame: o botão de procurar a chave do túnel SSH, em
     /// qualquer dos diálogos, abre o diálogo de arquivo (fora da thread da
     /// interface) e põe a resposta no campo.

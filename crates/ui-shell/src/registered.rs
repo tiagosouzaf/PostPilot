@@ -1273,6 +1273,11 @@ impl RegisteredPanel {
     }
 
     /// Diálogo de servidor aberto, se houver.
+    pub fn server_dialog(&self) -> Option<&ServerDialog> {
+        self.server_dialog.as_ref()
+    }
+
+    /// O diálogo de registro aberto, mutável.
     pub fn server_dialog_mut(&mut self) -> Option<&mut ServerDialog> {
         self.server_dialog.as_mut()
     }
@@ -2173,6 +2178,8 @@ pub struct ServerDialog {
     store: Option<Arc<dyn SecretStore>>,
     lookup: Option<Lookup>,
     saved: bool,
+    /// "Test connection": tenta conectar com os campos, sem salvar nada.
+    pub test: crate::conn_test::ConnectionTest,
 }
 
 impl ServerDialog {
@@ -2213,6 +2220,23 @@ impl ServerDialog {
             store: store.cloned(),
             lookup,
             saved: false,
+            test: crate::conn_test::ConnectionTest::default(),
+        }
+    }
+
+    /// Pede o teste de conexão com os campos de agora (o botão "Test
+    /// connection"). Campo faltando vira a mensagem do teste. Nada é
+    /// gravado.
+    pub fn request_test(&mut self) {
+        match self.settings() {
+            Ok(settings) => {
+                // O segredo do túnel SSH digitado vale também para o teste.
+                if let Some(ssh) = &settings.ssh {
+                    self.ssh.hand_over(ssh);
+                }
+                self.test.request(settings, self.password.clone());
+            }
+            Err(e) => self.test.invalid(e),
         }
     }
 
@@ -2385,6 +2409,9 @@ impl ServerDialog {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
         }
         let mut reply = Reply::None;
+        let current = self.settings().ok();
+        self.test
+            .keep_for(current.as_ref().map(|s| (s, self.password.as_str())));
         let title = if self.editing.is_some() {
             tr("Edit Server Registration Properties")
         } else {
@@ -2577,6 +2604,10 @@ impl ServerDialog {
             if let Some(error) = &self.error {
                 ui.add_space(6.0);
                 ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.add_space(8.0);
+            if self.test.show(ui, true) {
+                self.request_test();
             }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

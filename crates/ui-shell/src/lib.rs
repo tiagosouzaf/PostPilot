@@ -16,6 +16,7 @@ pub mod backup_mssql;
 pub mod bench;
 pub mod claude;
 pub mod claude_panel;
+pub mod conn_test;
 pub mod connect;
 pub mod csv_import;
 pub mod csv_import_dialog;
@@ -3506,6 +3507,7 @@ impl ShellApp {
         self.connect_step();
         self.background_step(&ctx);
         self.ssh_browse_step();
+        self.connection_test_step(&ctx);
         self.expand_step();
         self.execution_step(&ctx);
         self.claude_step(&ctx);
