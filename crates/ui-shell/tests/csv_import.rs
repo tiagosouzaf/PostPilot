@@ -117,6 +117,15 @@ fn the_window_maps_previews_and_loads_the_file() {
     // A prévia mostra o valor e o NULL do campo vazio.
     harness.get_by_label("Bia");
     harness.get_by_label("NULL");
+    // Fora de Produção também pergunta antes de carregar.
+    harness.get_by_label("Import").click();
+    harness.run();
+    assert_eq!(*harness.state().phase(), Phase::Confirming);
+    assert!(
+        log.lock().unwrap().is_empty(),
+        "nothing runs before the yes"
+    );
+    harness.get_by_label("The import adds rows to public.cliente.");
     harness.get_by_label("Import").click();
     wait(&mut harness, |d| matches!(d.phase(), Phase::Done(_)));
     assert_eq!(
@@ -164,6 +173,8 @@ fn an_environment_that_confirms_changes_asks_before_loading() {
 #[test]
 fn a_failed_load_says_the_line_and_keeps_the_window_open() {
     let (mut harness, log, path) = dialog(b"nome,valor\nAna,1\nBia,erro\n", "falha.csv", None);
+    harness.get_by_label("Import").click();
+    harness.run();
     harness.get_by_label("Import").click();
     wait(&mut harness, |d| d.error().is_some());
     assert_eq!(*harness.state().phase(), Phase::Editing);
@@ -623,6 +634,8 @@ mod app {
         let (mut harness, log) = harness(&path, false);
         open(&mut harness);
         harness.get_by_label("Import CSV into public.cliente");
+        harness.get_by_label("Import").click();
+        harness.run_steps(5);
         harness.get_by_label("Import").click();
         until(&mut harness, |h| {
             h.state_mut()

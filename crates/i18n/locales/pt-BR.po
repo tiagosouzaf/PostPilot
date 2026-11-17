@@ -1965,8 +1965,8 @@ msgstr "Excluir {n} Linhas"
 msgid "Deleting..."
 msgstr "Excluindo..."
 
-msgid "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. Delete removes the selected rows after confirmation."
-msgstr "Clique duas vezes em uma célula (ou pressione F2) para editá-la; Enter salva, Esc cancela. Delete remove as linhas selecionadas após confirmação."
+msgid "Double-click a cell (or press F2) to edit it; Enter asks for confirmation and saves, Esc cancels. Delete removes the selected rows after confirmation."
+msgstr "Clique duas vezes em uma célula (ou pressione F2) para editá-la; Enter pede confirmação e salva, Esc cancela. Delete remove as linhas selecionadas após confirmação."
 
 msgid "Duration"
 msgstr "Duração"
@@ -6534,3 +6534,36 @@ msgstr "O catálogo deste banco ainda não foi lido."
 
 msgid "Not a table or view of the catalog."
 msgstr "Não é uma tabela nem uma view do catálogo."
+
+msgid "Confirm Change"
+msgstr "Confirmar Alteração"
+
+msgid "You are about to change 1 value in {table}. Are you sure?"
+msgstr "Você está prestes a alterar 1 valor em {table}. Tem certeza?"
+
+msgid "Server: {server}"
+msgstr "Servidor: {server}"
+
+msgid "The value was not changed."
+msgstr "O valor não foi alterado."
+
+msgid "The row was not saved. Press Esc to cancel its changes."
+msgstr "A linha não foi gravada. Pressione Esc para desfazer as alterações dela."
+
+msgid "You are about to insert 1 row into {table}. Are you sure?"
+msgstr "Você está prestes a inserir 1 linha em {table}. Tem certeza?"
+
+msgid "You are about to change 1 row in {table}. Are you sure?"
+msgstr "Você está prestes a alterar 1 linha em {table}. Tem certeza?"
+
+msgid "The import adds rows to {table}."
+msgstr "A importação adiciona linhas em {table}."
+
+msgid "Apply these changes to the server?"
+msgstr "Aplicar estas alterações no servidor?"
+
+msgid "The restore changes the database. Do you want to run it now?"
+msgstr "O restore altera o banco de dados. Quer executar agora?"
+
+msgid "Delete the selected execution from the history? This cannot be undone."
+msgstr "Apagar do histórico a execução selecionada? Isso não pode ser desfeito."

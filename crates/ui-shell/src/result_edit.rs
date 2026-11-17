@@ -2,7 +2,8 @@
 //!
 //! Quando o lote é um comando só, que lê de uma tabela com chave primária
 //! e traz a chave inteira, o resultado fica editável: dois cliques (ou F2)
-//! numa célula editam ali mesmo, Enter grava (`UPDATE` pela chave), Esc
+//! numa célula editam ali mesmo, Enter pede confirmação (mostrando o valor
+//! de antes, o novo e o comando) e só então grava (`UPDATE` pela chave), Esc
 //! desiste; Delete nas linhas selecionadas pede confirmação e exclui. Para
 //! saber de onde vem cada coluna, o servidor prepara o comando (sem rodar)
 //! e diz a tabela e a coluna de origem; o catálogo diz a chave primária e
@@ -360,6 +361,60 @@ struct ConfirmDelete {
     preview: Vec<String>,
 }
 
+/// Célula esperando o "Yes" para gravar.
+#[derive(Clone, Debug)]
+struct ConfirmUpdate {
+    cell: Cell,
+    value: Option<String>,
+    /// Nome da coluna (ou do campo do documento).
+    column: String,
+    /// O valor que está no resultado agora.
+    old: Option<String>,
+    /// A linha, como `chave = valor, ...`.
+    row: String,
+    /// O comando que vai rodar (SQL); num motor de documentos não há.
+    command: Option<String>,
+}
+
+/// Coluna, valor de antes, valor novo e comando de uma gravação que
+/// espera confirmação.
+pub type UpdatePreview<'a> = (&'a str, Option<&'a str>, Option<&'a str>, Option<&'a str>);
+
+/// Onde a alteração vai ser gravada, para mostrar nas confirmações.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    /// Texto da conexão (servidor e banco).
+    pub server: String,
+    /// Ambiente do servidor e a cor dele.
+    pub environment: Option<(String, crate::registered::Rgb)>,
+}
+
+impl Place {
+    /// Cabeçalho de uma confirmação: o título e, ao lado, o ambiente.
+    pub fn heading(&self, ui: &mut egui::Ui, title: &str) {
+        ui.horizontal_wrapped(|ui| {
+            ui.heading(title);
+            if let Some((name, color)) = &self.environment
+                && !name.is_empty()
+            {
+                crate::registered::environment_badge(ui, name, *color);
+            }
+        });
+    }
+
+    /// Linha com o servidor, quando se sabe qual é.
+    pub fn server_line(&self, ui: &mut egui::Ui) {
+        if !self.server.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(trf!("Server: {server}", server = self.server)).weak(),
+                )
+                .truncate(),
+            );
+        }
+    }
+}
+
 /// O que volta da sessão.
 enum Reply {
     Sources(Result<Vec<Option<ColumnSource>>, String>),
@@ -403,6 +458,8 @@ pub struct ResultEditor {
     /// Gravando ou excluindo.
     busy: bool,
     confirm: Option<ConfirmDelete>,
+    /// Célula esperando a confirmação para gravar.
+    confirm_update: Option<ConfirmUpdate>,
     /// O que aconteceu por último (ou por que não dá para editar, depois
     /// de uma tentativa).
     message: Option<String>,
@@ -440,6 +497,7 @@ impl ResultEditor {
             doc_key: None,
             busy: false,
             confirm: None,
+            confirm_update: None,
             message: None,
             log: Vec::new(),
         };
@@ -471,6 +529,7 @@ impl ResultEditor {
             doc_key: None,
             busy: false,
             confirm: None,
+            confirm_update: None,
             message: None,
             log: Vec::new(),
         }
@@ -506,6 +565,24 @@ impl ResultEditor {
 
     pub fn is_confirming(&self) -> bool {
         self.confirm.is_some()
+    }
+
+    /// Uma célula espera a confirmação para ser gravada.
+    pub fn is_confirming_update(&self) -> bool {
+        self.confirm_update.is_some()
+    }
+
+    /// A gravação que espera confirmação: coluna, valor de antes, valor
+    /// novo e o comando (quando é SQL).
+    pub fn confirm_update_preview(&self) -> Option<UpdatePreview<'_>> {
+        self.confirm_update.as_ref().map(|c| {
+            (
+                c.column.as_str(),
+                c.old.as_deref(),
+                c.value.as_deref(),
+                c.command.as_deref(),
+            )
+        })
     }
 
     /// Prévia das linhas da confirmação de exclusão.
@@ -627,7 +704,7 @@ impl ResultEditor {
         grid.busy = self.is_busy();
         // As posições de linha guardadas (gravação em andamento, exclusão
         // esperando o "Yes") só valem enquanto a ordem e o filtro não mudam.
-        grid.view_locked = self.busy || self.confirm.is_some();
+        grid.view_locked = self.busy || self.confirm.is_some() || self.confirm_update.is_some();
         if self.status == Status::Editable
             && let Some(docs) = &self.docs
         {
@@ -673,14 +750,85 @@ impl ResultEditor {
             self.message = grid.read_only_reason.clone();
         }
         if let Some((cell, value)) = &out.commit {
-            self.update(store, *cell, value.clone());
+            self.request_update(store, *cell, value.clone());
         }
         if let Some(rows) = out.delete_rows.clone() {
             self.request_delete(store, rows);
         }
     }
 
-    /// Grava o valor de uma célula.
+    /// Pede para gravar o valor de uma célula; só grava depois do "Yes".
+    pub fn request_update(&mut self, store: &mut ResultStore, cell: Cell, value: Option<String>) {
+        if self.busy || self.confirm.is_some() || self.confirm_update.is_some() {
+            return;
+        }
+        let row = store.row(cell.row);
+        let old = row.get(cell.col).cloned().flatten();
+        if old == value {
+            return;
+        }
+        let shown = |v: &Option<String>| v.clone().unwrap_or_else(|| "NULL".into());
+        let pending = if let (Some(docs), Some(key)) = (&self.docs, self.doc_key) {
+            let Some(column) = store.columns().get(cell.col).cloned() else {
+                return;
+            };
+            if cell.col == key {
+                return;
+            }
+            let id = row.get(key).cloned().flatten();
+            ConfirmUpdate {
+                cell,
+                value,
+                column,
+                old,
+                row: format!("{} = {}", docs.key(), shown(&id)),
+                command: None,
+            }
+        } else if let Some(target) = &self.target {
+            let Some(sql) = target.update_sql(&row, cell.col, value.as_deref()) else {
+                return;
+            };
+            let Some(column) = target.columns.get(cell.col).and_then(|c| c.as_ref()) else {
+                return;
+            };
+            let key = target
+                .key
+                .iter()
+                .map(|&i| {
+                    let name = target.columns[i].as_ref().map_or("", |c| &c.name);
+                    format!("{name} = {}", shown(&row.get(i).cloned().flatten()))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            ConfirmUpdate {
+                cell,
+                value,
+                column: column.name.clone(),
+                old,
+                row: key,
+                command: Some(sql),
+            }
+        } else {
+            return;
+        };
+        self.message = None;
+        self.confirm_update = Some(pending);
+    }
+
+    /// Responde a confirmação de gravação.
+    pub fn answer_update(&mut self, yes: bool, store: &mut ResultStore) {
+        let Some(pending) = self.confirm_update.take() else {
+            return;
+        };
+        if yes {
+            self.update(store, pending.cell, pending.value);
+        } else {
+            self.message = Some(tr("The value was not changed.").into());
+        }
+    }
+
+    /// Grava agora o valor de uma célula, sem perguntar (quem pergunta é
+    /// [`ResultEditor::request_update`]).
     pub fn update(&mut self, store: &mut ResultStore, cell: Cell, value: Option<String>) {
         if self.busy {
             return;
@@ -845,8 +993,82 @@ impl ResultEditor {
         });
     }
 
-    /// A confirmação de exclusão, quando pedida.
-    pub fn confirm_window(&mut self, ctx: &egui::Context, store: &mut ResultStore, id: egui::Id) {
+    /// A confirmação de gravação de uma célula, quando pedida.
+    fn confirm_update_window(
+        &mut self,
+        ctx: &egui::Context,
+        store: &mut ResultStore,
+        id: egui::Id,
+        place: &Place,
+    ) {
+        let Some(pending) = &self.confirm_update else {
+            return;
+        };
+        let table = self.editing().unwrap_or_default();
+        let mut answer = None;
+        let modal = crate::theme::modal(id.with("update_cell")).show(ctx, |ui| {
+            crate::fit::dialog_width(ui, 480.0);
+            place.heading(ui, tr("Confirm Change"));
+            ui.label(trf!(
+                "You are about to change 1 value in {table}. Are you sure?",
+                table = table
+            ));
+            place.server_line(ui);
+            ui.add_space(4.0);
+            let shown = |v: &Option<String>| v.clone().unwrap_or_else(|| "NULL".into());
+            egui::ScrollArea::vertical()
+                .id_salt(id.with("update_cell_text"))
+                .max_height(crate::fit::dialog_height(ui, 220.0, 190.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(&pending.row).monospace());
+                    ui.label(
+                        // i18n-ignore
+                        RichText::new(format!(
+                            "{}: {}  →  {}",
+                            pending.column,
+                            shown(&pending.old),
+                            shown(&pending.value)
+                        ))
+                        .monospace()
+                        .strong(),
+                    );
+                    if let Some(sql) = &pending.command {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(sql).monospace().weak());
+                    }
+                });
+            ui.add_space(6.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // "No" com o foco: Enter não grava sem querer.
+                let no = ui.button(tr("No"));
+                if no.clicked() {
+                    answer = Some(false);
+                }
+                if ui.button(tr("Yes")).clicked() {
+                    answer = Some(true);
+                }
+                if !ui.ctx().memory(|m| m.focused().is_some()) {
+                    no.request_focus();
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        if let Some(yes) = answer {
+            self.answer_update(yes, store);
+        }
+    }
+
+    /// As confirmações (gravar uma célula, excluir linhas), quando pedidas.
+    pub fn confirm_window(
+        &mut self,
+        ctx: &egui::Context,
+        store: &mut ResultStore,
+        id: egui::Id,
+        place: &Place,
+    ) {
+        self.confirm_update_window(ctx, store, id, place);
         let Some(confirm) = &self.confirm else {
             return;
         };
@@ -855,11 +1077,14 @@ impl ResultEditor {
         let mut answer = None;
         let modal = crate::theme::modal(id.with("delete_rows")).show(ctx, |ui| {
             crate::fit::dialog_width(ui, 420.0);
-            ui.heading(if count == 1 {
-                tr("Delete Row")
-            } else {
-                tr("Delete Rows")
-            });
+            place.heading(
+                ui,
+                if count == 1 {
+                    tr("Delete Row")
+                } else {
+                    tr("Delete Rows")
+                },
+            );
             ui.label(if count == 1 {
                 trf!(
                     "You are about to delete 1 row from {table}. Are you sure?",
@@ -872,6 +1097,7 @@ impl ResultEditor {
                     table = table
                 )
             });
+            place.server_line(ui);
             ui.add_space(4.0);
             for line in &confirm.preview {
                 ui.label(RichText::new(line).monospace());
