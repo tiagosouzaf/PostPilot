@@ -376,10 +376,7 @@ fn relations<'a>(catalog: Option<&'a Catalog>, target: Option<&str>) -> Vec<&'a 
 const MAX_FIELDS: usize = 300;
 
 fn starts_with(name: &str, prefix: &str) -> bool {
-    name.len() >= prefix.len()
-        && name
-            .get(..prefix.len())
-            .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
+    crate::fuzzy::matches(name, prefix)
 }
 
 struct Items<'a> {
@@ -516,6 +513,13 @@ fn top_level(method: &str, path: &str) -> &'static [&'static str] {
 /// Sugestões para o cursor em `at` (bytes) num texto de requisições do
 /// Elasticsearch.
 pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalog>) -> Completion {
+    let mut c = candidates(text, tokens, at, catalog);
+    // Os que começam igual primeiro, os aproximados depois.
+    crate::fuzzy::sort(&mut c.items, &c.prefix);
+    c
+}
+
+fn candidates(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalog>) -> Completion {
     let none = Completion {
         replace: at..at,
         ..Completion::default()
@@ -850,7 +854,14 @@ mod tests {
         );
         assert_eq!(
             labels("GET /pedidos/_search\n{ \"query\": { \"ma|"),
-            ["match", "match_all", "match_phrase", "match_phrase_prefix"]
+            [
+                "match",
+                "match_all",
+                "match_phrase",
+                "match_phrase_prefix",
+                "dis_max",
+                "multi_match"
+            ]
         );
         assert_eq!(
             labels("GET /pedidos/_search\n{ \"query\": { \"bool\": { \"m|"),
@@ -920,7 +931,8 @@ mod tests {
     #[test]
     fn aggregations() {
         let text = "GET /pedidos/_search\n{ \"aggs\": { \"por_cidade\": { \"te|";
-        assert_eq!(labels(text), ["terms"]);
+        // Depois dos que começam igual, os que têm a palavra no meio.
+        assert_eq!(labels(text), ["terms", "significant_terms"]);
         // O nome da agregação é livre.
         assert!(labels("GET /pedidos/_search\n{ \"aggs\": { \"po|").is_empty());
         assert_eq!(

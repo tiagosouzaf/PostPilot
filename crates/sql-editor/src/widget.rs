@@ -230,6 +230,47 @@ fn one_line(
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
     painter.layout_job(job)
 }
+
+/// Como [`one_line`], com as letras em `marks` (índices em caracteres)
+/// destacadas: são as que casaram com o que foi digitado.
+fn marked_line(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    mark: Color32,
+    marks: &[usize],
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    if marks.is_empty() {
+        return one_line(painter, text, font, color, max_width);
+    }
+    let plain = egui::TextFormat::simple(font.clone(), color);
+    let strong = egui::TextFormat {
+        underline: egui::Stroke::new(1.0, mark),
+        ..egui::TextFormat::simple(font, mark)
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let mut marks = marks.iter().copied().peekable();
+    // Um trecho por sequência de letras do mesmo jeito.
+    let mut run = String::new();
+    let mut run_marked = false;
+    for (i, c) in text.chars().enumerate() {
+        let marked = marks.next_if_eq(&i).is_some();
+        if marked != run_marked && !run.is_empty() {
+            let format = if run_marked { &strong } else { &plain };
+            job.append(&run, 0.0, format.clone());
+            run.clear();
+        }
+        run_marked = marked;
+        run.push(c);
+    }
+    if !run.is_empty() {
+        job.append(&run, 0.0, if run_marked { strong } else { plain });
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    painter.layout_job(job)
+}
 /// Letra e margem da explicação embaixo da lista.
 const DOC_FONT: f32 = 12.0;
 const DOC_MARGIN: f32 = 6.0;
@@ -2338,6 +2379,7 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     let items = &p.completion.items;
+                    let typed = p.completion.prefix.trim_start_matches(['"', '[']);
                     for (i, item) in items.iter().enumerate().skip(p.top).take(rows) {
                         let (rect, resp) =
                             ui.allocate_exact_size(vec2(width, row_h), Sense::click());
@@ -2398,8 +2440,24 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                             .size()
                             .x;
                         let (label_max, detail_max) = split_row(avail, label_w, detail_w);
-                        let label =
-                            one_line(painter, &item.label, font.clone(), text_color, label_max);
+                        // As letras que casaram com o que foi digitado.
+                        let marks = crate::fuzzy::find(&item.label, typed)
+                            .map(|m| m.chars)
+                            .unwrap_or_default();
+                        let mark_color = if selected {
+                            Color32::WHITE
+                        } else {
+                            v.hyperlink_color
+                        };
+                        let label = marked_line(
+                            painter,
+                            &item.label,
+                            font.clone(),
+                            text_color,
+                            mark_color,
+                            &marks,
+                            label_max,
+                        );
                         let mut cut = label.elided;
                         painter.galley(
                             pos2(rect.left() + ROW_LEFT, mid.y - label.size().y / 2.0),
