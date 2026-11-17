@@ -88,20 +88,34 @@ impl Remote for Servers {
 }
 
 /// O que o IntelliSense das janelas entre servidores sabe: os servidores
-/// (como schemas) e, dos que já têm conexão aberta, as tabelas do banco do
-/// registro.
+/// (como schemas) e as tabelas do banco do registro, dos que já têm
+/// conexão aberta e dos que a consulta da janela cita (esses conectam em
+/// segundo plano, com a senha guardada).
 #[derive(Default)]
 pub struct Cache {
     /// Tabelas lidas, por servidor.
     relations: HashMap<TargetId, Vec<Relation>>,
     asked: HashSet<TargetId>,
+    /// Leituras em andamento e as que falharam.
+    loads: HashMap<TargetId, Load>,
     channel: Option<Channel>,
     /// Os nomes dos servidores do catálogo montado.
     names: Vec<(String, TargetId)>,
+    /// A janela e o texto de onde saíram os `mentioned`.
+    scanned: Option<(u32, u64)>,
+    /// Os servidores que a consulta da janela ativa cita.
+    mentioned: Vec<TargetId>,
     catalog: Catalog,
 }
 
-type Loaded = (TargetId, Vec<Relation>);
+/// Como está a leitura das tabelas de um servidor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Load {
+    Reading,
+    Failed(String),
+}
+
+type Loaded = (TargetId, Result<Vec<Relation>, String>);
 
 struct Channel(mpsc::Sender<Loaded>, mpsc::Receiver<Loaded>);
 
@@ -109,6 +123,13 @@ impl Cache {
     /// O catálogo para o editor: um schema por servidor.
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// Como está a leitura das tabelas do servidor de nome `name`: `None`
+    /// quando já chegou ou ninguém pediu.
+    pub fn load(&self, name: &str) -> Option<&Load> {
+        let (_, id) = self.names.iter().find(|(n, _)| n == name)?;
+        self.loads.get(id)
     }
 
     fn rebuild(&mut self) {
@@ -142,6 +163,59 @@ fn default_relations(catalog: Catalog) -> Vec<Relation> {
         }
     }
     out
+}
+
+/// Os servidores que a consulta cita: os nomes antes de um `.` ou de um
+/// `(` no lugar de uma tabela (depois de `FROM`, `JOIN` ou vírgula).
+fn mentioned(text: &str, names: &[(String, TargetId)]) -> Vec<TargetId> {
+    use pgstudio_sql_editor::lexer::{TokenKind, tokenize};
+    let known: Vec<&str> = names.iter().map(|(n, _)| n.as_str()).collect();
+    let tokens = tokenize(text);
+    let tokens: Vec<_> = tokens
+        .iter()
+        .filter(|t| !matches!(t.kind, TokenKind::Whitespace | TokenKind::Comment))
+        .collect();
+    let word = |i: usize| &text[tokens[i].range.clone()];
+    let mut out: Vec<TargetId> = Vec::new();
+    for i in 1..tokens.len().saturating_sub(1) {
+        let written = match tokens[i].kind {
+            TokenKind::Identifier => word(i).to_string(),
+            TokenKind::QuotedIdentifier => {
+                let w = word(i);
+                match w.strip_prefix('"').and_then(|w| w.strip_suffix('"')) {
+                    Some(inner) if !inner.is_empty() => inner.replace("\"\"", "\""),
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+        let before = word(i - 1);
+        let table_position = before == ","
+            || (tokens[i - 1].kind == TokenKind::Keyword
+                && (before.eq_ignore_ascii_case("from") || before.eq_ignore_ascii_case("join")));
+        if !table_position || !matches!(word(i + 1), "." | "(") {
+            continue;
+        }
+        if let Some(n) = pgstudio_federated::server_named(&known, &written) {
+            let id = &names[n].1;
+            if !out.contains(id) {
+                out.push(id.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Se o cursor (em caracteres) está logo depois de um `nome.`, com ou sem
+/// o começo de outro nome: é onde a lista de tabelas de um servidor abre.
+fn after_dot(text: &str, cursor: usize) -> bool {
+    let before: Vec<char> = text.chars().take(cursor).collect();
+    let word = before
+        .iter()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || **c == '_')
+        .count();
+    before.len() > word && before[before.len() - word - 1] == '.'
 }
 
 /// O texto de exemplo de uma janela nova, com os nomes dos servidores
@@ -317,16 +391,21 @@ impl ShellApp {
     }
 
     /// Mantém o catálogo do IntelliSense das janelas entre servidores: os
-    /// nomes das conexões guardadas e, das que têm conexão aberta, as
-    /// tabelas (lidas numa thread, uma vez por servidor).
+    /// nomes das conexões guardadas e as tabelas das que têm conexão
+    /// aberta e das que a consulta cita. Tudo é lido em threads, uma vez
+    /// por servidor; um servidor citado e ainda sem conexão conecta com a
+    /// senha guardada (a conexão fica com a janela, e o F5 usa a mesma).
     pub(crate) fn federated_step(&mut self, ctx: &egui::Context) {
-        if !self.active_doc.is_some_and(|id| self.is_federated(id)) {
+        let Some(doc_id) = self.active_doc.filter(|id| self.is_federated(*id)) else {
             return;
-        }
+        };
         let saved = self.multi_targets();
         let names: Vec<(String, TargetId)> =
             saved.iter().map(|t| (t.name.clone(), t.id())).collect();
         let mut changed = names != self.federated.names;
+        if changed {
+            self.federated.scanned = None;
+        }
         self.federated.names = names;
 
         // De quem dá para ler as tabelas: os servidores conectados no
@@ -354,36 +433,159 @@ impl ShellApp {
                 }
             }
         }
+
+        // Os servidores que a consulta cita (relido quando o texto muda).
+        let mut connections: Option<Connections> = None;
+        if let Some(doc) = self.documents.get(doc_id) {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            doc.text.hash(&mut hasher);
+            let stamp = Some((doc_id, hasher.finish()));
+            if self.federated.scanned != stamp {
+                self.federated.scanned = stamp;
+                // O exemplo de uma janela nova cita os dois primeiros
+                // servidores: ninguém os pediu ainda.
+                self.federated.mentioned = if doc.text == template(&saved) {
+                    Vec::new()
+                } else {
+                    mentioned(&doc.text, &self.federated.names)
+                };
+            }
+            connections = doc.federated.as_ref().map(|w| w.connections.clone());
+        }
+
+        let (connector, secrets) = (self.connector.clone(), self.secrets.clone());
         let cache = &mut self.federated;
         let Channel(tx, rx) = cache.channel.get_or_insert_with(|| {
             let (tx, rx) = mpsc::channel();
             Channel(tx, rx)
         });
-        for (id, provider) in providers {
+        let mut status: Option<String> = None;
+        for (id, provider) in &providers {
             if !cache.asked.insert(id.clone()) {
                 continue;
             }
-            let (tx, ctx) = (tx.clone(), ctx.clone());
+            cache.loads.insert(id.clone(), Load::Reading);
+            let (tx, ctx, id, provider) = (tx.clone(), ctx.clone(), id.clone(), provider.clone());
             std::thread::spawn(move || {
-                if let Ok(catalog) = provider.catalog(&id.database) {
-                    let _ = tx.send((id, default_relations(catalog)));
-                    ctx.request_repaint();
-                }
+                let result = provider
+                    .catalog(&id.database)
+                    .map(default_relations)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send((id, result));
+                ctx.request_repaint();
             });
         }
-        while let Ok((id, relations)) = rx.try_recv() {
-            cache.relations.insert(id, relations);
-            changed = true;
+        for id in cache.mentioned.clone() {
+            let (Some(target), Some(connections)) =
+                (saved.iter().find(|t| t.id() == id), connections.as_ref())
+            else {
+                continue;
+            };
+            if !cache.asked.insert(id.clone()) {
+                continue;
+            }
+            cache.loads.insert(id.clone(), Load::Reading);
+            status = Some(trf!(
+                "Reading the tables of {server} in the background...",
+                server = written_name(&target.name)
+            ));
+            let target = RunTarget {
+                name: target.name.clone(),
+                settings: target.settings.clone(),
+                live: None,
+                missing: false,
+            };
+            let (tx, ctx, connections) = (tx.clone(), ctx.clone(), connections.clone());
+            let (connector, secrets) = (connector.clone(), secrets.clone());
+            std::thread::spawn(move || {
+                let result = crate::multi::open_service(
+                    &target,
+                    connector.as_ref(),
+                    secrets.as_ref(),
+                    &connections,
+                )
+                .and_then(|_| {
+                    let open = connections.lock().unwrap_or_else(|e| e.into_inner());
+                    open.get(&id)
+                        .map(|c| c.metadata.clone())
+                        .ok_or_else(|| tr("Connect to a server to run queries.").to_string())
+                })
+                .and_then(|metadata| metadata.catalog(&id.database).map_err(|e| e.to_string()))
+                .map(default_relations);
+                let _ = tx.send((id, result));
+                ctx.request_repaint();
+            });
+        }
+        let mut arrived = false;
+        while let Ok((id, result)) = rx.try_recv() {
+            let name = cache
+                .names
+                .iter()
+                .find(|(_, i)| *i == id)
+                .map(|(n, _)| written_name(n));
+            let cited = cache.mentioned.contains(&id);
+            match result {
+                Ok(relations) => {
+                    if let (Some(name), true) = (name, cited) {
+                        status = Some(trf!(
+                            "{server}: {count} tables and views ready for IntelliSense.",
+                            server = name,
+                            count = relations.len()
+                        ));
+                        arrived = true;
+                    }
+                    cache.loads.remove(&id);
+                    cache.relations.insert(id, relations);
+                    changed = true;
+                }
+                Err(error) => {
+                    if let (Some(name), true) = (name, cited) {
+                        status = Some(trf!(
+                            "Could not read the tables of {server}: {error} (Ctrl+Shift+R tries again)",
+                            server = name,
+                            error = error
+                        ));
+                    }
+                    cache.loads.insert(id, Load::Failed(error));
+                }
+            }
         }
         if changed {
             cache.rebuild();
         }
+        if let Some(status) = status {
+            self.status = status;
+        }
+        // As tabelas chegaram e o cursor ainda está depois do ponto: a
+        // lista abre sozinha, como se a pessoa tivesse acabado de digitar.
+        if arrived
+            && let Some((a, c)) =
+                pgstudio_sql_editor::selection(ctx, crate::panels::editor_id(doc_id))
+            && a == c
+            && let Some(doc) = self.documents.get_mut(doc_id)
+            && after_dot(&doc.text, c)
+        {
+            doc.editor.list_members();
+        }
+    }
+
+    /// As tabelas que o IntelliSense das janelas entre servidores conhece.
+    pub fn federated_catalog(&self) -> &Catalog {
+        self.federated.catalog()
+    }
+
+    /// Como está a leitura das tabelas do servidor `name` para o
+    /// IntelliSense das janelas entre servidores.
+    pub fn federated_load(&self, name: &str) -> Option<&Load> {
+        self.federated.load(name)
     }
 
     /// Lê de novo as tabelas dos servidores (Ctrl+Shift+R numa janela
     /// entre servidores).
     pub(crate) fn federated_refresh(&mut self) {
         self.federated.asked.clear();
+        self.federated.loads.clear();
     }
 }
 
@@ -443,6 +645,42 @@ mod tests {
         cache.rebuild();
         let schema = cache.catalog().schema("\"PG Vendas\"").unwrap();
         assert_eq!(schema.relations[0].name, "clientes");
+    }
+
+    #[test]
+    fn the_servers_a_query_cites_are_the_ones_in_table_position() {
+        let id = |n: &str| TargetId {
+            server: n.into(),
+            database: "d".into(),
+        };
+        let names = vec![
+            ("Tiib@Production".to_string(), id("a")),
+            ("PG Vendas".to_string(), id("b")),
+            ("d".to_string(), id("c")),
+        ];
+        let found = |sql: &str| mentioned(sql, &names);
+        assert_eq!(
+            found("SELECT * FROM documento d inner join \"Tiib@Production\". ORDER BY d.id"),
+            [id("a")]
+        );
+        assert_eq!(
+            found("select * from pg_vendas.x, \"tiib@production\"($$ select 1 $$) t"),
+            [id("b"), id("a")]
+        );
+        // Um apelido com nome de servidor não é o servidor.
+        assert!(found("select d.id from documento d where d.id = 1").is_empty());
+        // Ainda digitando o nome: nada a ler.
+        assert!(found("select * from \"Tiib@Prod").is_empty());
+        assert!(found("select * from \"Tiib@Production\"").is_empty());
+    }
+
+    #[test]
+    fn the_list_reopens_only_right_after_a_dot() {
+        assert!(after_dot("from \"A\".", 9));
+        assert!(after_dot("from a.doc", 10));
+        assert!(!after_dot("from a.doc ", 11));
+        assert!(!after_dot("from a", 6));
+        assert!(!after_dot("", 0));
     }
 
     #[test]

@@ -6361,6 +6361,15 @@ msgstr "A consulta entre servidores só lê: escreva um SELECT."
 msgid "Could not use the local database for the join: {error}"
 msgstr "Não foi possível usar o banco local do join: {error}"
 
+msgid "Reading the tables of {server} in the background..."
+msgstr "Lendo as tabelas de {server} em segundo plano..."
+
+msgid "{server}: {count} tables and views ready for IntelliSense."
+msgstr "{server}: {count} tabelas e views prontas para o IntelliSense."
+
+msgid "Could not read the tables of {server}: {error} (Ctrl+Shift+R tries again)"
+msgstr "Não foi possível ler as tabelas de {server}: {error} (Ctrl+Shift+R tenta de novo)"
+
 msgid "Cross-server"
 msgstr "Entre servidores"
 
