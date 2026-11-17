@@ -32,7 +32,10 @@ pub use install::{
     AUR_PACKAGE, CANCELLED, INSTALL_COMMAND, InstallKind, Installed, NOT_AUTHORIZED, aur_helper,
     cleanup_old_binary, find_pkexec, install,
 };
-pub use net::{Progress, download_verified, fetch_latest, fetch_latest_from_sums};
+pub use net::{
+    CONNECTION_FAILED, MAX_ATTEMPTS, Progress, SERVER_UNAVAILABLE, download_verified, fetch_latest,
+    fetch_latest_from_sums,
+};
 pub use release::{
     Asset, Release, ReleaseError, parse_release, parse_sha256sums, release_from_sums,
 };
