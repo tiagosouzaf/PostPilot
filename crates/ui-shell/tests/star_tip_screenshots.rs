@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Id, Pos2, Rect};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_sql_editor::{Colors, EditorState, SqlEditor};
 
@@ -56,6 +57,10 @@ const LOTES: &[(&str, &str)] = &[
     ("atualizado_por", "uuid"),
     ("atualizado_em", "timestamp with time zone"),
     ("excluido_em", "timestamp with time zone"),
+    (
+        "registro_do_controle_de_qualidade_concluido_pela_equipe_em",
+        "timestamp with time zone",
+    ),
 ];
 
 fn catalog() -> Catalog {
@@ -103,7 +108,7 @@ fn out(name: &str) -> PathBuf {
 
 /// Abre `text`, para o ponteiro no caractere `col` da primeira linha e
 /// salva.
-fn shot(text: &str, col: usize, size: [f32; 2], name: &str) {
+fn shot(text: &str, col: usize, size: [f32; 2], pick: &[&str], name: &str) {
     pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
     let doc = Doc {
         catalog: catalog(),
@@ -141,6 +146,15 @@ fn shot(text: &str, col: usize, size: [f32; 2], name: &str) {
     );
     h.hover_at(pos);
     h.run_steps(40);
+    // O ponteiro vai para dentro da lista e escolhe as colunas.
+    for label in pick {
+        let pos = h.get_by_label(label).rect().center();
+        h.hover_at(pos);
+        h.run_steps(3);
+        h.get_by_label(label).click();
+        h.run_steps(3);
+    }
+    h.run_steps(60);
     let (_, tip) = h
         .state()
         .state
@@ -161,25 +175,29 @@ fn star_tip() {
     shot(
         "select * from lotes l where l.",
         7,
-        [1000.0, 520.0],
-        "1-colunas-do-asterisco.png",
+        [1000.0, 560.0],
+        &["numero", "data_de_entrada", "quantidade_de_animais_atual"],
+        "1-colunas-escolhidas.png",
     );
     shot(
         "select f.*, l.numero from lotes l join fazendas f on f.id = l.fazenda_id",
         9,
         [760.0, 300.0],
+        &[],
         "2-alias-asterisco.png",
     );
     shot(
         "select * from lotes l join fazendas f on f.id = l.fazenda_id",
         7,
-        [1000.0, 520.0],
+        [1100.0, 560.0],
+        &["fazendas"],
         "3-join.png",
     );
     shot(
         "select * from lotes l where l.",
         7,
         [520.0, 300.0],
+        &["fazenda_id"],
         "4-janela-pequena.png",
     );
 }
