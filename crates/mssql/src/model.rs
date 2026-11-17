@@ -276,7 +276,7 @@ impl MssqlExplorer {
     /// até o fim e volta para o banco onde estava.
     pub(crate) fn run_ddl(&self, db: &str, statements: &[String]) -> Result<(), MetadataError> {
         self.runtime.block_on(async {
-            let mut session = self.session.lock().await;
+            let mut session = self.healthy().await.map_err(MetadataError)?;
             let home = session
                 .rows("SELECT DB_NAME()")
                 .await

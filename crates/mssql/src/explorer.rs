@@ -29,7 +29,7 @@ use pgstudio_core::metadata::{
 use pgstudio_i18n::tr;
 use pgstudio_pg_client::DbRuntime;
 
-use crate::Session;
+use crate::{Broken, Session};
 
 /// Nomes das colunas e linhas de uma consulta.
 type Named = (Vec<String>, Vec<Vec<Option<String>>>);
@@ -55,12 +55,14 @@ const LOGIN_TYPES: &str = "'S', 'U', 'G', 'E', 'X'";
 /// Lê os metadados com a sessão aberta pelo Connect to Server.
 pub struct MssqlExplorer {
     pub(crate) runtime: DbRuntime,
-    pub(crate) session: tokio::sync::Mutex<Session>,
+    /// Só por [`MssqlExplorer::healthy`], que reabre a conexão que caiu.
+    session: tokio::sync::Mutex<Session>,
+    password: String,
     label: String,
 }
 
 impl MssqlExplorer {
-    pub fn new(session: Session, _password: String, runtime: DbRuntime) -> Self {
+    pub fn new(session: Session, password: String, runtime: DbRuntime) -> Self {
         let s = session.settings();
         let label = format!(
             "{} (SQL Server {} - {})",
@@ -71,6 +73,7 @@ impl MssqlExplorer {
         MssqlExplorer {
             runtime,
             session: tokio::sync::Mutex::new(session),
+            password,
             label,
         }
     }
@@ -80,16 +83,38 @@ impl MssqlExplorer {
         &self.label
     }
 
+    /// A sessão, trocada por uma nova se a anterior não serve mais (um
+    /// tempo esgotado deixa a conexão fora de sincronia; o servidor pode
+    /// ter derrubado uma conexão parada).
+    pub(crate) async fn healthy(&self) -> Result<tokio::sync::MutexGuard<'_, Session>, String> {
+        let mut session = self.session.lock().await;
+        if session.is_broken() {
+            session.reopen(&self.password).await?;
+        }
+        Ok(session)
+    }
+
+    /// Uma leitura. Se a conexão caiu, abre outra e lê de novo, uma vez
+    /// (só leituras passam por aqui: repetir não altera nada). Depois de
+    /// um tempo esgotado não repete na hora, para não esperar em dobro: a
+    /// próxima leitura já vai numa conexão nova.
+    async fn read(&self, sql: &str) -> Result<Named, String> {
+        let mut session = self.healthy().await?;
+        match session.table(sql).await {
+            Err(_) if session.broken() == Some(Broken::Lost) => {
+                session.reopen(&self.password).await?;
+                session.table(sql).await
+            }
+            result => result,
+        }
+    }
+
     pub(crate) fn rows(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, MetadataError> {
-        self.runtime
-            .block_on(async { self.session.lock().await.rows(sql).await })
-            .map_err(MetadataError)
+        self.table(sql).map(|(_, rows)| rows)
     }
 
     fn table(&self, sql: &str) -> Result<Named, MetadataError> {
-        self.runtime
-            .block_on(async { self.session.lock().await.table(sql).await })
-            .map_err(MetadataError)
+        self.runtime.block_on(self.read(sql)).map_err(MetadataError)
     }
 
     /// Nós `(id, nome)` de uma consulta de duas colunas, com o id prefixado.

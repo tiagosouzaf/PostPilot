@@ -26,8 +26,9 @@ use pgstudio_automation::{
     Client, EditMode, Inbox, Origin, Pending, Reply, Responder, ToolCall, catalog,
 };
 use pgstudio_core::connection::{Connected, Engine};
-use pgstudio_core::query::QueryService;
+use pgstudio_core::query::{QueryEvent, QueryService, QuerySession};
 use serde_json::{Value, json};
+use std::time::{Duration, Instant};
 
 use crate::execution::{Execution, MessageKind};
 use crate::registered::{AiAccess, Rgb, ServerTag};
@@ -962,6 +963,7 @@ impl ShellApp {
         responder: Responder,
     ) {
         let session = queries.open(database);
+        let limit = ReadLimit::start(&session, &batch);
         // A sessão vive até o fim da execução; depois a conexão fecha (e
         // uma transação abortada vai junto).
         let keep = session.clone();
@@ -971,6 +973,9 @@ impl ShellApp {
         session.execute(
             batch,
             Box::new(move |event| {
+                if let Some(e) = limit.finished(&event) {
+                    collector.push(e);
+                }
                 collector.push(event);
                 if collector.is_finished() && keep.take().is_some() {
                     let reply = Reply {
@@ -1348,6 +1353,7 @@ impl ShellApp {
         responder: Responder,
     ) {
         let session = queries.open(database);
+        let limit = ReadLimit::start(&session, &batch);
         let done = self.claude.done_tx.clone();
         let repaint = ctx.clone();
         // A sessão vive até o fim da execução; depois a conexão fecha.
@@ -1355,6 +1361,9 @@ impl ShellApp {
         session.execute(
             batch,
             Box::new(move |event| {
+                if let Some(e) = limit.finished(&event) {
+                    gatherer.push(e);
+                }
                 gatherer.push(event);
                 if gatherer.is_finished()
                     && let Some((_, finish)) = keep.take()
@@ -1578,4 +1587,150 @@ fn cut_cell(s: &str) -> String {
         end -= 1;
     }
     format!("{}…", &s[..end])
+}
+
+/// O tempo máximo de uma leitura do assistente no SQL Server. O servidor
+/// não tem `statement_timeout` e as conexões de consulta não têm limite
+/// (como no SSMS), então quem conta e cancela é o PostPilot, como os 60 s
+/// do PostgreSQL. Os outros lotes (os que o usuário confirmou) não têm
+/// limite.
+struct ReadLimit {
+    done: Arc<std::sync::atomic::AtomicBool>,
+    expired: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ReadLimit {
+    fn start(session: &Arc<dyn QuerySession>, batch: &str) -> ReadLimit {
+        Self::start_with(
+            session,
+            batch,
+            pgstudio_automation::safety::MSSQL_READ_ONLY_LIMIT,
+        )
+    }
+
+    fn start_with(session: &Arc<dyn QuerySession>, batch: &str, limit: Duration) -> ReadLimit {
+        use std::sync::atomic::Ordering;
+        let this = ReadLimit {
+            done: Arc::default(),
+            expired: Arc::default(),
+        };
+        if !pgstudio_automation::safety::is_mssql_read_only_batch(batch) {
+            return this;
+        }
+        let (done, expired) = (this.done.clone(), this.expired.clone());
+        let session = Arc::downgrade(session);
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < limit {
+                if done.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100).min(limit));
+            }
+            if let Some(session) = session.upgrade()
+                && !done.load(Ordering::SeqCst)
+            {
+                expired.store(true, Ordering::SeqCst);
+                session.cancel();
+            }
+        });
+        this
+    }
+
+    /// Chamado a cada evento. No fim de uma execução que o limite
+    /// cancelou, devolve o erro que explica o cancelamento.
+    fn finished(&self, event: &QueryEvent) -> Option<QueryEvent> {
+        use std::sync::atomic::Ordering;
+        let QueryEvent::Finished { canceled } = event else {
+            return None;
+        };
+        self.done.store(true, Ordering::SeqCst);
+        (*canceled && self.expired.load(Ordering::SeqCst)).then(|| {
+            QueryEvent::Error(pgstudio_core::query::ServerMessage::error(format!(
+                "Canceled: the query ran for more than {} s, the limit for read-only queries. \
+                 Make it cheaper (filter, aggregate, TOP) or split it.",
+                pgstudio_automation::safety::MSSQL_READ_ONLY_LIMIT.as_secs()
+            )))
+        })
+    }
+}
+
+#[cfg(test)]
+mod read_limit_tests {
+    use super::*;
+    use pgstudio_core::query::QuerySink;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Counting {
+        cancels: AtomicUsize,
+    }
+
+    impl QuerySession for Counting {
+        fn execute(&self, _sql: String, _sink: QuerySink) {}
+
+        fn cancel(&self) {
+            self.cancels.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn database(&self) -> String {
+            String::new()
+        }
+    }
+
+    fn wait_for(what: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !what() {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_slow_sql_server_read_is_canceled_and_explained() {
+        let counting = Arc::new(Counting::default());
+        let session: Arc<dyn QuerySession> = counting.clone();
+        let batch = read_only_batch_for(Engine::SqlServer, "SELECT 1");
+        let limit = ReadLimit::start_with(&session, &batch, Duration::from_millis(30));
+        assert!(
+            limit
+                .finished(&QueryEvent::CommandComplete { rows: 1 })
+                .is_none()
+        );
+        wait_for(|| counting.cancels.load(Ordering::SeqCst) == 1);
+        match limit.finished(&QueryEvent::Finished { canceled: true }) {
+            Some(QueryEvent::Error(e)) => assert!(e.message.contains("60 s"), "{}", e.message),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn fast_reads_and_other_batches_are_left_alone() {
+        let counting = Arc::new(Counting::default());
+        let session: Arc<dyn QuerySession> = counting.clone();
+        // Terminou antes do limite.
+        let batch = read_only_batch_for(Engine::SqlServer, "SELECT 1");
+        let limit = ReadLimit::start_with(&session, &batch, Duration::from_millis(150));
+        assert!(
+            limit
+                .finished(&QueryEvent::Finished { canceled: false })
+                .is_none()
+        );
+        // O que o usuário confirmou e os outros motores não têm limite.
+        for batch in [
+            "UPDATE t SET a = 1".to_string(),
+            read_only_batch_for(Engine::PostgreSql, "SELECT 1"),
+        ] {
+            let limit = ReadLimit::start_with(&session, &batch, Duration::from_millis(1));
+            std::thread::sleep(Duration::from_millis(50));
+            // Um cancelamento do usuário não ganha a explicação do limite.
+            assert!(
+                limit
+                    .finished(&QueryEvent::Finished { canceled: true })
+                    .is_none()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(counting.cancels.load(Ordering::SeqCst), 0);
+    }
 }

@@ -22,7 +22,7 @@ use std::time::Duration;
 use pgstudio_core::connection::{
     ConnectError, Connected, ConnectionSettings, Connector, Engine, SslMode,
 };
-use pgstudio_i18n::trf;
+use pgstudio_i18n::{tr, trf};
 use pgstudio_pg_client::DbRuntime;
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel, SqlBrowser};
 use tokio::net::TcpStream;
@@ -33,6 +33,20 @@ pub use query::{MssqlQueryService, MssqlQuerySession};
 
 /// Tempo máximo para abrir a conexão.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Quanto a árvore e os outros metadados esperam o servidor mandar o
+/// próximo pedaço de uma resposta. As janelas de consulta não têm limite,
+/// como no SSMS: quem decide parar é o usuário, no Cancelar.
+pub const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Por que uma conexão não serve mais.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Broken {
+    /// O servidor demorou demais: a resposta ficou pela metade.
+    TimedOut,
+    /// A conexão caiu ou saiu de sincronia.
+    Lost,
+}
 
 /// Nome que o servidor mostra em `sys.dm_exec_sessions.program_name`.
 pub const APPLICATION_NAME: &str = "PostPilot";
@@ -45,18 +59,35 @@ pub struct Session {
     client: TdsClient,
     settings: ConnectionSettings,
     server_version: String,
+    /// Limite de espera por pedaço de resposta (`None`: sem limite).
+    command_timeout: Option<Duration>,
+    /// Depois de uma falha do driver (tempo esgotado, queda) a conexão não
+    /// pode ser reutilizada: quem a guarda abre outra.
+    broken: Option<Broken>,
     /// O túnel SSH por onde a conexão passa: fica aberto enquanto ela
     /// existir.
     _tunnel: Option<Arc<pgstudio_ssh::Tunnel>>,
 }
 
 impl Session {
-    /// Conecta com as configurações e a senha dadas.
+    /// Conecta com as configurações e a senha dadas, sem limite de tempo
+    /// para os comandos (janelas de consulta).
     pub async fn connect(
         settings: &ConnectionSettings,
         password: &str,
     ) -> Result<Session, ConnectError> {
-        match tokio::time::timeout(CONNECT_TIMEOUT, Self::connect_inner(settings, password)).await {
+        Self::connect_with(settings, password, None).await
+    }
+
+    /// Como [`Session::connect`], desistindo de um comando quando o
+    /// servidor fica `command_timeout` sem mandar nada.
+    pub async fn connect_with(
+        settings: &ConnectionSettings,
+        password: &str,
+        command_timeout: Option<Duration>,
+    ) -> Result<Session, ConnectError> {
+        let connecting = Self::connect_inner(settings, password, command_timeout);
+        match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
             Ok(r) => r,
             Err(_) => Err(ConnectError::Network(trf!(
                 "Timed out connecting to {server}.",
@@ -68,8 +99,10 @@ impl Session {
     async fn connect_inner(
         settings: &ConnectionSettings,
         password: &str,
+        command_timeout: Option<Duration>,
     ) -> Result<Session, ConnectError> {
         let mut config = config(settings, password);
+        config.command_timeout(command_timeout);
         // Com túnel SSH, o socket vai para a porta local dele (o `config`
         // continua com o nome do servidor, para o certificado). Pelo túnel
         // a instância nomeada não é procurada: vale a porta.
@@ -84,6 +117,8 @@ impl Session {
                         client,
                         settings: settings.clone(),
                         server_version,
+                        command_timeout,
+                        broken: None,
                         _tunnel: tunnel,
                     });
                 }
@@ -116,6 +151,35 @@ impl Session {
         &mut self.client
     }
 
+    /// Se a conexão não serve mais, e por quê.
+    pub fn broken(&self) -> Option<Broken> {
+        self.broken
+    }
+
+    pub fn is_broken(&self) -> bool {
+        self.broken.is_some()
+    }
+
+    /// Registra uma falha do driver: a conexão não é mais reutilizada.
+    /// Devolve o texto para o usuário.
+    pub fn fail(&mut self, e: &tiberius::error::Error) -> String {
+        self.broken = Some(if timed_out(e) {
+            Broken::TimedOut
+        } else {
+            Broken::Lost
+        });
+        describe(e)
+    }
+
+    /// Troca esta conexão por uma nova, com as mesmas configurações.
+    pub async fn reopen(&mut self, password: &str) -> Result<(), String> {
+        let settings = self.settings.clone();
+        *self = Session::connect_with(&settings, password, self.command_timeout)
+            .await
+            .map_err(|e| e.message().to_string())?;
+        Ok(())
+    }
+
     /// Para cancelar de fora o lote em andamento.
     pub fn cancel_handle(&self) -> tiberius::CancelHandle {
         self.client.cancel_handle()
@@ -133,29 +197,44 @@ impl Session {
         sql: &str,
     ) -> Result<(Vec<String>, Vec<Vec<Option<String>>>), String> {
         use futures_util::TryStreamExt;
-        let mut stream = self.client.batch(sql).await.map_err(|e| describe(&e))?;
         let mut names = Vec::new();
         let mut rows = Vec::new();
         let mut results = 0;
         let mut error = None;
-        while let Some(item) = stream.try_next().await.map_err(|e| describe(&e))? {
-            match item {
-                tiberius::BatchItem::Metadata(columns) => {
-                    results += 1;
-                    if results == 1 {
-                        names = columns.iter().map(|c| c.name().to_string()).collect();
+        // Qualquer falha do driver (não as mensagens de erro do servidor,
+        // que chegam como itens) deixa a conexão sem uso.
+        let failed = 'read: {
+            let mut stream = match self.client.batch(sql).await {
+                Ok(s) => s,
+                Err(e) => break 'read Some(e),
+            };
+            loop {
+                let item = match stream.try_next().await {
+                    Ok(Some(item)) => item,
+                    Ok(None) => break 'read None,
+                    Err(e) => break 'read Some(e),
+                };
+                match item {
+                    tiberius::BatchItem::Metadata(columns) => {
+                        results += 1;
+                        if results == 1 {
+                            names = columns.iter().map(|c| c.name().to_string()).collect();
+                        }
                     }
+                    tiberius::BatchItem::Row(row) if results == 1 => rows.push(
+                        row.cells()
+                            .map(|(c, d)| value::to_text(d, c.column_type()))
+                            .collect(),
+                    ),
+                    tiberius::BatchItem::Message(m) if m.is_error && error.is_none() => {
+                        error = Some(m.message)
+                    }
+                    _ => {}
                 }
-                tiberius::BatchItem::Row(row) if results == 1 => rows.push(
-                    row.cells()
-                        .map(|(c, d)| value::to_text(d, c.column_type()))
-                        .collect(),
-                ),
-                tiberius::BatchItem::Message(m) if m.is_error && error.is_none() => {
-                    error = Some(m.message)
-                }
-                _ => {}
             }
+        };
+        if let Some(e) = failed {
+            return Err(self.fail(&e));
         }
         match error {
             Some(e) => Err(e),
@@ -246,10 +325,35 @@ async fn server_version(client: &mut TdsClient) -> Option<String> {
     row.get::<&str, _>(0).map(str::to_string)
 }
 
+/// Se o erro é o servidor não ter respondido a tempo.
+fn timed_out(e: &tiberius::error::Error) -> bool {
+    matches!(
+        e,
+        tiberius::error::Error::Io {
+            kind: std::io::ErrorKind::TimedOut,
+            ..
+        }
+    )
+}
+
 /// Erro do driver como texto.
 pub fn describe(e: &tiberius::error::Error) -> String {
     match e {
         tiberius::error::Error::Server(t) => t.message().to_string(),
+        _ if timed_out(e) => tr(
+            "The server took too long to answer and the connection was closed. Try again: PostPilot opens a new connection by itself.",
+        )
+        .to_string(),
+        // A conexão ficou pela metade (tempo esgotado ou envio
+        // interrompido) e o driver a recusa.
+        tiberius::error::Error::Protocol(m)
+            if m.contains("out of sync") || m.contains("inconsistent state") =>
+        {
+            tr(
+                "The connection to the server was lost. Try again: PostPilot opens a new connection by itself.",
+            )
+            .to_string()
+        }
         tiberius::error::Error::Io { message, .. } => message.clone(),
         other => other.to_string(),
     }
@@ -285,11 +389,22 @@ pub fn connect_error(e: &tiberius::error::Error, settings: &ConnectionSettings) 
 #[derive(Clone)]
 pub struct MssqlConnector {
     runtime: DbRuntime,
+    metadata_timeout: Duration,
 }
 
 impl MssqlConnector {
     pub fn new(runtime: DbRuntime) -> Self {
-        MssqlConnector { runtime }
+        MssqlConnector {
+            runtime,
+            metadata_timeout: METADATA_TIMEOUT,
+        }
+    }
+
+    /// Outro limite de espera para a árvore e os metadados (os testes
+    /// usam um curto).
+    pub fn with_metadata_timeout(mut self, timeout: Duration) -> Self {
+        self.metadata_timeout = timeout;
+        self
     }
 }
 
@@ -301,9 +416,11 @@ impl Connector for MssqlConnector {
     ) -> Result<Connected, ConnectError> {
         let mut settings = settings.clone();
         settings.engine = Engine::SqlServer;
-        let session = self
-            .runtime
-            .block_on(Session::connect(&settings, password))?;
+        let session = self.runtime.block_on(Session::connect_with(
+            &settings,
+            password,
+            Some(self.metadata_timeout),
+        ))?;
         let server_version = session.server_version().to_string();
         let explorer = MssqlExplorer::new(session, password.to_string(), self.runtime.clone());
         Ok(Connected {

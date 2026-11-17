@@ -505,6 +505,21 @@ pub fn read_only_batch(sql: &str) -> String {
     )
 }
 
+/// Como começa o lote só de leitura do SQL Server.
+pub const MSSQL_READ_ONLY_PREFIX: &str =
+    "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION;";
+
+/// Quanto uma leitura do assistente pode rodar no SQL Server, que não tem
+/// `statement_timeout`: quem conta o tempo e cancela é o PostPilot. Igual
+/// ao [`READ_ONLY_TIMEOUT`] do PostgreSQL.
+pub const MSSQL_READ_ONLY_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Se `batch` é um lote só de leitura do SQL Server, montado pelo
+/// [`read_only_batch_for`].
+pub fn is_mssql_read_only_batch(batch: &str) -> bool {
+    batch.starts_with(MSSQL_READ_ONLY_PREFIX)
+}
+
 /// Como [`read_only_batch`], no motor. O SQL Server não tem transação só
 /// de leitura: o lote (que o [`classify_for`] já viu que só lê) roda numa
 /// transação que é sempre desfeita, com `XACT_ABORT` e sem esperar mais
@@ -517,9 +532,9 @@ pub fn read_only_batch_for(engine: pgstudio_core::connection::Engine, sql: &str)
         | pgstudio_core::connection::Engine::MongoDb
         | pgstudio_core::connection::Engine::Elasticsearch => sql.to_string(),
         pgstudio_core::connection::Engine::PostgreSql => read_only_batch(sql),
-        pgstudio_core::connection::Engine::SqlServer => format!(
-            "SET XACT_ABORT ON; SET LOCK_TIMEOUT 60000; BEGIN TRANSACTION; {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;"
-        ),
+        pgstudio_core::connection::Engine::SqlServer => {
+            format!("{MSSQL_READ_ONLY_PREFIX} {sql}\n;\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;")
+        }
     }
 }
 
