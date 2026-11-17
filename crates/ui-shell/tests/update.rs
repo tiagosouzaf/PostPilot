@@ -207,3 +207,32 @@ fn update_now_starts_the_download_without_opening_the_window() {
     ));
     assert!(!updater.is_open());
 }
+
+#[test]
+fn a_server_failure_is_explained_instead_of_showing_the_http_code_alone() {
+    let h = harness_with(
+        InstallKind::Dpkg,
+        Some("/usr/bin/pkexec"),
+        State::InstallFailed(
+            release(),
+            "GitHub's download server is temporarily unavailable (HTTP 504)".into(),
+        ),
+    );
+    h.get_by_label(
+        "The update to 99.0.0 failed: GitHub's download server is temporarily unavailable \
+         (HTTP 504). The app tried 5 times; try again in a few minutes.",
+    );
+    h.get_by_label("Try again");
+
+    let h = harness_with(
+        InstallKind::Dpkg,
+        Some("/usr/bin/pkexec"),
+        State::InstallFailed(
+            release(),
+            "The connection failed during the download (timeout)".into(),
+        ),
+    );
+    h.get(by().label_contains(
+        "The connection failed during the download, after 5 tries. Check your internet",
+    ));
+}

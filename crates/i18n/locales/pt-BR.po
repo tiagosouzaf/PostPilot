@@ -6846,3 +6846,12 @@ msgstr "Fuso"
 
 msgid "Offset from UTC, like +00 or -03:00. Empty uses the time zone of the session."
 msgstr "Diferença para o UTC, como +00 ou -03:00. Vazio usa o fuso da sessão."
+
+msgid "GitHub's download server is temporarily unavailable {detail}. The app tried {attempts} times; try again in a few minutes."
+msgstr "O servidor de download do GitHub está fora do ar no momento {detail}. O app tentou {attempts} vezes; tente de novo em alguns minutos."
+
+msgid "The connection failed during the download, after {attempts} tries. Check your internet and try again. {detail}"
+msgstr "A conexão falhou durante o download, depois de {attempts} tentativas. Confira sua internet e tente de novo. {detail}"
+
+msgid "The download of {version} failed; trying again ({attempt} of {max})…"
+msgstr "O download da {version} falhou; tentando de novo ({attempt} de {max})…"
