@@ -10,4 +10,4 @@ pub mod engine;
 pub mod plan;
 
 pub use engine::{FederatedSession, Options, Remote};
-pub use plan::{Plan, PlanError, Server, Source, plan, written_name};
+pub use plan::{Plan, PlanError, Server, Source, plan, server_named, written_name};

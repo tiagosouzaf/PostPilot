@@ -331,6 +331,76 @@ fn the_window_is_still_cross_server_after_reopening_the_app() {
 
 // --- Servidores de verdade ---
 
+/// Roda quadros até `done` valer.
+fn wait(harness: &mut Harness<'static, ShellApp>, what: &str, done: impl Fn(&ShellApp) -> bool) {
+    let start = Instant::now();
+    loop {
+        harness.step();
+        if done(harness.state()) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "{what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn a_cited_server_without_an_open_connection_loads_its_tables_in_the_background() {
+    use pgstudio_ui_shell::federated::Load;
+    let log = Log::default();
+    let mut harness = start(app(&log));
+    cross_query(&mut harness, "SELECT * FROM \"Vendas PG\".");
+    let tables = |app: &ShellApp, server: &str| {
+        app.federated_catalog()
+            .schema(server)
+            .map_or(0, |s| s.relations.len())
+    };
+    // Os servidores aparecem na hora; as tabelas, quando a leitura acaba.
+    harness.step();
+    assert!(
+        harness
+            .state()
+            .federated_catalog()
+            .schema("financeiro")
+            .is_some()
+    );
+    wait(&mut harness, "tables never arrived", |app| {
+        tables(app, "\"Vendas PG\"") > 0
+    });
+    assert_eq!(harness.state().federated_load("Vendas PG"), None);
+    let rel = harness
+        .state()
+        .federated_catalog()
+        .relation(Some("\"Vendas PG\""), "table_00000")
+        .expect("table of the fake catalog");
+    assert!(rel.columns.iter().any(|c| c.name == "email"));
+    assert!(
+        harness.state().status().contains("\"Vendas PG\""),
+        "{}",
+        harness.state().status()
+    );
+    // Quem a consulta não cita fica como estava: sem conexão.
+    assert_eq!(tables(harness.state(), "financeiro"), 0);
+    assert_eq!(harness.state().federated_load("financeiro"), None);
+
+    // Sem senha guardada, a falha fica dita em vez de silêncio.
+    let id = harness.state().active_document().unwrap();
+    harness
+        .state_mut()
+        .documents_mut()
+        .get_mut(id)
+        .unwrap()
+        .text = "SELECT * FROM \"Vendas PG\".table_00000 a JOIN semsenha.".into();
+    wait(&mut harness, "failure never arrived", |app| {
+        matches!(app.federated_load("semsenha"), Some(Load::Failed(_)))
+    });
+    assert!(
+        harness.state().status().contains("semsenha"),
+        "{}",
+        harness.state().status()
+    );
+}
+
 fn var(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.into())
 }
