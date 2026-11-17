@@ -8,6 +8,9 @@
 
 pub mod engine;
 pub mod plan;
+pub mod pushdown;
 
 pub use engine::{FederatedSession, Options, Remote};
-pub use plan::{Plan, PlanError, Server, Source, plan, server_named, written_name};
+pub use plan::{
+    Home, Plan, PlanError, Server, Source, plan, plan_with, server_named, written_name,
+};

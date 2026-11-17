@@ -15,13 +15,39 @@ insert into clientes (id, nome, cidade, cpf, ativo) values
   (2, 'Bruno Lima', 'Rio de Janeiro', '98765432100', true),
   (3, 'Carla Dias', 'Curitiba', '11122233344', false),
   (4, 'Diego Alves', 'Recife', null, true);
-create table grande as select g as id, 'linha ' || g as texto from generate_series(1, 200000) g;
+create table grande as select g as id, 'linha ' || g as texto from generate_series(1, 100000) g;
+SQL
+
+# Dois bancos com tabelas de milhões de linhas: o que a consulta não pode
+# baixar inteiro.
+psql -h 127.0.0.1 -p "${PGPORT:-54329}" -U postgres -q \
+  -c "drop database if exists tiibcontrol" -c "create database tiibcontrol" \
+  -c "drop database if exists tiibsaas" -c "create database tiibsaas"
+psql -h 127.0.0.1 -p "${PGPORT:-54329}" -U postgres -d tiibcontrol -q <<'SQL'
+create table documento (id bigint primary key, caixa_id int, chave_processamento_tiib text,
+                        criado timestamp not null, status text, conteudo text);
+insert into documento
+  select g, g % 5000, 'chave-' || (g % 2500000), timestamp '2020-01-01' + (g || ' seconds')::interval,
+         case when g % 10 = 0 then 'ERRO' else 'OK' end, repeat('x', 100)
+  from generate_series(1, 3000000) g;
+create index on documento (criado);
+analyze documento;
+SQL
+psql -h 127.0.0.1 -p "${PGPORT:-54329}" -U postgres -d tiibsaas -q <<'SQL'
+create table lotes (id bigint primary key, chave_de_processamento text, nome text, enchimento text);
+insert into lotes select g, 'chave-' || g, 'lote ' || g, repeat('y', 100)
+  from generate_series(1, 3000000) g where g % 3 <> 0;
+create index on lotes (chave_de_processamento);
+analyze lotes;
 SQL
 
 sqlcmd() { docker exec pp-mssql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_PASSWORD" "$@"; }
 sqlcmd -Q "if db_id('erp') is not null drop database erp; create database erp"
 sqlcmd -d erp -Q "create table dbo.pedidos (id int primary key, cliente_id int, total decimal(10,2), feito datetime2 default '2026-02-01 08:00:00', pago bit);
-insert into dbo.pedidos (id, cliente_id, total, pago) values (1,1,150.50,1),(2,1,49.50,0),(3,2,1000.00,1),(4,9,5.00,1);"
+insert into dbo.pedidos (id, cliente_id, total, pago) values (1,1,150.50,1),(2,1,49.50,0),(3,2,1000.00,1),(4,9,5.00,1);
+create table dbo.movimentos (id int primary key, pedido_id int, valor decimal(10,2));
+with n as (select top (300000) row_number() over (order by (select null)) as i from sys.all_objects a cross join sys.all_objects b)
+insert into dbo.movimentos select i, i % 4 + 1, i * 0.01 from n;"
 
 docker exec pp-mongo mongosh -u root -p "$NOSQL_PASSWORD" --quiet --eval '
   db = db.getSiblingDB("app"); db.sessoes.drop();

@@ -460,8 +460,10 @@ Service no Linux), nunca em arquivo; sem cofre, o PostPilot pede a senha.
 junta dados de conexões guardadas diferentes: PostgreSQL com SQL Server, e
 também com MongoDB, Elasticsearch e Redis. Cada fonte é lida no servidor dela
 (`servidor.banco.schema.tabela`, ou a consulta do próprio servidor em
-`servidor($$ ... $$)`) e o join roda num SQLite local. Só leitura. Sintaxe e
-limites em [docs/consulta-entre-servidores.md](docs/consulta-entre-servidores.md).
+`servidor($$ ... $$)`) e o join roda num SQLite local. De cada tabela o
+servidor manda só o que a consulta usa (colunas, filtros, chaves do join,
+ordem e limite), e uma tabela que viria com mais de 200.000 linhas para antes
+de baixar e avisa. Só leitura. Sintaxe e limites em [docs/consulta-entre-servidores.md](docs/consulta-entre-servidores.md).
 
 ### Workspace num repositório
 

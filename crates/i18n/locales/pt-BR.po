@@ -6556,6 +6556,30 @@ msgstr "Escreva a tabela como servidor.banco.schema.tabela, servidor.schema.tabe
 msgid "[{source}] The query returned more than one result; only the first is used."
 msgstr "[{source}] A consulta devolveu mais de um resultado; só o primeiro é usado."
 
+msgid "Filter the table in the WHERE, join it by a key to a table that is filtered, or write the query for the server with server($$ ... $$). To download it anyway (up to {max} rows per table), add the comment -- baixar tudo to the query."
+msgstr "Filtre a tabela no WHERE, junte por uma chave com uma tabela que tenha filtro, ou escreva a consulta do servidor com servidor($$ ... $$). Para baixar mesmo assim (até {max} linhas por tabela), ponha o comentário -- baixar tudo na consulta."
+
+msgid "Reading only what the query uses did not work ({error}). Trying again with the tables as they are."
+msgstr "Ler só o que a consulta usa não deu certo ({error}). Tentando de novo com as tabelas como estão."
+
+msgid "The table \"{name}\" does not say its server. Write server.{name}; the servers are: {servers}."
+msgstr "A tabela \"{name}\" não diz de qual servidor é. Escreva servidor.{name}; os servidores são: {servers}."
+
+msgid "[{source}] Stopped before downloading: about {rows} rows would come from {server}, and the query has nothing that lets the server send less."
+msgstr "[{source}] Parei antes de baixar: viriam cerca de {rows} linhas de {server}, e a consulta não tem nada que deixe o servidor mandar menos."
+
+msgid "[{source}] Stopped: more than {rows} rows were coming from {server}."
+msgstr "[{source}] Parei: estavam vindo mais de {rows} linhas de {server}."
+
+msgid "[{source}] The first {rows} rows were not enough for the {need} asked; reading more."
+msgstr "[{source}] As primeiras {rows} linhas não bastaram para as {need} pedidas; lendo mais."
+
+msgid "[{source}] {rows} rows so far..."
+msgstr "[{source}] {rows} linhas até agora..."
+
+msgid "the {count} keys of {source}"
+msgstr "as {count} chaves de {source}"
+
 msgid "[{source}] WARNING: only the first {rows} rows were read. Filter on the server with server($$ query $$) to read less."
 msgstr "[{source}] AVISO: só as primeiras {rows} linhas foram lidas. Filtre no servidor com servidor($$ consulta $$) para ler menos."
 
@@ -6568,8 +6592,11 @@ msgstr "nome entre colchetes"
 msgid "quoted text"
 msgstr "texto entre aspas"
 
-msgid "A whole table:  server.database.schema.table  (or server.table)"
-msgstr "Tabela inteira:        servidor.banco.schema.tabela  (ou servidor.tabela)"
+msgid "A table:        server.database.schema.table  (or server.table; no server: this window's)"
+msgstr "Uma tabela:            servidor.banco.schema.tabela  (ou servidor.tabela; sem servidor: o da janela)"
+
+msgid "Filters, join keys, ORDER BY and LIMIT run on each server; a huge table stops first."
+msgstr "Filtros, chaves do join, ORDER BY e LIMIT rodam em cada servidor; tabela enorme para antes."
 
 msgid "A server query: server($$ select ... where ... $$) alias  (filters on the server)"
 msgstr "Consulta no servidor:  servidor($$ select ... where ... $$) apelido  (filtra no servidor)"

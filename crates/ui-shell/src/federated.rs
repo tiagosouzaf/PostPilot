@@ -21,7 +21,7 @@ use pgstudio_core::catalog::{Catalog, Relation, Schema};
 use pgstudio_core::connection::{Connector, Engine};
 use pgstudio_core::metadata::MetadataProvider;
 use pgstudio_core::query::QuerySession;
-use pgstudio_federated::{FederatedSession, Options, Remote, Server, written_name};
+use pgstudio_federated::{FederatedSession, Home, Options, Remote, Server, written_name};
 use pgstudio_i18n::{tr, trf};
 
 use crate::ShellApp;
@@ -232,7 +232,10 @@ fn template(servers: &[Target]) -> String {
     let second = names.get(1).cloned().unwrap_or_else(|| "b".into());
     let lines = [
         tr("Cross-server query: one SELECT that joins data from saved connections.").to_string(),
-        tr("A whole table:  server.database.schema.table  (or server.table)").to_string(),
+        tr("A table:        server.database.schema.table  (or server.table; no server: this window's)")
+            .to_string(),
+        tr("Filters, join keys, ORDER BY and LIMIT run on each server; a huge table stops first.")
+            .to_string(),
         tr("A server query: server($$ select ... where ... $$) alias  (filters on the server)")
             .to_string(),
         tr("MongoDB:        server.collection  or  server($$ db.orders.find({...}) $$)")
@@ -349,6 +352,51 @@ impl ShellApp {
             .into_iter()
             .map(|(t, _)| t)
             .collect();
+        let mut targets = targets;
+        // O servidor da janela: as tabelas escritas sem servidor na frente
+        // são dele, no banco escolhido na barra.
+        let key = self.doc_servers.get(&id).cloned().or_else(|| {
+            self.connection
+                .as_ref()
+                .map(|c| crate::servers::server_key(&c.settings))
+        });
+        let window_database = self.document_database(id).filter(|d| !d.is_empty());
+        let home = key.and_then(|key| {
+            // Vários registros podem ser do mesmo servidor (um por banco):
+            // vale o do banco da janela.
+            let same = |t: &RunTarget| !t.missing && crate::servers::server_key(&t.settings) == key;
+            let server = match targets
+                .iter()
+                .position(|t| same(t) && Some(&t.settings.database) == window_database.as_ref())
+                .or_else(|| targets.iter().position(same))
+            {
+                Some(at) => at,
+                None => {
+                    // Conectado, mas sem registro guardado: vale a conexão.
+                    let live = self
+                        .connection
+                        .iter()
+                        .chain(
+                            self.servers
+                                .parked
+                                .iter()
+                                .filter_map(|p| p.connection.as_ref()),
+                        )
+                        .find(|c| crate::servers::server_key(&c.settings) == key)?;
+                    targets.push(RunTarget {
+                        name: live.settings.host.clone(),
+                        settings: live.settings.clone(),
+                        live: Some(live.queries.clone()),
+                        missing: false,
+                    });
+                    targets.len() - 1
+                }
+            };
+            let database = window_database
+                .clone()
+                .unwrap_or_else(|| targets[server].settings.database.clone());
+            Some(Home { server, database })
+        });
         let servers: Vec<Server> = targets
             .iter()
             .map(|t| Server {
@@ -371,11 +419,9 @@ impl ShellApp {
             secrets,
             connected: window.connections.clone(),
         };
-        window.session = Some(Arc::new(FederatedSession::new(
-            servers,
-            Arc::new(remote),
-            Options::default(),
-        )));
+        window.session = Some(Arc::new(
+            FederatedSession::new(servers, Arc::new(remote), Options::default()).with_home(home),
+        ));
         self.launch(ctx, id, sql, offset, crate::Run::Results);
         true
     }
