@@ -6861,3 +6861,27 @@ msgstr "O servidor demorou demais para responder e a conexão foi fechada. Tente
 
 msgid "The connection to the server was lost. Try again: PostPilot opens a new connection by itself."
 msgstr "A conexão com o servidor caiu. Tente de novo: o PostPilot abre uma conexão nova sozinho."
+
+msgid "Connection succeeded: {server} answered as {product} in {time}."
+msgstr "Conexão bem-sucedida: {server} respondeu como {product} em {time}."
+
+msgid "Connection test failed: {error}"
+msgstr "O teste de conexão falhou: {error}"
+
+msgid "No answer from {server} in {seconds} seconds. Check the server name, the port and whether a firewall or VPN is in the way."
+msgstr "Sem resposta de {server} em {seconds} segundos. Confira o nome do servidor, a porta e se há um firewall ou VPN no caminho."
+
+msgid "Connection test canceled."
+msgstr "Teste de conexão cancelado."
+
+msgid "Cancel test"
+msgstr "Cancelar teste"
+
+msgid "Stop waiting for this connection test"
+msgstr "Parar de esperar por este teste de conexão"
+
+msgid "Try to connect with these fields, without saving or opening the connection"
+msgstr "Tenta conectar com estes campos, sem salvar nem abrir a conexão"
+
+msgid "Testing {server}…"
+msgstr "Testando {server}…"
