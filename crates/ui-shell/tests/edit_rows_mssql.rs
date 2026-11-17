@@ -87,10 +87,12 @@ fn edits_inserts_and_deletes_reach_the_database() {
 
     // Editar: grava ao sair da linha; a coluna calculada não muda.
     e.select(0, 1, &ctx);
+    e.answer_save(true, &ctx);
     e.set_cell(0, 1, Some("d'água".into()));
     e.set_cell(0, 2, None);
     e.set_cell(0, 3, Some("99".into()));
     e.select(1, 1, &ctx);
+    e.answer_save(true, &ctx);
     settle(&mut e, &ctx);
     assert_eq!(e.row_state(0), RowState::Clean, "{:?}", e.row_error(0));
     assert_eq!(
@@ -107,9 +109,11 @@ fn edits_inserts_and_deletes_reach_the_database() {
 
     // Inserir: id (identidade), total (default) e dobro vêm do banco.
     e.select(3, 1, &ctx);
+    e.answer_save(true, &ctx);
     e.set_cell(3, 1, Some("novo".into()));
     assert_eq!(e.row_state(3), RowState::New);
     e.commit(&ctx);
+    e.answer_save(true, &ctx);
     settle(&mut e, &ctx);
     assert_eq!(e.row_state(3), RowState::Clean, "{:?}", e.row_error(3));
     assert_eq!(e.value(3, 0), Some("4"));
@@ -119,8 +123,10 @@ fn edits_inserts_and_deletes_reach_the_database() {
 
     // NOT NULL: a linha fica marcada e o banco não muda.
     e.select(2, 1, &ctx);
+    e.answer_save(true, &ctx);
     e.set_cell(2, 1, None);
     e.commit(&ctx);
+    e.answer_save(true, &ctx);
     settle(&mut e, &ctx);
     assert_eq!(e.row_state(2), RowState::Error);
     assert!(
@@ -144,8 +150,10 @@ fn edits_inserts_and_deletes_reach_the_database() {
         .find(|&r| e.value(r, 0) == Some("3"))
         .unwrap();
     e.select(row, 1, &ctx);
+    e.answer_save(true, &ctx);
     e.set_cell(row, 1, Some("x".into()));
     e.commit(&ctx);
+    e.answer_save(true, &ctx);
     settle(&mut e, &ctx);
     assert_eq!(e.row_state(row), RowState::Error);
     assert!(e.row_error(row).unwrap().contains("not found"));

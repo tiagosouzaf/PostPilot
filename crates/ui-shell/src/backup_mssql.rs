@@ -735,6 +735,8 @@ impl BackupDialog {
 /// A janela "Restore Database" do SQL Server.
 pub struct RestoreDialog {
     pub options: RestoreOptions,
+    /// O "OK" foi clicado: esperando o "Yes".
+    confirming: bool,
     /// Sessão no master.
     session: Arc<dyn QuerySession>,
     tx: Sender<Msg>,
@@ -784,6 +786,7 @@ impl RestoreDialog {
             files: Vec::new(),
             listing: false,
             suggested: database.is_none(),
+            confirming: false,
             progress: Progress::new(),
             error: None,
         }
@@ -1002,12 +1005,26 @@ impl RestoreDialog {
                 .progress
                 .phase
             {
+                Phase::Editing if self.confirming => {
+                    if ui.button(tr("No")).clicked() {
+                        self.confirming = false;
+                    }
+                    if ui.button(tr("Yes")).clicked() {
+                        self.confirming = false;
+                        request = self.start(ctx).or(request.take());
+                    }
+                    crate::fit::text(
+                        ui,
+                        tr("The restore changes the database. Do you want to run it now?"),
+                    );
+                }
                 Phase::Editing => {
                     if ui.button(tr("Cancel")).clicked() {
                         request = Some(Request::Closed);
                     }
                     if ui.button(tr("OK")).clicked() {
-                        request = self.start(ctx).or(request.take());
+                        self.error = self.invalid().map(str::to_string);
+                        self.confirming = self.error.is_none();
                     }
                     if script_button(ui) {
                         match self.sql() {

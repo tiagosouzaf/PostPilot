@@ -407,6 +407,10 @@ pub struct EditRows {
     editing: Option<(usize, usize, String)>,
     /// Linha esperando o "Yes" para excluir.
     confirm_delete: Option<usize>,
+    /// Linha esperando o "Yes" para gravar, com o comando que vai rodar.
+    confirm_save: Option<(usize, String)>,
+    /// Servidor e ambiente, para mostrar nas confirmações.
+    place: crate::result_edit::Place,
     /// Última mensagem (erro ou o que foi feito).
     message: Option<String>,
     log: Vec<String>,
@@ -436,6 +440,8 @@ impl EditRows {
             selected: None,
             editing: None,
             confirm_delete: None,
+            confirm_save: None,
+            place: Default::default(),
             message: None,
             log: Vec::new(),
             close_after_save: false,
@@ -532,6 +538,17 @@ impl EditRows {
 
     pub fn is_confirming(&self) -> bool {
         self.confirm_delete.is_some()
+    }
+
+    /// Diz em que servidor e ambiente a janela grava (aparece nas
+    /// confirmações).
+    pub fn set_place(&mut self, place: crate::result_edit::Place) {
+        self.place = place;
+    }
+
+    /// O comando da linha que espera a confirmação para ser gravada.
+    pub fn confirm_save_sql(&self) -> Option<&str> {
+        self.confirm_save.as_ref().map(|(_, sql)| sql.as_str())
     }
 
     /// Mensagens para o Output desde a última chamada.
@@ -842,19 +859,48 @@ impl EditRows {
         }
     }
 
-    fn save(&mut self, row: usize, ctx: &egui::Context) {
-        if self.busy.is_some() {
-            return;
-        }
-        let (Some(table), Some(r)) = (&self.table, self.rows.get(row)) else {
-            return;
-        };
-        let sql = if r.new {
+    /// O comando que grava a linha, se ela tem o que gravar.
+    fn save_sql(&self, row: usize) -> Option<String> {
+        let (table, r) = (self.table.as_ref()?, self.rows.get(row)?);
+        if r.new {
             Some(table.insert_sql(&r.values, &r.touched))
         } else {
             table.update_sql(&r.original, &r.values)
+        }
+    }
+
+    /// Pede para gravar a linha; só grava depois do "Yes".
+    fn save(&mut self, row: usize, _ctx: &egui::Context) {
+        if self.busy.is_some() || self.confirm_save.is_some() {
+            return;
+        }
+        if let Some(sql) = self.save_sql(row) {
+            self.confirm_save = Some((row, sql));
+        }
+    }
+
+    /// Responde a confirmação de gravação. Com "No" a linha continua
+    /// alterada e selecionada, para corrigir ou desfazer com Esc.
+    pub fn answer_save(&mut self, yes: bool, ctx: &egui::Context) {
+        let Some((row, _)) = self.confirm_save.take() else {
+            return;
         };
-        let Some(sql) = sql else {
+        if yes {
+            self.save_now(row, ctx);
+            return;
+        }
+        self.close_after_save = false;
+        let col = self.selected.map_or(0, |(_, c)| c);
+        self.selected = Some((row, col));
+        self.message =
+            Some(tr("The row was not saved. Press Esc to cancel its changes.").to_string());
+    }
+
+    fn save_now(&mut self, row: usize, ctx: &egui::Context) {
+        if self.busy.is_some() {
+            return;
+        }
+        let Some(sql) = self.save_sql(row) else {
             return;
         };
         self.busy = Some(row);
@@ -953,7 +999,7 @@ impl EditRows {
             }
         }
         // Fechando: grava a próxima linha alterada; sem nenhuma, fecha.
-        if self.close_after_save && self.busy.is_none() {
+        if self.close_after_save && self.busy.is_none() && self.confirm_save.is_none() {
             match self.rows.iter().position(Row::is_dirty) {
                 Some(row) if self.editable() => self.save(row, ctx),
                 _ => {
@@ -1023,7 +1069,7 @@ impl EditRows {
     /// Teclado fora da edição: setas, F2/Enter, Esc, Ctrl+0, Delete e
     /// texto digitado (começa a editar).
     fn keys(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if self.confirm_delete.is_some() {
+        if self.confirm_delete.is_some() || self.confirm_save.is_some() {
             return;
         }
         let rows = self.rows.len();
@@ -1361,7 +1407,65 @@ impl EditRows {
         )
     }
 
+    /// A confirmação de gravação de uma linha, quando pedida.
+    fn confirm_save_window(&mut self, ctx: &egui::Context) {
+        let Some((row, sql)) = &self.confirm_save else {
+            return;
+        };
+        let new = self.rows.get(*row).is_some_and(|r| r.new);
+        let table = self
+            .table
+            .as_ref()
+            .map(|t| t.display.clone())
+            .unwrap_or_default();
+        let mut answer = None;
+        let modal = crate::theme::modal(egui::Id::new("edit_rows_save")).show(ctx, |ui| {
+            crate::fit::dialog_width(ui, 480.0);
+            self.place.heading(ui, tr("Confirm Change"));
+            ui.label(if new {
+                trf!(
+                    "You are about to insert 1 row into {table}. Are you sure?",
+                    table = table
+                )
+            } else {
+                trf!(
+                    "You are about to change 1 row in {table}. Are you sure?",
+                    table = table
+                )
+            });
+            self.place.server_line(ui);
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .id_salt("edit_rows_save_sql")
+                .max_height(crate::fit::dialog_height(ui, 220.0, 190.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(sql).monospace());
+                });
+            ui.add_space(6.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // "No" com o foco: Enter não grava sem querer.
+                let no = ui.button(tr("No"));
+                if no.clicked() {
+                    answer = Some(false);
+                }
+                if ui.button(tr("Yes")).clicked() {
+                    answer = Some(true);
+                }
+                if !ui.ctx().memory(|m| m.focused().is_some()) {
+                    no.request_focus();
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        if let Some(yes) = answer {
+            self.answer_save(yes, ctx);
+        }
+    }
+
     fn confirm_window(&mut self, ctx: &egui::Context) {
+        self.confirm_save_window(ctx);
         if self.confirm_delete.is_none() {
             return;
         }
@@ -1369,8 +1473,9 @@ impl EditRows {
         let row = self.confirm_delete.and_then(|r| self.confirm_row_text(r));
         let modal = crate::theme::modal(egui::Id::new("edit_rows_delete")).show(ctx, |ui| {
             crate::fit::dialog_width(ui, 380.0);
-            ui.heading(tr("Delete Row"));
+            self.place.heading(ui, tr("Delete Row"));
             ui.label(tr("You are about to delete 1 row. Are you sure?"));
+            self.place.server_line(ui);
             if let Some(row) = &row {
                 ui.add_space(4.0);
                 ui.label(RichText::new(row).monospace());

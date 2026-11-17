@@ -139,6 +139,62 @@ fn edits_and_deletes_from_a_select() {
         Some("1 row updated.")
     );
 
+    // Pela grade (Enter ou clique fora), nada grava antes do "Yes": a
+    // confirmação mostra a coluna, o valor de antes, o novo e o comando.
+    {
+        let set = &mut exec.results[0];
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.request_update(&mut s, Cell { row: 2, col: 0 }, Some("Clara".into()));
+        assert!(editor.is_confirming_update());
+        assert!(!editor.is_busy());
+        assert_eq!(
+            editor.confirm_update_preview(),
+            Some((
+                "nome",
+                Some("Carla"),
+                Some("Clara"),
+                Some("UPDATE public.grid_edit SET nome = 'Clara' WHERE id = '3' RETURNING nome")
+            ))
+        );
+        // Enquanto pergunta, ordenar ou filtrar não troca a linha de lugar.
+        editor.step(&mut s, &mut set.grid);
+        assert!(set.grid.view_locked);
+        // "No": o banco e a grade ficam como estavam.
+        editor.answer_update(false, &mut s);
+        assert!(!editor.is_confirming_update() && !editor.is_busy());
+        assert_eq!(editor.message(), Some("The value was not changed."));
+        assert_eq!(s.cell(2, 0), Some("Carla"));
+    }
+    assert_eq!(
+        value(&session, "SELECT nome FROM grid_edit WHERE id = 3").as_deref(),
+        Some("Carla")
+    );
+    // "Yes": grava.
+    {
+        let set = &mut exec.results[0];
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.request_update(&mut s, Cell { row: 2, col: 0 }, Some("Clara".into()));
+        editor.answer_update(true, &mut s);
+    }
+    settle(&mut exec);
+    assert_eq!(
+        value(&session, "SELECT nome FROM grid_edit WHERE id = 3").as_deref(),
+        Some("Clara")
+    );
+    {
+        let set = &mut exec.results[0];
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        // O mesmo valor: não há o que confirmar. Volta ao original para o
+        // resto do teste.
+        editor.request_update(&mut s, Cell { row: 2, col: 0 }, Some("Clara".into()));
+        assert!(!editor.is_confirming_update());
+        editor.update(&mut s, Cell { row: 2, col: 0 }, Some("Carla".into()));
+    }
+    settle(&mut exec);
+
     // NULL (Ctrl+0) também.
     {
         let set = &mut exec.results[0];

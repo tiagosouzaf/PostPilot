@@ -1442,6 +1442,7 @@ impl ShellApp {
                                 e.select(row, col, ctx);
                                 e.set_cell(row, col, Some(format!("edit {edits}")));
                                 e.select((row + 1) % rows, col, ctx);
+                                e.answer_save(true, ctx);
                                 if e.is_saving() {
                                     run.refresh_start = Some(std::time::Instant::now());
                                 }
@@ -4376,6 +4377,18 @@ impl ShellApp {
         self.activity.as_mut()
     }
 
+    /// O servidor conectado e o ambiente dele, para as confirmações.
+    fn connection_place(&self) -> result_edit::Place {
+        let tag = self
+            .connection
+            .as_ref()
+            .and_then(|c| self.server_tag(&servers::server_key(&c.settings)));
+        result_edit::Place {
+            server: self.connection_label(),
+            environment: tag.map(|t| (t.environment.unwrap_or_default(), t.color)),
+        }
+    }
+
     /// Abre uma janela Edit Top N Rows da tabela `oid` em `session`.
     pub fn open_edit_rows(
         &mut self,
@@ -4386,8 +4399,9 @@ impl ShellApp {
         let id = self.next_edit_rows;
         self.next_edit_rows += 1;
         let limit = pgstudio_object_explorer::EDIT_TOP_ROWS;
-        self.edit_rows
-            .insert(id, edit_rows::EditRows::new(session, oid, limit, ctx));
+        let mut edit = edit_rows::EditRows::new(session, oid, limit, ctx);
+        edit.set_place(self.connection_place());
+        self.edit_rows.insert(id, edit);
         self.workspace.open(Panel::EditRows(id));
         id
     }
