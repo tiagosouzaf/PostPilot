@@ -59,6 +59,19 @@ fn catalog() -> Catalog {
                     ],
                 ),
                 rel(
+                    "movimentacao_estoque",
+                    &[
+                        ("id", "bigint"),
+                        ("data_hora_atualizacao", "timestamp with time zone"),
+                        ("data_hora_criacao", "timestamp with time zone"),
+                        ("quantidade_movimentada", "numeric(12,3)"),
+                        ("status", "character varying(20)"),
+                        ("status_conferencia", "character varying(20)"),
+                        ("usuario_responsavel_id", "bigint"),
+                        ("valor_total", "numeric(14,2)"),
+                    ],
+                ),
+                rel(
                     "pedidos",
                     &[
                         ("id", "integer"),
@@ -199,5 +212,40 @@ fn long_names() {
         sql,
         5,
         "nomes-longos-estreito.png",
+    );
+}
+
+/// A busca aproximada: abreviação, palavra do meio e erro de digitação
+/// acham o nome, com as letras que casaram destacadas.
+#[test]
+fn fuzzy() {
+    let from = "select *\nfrom movimentacao_estoque m\nwhere m.";
+    for (typed, name) in [
+        ("dt_cria", "1-abreviacao.png"),
+        ("hora", "2-palavra-do-meio.png"),
+        ("statsu", "3-erro-de-digitacao.png"),
+        ("quantidde", "4-letra-faltando.png"),
+    ] {
+        shot_at(
+            [760.0, 300.0],
+            Dialect::Postgres,
+            &format!("{from}{typed}"),
+            0,
+            name,
+        );
+    }
+    shot_at(
+        [760.0, 300.0],
+        Dialect::Postgres,
+        "select * from movimentcao",
+        0,
+        "5-tabela.png",
+    );
+    shot_at(
+        [420.0, 300.0],
+        Dialect::Postgres,
+        &format!("{from}datahora"),
+        0,
+        "6-janela-pequena.png",
     );
 }

@@ -313,7 +313,7 @@ fn plain(name: &str) -> bool {
 
 fn push_all(items: &mut Vec<Suggestion>, prefix: &str, names: &[(&str, &str)], kind: Kind) {
     for (name, detail) in names {
-        if name.starts_with(prefix) {
+        if crate::fuzzy::matches(name, prefix) {
             items.push(Suggestion {
                 label: name.to_string(),
                 insert: name.to_string(),
@@ -326,7 +326,7 @@ fn push_all(items: &mut Vec<Suggestion>, prefix: &str, names: &[(&str, &str)], k
 
 fn push_operators(items: &mut Vec<Suggestion>, prefix: &str, names: &[&str], detail: &str) {
     for name in names {
-        if name.starts_with(prefix) && !items.iter().any(|i| i.label == *name) {
+        if crate::fuzzy::matches(name, prefix) && !items.iter().any(|i| i.label == *name) {
             items.push(Suggestion {
                 label: name.to_string(),
                 insert: name.to_string(),
@@ -341,7 +341,7 @@ fn push_operators(items: &mut Vec<Suggestion>, prefix: &str, names: &[&str], det
 /// nos que têm ponto (`"cliente.cidade"`), como uma chave pede.
 fn push_fields(items: &mut Vec<Suggestion>, prefix: &str, relation: &Relation, quote: bool) {
     for column in &relation.columns {
-        if column.name.starts_with(prefix) {
+        if crate::fuzzy::matches(&column.name, prefix) {
             items.push(Suggestion {
                 label: column.name.clone(),
                 insert: if quote && !plain(&column.name) {
@@ -430,7 +430,7 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
                 .into_iter()
                 .flat_map(|c| &c.schemas)
                 .flat_map(|s| &s.relations)
-                .filter(|r| r.name.starts_with(prefix))
+                .filter(|r| crate::fuzzy::matches(&r.name, prefix))
             {
                 items.push(Suggestion {
                     label: r.name.clone(),
@@ -497,6 +497,8 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
             );
         }
     }
+    // Os que começam igual primeiro, os aproximados depois.
+    crate::fuzzy::sort(&mut items, prefix);
     Completion {
         replace: start..at,
         prefix: prefix.to_string(),
@@ -628,7 +630,7 @@ mod tests {
         );
         assert_eq!(
             labels("db.pedidos.updateMany({ pago: false }, { $s| })"),
-            ["$set", "$setOnInsert"]
+            ["$set", "$setOnInsert", "$addToSet"]
         );
         // No filtro do update, os operadores de filtro.
         assert_eq!(

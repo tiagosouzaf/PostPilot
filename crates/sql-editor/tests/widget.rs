@@ -310,6 +310,33 @@ fn backspace_updates_the_list() {
 }
 
 #[test]
+fn a_misspelled_word_is_replaced_by_the_suggestion() {
+    let mut h = harness("");
+    typed(&mut h, "select * from clinte");
+    assert_eq!(labels(&h), ["cliente"]);
+    key(&mut h, Modifiers::NONE, Key::Tab);
+    assert_eq!(h.state().text, "select * from cliente");
+    // Um pedaço do nome, e depois as letras invertidas.
+    typed(&mut h, " c where c.ome");
+    assert_eq!(labels(&h), ["nome"]);
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().text, "select * from cliente c where c.nome");
+    typed(&mut h, " and c.nmoe");
+    assert_eq!(labels(&h), ["nome"]);
+    key(&mut h, Modifiers::NONE, Key::Tab);
+    assert_eq!(
+        h.state().text,
+        "select * from cliente c where c.nome and c.nome"
+    );
+    // Um desfazer devolve a palavra como foi digitada.
+    key(&mut h, Modifiers::CTRL, Key::Z);
+    assert_eq!(
+        h.state().text,
+        "select * from cliente c where c.nome and c.nmoe"
+    );
+}
+
+#[test]
 fn clicking_a_suggestion_inserts_it() {
     let mut h = harness("");
     typed(&mut h, "select * from c");

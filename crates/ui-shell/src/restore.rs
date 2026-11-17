@@ -168,6 +168,8 @@ pub enum Request {
 /// A janela "Restore Database".
 pub struct RestoreDialog {
     pub options: RestoreOptions,
+    /// O "OK" foi clicado: esperando o "Yes".
+    confirming: bool,
     settings: ConnectionSettings,
     password: String,
     session: Arc<dyn QuerySession>,
@@ -243,6 +245,7 @@ impl RestoreDialog {
             entries: None,
             chosen: BTreeSet::new(),
             phase: Phase::Editing,
+            confirming: false,
             progress: Vec::new(),
             error: None,
             new_name: String::new(),
@@ -571,13 +574,27 @@ impl RestoreDialog {
             ui.allocate_ui_with_layout(bar, Layout::right_to_left(Align::Center), |ui| match &self
                 .phase
             {
+                Phase::Editing if self.confirming => {
+                    if ui.button(tr("No")).clicked() {
+                        self.confirming = false;
+                    }
+                    if ui.button(tr("Yes")).clicked() {
+                        self.confirming = false;
+                        request = self.start(ctx).or(request.take());
+                    }
+                    crate::fit::text(
+                        ui,
+                        tr("The restore changes the database. Do you want to run it now?"),
+                    );
+                }
                 Phase::Editing => {
                     if ui.button(tr("Cancel")).clicked() {
                         request = Some(Request::Closed);
                     }
                     let ok = self.tool.is_ok();
                     if ui.add_enabled(ok, egui::Button::new(tr("OK"))).clicked() {
-                        request = self.start(ctx).or(request.take());
+                        self.error = self.invalid();
+                        self.confirming = self.error.is_none();
                     }
                     if ui
                         .add_enabled(

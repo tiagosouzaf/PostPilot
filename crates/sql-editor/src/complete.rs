@@ -187,13 +187,10 @@ pub(crate) fn refs_after(text: &str, tokens: &[Token], keywords: &[&str]) -> Vec
     refs
 }
 
-/// Se `name` combina com o que foi digitado (começo, sem diferenciar
-/// maiúsculas).
+/// Se `name` combina com o que foi digitado: começa igual ou é parecido
+/// (ver [`crate::fuzzy`]).
 fn matches(name: &str, prefix: &str) -> bool {
-    name.len() >= prefix.len()
-        && name
-            .get(..prefix.len())
-            .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
+    crate::fuzzy::matches(name, prefix)
 }
 
 /// Sugestões para o cursor em `at` (bytes). Dentro de comentários e strings
@@ -392,6 +389,8 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
             .then(a.kind.cmp(&b.kind))
     });
     items.dedup_by(|a, b| a.label == b.label && a.kind == b.kind);
+    // Os que começam igual primeiro, os aproximados depois.
+    crate::fuzzy::sort(&mut items, prefix);
     Completion {
         replace: start..at,
         prefix: prefix_raw.to_string(),
@@ -399,21 +398,36 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
     }
 }
 
-/// Melhor sugestão para o que foi digitado: a primeira que começa igual,
-/// preferindo os tipos mais específicos (colunas, tabelas).
+/// Melhor sugestão para o que foi digitado: entre as que combinam melhor
+/// (as primeiras da lista), a que é igual, preferindo os tipos mais
+/// específicos (colunas, tabelas) às palavras-chave.
 pub fn best(c: &Completion) -> usize {
     let prefix = c.prefix.trim_start_matches(['"', '[']);
     if prefix.is_empty() {
         return 0;
     }
+    let Some(first) = c.items.first() else {
+        return 0;
+    };
+    // Igual e começo valem como um grupo só: `or` escolhe `OR`, e `tot`
+    // escolhe a coluna `total` antes de uma palavra-chave.
+    let group =
+        |s: &Suggestion| crate::fuzzy::tier(&s.label, prefix).max(crate::fuzzy::Tier::Prefix);
+    let top = group(first);
+    let end = c
+        .items
+        .iter()
+        .position(|s| group(s) != top)
+        .unwrap_or(c.items.len());
+    let items = &c.items[..end];
     let exact = |keyword: bool| {
-        c.items.iter().position(|s| {
+        items.iter().position(|s| {
             (s.kind == Kind::Keyword) == keyword && s.label.eq_ignore_ascii_case(prefix)
         })
     };
     exact(false)
         .or_else(|| exact(true))
-        .or_else(|| c.items.iter().position(|s| s.kind != Kind::Keyword))
+        .or_else(|| items.iter().position(|s| s.kind != Kind::Keyword))
         .unwrap_or(0)
 }
 
@@ -635,6 +649,104 @@ mod tests {
         assert_eq!(c.items[best(&c)].label, "OR");
     }
 
+    fn long_names() -> Catalog {
+        let mut cat = catalog();
+        cat.schemas[0].relations.push(rel(
+            "movimentacao_estoque",
+            RelationKind::Table,
+            &[
+                "id",
+                "data_hora_criacao",
+                "data_hora_atualizacao",
+                "quantidade",
+                "status",
+                "usuario_responsavel_id",
+                "valor_total",
+            ],
+        ));
+        cat
+    }
+
+    fn long(sql: &str) -> Completion {
+        let pos = sql.find('|').unwrap();
+        let text = sql.replace('|', "");
+        complete(&text, &tokenize(&text), pos, Some(&long_names()))
+    }
+
+    #[test]
+    fn a_misspelled_word_still_finds_the_name() {
+        // Letras invertidas, faltando e trocadas.
+        for typed in ["statsu", "sttaus", "stauts", "satus"] {
+            let c = long(&format!("select m.{typed}| from movimentacao_estoque m"));
+            assert_eq!(labels(&c), ["status"], "{typed}");
+        }
+        let c = long("select * from movimentcao|");
+        assert_eq!(labels(&c), ["movimentacao_estoque"]);
+        let c = long("select * from clinte|");
+        assert_eq!(labels(&c), ["cliente"]);
+        // A coluna vem escolhida, não a palavra-chave parecida.
+        let c = long("select quantidde| from movimentacao_estoque");
+        assert_eq!(c.items[best(&c)].label, "quantidade");
+        // As palavras-chave também.
+        let c = at("slect|");
+        assert_eq!(c.items[best(&c)].label, "SELECT");
+        let c = at("select * form|");
+        assert!(labels(&c).contains(&"FROM".to_string()), "{:?}", labels(&c));
+        // A sugestão troca a palavra errada inteira.
+        let c = long("select m.statsu| from movimentacao_estoque m");
+        assert_eq!(c.replace, 9..15);
+    }
+
+    #[test]
+    fn a_piece_or_an_abbreviation_finds_a_long_name() {
+        let pick = |typed: &str| long(&format!("select m.{typed}| from movimentacao_estoque m"));
+        // Um pedaço do meio: as duas colunas, em ordem.
+        assert_eq!(
+            labels(&pick("hora")),
+            ["data_hora_atualizacao", "data_hora_criacao"]
+        );
+        assert_eq!(labels(&pick("criacao")), ["data_hora_criacao"]);
+        assert_eq!(labels(&pick("cria")), ["data_hora_criacao"]);
+        // Sem os underscores, e só os começos das palavras.
+        assert_eq!(
+            labels(&pick("datahora")),
+            ["data_hora_atualizacao", "data_hora_criacao"]
+        );
+        assert_eq!(labels(&pick("dhc")), ["data_hora_criacao"]);
+        assert_eq!(labels(&pick("dt_cria")), ["data_hora_criacao"]);
+        assert_eq!(labels(&pick("qtd")), ["quantidade"]);
+        assert_eq!(labels(&pick("vlr")), ["valor_total"]);
+        assert_eq!(labels(&pick("usr_resp")), ["usuario_responsavel_id"]);
+        // Tabelas depois do FROM.
+        assert_eq!(
+            labels(&long("select * from estoque|")),
+            ["movimentacao_estoque"]
+        );
+        assert_eq!(
+            labels(&long("select * from mov_est|")),
+            ["movimentacao_estoque"]
+        );
+    }
+
+    #[test]
+    fn what_starts_alike_comes_first_and_guesses_stay_out() {
+        // Quem digita certo vê o que via antes, e depois os nomes que têm
+        // a palavra no meio.
+        let c = long("select m.data| from movimentacao_estoque m");
+        assert_eq!(labels(&c), ["data_hora_atualizacao", "data_hora_criacao"]);
+        let c = long("select * from pedido p where p.id|");
+        assert_eq!(labels(&c), ["id", "cliente_id"]);
+        // `tot` acha `total` pelo começo: `valor_total` vem depois, e
+        // nenhum palpite entra.
+        let c = long("select * from pedido p, movimentacao_estoque m where tot|");
+        assert_eq!(labels(&c), ["total", "calcula_total", "valor_total"]);
+        assert_eq!(c.items[best(&c)].label, "total");
+        // Uma palavra-chave que começa igual continua escolhida mesmo com
+        // um nome que tem o trecho no meio.
+        let c = long("select m.id from movimentacao_estoque m wher|");
+        assert_eq!(c.items[best(&c)].label, "WHERE");
+    }
+
     #[test]
     fn five_thousand_tables_suggest_quickly() {
         let mut cat = catalog();
@@ -662,6 +774,18 @@ mod tests {
             Some(&cat),
         );
         assert_eq!(c2.items.len(), 5002);
+        // Com um erro de digitação, todos os nomes passam pela busca
+        // aproximada.
+        let typo = "select * from tabla_0042";
+        let tokens = tokenize(typo);
+        let start = std::time::Instant::now();
+        let c3 = complete(typo, &tokens, typo.len(), Some(&cat));
+        let fuzzy = start.elapsed();
+        eprintln!("busca aproximada em 5 mil tabelas: {fuzzy:?}");
+        assert_eq!(c3.items[best(&c3)].label, "tabela_0042");
+        // Build de teste, sem otimização: o compilado para uso é umas dez
+        // vezes mais rápido.
+        assert!(fuzzy < std::time::Duration::from_millis(250), "{fuzzy:?}");
         // O critério do plano é 50 ms; em build de teste fica bem abaixo.
         assert!(
             elapsed < std::time::Duration::from_millis(50),

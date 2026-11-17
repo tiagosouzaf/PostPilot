@@ -103,6 +103,8 @@ pub struct SecurityDialog {
     state: State,
     pub page: Page,
     applying: bool,
+    /// O "OK" foi clicado: mostrando os comandos e esperando o "Yes".
+    confirming: bool,
     error: Option<String>,
     /// Comandos enviados no OK, para o Output.
     sent: Vec<String>,
@@ -167,6 +169,7 @@ impl SecurityDialog {
             state: State::Loading,
             page,
             applying: false,
+            confirming: false,
             error: None,
             sent: Vec::new(),
         }
@@ -330,6 +333,26 @@ impl SecurityDialog {
             Some(_) => None,
             None => Some(tr("The properties are not loaded.")),
         }
+    }
+
+    /// O "OK": sem mudanças, só fecha; com mudanças, mostra os comandos e
+    /// espera a confirmação.
+    pub fn ask_apply(&mut self) -> Option<Request> {
+        if let Some(why) = self.invalid() {
+            self.error = Some(why.to_string());
+            return None;
+        }
+        self.error = None;
+        if self.statements(true).is_empty() {
+            return Some(Request::Closed);
+        }
+        self.confirming = true;
+        None
+    }
+
+    /// Esperando a confirmação para aplicar (testes).
+    pub fn is_confirming(&self) -> bool {
+        self.confirming
     }
 
     /// Aplica as mudanças numa transação. Sem mudanças, só fecha.
@@ -519,14 +542,36 @@ impl SecurityDialog {
             if let Some(e) = &self.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
+            if self.confirming {
+                // O que vai rodar (a senha não aparece).
+                egui::ScrollArea::vertical()
+                    .id_salt("security_properties_confirm")
+                    .max_height(90.0)
+                    .show(ui, |ui| {
+                        for line in self.statements(false) {
+                            ui.label(egui::RichText::new(line).monospace());
+                        }
+                    });
+            }
             let bar = egui::vec2(ui.available_width(), 26.0);
             ui.allocate_ui_with_layout(bar, Layout::right_to_left(Align::Center), |ui| {
+                if self.confirming {
+                    if ui.button(tr("No")).clicked() {
+                        self.confirming = false;
+                    }
+                    if ui.button(tr("Yes")).clicked() {
+                        self.confirming = false;
+                        request = self.apply(ctx).or(request.take());
+                    }
+                    crate::fit::text(ui, tr("Apply these changes to the server?"));
+                    return;
+                }
                 let ready = matches!(self.state, State::Ready(_)) && !self.applying;
                 if ui.button(tr("Cancel")).clicked() {
                     request = Some(Request::Closed);
                 }
                 if ui.add_enabled(ready, egui::Button::new(tr("OK"))).clicked() {
-                    request = self.apply(ctx).or(request.take());
+                    request = self.ask_apply().or(request.take());
                 }
                 if ui
                     .add_enabled(

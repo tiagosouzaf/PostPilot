@@ -100,8 +100,12 @@ pub fn show<'a>(
         Tab::Results => match exec.mode {
             ResultsMode::Grid | ResultsMode::File => {
                 let mut log = Vec::new();
+                let place = crate::result_edit::Place {
+                    server: server.label.to_string(),
+                    environment: tag.map(|t| (t.environment.clone().unwrap_or_default(), t.color)),
+                };
                 (action.save_results, action.open_json) =
-                    grids(ui, doc, &mut exec.results, &mut log);
+                    grids(ui, doc, &mut exec.results, &mut log, &place);
                 for text in log {
                     exec.push_info(text);
                 }
@@ -306,6 +310,7 @@ fn grids(
     doc: u32,
     sets: &mut [ResultSet],
     log: &mut Vec<String>,
+    place: &crate::result_edit::Place,
 ) -> (Option<SaveRequest>, Option<JsonRequest>) {
     let mut save = None;
     let mut json = None;
@@ -337,7 +342,7 @@ fn grids(
                     }
                     if let Some(editor) = editor.as_mut() {
                         editor.handle(&out, &mut store, state);
-                        editor.confirm_window(ui.ctx(), &mut store, id);
+                        editor.confirm_window(ui.ctx(), &mut store, id, place);
                         log.extend(editor.take_log());
                     }
                     if let Some(cell) = out.open_json {
@@ -362,8 +367,8 @@ fn edit_strip(ui: &mut egui::Ui, editor: &ResultEditor) {
         if let Some(t) = &editable {
             ui.label(RichText::new(icons::PENCIL_SIMPLE).weak())
                 .on_hover_text(tr(
-                    "Double-click a cell (or press F2) to edit it; Enter saves, Esc cancels. \
-                     Delete removes the selected rows after confirmation.",
+                    "Double-click a cell (or press F2) to edit it; Enter asks for confirmation \
+                     and saves, Esc cancels. Delete removes the selected rows after confirmation.",
                 ));
             ui.weak(trf!("Editing {table}", table = t));
             if message.is_some() {

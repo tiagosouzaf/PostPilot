@@ -557,6 +557,8 @@ pub struct History {
     shown: Vec<usize>,
     shown_for: Option<(String, u64)>,
     confirm_clear: bool,
+    /// Execução esperando o "Delete" de confirmação.
+    confirm_delete: Option<u64>,
 }
 
 impl History {
@@ -650,6 +652,27 @@ impl History {
             });
         });
         self.refresh();
+        // Só vale para a execução que está selecionada.
+        if self.confirm_delete.is_some() && self.confirm_delete != self.selected {
+            self.confirm_delete = None;
+        }
+        if let Some(id) = self.confirm_delete {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    tr("Delete the selected execution from the history? This cannot be undone."),
+                );
+                if ui.button(tr("Delete")).clicked() {
+                    self.store.remove(id);
+                    self.selected = None;
+                    self.confirm_delete = None;
+                }
+                if ui.button(tr("Cancel")).clicked() {
+                    self.confirm_delete = None;
+                }
+            });
+            self.refresh();
+        }
         if self.confirm_clear {
             ui.horizontal(|ui| {
                 ui.colored_label(
@@ -746,8 +769,7 @@ impl History {
             open = double_clicked;
         }
         if let Some(id) = delete {
-            self.store.remove(id);
-            self.selected = None;
+            self.confirm_delete = Some(id);
         }
         let id = open?;
         self.selected = Some(id);
