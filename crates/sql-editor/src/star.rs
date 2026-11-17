@@ -30,6 +30,11 @@ pub struct StarTable {
 pub struct Star {
     /// Onde está o `*` no texto, em bytes.
     pub range: Range<usize>,
+    /// O que trocar pelos nomes das colunas: o `*` ou, em `l.*`, o
+    /// `l.*` inteiro.
+    pub replace: Range<usize>,
+    /// Se é `alias.*`.
+    pub qualified: bool,
     pub tables: Vec<StarTable>,
 }
 
@@ -41,6 +46,41 @@ impl Star {
             .filter_map(|t| t.columns.as_ref())
             .map(Vec::len)
             .sum()
+    }
+
+    /// Os nomes das colunas `chosen` (tabela, coluna), na ordem do banco,
+    /// como entram no lugar do asterisco: com o alias na frente se o
+    /// asterisco tinha, ou se há mais de uma tabela. `quote` põe as aspas
+    /// que o nome precisar.
+    pub fn names(&self, chosen: &[(usize, usize)], quote: impl Fn(&str) -> String) -> Vec<String> {
+        let qualify = self.qualified || self.tables.len() > 1;
+        let mut chosen = chosen.to_vec();
+        chosen.sort_unstable();
+        chosen.dedup();
+        chosen
+            .iter()
+            .filter_map(|&(t, c)| {
+                let table = self.tables.get(t)?;
+                let column = table.columns.as_ref()?.get(c)?;
+                let name = quote(&column.name);
+                Some(if qualify {
+                    format!("{}.{name}", table.alias.as_deref().unwrap_or(&table.name))
+                } else {
+                    name
+                })
+            })
+            .collect()
+    }
+
+    /// Todas as colunas, como [`Star::names`] as espera.
+    pub fn all(&self) -> Vec<(usize, usize)> {
+        self.tables
+            .iter()
+            .enumerate()
+            .flat_map(|(t, table)| {
+                (0..table.columns.as_ref().map_or(0, Vec::len)).map(move |c| (t, c))
+            })
+            .collect()
     }
 }
 
@@ -160,11 +200,16 @@ pub fn star_at(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalog
             .map(|rel| rel.columns.clone()),
     };
 
+    let mut replace = star.range.clone();
     let tables = if qualified {
         // `l.*`, `lotes.*` ou `public.lotes.*`.
         let name = s.checked_sub(2).map(|i| toks[i]).filter(|t| is_name(t))?;
         let schema = (s >= 4 && is_punct(text, toks[s - 3], ".") && is_name(toks[s - 4]))
             .then(|| word(text, toks[s - 4]));
+        replace.start = match schema {
+            Some(_) => toks[s - 4].range.start,
+            None => name.range.start,
+        };
         let written = word(text, name);
         let wanted = normalize(written);
         let by_ref = refs.iter().find(|r| match &r.alias {
@@ -194,6 +239,8 @@ pub fn star_at(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalog
     }
     Some(Star {
         range: star.range.clone(),
+        replace,
+        qualified,
         tables,
     })
 }
@@ -400,6 +447,31 @@ mod tests {
             ["Lotes: id, numero, fazenda_id"]
         );
         assert_eq!(t("SELECT 10 * id FROM Lotes"), None);
+    }
+
+    #[test]
+    fn the_chosen_columns_replace_the_star() {
+        let q = |n: &str| n.to_string();
+        // Uma tabela: só os nomes, na ordem do banco.
+        let s = star("select * from lotes l", 0).unwrap();
+        assert_eq!(s.replace, 7..8);
+        assert_eq!(s.names(&[(0, 2), (0, 0)], q), ["id", "fazenda_id"]);
+        assert_eq!(s.names(&s.all(), q), ["id", "numero", "fazenda_id"]);
+        // `l.*`: o alias vai junto, e sai o `l.*` inteiro.
+        let sql = "select l.* from lotes l";
+        let s = star(sql, 0).unwrap();
+        assert_eq!(&sql[s.replace.clone()], "l.*");
+        assert_eq!(s.names(&[(0, 1)], q), ["l.numero"]);
+        let sql = "select arquivo.lotes.* from arquivo.lotes";
+        let s = star(sql, 0).unwrap();
+        assert_eq!(&sql[s.replace.clone()], "arquivo.lotes.*");
+        assert_eq!(s.names(&[(0, 0)], q), ["arquivo.lotes.id"]);
+        // Mais de uma tabela: cada coluna com a tabela dela.
+        let s = star("select * from lotes l join fazendas on true", 0).unwrap();
+        assert_eq!(
+            s.names(&[(1, 1), (0, 0)], |n| format!("\"{n}\"")),
+            ["l.\"id\"", "fazendas.\"nome\""]
+        );
     }
 
     #[test]

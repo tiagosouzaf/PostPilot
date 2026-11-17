@@ -36,14 +36,30 @@ pub struct Action {
     pub open_json: Option<(usize, pgstudio_result_grid::Cell)>,
 }
 
+/// O servidor na faixa de status: o texto mostrado (o endereço ou, num
+/// servidor registrado, a pasta e o nome do registro) e, quando o texto
+/// não é o endereço, o endereço para a dica.
+#[derive(Clone, Copy)]
+pub struct Server<'a> {
+    pub label: &'a str,
+    pub host: Option<&'a str>,
+}
+
+impl<'a> From<&'a str> for Server<'a> {
+    fn from(label: &'a str) -> Self {
+        Server { label, host: None }
+    }
+}
+
 /// Desenha o painel de resultados. `server` é o texto da conexão.
-pub fn show(
+pub fn show<'a>(
     ui: &mut egui::Ui,
     doc: u32,
     exec: &mut Execution,
-    server: &str,
+    server: impl Into<Server<'a>>,
     tag: Option<&ServerTag>,
 ) -> Action {
+    let server = server.into();
     let mut action = Action::default();
     egui::Panel::bottom(egui::Id::new(("query_status", doc)))
         .resizable(false)
@@ -85,7 +101,7 @@ pub fn show(
             ResultsMode::Grid | ResultsMode::File => {
                 let mut log = Vec::new();
                 let place = crate::result_edit::Place {
-                    server: server.to_string(),
+                    server: server.label.to_string(),
                     environment: tag.map(|t| (t.environment.clone().unwrap_or_default(), t.color)),
                 };
                 (action.save_results, action.open_json) =
@@ -146,7 +162,13 @@ fn plans(ui: &mut egui::Ui, doc: u32, exec: &mut Execution) {
 
 /// Faixa de status de uma janela de consulta que ainda não executou:
 /// o servidor e o banco dela.
-pub fn connected_strip(ui: &mut egui::Ui, database: &str, server: &str, tag: Option<&ServerTag>) {
+pub fn connected_strip<'a>(
+    ui: &mut egui::Ui,
+    database: &str,
+    server: impl Into<Server<'a>>,
+    tag: Option<&ServerTag>,
+) {
+    let server = server.into();
     let icon = RichText::new(icons::PLUG).color(Color32::from_rgb(0x10, 0x7C, 0x10));
     strip(ui, icon, tr("Connected."), server, tag, |ui| {
         fit::text(ui, database);
@@ -162,7 +184,7 @@ fn strip(
     ui: &mut egui::Ui,
     icon: RichText,
     message: &str,
-    server: &str,
+    server: Server<'_>,
     tag: Option<&ServerTag>,
     fixed: impl FnOnce(&mut egui::Ui),
 ) {
@@ -188,7 +210,10 @@ fn strip(
             let left = fit::text_width(ui, icon.clone()) + fit::text_width(ui, message);
             let free = ui.available_width() - badge;
             let server_max = (free - left - 3.0 * spacing).max(free * 0.4);
-            fit::text_within(ui, server, server_max);
+            let label = fit::text_within(ui, server.label, server_max);
+            if let (Some(label), Some(host)) = (label, server.host) {
+                label.on_hover_text(host);
+            }
             if badge > 0.0 && ui.available_width() >= badge - spacing {
                 environment(ui, tag);
             }
@@ -221,7 +246,7 @@ fn environment(ui: &mut egui::Ui, tag: Option<&ServerTag>) {
     }
 }
 
-fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: &str, tag: Option<&ServerTag>) {
+fn status_strip(ui: &mut egui::Ui, exec: &Execution, server: Server<'_>, tag: Option<&ServerTag>) {
     let outcome = exec.outcome();
     let (icon, color) = match outcome {
         Outcome::Running => (icons::HOURGLASS, ui.visuals().text_color()),

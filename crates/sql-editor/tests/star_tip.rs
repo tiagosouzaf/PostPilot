@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, Id, Pos2, Rect};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_sql_editor::{EditorState, SqlEditor};
 
@@ -186,4 +187,92 @@ fn dozens_of_long_columns_fit_in_the_window() {
             "{size:?}: a lista {rect:?} sai da janela {screen:?}"
         );
     }
+}
+
+/// Leva o ponteiro para dentro da lista e clica no que tem o rótulo.
+fn click(h: &mut Harness<'static, Doc>, label: &str) {
+    let pos = h.get_by_label(label).rect().center();
+    h.hover_at(pos);
+    h.run_steps(3);
+    h.get_by_label(label).click();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_list_stays_open_with_the_pointer_inside_it() {
+    let mut h = harness("select * from lotes l where l.", 5, [800.0, 400.0]);
+    hover(&mut h, 7);
+    let (_, rect) = h.state().state.star_tip().unwrap();
+    // Do asterisco até o meio da lista, e parado lá por um bom tempo.
+    h.hover_at(rect.center());
+    h.run_steps(120);
+    assert!(
+        h.state().state.star_tip().is_some(),
+        "fechou com o ponteiro dentro"
+    );
+    // Fora dela e do asterisco, fecha.
+    h.hover_at(Pos2::new(rect.right() + 60.0, rect.bottom() + 60.0));
+    h.run_steps(60);
+    assert!(h.state().state.star_tip().is_none());
+}
+
+#[test]
+fn chosen_columns_replace_the_star() {
+    let mut h = harness("select * from lotes l where l.", 5, [800.0, 400.0]);
+    hover(&mut h, 7);
+    click(&mut h, "quantidade_de_animais_na_entrada_03");
+    click(&mut h, "quantidade_de_animais_na_entrada_01");
+    assert!(
+        h.state().state.star_tip().is_some(),
+        "o clique fechou a lista"
+    );
+    click(&mut h, "Replace the * with 2");
+    assert_eq!(
+        h.state().text,
+        "select quantidade_de_animais_na_entrada_01, quantidade_de_animais_na_entrada_03 \
+         from lotes l where l."
+    );
+    assert!(h.state().state.star_tip().is_none());
+}
+
+#[test]
+fn a_click_on_a_chosen_column_lets_it_go() {
+    let mut h = harness(
+        "select f.* from lotes l join fazendas f on true",
+        3,
+        [800.0, 400.0],
+    );
+    hover(&mut h, 9);
+    click(&mut h, "nome");
+    click(&mut h, "id");
+    click(&mut h, "id");
+    click(&mut h, "Replace the * with 1");
+    assert_eq!(
+        h.state().text,
+        "select f.nome from lotes l join fazendas f on true"
+    );
+}
+
+#[test]
+fn without_a_choice_the_star_becomes_every_column() {
+    let mut h = harness("select * from fazendas", 3, [800.0, 400.0]);
+    hover(&mut h, 7);
+    click(&mut h, "Replace the * with all");
+    assert_eq!(h.state().text, "select id, nome from fazendas");
+}
+
+#[test]
+fn the_table_name_chooses_all_its_columns() {
+    let mut h = harness(
+        "select * from lotes l join fazendas f on true",
+        2,
+        [800.0, 400.0],
+    );
+    hover(&mut h, 7);
+    click(&mut h, "fazendas");
+    click(&mut h, "Replace the * with 2");
+    assert_eq!(
+        h.state().text,
+        "select f.id, f.nome from lotes l join fazendas f on true"
+    );
 }
