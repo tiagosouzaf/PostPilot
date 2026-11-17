@@ -14,25 +14,47 @@ use egui_kittest::kittest::Queryable;
 use egui_phosphor::regular as icons;
 use pgstudio_core::CommandId;
 use pgstudio_core::connection::{ConnectError, Connected, ConnectionSettings, Connector};
-use pgstudio_core::query::{QueryEvent, QueryService, QuerySession, QuerySink};
+use pgstudio_core::query::{Pace, QueryEvent, QueryService, QuerySession, QuerySink};
 use pgstudio_object_explorer::fake::FakeProvider;
 use pgstudio_ui_shell::ShellApp;
 use pgstudio_ui_shell::options::Page;
 
 const ROWS: u64 = 12_340;
 
-struct FakeQueries;
+/// `true`: a sessão sabe buscar o resultado uma página por vez.
+struct FakeQueries(bool);
 
 impl QueryService for FakeQueries {
     fn open(&self, _: &str) -> Arc<dyn QuerySession> {
-        Arc::new(FakeSession)
+        Arc::new(FakeSession(self.0))
     }
 }
 
-struct FakeSession;
+struct FakeSession(bool);
 
-impl QuerySession for FakeSession {
-    fn execute(&self, _: String, mut sink: QuerySink) {
+/// Espera a linha estar liberada (a thread dorme até ser acordada).
+fn allowed(pace: &Pace) -> bool {
+    use std::future::Future;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Park(std::thread::Thread);
+    impl Wake for Park {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(Park(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut row = std::pin::pin!(pace.row());
+    loop {
+        if let Poll::Ready(go) = row.as_mut().poll(&mut cx) {
+            return go;
+        }
+        std::thread::park();
+    }
+}
+
+impl FakeSession {
+    fn start(mut sink: QuerySink, pace: Option<Pace>) {
         std::thread::spawn(move || {
             sink(QueryEvent::Columns(
                 ["id", "cliente", "cidade", "status", "total", "criado_em"]
@@ -42,6 +64,12 @@ impl QuerySession for FakeSession {
             let cities = ["São Paulo", "Curitiba", "Recife", "Porto Alegre", "Belém"];
             let names = ["Ana Souza", "Bruno Lima", "Carla Dias", "Diego Reis"];
             for i in 1..=ROWS {
+                if let Some(pace) = &pace
+                    && !allowed(pace)
+                {
+                    sink(QueryEvent::Finished { canceled: true });
+                    return;
+                }
                 sink(QueryEvent::Row(vec![
                     Some(i.to_string()),
                     Some(format!("{} {}", names[(i % 4) as usize], i % 97)),
@@ -60,6 +88,20 @@ impl QuerySession for FakeSession {
             sink(QueryEvent::Finished { canceled: false });
         });
     }
+}
+
+impl QuerySession for FakeSession {
+    fn execute(&self, _: String, sink: QuerySink) {
+        Self::start(sink, None);
+    }
+
+    fn execute_paced(&self, sql: String, sink: QuerySink, pace: Pace) {
+        if self.0 {
+            Self::start(sink, Some(pace));
+        } else {
+            self.execute(sql, sink);
+        }
+    }
 
     fn cancel(&self) {}
 
@@ -68,7 +110,7 @@ impl QuerySession for FakeSession {
     }
 }
 
-struct FakeConnector;
+struct FakeConnector(bool);
 
 impl Connector for FakeConnector {
     fn connect(&self, s: &ConnectionSettings, _: &str) -> Result<Connected, ConnectError> {
@@ -76,7 +118,7 @@ impl Connector for FakeConnector {
             settings: s.clone(),
             server_version: "17.2".into(),
             metadata: Arc::new(FakeProvider::new(Duration::ZERO)),
-            queries: Arc::new(FakeQueries),
+            queries: Arc::new(FakeQueries(self.0)),
         })
     }
 }
@@ -120,7 +162,7 @@ fn click(h: &mut Harness<'static, ShellApp>, pos: egui::Pos2) {
 #[test]
 fn screenshots_of_pages_and_copy_formats() {
     pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
-    let mut app = ShellApp::default().with_connector(Arc::new(FakeConnector));
+    let mut app = ShellApp::default().with_connector(Arc::new(FakeConnector(false)));
     app.connect_to(
         ConnectionSettings {
             host: "homologacao.loja.com.br".into(),
@@ -233,4 +275,87 @@ fn screenshots_of_pages_and_copy_formats() {
     h.state_mut().options_mut().unwrap().page = Page::ResultsGrid;
     h.run_steps(8);
     save(&mut h, "4-opcoes.png");
+}
+
+/// O resultado vindo do servidor uma página por vez: a primeira página com
+/// o total "500+", e a página das opções.
+#[test]
+fn screenshots_of_fetching_only_the_page() {
+    pgstudio_i18n::set_language(pgstudio_i18n::Language::PortugueseBrazil);
+    let mut app = ShellApp::default().with_connector(Arc::new(FakeConnector(true)));
+    app.connect_to(
+        ConnectionSettings {
+            host: "homologacao.loja.com.br".into(),
+            user: "app".into(),
+            database: "loja".into(),
+            ..Default::default()
+        },
+        "x".into(),
+    );
+    let mut h = Harness::builder()
+        .with_size(window())
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(|ui, app: &mut ShellApp| app.show(ui), app);
+    pgstudio_ui_shell::install_fonts(&h.ctx);
+    let theme = match std::env::var("PGSTUDIO_SHOT_THEME").as_deref() {
+        Ok("light") => pgstudio_core::Theme::Light,
+        _ => pgstudio_core::Theme::Dark,
+    };
+    pgstudio_ui_shell::theme::apply(&h.ctx, theme);
+    let start = Instant::now();
+    while h.state().connection().is_none() {
+        h.step();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    h.run_steps(5);
+    h.key_press_modifiers(Modifiers::CTRL, Key::N);
+    h.run_steps(3);
+    h.event(Event::Text(
+        "select id, cliente, cidade, status, total, criado_em\nfrom pedidos".into(),
+    ));
+    h.run_steps(3);
+    let doc = h.state().active_document().unwrap();
+    h.key_press(Key::F5);
+    let rows = |h: &Harness<'static, ShellApp>| {
+        h.state()
+            .documents()
+            .get(doc)
+            .and_then(|d| d.execution.as_ref())
+            .filter(|e| !e.is_running())
+            .and_then(|e| e.results.first().map(|r| r.len()))
+    };
+    let wait = |h: &mut Harness<'static, ShellApp>, want: u64| {
+        let start = Instant::now();
+        loop {
+            h.step();
+            if rows(h) == Some(want) && !h.state().is_loading_catalog() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(20));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        h.run_steps(5);
+    };
+    // 5: só a primeira página veio; o resto está no servidor.
+    wait(&mut h, 500);
+    save(&mut h, "5-so-a-primeira-pagina.png");
+
+    // 6: a página seguinte foi buscada.
+    let next = h
+        .get_all_by_label(icons::CARET_RIGHT)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap()
+        .rect()
+        .center();
+    click(&mut h, next);
+    wait(&mut h, 1000);
+    save(&mut h, "6-pagina-seguinte.png");
+
+    // 7: as opções.
+    let ctx = h.ctx.clone();
+    h.state_mut().execute(&ctx, CommandId::Options);
+    h.state_mut().options_mut().unwrap().page = Page::ResultsGrid;
+    h.run_steps(8);
+    save(&mut h, "7-opcoes-busca.png");
 }

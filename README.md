@@ -303,6 +303,20 @@ da linha continua o do resultado inteiro, e ordenar e filtrar valem para o
 resultado todo, não só para a página. O canto, o Ctrl+A e o cabeçalho
 selecionam o que está na página à mostra.
 
+No PostgreSQL e no SQL Server, o F5 de um SELECT sozinho busca do servidor só a
+primeira página: a consulta fica aberta lá e a faixa mostra o total como
+"500+". A página seguinte busca mais uma página; a última página, "Todas as
+linhas" e "Save Results As..." buscam tudo. Enquanto parte das linhas está no
+servidor, ordenar e filtrar valem para as que já vieram e a grade fica só
+leitura (a edição volta quando o resto chega). A consulta parada segura os
+bloqueios dela, então é encerrada quando a janela roda outra coisa, no Cancel
+(Alt+Break), ao fechar a janela ou depois de 10 minutos esperando (o tempo
+muda nas opções; o que já veio continua na grade). Scripts, comandos que
+alteram dados, consultas dentro de uma transação aberta, Results to Text e os
+outros motores (MongoDB, Redis, Elasticsearch) trazem tudo, como antes. Para
+voltar a trazer sempre tudo, desmarque "Buscar do servidor só a página à
+mostra" em Tools > Options > Query Results > Results to Grid.
+
 Na mesma faixa, "Copiar como" escolhe o formato do que o Ctrl+C manda para a
 área de transferência: separado por tab (o padrão, que cola direto numa
 planilha), CSV com vírgula ou com ponto e vírgula (o do Excel em português),

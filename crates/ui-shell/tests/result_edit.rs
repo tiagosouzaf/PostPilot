@@ -452,3 +452,96 @@ fn edits_and_deletes_follow_the_sorted_and_filtered_rows() {
     drop(s);
     value(&session, "DROP TABLE grid_edit_view");
 }
+
+/// Com o resultado vindo do servidor em páginas, a grade fica só leitura
+/// enquanto parte das linhas está lá (a conexão está com a consulta
+/// aberta) e passa a editar quando o resto chega.
+#[test]
+fn a_result_fetched_in_pages_is_editable_once_all_rows_came() {
+    use pgstudio_result_grid::grid::Fetch;
+    let Some(service) = service() else {
+        return;
+    };
+    let session = service.open("postgres");
+    let ctx = egui::Context::default();
+    value(
+        &session,
+        "DROP TABLE IF EXISTS grid_paged; \
+         CREATE TABLE grid_paged (id int PRIMARY KEY, nome text); \
+         INSERT INTO grid_paged SELECT g, 'n' || g FROM generate_series(1, 5000) g",
+    );
+    let mut exec = Execution::start_paged(
+        session.clone(),
+        "SELECT id, nome FROM grid_paged ORDER BY id".into(),
+        0,
+        500,
+        &ctx,
+    );
+    let start = Instant::now();
+    // A primeira página conta como pronta.
+    while !exec.poll() {
+        assert!(start.elapsed() < Duration::from_secs(30), "never paused");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(exec.has_more());
+    assert!(!exec.is_running());
+    assert_eq!(exec.total_rows(), 500);
+    assert!(reason(&exec).contains("still on the server"));
+
+    // Mais uma página.
+    exec.fetch(Fetch::Page);
+    assert!(exec.is_running());
+    while exec.is_fetching() {
+        exec.poll();
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "never paused again"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(exec.total_rows(), 1000);
+
+    // O resto: a execução termina e a grade vira editável.
+    exec.fetch(Fetch::All);
+    while exec.has_more() {
+        assert!(!exec.poll(), "the execution is reported only once");
+        assert!(start.elapsed() < Duration::from_secs(30), "never finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(exec.total_rows(), 5000);
+    settle(&mut exec);
+    assert_eq!(status(&exec), Status::Editable);
+    let set = &mut exec.results[0];
+    let store = set.shared_store();
+    {
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.update(&mut s, Cell { row: 4999, col: 1 }, Some("fim".into()));
+    }
+    settle(&mut exec);
+    assert_eq!(
+        value(&session, "SELECT nome FROM grid_paged WHERE id = 5000").as_deref(),
+        Some("fim")
+    );
+
+    // Trocada por outra execução com linhas ainda no servidor, a consulta
+    // é encerrada lá e a sessão atende a seguinte.
+    let mut paused = Execution::start_paged(
+        session.clone(),
+        "SELECT g, repeat('x', 200) FROM generate_series(1, 3000000) g".into(),
+        0,
+        500,
+        &ctx,
+    );
+    while !paused.poll() {
+        assert!(start.elapsed() < Duration::from_secs(60), "never paused");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(paused.has_more());
+    drop(paused);
+    assert_eq!(
+        value(&session, "SELECT count(*) FROM grid_paged").as_deref(),
+        Some("5000")
+    );
+    value(&session, "DROP TABLE grid_paged");
+}
