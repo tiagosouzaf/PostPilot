@@ -4172,6 +4172,7 @@ dependencies = [
  "pgstudio-core",
  "pgstudio-i18n",
  "rusqlite",
+ "sqlparser",
 ]
 
 [[package]]

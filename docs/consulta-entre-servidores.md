@@ -38,8 +38,11 @@ O nome do servidor vai sem aspas quando é simples (`pg_vendas` também acha
 "PG Vendas") ou entre aspas (`"PG Vendas"`) ou colchetes (`[PG Vendas]`).
 Sem banco, vale o banco da conexão guardada.
 
-O endereço de uma tabela lê a tabela **inteira**. Para o filtro rodar no
-servidor, use a consulta dele:
+Uma tabela escrita **sem servidor** (`documento`, `public.documento`) é do
+servidor e do banco da janela, os que aparecem na barra.
+
+Para ir além do que o PostPilot manda sozinho ao servidor (veja abaixo), use
+a consulta dele:
 
 ```sql
 SELECT c.nome, s.dispositivo, a.texto
@@ -49,6 +52,45 @@ JOIN busca($$ GET /avaliacoes/_search
               {"query": {"term": {"nota": 5}}, "size": 1000} $$) a ON a.cliente_id = c.id
 JOIN cache($$ HGETALL usuario:1 $$) h ON h.field = 'nome';
 ```
+
+## O que roda em cada servidor
+
+O PostPilot não baixa uma tabela inteira para depois filtrar. De uma tabela
+do PostgreSQL ou do SQL Server ele pede ao servidor só o que a consulta usa:
+
+- **Colunas**: só as que aparecem na consulta (`SELECT *` pede todas).
+- **Filtros**: as condições do `WHERE` e do `ON` que falam de uma tabela só,
+  com `=`, `<`, `>`, `IN`, `BETWEEN`, `IS NULL`, `AND` e `OR` contra números,
+  textos e datas (`'2026-01-31'` ou `'2026-01-31 10:00:00'`).
+- **Chaves do join**: com `a.x = b.y`, a tabela `b` é lida só com as chaves
+  que `a` trouxe (até 50.000 chaves, em lotes).
+- **Ordem e limite**: um `ORDER BY` pelas colunas de uma tabela com `LIMIT`
+  lê só as primeiras linhas dela (1.000, e mais se o join não completar o
+  limite).
+
+```sql
+-- Lê as 1.000 últimas linhas de documento e, de lotes, só as chaves delas.
+SELECT d.caixa_id, l.id
+FROM documento d
+JOIN "Tiib@SaaS".lotes l ON l.chave_de_processamento = d.chave_processamento_tiib
+ORDER BY d.id DESC
+LIMIT 1;
+```
+
+A aba **Mensagens** mostra, enquanto roda, o que foi pedido a cada servidor
+e quantas linhas vieram. O botão de cancelar para tudo na hora.
+
+**Quando não dá para diminuir, a consulta para antes de baixar.** Se uma
+tabela viria com mais de 200.000 linhas (pela estimativa do servidor), nada
+é baixado e a mensagem diz quantas linhas viriam de qual servidor. Aí é
+filtrar, juntar por uma chave com uma tabela filtrada ou escrever a consulta
+do servidor. Para baixar mesmo assim (até 1.000.000 de linhas por tabela),
+ponha o comentário `-- baixar tudo` na consulta.
+
+Fica sem essa economia, por enquanto: coleções do MongoDB, índices do
+Elasticsearch e chaves do Redis (use `servidor($$ ... $$)` para filtrar
+neles), consultas com subconsulta, `WITH`, `UNION` ou a mesma tabela duas
+vezes, `LIKE`, funções no filtro e `ORDER BY` por texto.
 
 ## Como funciona
 
@@ -67,11 +109,12 @@ terminar) e roda o seu `SELECT` nele. Por isso:
 
 ## Limites
 
-- **Volume**: os dados de cada fonte vêm para o seu computador. Cada fonte
-  lê até 1.000.000 de linhas; passou disso ela é cortada e as Mensagens
-  avisam. Filtre no servidor com `servidor($$ ... $$)`.
-- **Filtros**: o `WHERE` de fora roda aqui, depois de ler. O endereço de uma
-  tabela não empurra filtro nem escolhe colunas.
+- **Volume**: os dados de cada fonte vêm para o seu computador. Uma tabela
+  inteira com mais de 200.000 linhas não vem sem o comentário
+  `-- baixar tudo`; com ele, e nas consultas `servidor($$ ... $$)`, cada
+  fonte lê até 1.000.000 de linhas e as Mensagens avisam quando corta.
+- **Filtros**: o `WHERE` de fora roda aqui também, depois de ler; o que vai
+  para o servidor é só para ler menos.
 - **Tipos**: os valores chegam como texto. Colunas só de números viram
   números (para comparar e somar entre servidores); o resto fica texto.
   Códigos com zero na frente (CEP, CPF) continuam texto. Datas ficam como o

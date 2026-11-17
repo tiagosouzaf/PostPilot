@@ -43,6 +43,22 @@ pub struct Source {
     pub table: String,
     /// A fonte é o endereço de uma tabela (lida inteira).
     pub whole: bool,
+    /// Numa tabela do PostgreSQL ou do SQL Server, o nome dela como vai no
+    /// SQL do servidor: dá para montar um SELECT com só as colunas, os
+    /// filtros e as chaves que a consulta usa (veja [`crate::pushdown`]).
+    pub relation: Option<String>,
+    /// Quantas vezes a consulta cita a fonte.
+    pub uses: usize,
+}
+
+/// O servidor da janela: as tabelas escritas sem servidor na frente são
+/// dele.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Home {
+    /// Índice em `servers`.
+    pub server: usize,
+    /// O banco da janela.
+    pub database: String,
 }
 
 /// Um comando para o SQLite local, já com as fontes trocadas.
@@ -425,9 +441,71 @@ fn direct(server: &Server, parts: &[Part]) -> Result<(String, String), String> {
     }
 }
 
-/// Monta o plano de `sql` com as conexões guardadas `servers`.
+/// Os nomes definidos num `WITH nome AS (...)`: são tabelas da própria
+/// consulta, não de um servidor.
+fn cte_names(sql: &str, tokens: &[Token]) -> Vec<String> {
+    let name = |t: &Token| match &t.kind {
+        Kind::Word => Some(sql[t.start..t.end].to_lowercase()),
+        Kind::Quoted(n) => Some(n.to_lowercase()),
+        _ => None,
+    };
+    let is_word = |t: Option<&Token>, w: &str| {
+        t.is_some_and(|t| t.kind == Kind::Word && sql[t.start..t.end].eq_ignore_ascii_case(w))
+    };
+    let mut out = Vec::new();
+    for (i, t) in tokens.iter().enumerate() {
+        if !is_word(Some(t), "as") || i == 0 {
+            continue;
+        }
+        // `AS (`, `AS MATERIALIZED (` ou `AS NOT MATERIALIZED (`.
+        let mut j = i + 1;
+        if is_word(tokens.get(j), "not") {
+            j += 1;
+        }
+        if is_word(tokens.get(j), "materialized") {
+            j += 1;
+        }
+        if tokens.get(j).is_none_or(|t| t.kind != Kind::Punct('(')) {
+            continue;
+        }
+        // Antes do `AS`: o nome, ou o nome com a lista de colunas.
+        let mut k = i - 1;
+        if tokens[k].kind == Kind::Punct(')') {
+            let mut depth = 0usize;
+            loop {
+                match tokens[k].kind {
+                    Kind::Punct(')') => depth += 1,
+                    Kind::Punct('(') => depth -= 1,
+                    _ => {}
+                }
+                if depth == 0 || k == 0 {
+                    break;
+                }
+                k -= 1;
+            }
+            if k == 0 {
+                continue;
+            }
+            k -= 1;
+        }
+        if let Some(n) = name(&tokens[k]) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Monta o plano de `sql` com as conexões guardadas `servers`. Sem servidor
+/// da janela: toda tabela precisa dizer o servidor.
 pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
+    plan_with(sql, servers, None)
+}
+
+/// Monta o plano de `sql` com as conexões guardadas `servers`; as tabelas
+/// sem servidor na frente são do servidor da janela, `home`.
+pub fn plan_with(sql: &str, servers: &[Server], home: Option<&Home>) -> Result<Plan, PlanError> {
     let tokens = lex(sql)?;
+    let ctes = cte_names(sql, &tokens);
     let word = |t: &Token| match t.kind {
         Kind::Word => Some(sql[t.start..t.end].to_lowercase()),
         _ => None,
@@ -489,17 +567,33 @@ pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
             };
             let local = matches!(parts[0].name.to_lowercase().as_str(), "main" | "temp")
                 && !parts[0].quoted;
-            let server = find_server(servers, &parts[0]);
-            let is_source = match (server, native.is_some(), parts.len()) {
-                (Some(_), true, _) => true,
-                (Some(_), false, n) => n >= 2,
-                // `json_each(...)` e outras funções de tabela do SQLite.
-                (None, _, 1) => false,
-                (None, _, _) if local => false,
-                (None, _, _) => {
+            // O servidor que o endereço diz; sem ele, a tabela é do
+            // servidor da janela.
+            let named =
+                find_server(servers, &parts[0]).filter(|_| native.is_some() || parts.len() >= 2);
+            let call = tokens.get(j).is_some_and(|t| t.kind == Kind::Punct('('));
+            let own = parts.len() == 1
+                && (call
+                    || ctes.contains(&parts[0].name.to_lowercase())
+                    || parts[0].name.to_lowercase().starts_with("sqlite_"));
+            // (servidor, banco do servidor, partes depois do servidor)
+            let target: Option<(usize, String, &[Part])> = match (named, home) {
+                (Some(i), _) => Some((i, servers[i].database.clone(), &parts[1..])),
+                // `json_each(...)`, um nome do WITH, `main.x`: do SQLite.
+                (None, _) if local || own => None,
+                (None, Some(home)) if servers.get(home.server).is_some() => {
+                    Some((home.server, home.database.clone(), &parts[..]))
+                }
+                (None, _) => {
                     let known: Vec<String> =
                         servers.iter().map(|s| written_name(&s.name)).collect();
-                    let message = if known.is_empty() {
+                    let message = if parts.len() == 1 && !known.is_empty() {
+                        trf!(
+                            "The table \"{name}\" does not say its server. Write server.{name}; the servers are: {servers}.",
+                            name = parts[0].name,
+                            servers = known.join(", ")
+                        )
+                    } else if known.is_empty() {
                         trf!(
                             "\"{name}\" is not a saved connection. Register the servers in the workspace or in Registered Servers.",
                             name = parts[0].name
@@ -514,14 +608,17 @@ pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
                     return Err(fail(message, t));
                 }
             };
-            if is_source && let Some(server_index) = server {
-                let server = &servers[server_index];
+            if let Some((server_index, default_database, rest)) = target {
+                let server = &Server {
+                    database: default_database,
+                    ..servers[server_index].clone()
+                };
                 let end_token = if native.is_some() { j + 2 } else { j - 1 };
                 let (database, query, whole) = match native {
                     Some(body) => {
-                        let database = match parts.len() {
-                            1 => server.database.clone(),
-                            2 => parts[1].name.clone(),
+                        let database = match rest.len() {
+                            0 => server.database.clone(),
+                            1 => rest[0].name.clone(),
                             _ => {
                                 return Err(fail(
                                     tr("Write a server query as server($$ ... $$) or server.database($$ ... $$).")
@@ -537,8 +634,7 @@ pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
                         (database, body, false)
                     }
                     None => {
-                        let (database, query) =
-                            direct(server, &parts[1..]).map_err(|m| fail(m, t))?;
+                        let (database, query) = direct(server, rest).map_err(|m| fail(m, t))?;
                         (database, query, true)
                     }
                 };
@@ -553,6 +649,15 @@ pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
                         s.server == server_index && s.database == database && s.query == query
                     })
                     .map(|s| s.table.clone());
+                let relation = (whole
+                    && matches!(server.engine, Engine::PostgreSql | Engine::SqlServer))
+                .then(|| query.strip_prefix("SELECT * FROM ").map(str::to_string))
+                .flatten();
+                if let Some(s) = plan.sources.iter_mut().find(|s| {
+                    s.server == server_index && s.database == database && s.query == query
+                }) {
+                    s.uses += 1;
+                }
                 let table = match existing {
                     Some(table) => table,
                     None => {
@@ -564,6 +669,8 @@ pub fn plan(sql: &str, servers: &[Server]) -> Result<Plan, PlanError> {
                             label,
                             table: table.clone(),
                             whole,
+                            relation,
+                            uses: 1,
                         });
                         table
                     }
@@ -780,5 +887,57 @@ mod tests {
         assert_eq!(written_name("pg_vendas"), "pg_vendas");
         assert_eq!(written_name("PG Vendas"), "\"PG Vendas\"");
         assert_eq!(written_name("order"), "\"order\"");
+    }
+
+    #[test]
+    fn a_table_without_a_server_is_of_the_window_server() {
+        let servers = servers();
+        let home = Home {
+            server: 0,
+            database: "tiibcontrol".into(),
+        };
+        let p = plan_with(
+            "with recentes as (select * from documento where id > 1) \
+             select * from recentes r join public.caixa c on c.id = r.caixa_id \
+             join json_each('[1]') j on 1 = 1 join main.x on 1 = 1 join outro.dbo.t t on 1 = 1",
+            &servers,
+            Some(&home),
+        )
+        .expect("plan");
+        let got: Vec<(usize, &str, &str)> = p
+            .sources
+            .iter()
+            .map(|s| (s.server, s.database.as_str(), s.query.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (0, "tiibcontrol", "SELECT * FROM documento"),
+                (0, "tiibcontrol", "SELECT * FROM public.caixa"),
+                (0, "outro", "SELECT * FROM dbo.t"),
+            ]
+        );
+        assert_eq!(p.sources[0].relation.as_deref(), Some("documento"));
+        assert_eq!(p.sources[0].uses, 1);
+        let sql = &p.statements[0].sql;
+        assert!(
+            sql.contains("from main.\"pp_1\" AS \"documento\" where"),
+            "{sql}"
+        );
+        assert!(sql.contains("from recentes r"), "{sql}");
+        assert!(sql.contains("json_each('[1]') j"), "{sql}");
+        assert!(sql.contains("join main.x on"), "{sql}");
+    }
+
+    #[test]
+    fn without_a_window_server_a_bare_table_says_how_to_write_it() {
+        let e = plan("select * from documento d", &servers()).unwrap_err();
+        assert!(
+            e.message
+                .starts_with("The table \"documento\" does not say its server."),
+            "{}",
+            e.message
+        );
+        assert_eq!(e.position, 15);
     }
 }

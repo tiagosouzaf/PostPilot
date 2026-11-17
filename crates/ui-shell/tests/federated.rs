@@ -252,18 +252,24 @@ fn joins_two_saved_servers_without_connecting_in_the_object_explorer() {
     assert_eq!(exec.outcome(), Outcome::Succeeded, "{}", messages(exec));
     assert_eq!(exec.results[0].columns(), ["nome", "total"]);
     assert_eq!(rows(exec, 0), vec![vec!["Bruno", "100"], vec!["Ana", "15"]]);
-    // Cada servidor recebeu a leitura dele, no banco pedido. O servidor de
+    // Cada servidor recebeu a pergunta do tamanho da tabela e a leitura
+    // dele, no banco pedido e só com as colunas usadas. O servidor de
     // Produção não pede confirmação: a consulta só lê.
     let mut log = log.lock().unwrap().clone();
     log.sort();
-    assert_eq!(log.len(), 2, "{log:?}");
+    assert_eq!(log.len(), 4, "{log:?}");
     assert_eq!(log[0].0, "ms-db");
     assert_eq!(log[0].1, "erp2");
-    assert_eq!(log[0].2, "SELECT * FROM dbo.pedidos");
-    assert_eq!(log[1].0, "pg-db");
-    assert_eq!(log[1].1, "erp");
-    assert!(log[1].2.contains("READ ONLY"), "{}", log[1].2);
-    assert!(log[1].2.contains("SELECT * FROM public.clientes"));
+    assert!(log[0].2.contains("sys.partitions"), "{}", log[0].2);
+    assert_eq!(log[1].0, "ms-db");
+    assert_eq!(log[1].2, "SELECT [total], [cliente_id] FROM dbo.pedidos");
+    assert_eq!(log[2].0, "pg-db");
+    assert_eq!(log[2].1, "erp");
+    assert!(log[2].2.contains("EXPLAIN (FORMAT JSON)"), "{}", log[2].2);
+    for entry in &log[2..] {
+        assert!(entry.2.contains("READ ONLY"), "{}", entry.2);
+        assert!(entry.2.contains("SELECT nome, id FROM public.clientes"));
+    }
 }
 
 #[test]
@@ -371,6 +377,26 @@ fn real_app() -> Option<ShellApp> {
             server(Engine::Elasticsearch, "ELASTICSEARCH", "19200", "", ""),
         ),
         ("cache", server(Engine::Redis, "REDIS", "16379", "", "")),
+        (
+            "TiibControl@MainDoc",
+            server(
+                Engine::PostgreSql,
+                "PGSTUDIO",
+                "54329",
+                "postgres",
+                "tiibcontrol",
+            ),
+        ),
+        (
+            "Tiib@SaaS",
+            server(
+                Engine::PostgreSql,
+                "PGSTUDIO",
+                "54329",
+                "postgres",
+                "tiibsaas",
+            ),
+        ),
     ];
     let store = Arc::new(MemoryStore::default());
     let mut r = RegisteredServers::default();
@@ -524,7 +550,195 @@ fn real_big_table_comes_whole() {
         return;
     };
     assert_eq!(outcome, Outcome::Succeeded, "{messages}");
-    assert_eq!(data, vec![vec!["200000", "20000100000", "4"]]);
+    assert_eq!(data, vec![vec!["100000", "5000050000", "4"]]);
+}
+
+/// Conecta o app no banco `tiibcontrol` (como a janela do usuário) e roda
+/// `sql` numa janela entre servidores.
+fn real_from_tiibcontrol(sql: &str) -> Option<(Answer, Duration)> {
+    let mut harness = start(real_app()?);
+    let mut s = ConnectionSettings::for_engine(Engine::PostgreSql);
+    s.host = var("PGSTUDIO_TEST_HOST", "127.0.0.1");
+    s.port = var("PGSTUDIO_TEST_PORT", "54329").parse().unwrap();
+    s.user = var("PGSTUDIO_TEST_USER", "postgres");
+    s.database = "tiibcontrol".into();
+    s.ssl = SslMode::Disable;
+    harness
+        .state_mut()
+        .connect_to(s, var("PGSTUDIO_TEST_PASSWORD", ""));
+    let start = Instant::now();
+    while harness.state().connection().is_none() {
+        harness.step();
+        assert!(start.elapsed() < Duration::from_secs(30), "never connected");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.run();
+    let id = cross_query(&mut harness, sql);
+    let start = Instant::now();
+    run(&mut harness, id, 120);
+    let took = start.elapsed();
+    let exec = execution(&harness, id);
+    let (columns, data) = match exec.results.first() {
+        Some(set) => (set.columns(), rows(exec, 0)),
+        None => (Vec::new(), Vec::new()),
+    };
+    Some(((exec.outcome(), columns, data, messages(exec)), took))
+}
+
+/// A consulta que travou o app: duas tabelas de milhões de linhas em dois
+/// servidores, a última linha por id. Lê as últimas linhas de uma e só as
+/// chaves delas da outra.
+#[test]
+fn real_latest_row_of_two_huge_tables_reads_almost_nothing() {
+    let Some(((outcome, columns, data, messages), took)) = real_from_tiibcontrol(
+        "SELECT d.caixa_id,l.id\n\
+         FROM documento d\n\
+         inner join \"Tiib@SaaS\".lotes l on l.chave_de_processamento=d.chave_processamento_tiib\n\
+         ORDER BY d.id DESC\n\
+         LIMIT 1",
+    ) else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(columns, ["caixa_id", "id"]);
+    assert_eq!(data, vec![vec!["0", "500000"]]);
+    assert!(took < Duration::from_secs(10), "took {took:?}\n{messages}");
+    assert!(
+        messages.contains("WHERE chave_processamento_tiib IS NOT NULL ORDER BY id DESC LIMIT 1000"),
+        "{messages}"
+    );
+    assert!(
+        messages.contains("[documento] TiibControl@MainDoc → SELECT caixa_id"),
+        "{messages}"
+    );
+    assert!(messages.contains("keys of documento)"), "{messages}");
+}
+
+/// Quando as últimas linhas não têm par, a consulta lê mais e, no fim, vai
+/// pelo lado que o filtro deixou pequeno.
+#[test]
+fn real_latest_row_far_from_the_end_still_answers_right() {
+    let Some(((outcome, _, data, messages), _)) = real_from_tiibcontrol(
+        "select d.id, l.id from documento d \
+         join \"Tiib@SaaS\".lotes l on l.chave_de_processamento = d.chave_processamento_tiib \
+         where l.id < 100 order by d.id desc limit 2",
+    ) else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(
+        data,
+        vec![vec!["2500098", "98"], vec!["2500097", "97"]],
+        "{messages}"
+    );
+    assert!(messages.contains("id < 100"), "{messages}");
+    assert!(messages.contains("reading more"), "{messages}");
+}
+
+/// Sem nada que diminua as tabelas, a consulta para antes de baixar e diz
+/// quantas linhas viriam.
+#[test]
+fn real_two_huge_tables_without_a_filter_stop_before_downloading() {
+    let Some(((outcome, _, data, messages), took)) = real_from_tiibcontrol(
+        "select count(*) from documento d \
+         join \"Tiib@SaaS\".lotes l on l.chave_de_processamento = d.chave_processamento_tiib",
+    ) else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Failed, "{messages}");
+    assert!(data.is_empty());
+    assert!(took < Duration::from_secs(10), "took {took:?}");
+    assert!(
+        messages.contains("[documento] Stopped before downloading: about 3,000,0"),
+        "{messages}"
+    );
+    assert!(
+        messages
+            .contains("Stopped before downloading: about 2,000,000 rows would come from Tiib@SaaS"),
+        "{messages}"
+    );
+    assert!(messages.contains("-- baixar tudo"), "{messages}");
+    assert!(!messages.contains("rows so far"), "{messages}");
+}
+
+/// Filtro de data e de texto no servidor; a outra tabela vem pelas chaves.
+#[test]
+fn real_filters_and_keys_go_to_the_servers() {
+    let Some(((outcome, _, data, messages), took)) = real_from_tiibcontrol(
+        "select count(*), min(d.id), max(l.id) from documento d \
+         join \"Tiib@SaaS\".lotes l on l.chave_de_processamento = d.chave_processamento_tiib \
+         where d.criado >= '2020-02-04' and d.criado < '2020-02-04 00:10:00' and d.status = 'ERRO'",
+    ) else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(data, vec![vec!["40", "2937600", "438190"]], "{messages}");
+    assert!(took < Duration::from_secs(10), "took {took:?}");
+    assert!(
+        messages.contains(
+            "WHERE criado >= '2020-02-04' AND criado <= '2020-02-04 00:10:00' AND status = 'ERRO'"
+        ),
+        "{messages}"
+    );
+    assert!(messages.contains("[documento] 61 rows"), "{messages}");
+}
+
+/// O comentário `-- baixar tudo` libera a tabela inteira, até o limite.
+#[test]
+fn real_download_all_is_an_explicit_choice() {
+    let Some(((outcome, _, data, messages), _)) =
+        real_from_tiibcontrol("select count(*) from \"Tiib@SaaS\".lotes -- baixar tudo")
+    else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(data, vec![vec!["1000000"]]);
+    assert!(messages.contains("rows so far"), "{messages}");
+    assert!(messages.contains("WARNING: only the first"), "{messages}");
+}
+
+/// No SQL Server: as últimas linhas com TOP, a outra tabela pelas chaves, e
+/// a parada pelo tamanho da tabela.
+#[test]
+fn real_sql_server_reads_the_top_rows_and_stops_on_a_big_table() {
+    let Some((outcome, _, data, messages)) = real(
+        "select p.id, c.nome from financeiro.erp.dbo.pedidos p \
+         join pg_vendas.clientes c on c.id = p.cliente_id order by p.id desc limit 2",
+    ) else {
+        return;
+    };
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(
+        data,
+        vec![vec!["3", "Bruno Lima"], vec!["2", "Ana Souza"]],
+        "{messages}"
+    );
+    assert!(messages.contains(
+        "SELECT TOP (1000) [id], [cliente_id] FROM dbo.pedidos WHERE [cliente_id] IS NOT NULL"
+    ));
+    assert!(messages.contains("keys of financeiro.erp.dbo.pedidos)"));
+
+    let (outcome, _, data, messages) = real(
+        "select c.nome, p.total from pg_vendas.clientes c \
+         join financeiro.erp.dbo.pedidos p on p.cliente_id = c.id \
+         where c.cidade = 'São Paulo' and p.total > 100",
+    )
+    .unwrap();
+    assert_eq!(outcome, Outcome::Succeeded, "{messages}");
+    assert_eq!(data, vec![vec!["Ana Souza", "150.5"]], "{messages}");
+    assert!(
+        messages.contains("WHERE cidade = 'São Paulo'"),
+        "{messages}"
+    );
+    assert!(messages.contains("WHERE [total] > 100"), "{messages}");
+
+    let (outcome, _, _, messages) =
+        real("select sum(m.valor) from financeiro.erp.dbo.movimentos m").unwrap();
+    assert_eq!(outcome, Outcome::Failed, "{messages}");
+    assert!(
+        messages.contains("Stopped before downloading: about 300,000 rows"),
+        "{messages}"
+    );
 }
 
 /// Captura de tela com os servidores de verdade, em português. Roda só a
