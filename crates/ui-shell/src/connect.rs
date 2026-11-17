@@ -521,7 +521,7 @@ impl ConnectDialog {
     /// preenche os campos e conecta com a senha guardada.
     fn saved_list(&mut self, ui: &mut egui::Ui, saved: &[SavedConnection]) {
         ui.label(tr("Saved connections:"));
-        let current = self.settings().ok().map(|s| secrets::password_key(&s));
+        let current = self.settings().ok().map(|s| crate::servers::server_key(&s));
         let mut chosen = None;
         egui::Frame::new()
             .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
@@ -563,7 +563,7 @@ impl ConnectDialog {
                                 if let Some((name, color)) = &c.environment {
                                     crate::registered::environment_badge(ui, name, *color);
                                 }
-                                let key = secrets::password_key(&c.settings);
+                                let key = crate::servers::server_key(&c.settings);
                                 let row = ui
                                     .selectable_label(current.as_ref() == Some(&key), &c.name)
                                     .on_hover_text(server_hint(&c.settings));

@@ -1082,14 +1082,19 @@ impl crate::ShellApp {
     /// mesmo banco e, se ele ainda estiver conectado, no mesmo servidor.
     pub fn open_history_entry(&mut self, entry: &Entry) {
         let database = (!entry.database.is_empty()).then(|| entry.database.clone());
-        let same_server = !entry.server.is_empty() && self.engine_of_key(&entry.server).is_some();
+        // O servidor de onde veio, ou outra conexão do mesmo login nele (o
+        // histórico antigo não tinha o banco na chave).
+        let server = Some(entry.server.as_str())
+            .filter(|key| !key.is_empty())
+            .and_then(|key| self.connected_key_for(key));
+        let same_server = server.is_some();
         let id = self.documents.new_script(
             entry.sql.clone(),
             // O banco só vale no servidor de onde veio.
             database.filter(|_| same_server),
         );
-        if same_server {
-            self.doc_servers.insert(id, entry.server.clone());
+        if let Some(key) = server {
+            self.doc_servers.insert(id, key);
         }
         self.activate_document(id);
         self.status = if same_server {

@@ -364,7 +364,8 @@ impl ShellApp {
         let home = key.and_then(|key| {
             // Vários registros podem ser do mesmo servidor (um por banco):
             // vale o do banco da janela.
-            let same = |t: &RunTarget| !t.missing && crate::servers::server_key(&t.settings) == key;
+            let same =
+                |t: &RunTarget| !t.missing && crate::servers::key_on_server(&key, &t.settings);
             let server = match targets
                 .iter()
                 .position(|t| same(t) && Some(&t.settings.database) == window_database.as_ref())
@@ -464,7 +465,7 @@ impl ShellApp {
                 .filter_map(|p| p.connection.as_ref()),
         );
         for c in live {
-            let key = crate::servers::server_key(&c.settings);
+            let key = crate::servers::login_key(&c.settings);
             for t in saved.iter().filter(|t| t.id().server == key) {
                 providers.push((t.id(), c.metadata.clone()));
             }

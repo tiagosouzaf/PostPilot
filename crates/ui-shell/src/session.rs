@@ -189,6 +189,41 @@ pub struct SessionState {
     pub data_compare: Option<crate::data_compare::Setup>,
 }
 
+impl SessionState {
+    /// As sessões gravadas antes de o banco entrar na chave do servidor
+    /// ([`server_key`]) têm a chave antiga (`usuario@host:porta`) nas
+    /// janelas: ela passa para a do servidor da sessão com esse login, para
+    /// cada janela reabrir no servidor em que estava.
+    pub fn adopt_server_keys(&mut self) {
+        let servers: Vec<ConnectionSettings> =
+            self.servers.iter().map(|s| s.settings.clone()).collect();
+        let current = |key: &mut String| {
+            let found = servers
+                .iter()
+                .find(|s| server_key(s) == *key)
+                .or_else(|| {
+                    servers
+                        .iter()
+                        .find(|s| crate::servers::key_on_server(key, s))
+                })
+                .map(server_key);
+            if let Some(found) = found {
+                *key = found;
+            }
+        };
+        for w in &mut self.windows {
+            current(&mut w.server);
+        }
+        for key in self.documents.iter_mut().filter_map(|d| d.server.as_mut()) {
+            current(key);
+        }
+        if let Some(compare) = &mut self.data_compare {
+            current(&mut compare.source.server);
+            current(&mut compare.target.server);
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,
@@ -441,7 +476,8 @@ impl ShellApp {
     }
 
     /// Reabre as janelas e põe os servidores na fila para reconectar.
-    fn restore_session(&mut self, store: &SessionStore, state: SessionState) {
+    fn restore_session(&mut self, store: &SessionStore, mut state: SessionState) {
+        state.adopt_server_keys();
         self.documents.set_query_counter(state.query_counter);
         if let Some(templates) = state.templates.clone() {
             self.templates.restore(templates);
@@ -980,6 +1016,69 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn old_sessions_get_the_server_key_with_the_database() {
+        let settings = |database: &str| ConnectionSettings {
+            host: "db".into(),
+            user: "ana".into(),
+            database: database.into(),
+            ..Default::default()
+        };
+        let server = |database: &str| SessionServer {
+            settings: settings(database),
+            ..Default::default()
+        };
+        let on = |key: &str| SessionDocument {
+            server: Some(key.into()),
+            ..Default::default()
+        };
+        let mut state = SessionState {
+            servers: vec![server("vendas"), server("estoque")],
+            documents: vec![
+                // Gravada antes de o banco entrar na chave.
+                on("ana@db:5432"),
+                // Já no formato novo.
+                on("ana@db:5432/estoque"),
+                // De um servidor que não está na sessão.
+                on("bia@outro:5432"),
+            ],
+            windows: vec![SessionWindow {
+                server: "ana@db:5432".into(),
+                front: false,
+                kind: WindowKind::EditRows {
+                    database: "vendas".into(),
+                    oid: 1,
+                },
+            }],
+            data_compare: Some(crate::data_compare::Setup {
+                source: crate::data_compare::Side {
+                    server: "ana@db:5432".into(),
+                    database: "vendas".into(),
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.adopt_server_keys();
+        let keys: Vec<_> = state
+            .documents
+            .iter()
+            .map(|d| d.server.clone().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "ana@db:5432/vendas",
+                "ana@db:5432/estoque",
+                "bia@outro:5432"
+            ]
+        );
+        assert_eq!(state.windows[0].server, "ana@db:5432/vendas");
+        let compare = state.data_compare.unwrap();
+        assert_eq!(compare.source.server, "ana@db:5432/vendas");
+        assert_eq!(compare.target.server, "");
     }
 
     #[test]

@@ -370,13 +370,23 @@ pub fn find_server<'a>(group: &'a ServerGroup, name: &str) -> Option<&'a Registe
         .or_else(|| group.groups.iter().find_map(|g| find_server(g, name)))
 }
 
-/// Procura o servidor com esta chave (usuário, servidor e porta).
+/// Procura o registro da conexão desta chave
+/// ([`crate::servers::server_key`]). Sem um registro no mesmo banco, vale
+/// outro do mesmo servidor e usuário (a senha é a mesma, e as chaves
+/// antigas não tinham o banco).
 pub fn find_server_by_key<'a>(group: &'a ServerGroup, key: &str) -> Option<&'a RegisteredServer> {
-    group
-        .servers
-        .iter()
-        .find(|s| crate::secrets::password_key(&s.settings) == key)
-        .or_else(|| group.groups.iter().find_map(|g| find_server_by_key(g, key)))
+    fn find<'a>(
+        group: &'a ServerGroup,
+        is: &dyn Fn(&ConnectionSettings) -> bool,
+    ) -> Option<&'a RegisteredServer> {
+        group
+            .servers
+            .iter()
+            .find(|s| is(&s.settings))
+            .or_else(|| group.groups.iter().find_map(|g| find(g, is)))
+    }
+    find(group, &|s| crate::servers::server_key(s) == key)
+        .or_else(|| find(group, &|s| crate::servers::key_on_server(key, s)))
 }
 
 /// Como conectar a consulta: o servidor do workspace, no banco da ligação.

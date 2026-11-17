@@ -12,7 +12,7 @@ use crate::ShellApp;
 use crate::file_dialogs::Question;
 use crate::panels::Panel;
 use crate::registered;
-use crate::servers::server_key;
+use crate::servers::{login_key, server_key};
 
 /// As chaves, no cofre, dos segredos dos túneis SSH dos servidores de
 /// `group` (e das subpastas), sem repetir.
@@ -373,7 +373,12 @@ impl ShellApp {
         let Some(servers) = self.workspace_panel.servers_at(index) else {
             return;
         };
-        let Some(settings) = link_settings(servers.servers().root(), &link) else {
+        // A conexão é a do registro (no banco dele); o banco da ligação é o
+        // da janela, como quando o usuário troca o banco na barra.
+        let linked = link_settings(servers.servers().root(), &link)
+            .and_then(|_| super::find_server(servers.servers().root(), &link.server))
+            .map(|s| s.settings.clone());
+        let Some(settings) = linked else {
             self.status = trf!(
                 "The query is linked to \"{server}\", which is not a server of this workspace.",
                 server = link.server
@@ -454,7 +459,7 @@ impl ShellApp {
         let mut root = self.registered.servers().root().clone();
         let mut keys: Vec<String> = Vec::new();
         for s in self.registered.servers().all_servers() {
-            let key = server_key(&s.settings);
+            let key = login_key(&s.settings);
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -470,7 +475,7 @@ impl ShellApp {
             .map(|c| &c.settings)
             .chain(self.recent.list());
         for settings in loose {
-            let key = server_key(settings);
+            let key = login_key(settings);
             if keys.contains(&key) || in_workspace(&key) {
                 continue;
             }
@@ -520,7 +525,7 @@ impl ShellApp {
     /// A senha em uso na conexão ativa, com a chave dela.
     fn current_password(&self) -> Option<(String, String)> {
         let c = self.connection.as_ref()?;
-        (!self.password.is_empty()).then(|| (server_key(&c.settings), self.password.clone()))
+        (!self.password.is_empty()).then(|| (login_key(&c.settings), self.password.clone()))
     }
 
     /// Traz as conexões desta máquina para o workspace aberto: os Registered
@@ -571,13 +576,15 @@ impl ShellApp {
         let Some(settings) = self.connection.as_ref().map(|c| c.settings.clone()) else {
             return Err(tr("Not connected.").into());
         };
-        let key = server_key(&settings);
+        // A senha é do login; o registro é da conexão (com o banco).
+        let key = login_key(&settings);
+        let connection_key = server_key(&settings);
         let ssh_key = settings.ssh.as_ref().map(|ssh| ssh.secret_key());
         let known = self.current_password().into_iter().collect();
         let Some(panel) = self.workspace_panel.servers_mut() else {
             return Err(tr("No workspace is open.").into());
         };
-        if find_server_by_key(panel.servers().root(), &key).is_some() {
+        if panel.servers().path_for_key(&connection_key).is_some() {
             return Err(tr("This connection is already in the workspace.").into());
         }
         let taken: Vec<String> = panel
@@ -588,10 +595,14 @@ impl ShellApp {
             .map(|s| s.name.clone())
             .collect();
         let host = settings.server_name();
-        let name = [host.clone(), format!("{host} ({})", settings.user)]
-            .into_iter()
-            .find(|n| !taken.iter().any(|t| t.eq_ignore_ascii_case(n)))
-            .unwrap_or_else(|| key.clone());
+        let name = [
+            host.clone(),
+            format!("{host} ({})", settings.user),
+            format!("{host} ({}, {})", settings.user, settings.database),
+        ]
+        .into_iter()
+        .find(|n| !taken.iter().any(|t| t.eq_ignore_ascii_case(n)))
+        .unwrap_or_else(|| key.clone());
         let server = registered::RegisteredServer {
             name: name.clone(),
             settings,
@@ -658,8 +669,8 @@ impl ShellApp {
         self.sync_server_labels();
         self.workspace_panel.importable = self.importable_connections();
         self.workspace_panel.unsaved_current = self.connection.as_ref().and_then(|c| {
-            let ours = self.workspace_panel.servers()?.servers().root();
-            find_server_by_key(ours, &server_key(&c.settings))
+            let ours = self.workspace_panel.servers()?.servers();
+            ours.path_for_key(&server_key(&c.settings))
                 .is_none()
                 .then(|| c.settings.server_name())
         });
