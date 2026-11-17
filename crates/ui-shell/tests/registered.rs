@@ -763,7 +763,8 @@ fn query_status_strip_shows_the_window_server_not_the_active_one() {
     harness.run();
     assert_eq!(harness.state().connection().unwrap().settings.host, "hr-db");
     harness.get_by_label("Connected.");
-    harness.get_by_label("sales-db (alice)");
+    // Registrado na pasta Production: a faixa diz a pasta.
+    harness.get_by_label("Production / sales-db (alice)");
 }
 
 #[test]

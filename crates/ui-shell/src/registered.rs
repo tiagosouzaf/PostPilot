@@ -580,6 +580,18 @@ impl RegisteredServers {
         self.server(&path).map(|s| s.name.as_str())
     }
 
+    /// As pastas (da de cima para a de dentro; vazio na raiz) e o nome com
+    /// que o servidor desta chave está registrado.
+    pub fn place_for_key(&self, key: &str) -> Option<(Vec<String>, String)> {
+        let path = self.path_for_key(key)?;
+        let name = self.server(&path)?.name.clone();
+        let folders = (1..=path.groups.len())
+            .filter_map(|n| self.group(&path.groups[..n]))
+            .map(|g| g.name.clone())
+            .collect();
+        Some((folders, name))
+    }
+
     /// Todos os servidores com o caminho do nó e a pasta por extenso
     /// ("Clientes / Acme"; vazio na raiz): primeiro os da pasta, depois os
     /// das subpastas.
