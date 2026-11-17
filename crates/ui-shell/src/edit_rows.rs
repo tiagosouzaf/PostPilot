@@ -21,6 +21,8 @@ use eframe::egui::{self, Align, Color32, Key, Layout, RichText, Sense, vec2};
 use egui_phosphor::regular as icon;
 use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{QueryEvent, QuerySession};
+use pgstudio_result_grid::ColumnKind;
+use pgstudio_result_grid::typed::{self, Picker};
 
 /// Altura de uma linha da grade.
 const ROW_HEIGHT: f32 = 22.0;
@@ -37,6 +39,8 @@ pub struct EditColumn {
     pub key: bool,
     /// Gerada ou de identidade `ALWAYS`: o banco escolhe o valor.
     pub read_only: bool,
+    /// Como a coluna é editada (calendário, lista de valores, texto).
+    pub kind: ColumnKind,
 }
 
 /// A tabela aberta.
@@ -242,10 +246,19 @@ fn columns_sql(engine: Engine, oid: u32) -> String {
                 coalesce(a.attnum = ANY (i.indkey), false), \
                 a.attgenerated <> '' OR a.attidentity = 'a', \
                 format('%I.%I', n.nspname, c.relname), \
-                n.nspname || '.' || c.relname \
+                n.nspname || '.' || c.relname, \
+                NOT a.attnotnull, \
+                (SELECT string_agg(e.enumlabel, chr(31) ORDER BY e.enumsortorder) \
+                   FROM pg_enum e WHERE e.enumtypid = b.type), \
+                format_type(b.type, b.typmod) \
            FROM pg_attribute a \
            JOIN pg_class c ON c.oid = a.attrelid \
            JOIN pg_namespace n ON n.oid = c.relnamespace \
+           JOIN pg_type t ON t.oid = a.atttypid \
+           CROSS JOIN LATERAL (SELECT CASE WHEN t.typtype = 'd' THEN t.typbasetype \
+                                           ELSE a.atttypid END AS type, \
+                                      CASE WHEN t.typtype = 'd' THEN t.typtypmod \
+                                           ELSE a.atttypmod END AS typmod) b \
            LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary \
           WHERE a.attrelid = {oid} AND a.attnum > 0 AND NOT a.attisdropped \
           ORDER BY a.attnum"
@@ -275,7 +288,8 @@ fn mssql_columns_sql(oid: u32) -> String {
                        OR t.name IN ('timestamp', 'binary', 'varbinary', 'image', 'sql_variant') \
                      THEN 't' ELSE 'f' END, \
                 QUOTENAME(s.name) + '.' + QUOTENAME(o.name), \
-                s.name + '.' + o.name \
+                s.name + '.' + o.name, \
+                CASE WHEN c.is_nullable = 1 THEN 't' ELSE 'f' END \
            FROM sys.objects o \
            JOIN sys.schemas s ON s.schema_id = o.schema_id \
            JOIN sys.columns c ON c.object_id = o.object_id \
@@ -300,11 +314,21 @@ fn parse_table(engine: Engine, rows: &[Vec<Option<String>>]) -> Result<EditTable
         display: text(first, 5),
         columns: rows
             .iter()
-            .map(|r| EditColumn {
-                name: text(r, 0),
-                type_name: text(r, 1),
-                key: text(r, 2) == "t",
-                read_only: text(r, 3) == "t",
+            .map(|r| {
+                // O tipo de base (num domínio); sem ele, o tipo da coluna.
+                let base = Some(text(r, 8)).filter(|t| !t.is_empty());
+                EditColumn {
+                    name: text(r, 0),
+                    type_name: text(r, 1),
+                    key: text(r, 2) == "t",
+                    read_only: text(r, 3) == "t",
+                    kind: crate::result_edit::column_kind(
+                        engine,
+                        &base.unwrap_or_else(|| text(r, 1)),
+                        &text(r, 6),
+                        &text(r, 7),
+                    ),
+                }
             })
             .collect(),
     })
@@ -405,6 +429,10 @@ pub struct EditRows {
     selected: Option<(usize, usize)>,
     /// Célula em edição e o texto dela.
     editing: Option<(usize, usize, String)>,
+    /// O calendário ou a lista de valores da célula em edição.
+    picker: Picker,
+    /// A célula em edição já recebeu o foco.
+    edit_focused: bool,
     /// Linha esperando o "Yes" para excluir.
     confirm_delete: Option<usize>,
     /// Linha esperando o "Yes" para gravar, com o comando que vai rodar.
@@ -439,6 +467,8 @@ impl EditRows {
             busy: None,
             selected: None,
             editing: None,
+            picker: Picker::default(),
+            edit_focused: false,
             confirm_delete: None,
             confirm_save: None,
             place: Default::default(),
@@ -763,6 +793,8 @@ impl EditRows {
         }
         let text = text.unwrap_or_else(|| self.value(row, col).unwrap_or("").to_string());
         self.editing = Some((row, col, text));
+        self.picker = Picker::default();
+        self.edit_focused = false;
     }
 
     pub fn is_editing(&self) -> bool {
@@ -1172,6 +1204,8 @@ impl EditRows {
         let mut delete: Option<usize> = None;
         let mut edited: Option<(usize, usize, String, bool)> = None;
         let mut cancel_edit = false;
+        // Valor escolhido num editor por tipo (`None` é NULL).
+        let mut chosen: Option<(usize, usize, Option<String>)> = None;
         let mut json_menu: Option<(usize, usize)> = None;
         let json_cols: Vec<bool> = (0..table.columns.len())
             .map(|c| self.json_kind(c).is_some())
@@ -1243,23 +1277,121 @@ impl EditRows {
                                             && *ec == c
                                         {
                                             let edit_id = egui::Id::new(("edit_rows_cell", id));
+                                            let picker_id =
+                                                egui::Id::new(("edit_rows_picker", id, r, c));
+                                            if col.kind.is_choice() {
+                                                // Lista de valores (booleano, enum): a
+                                                // célula fica como está e a lista abre
+                                                // embaixo.
+                                                let (rect, _) = ui.allocate_exact_size(
+                                                    vec2(w, ROW_HEIGHT),
+                                                    Sense::hover(),
+                                                );
+                                                let current = self.rows[r].values[c].as_deref();
+                                                let v = ui.visuals();
+                                                ui.painter().rect_stroke(
+                                                    rect,
+                                                    0.0,
+                                                    egui::Stroke::new(1.5, v.selection.bg_fill),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                                ui.painter().text(
+                                                    rect.left_center() + vec2(4.0, 0.0),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    current.unwrap_or(tr("NULL")),
+                                                    egui::TextStyle::Body.resolve(ui.style()),
+                                                    v.text_color(),
+                                                );
+                                                let out = typed::choice_popup(
+                                                    ui.ctx(),
+                                                    picker_id,
+                                                    rect,
+                                                    &col.kind,
+                                                    current,
+                                                    &mut self.picker,
+                                                );
+                                                let first = !self.edit_focused;
+                                                self.edit_focused = true;
+                                                match out.action {
+                                                    Some(typed::Action::Commit(v)) => {
+                                                        chosen = Some((r, c, v));
+                                                    }
+                                                    Some(_) => cancel_edit = true,
+                                                    None => {
+                                                        cancel_edit = !first
+                                                            && typed::pressed_outside(
+                                                                ui.ctx(),
+                                                                &[rect, out.rect],
+                                                            );
+                                                    }
+                                                }
+                                                continue;
+                                            }
                                             let resp = ui.add_sized(
                                                 vec2(w, ROW_HEIGHT),
                                                 egui::TextEdit::singleline(text)
                                                     .id(edit_id)
                                                     .margin(vec2(4.0, 2.0)),
                                             );
+                                            let (enter, esc) = ui.input(|i| {
+                                                (
+                                                    i.key_pressed(Key::Enter),
+                                                    i.key_pressed(Key::Escape),
+                                                )
+                                            });
+                                            if col.kind.is_temporal() {
+                                                // Data ou hora: o calendário abre embaixo e
+                                                // escreve no texto da célula.
+                                                let out = typed::temporal_popup(
+                                                    ui.ctx(),
+                                                    picker_id,
+                                                    resp.rect,
+                                                    &col.kind,
+                                                    text,
+                                                    &mut self.picker,
+                                                );
+                                                let nothing = ui.memory(|m| m.focused().is_none());
+                                                match out.action {
+                                                    Some(typed::Action::Commit(v)) => {
+                                                        chosen = Some((r, c, v));
+                                                    }
+                                                    Some(typed::Action::Accept) => {
+                                                        edited = Some((r, c, text.clone(), false));
+                                                    }
+                                                    Some(typed::Action::Cancel) => {
+                                                        cancel_edit = true;
+                                                    }
+                                                    None if !self.edit_focused
+                                                        || out.refocus
+                                                        || nothing && !esc && !enter =>
+                                                    {
+                                                        self.edit_focused = true;
+                                                        resp.request_focus();
+                                                        cursor_to_end(ui.ctx(), edit_id, text);
+                                                    }
+                                                    None if typed::pressed_outside(
+                                                        ui.ctx(),
+                                                        &[resp.rect, out.rect],
+                                                    ) =>
+                                                    {
+                                                        edited = Some((r, c, text.clone(), false));
+                                                    }
+                                                    None if resp.has_focus() => {}
+                                                    None if esc => cancel_edit = true,
+                                                    // Enter na célula fecha a edição; num
+                                                    // campo do calendário, só o campo.
+                                                    None if enter && resp.lost_focus() => {
+                                                        edited = Some((r, c, text.clone(), true));
+                                                    }
+                                                    None => {}
+                                                }
+                                                continue;
+                                            }
                                             if !resp.has_focus() && !resp.lost_focus() {
                                                 resp.request_focus();
                                                 cursor_to_end(ui.ctx(), edit_id, text);
                                             }
                                             if resp.lost_focus() {
-                                                let (enter, esc) = ui.input(|i| {
-                                                    (
-                                                        i.key_pressed(Key::Enter),
-                                                        i.key_pressed(Key::Escape),
-                                                    )
-                                                });
                                                 if esc {
                                                     cancel_edit = true;
                                                 } else {
@@ -1361,6 +1493,12 @@ impl EditRows {
             });
         if cancel_edit {
             self.editing = None;
+        }
+        if let Some((r, c, value)) = chosen {
+            self.editing = None;
+            if self.value(r, c) != value.as_deref() {
+                self.set_cell(r, c, value);
+            }
         }
         if let Some((r, c, text, enter)) = edited {
             self.editing = Some((r, c, text));
@@ -1571,18 +1709,21 @@ mod tests {
                     type_name: "integer".into(),
                     key: true,
                     read_only: false,
+                    kind: ColumnKind::default(),
                 },
                 EditColumn {
                     name: "Nome".into(),
                     type_name: "text".into(),
                     key: false,
                     read_only: false,
+                    kind: ColumnKind::default(),
                 },
                 EditColumn {
                     name: "total".into(),
                     type_name: "numeric".into(),
                     key: false,
                     read_only: true,
+                    kind: ColumnKind::default(),
                 },
             ],
         }
@@ -1679,12 +1820,14 @@ mod tests {
                     type_name: "int".into(),
                     key: true,
                     read_only: true,
+                    kind: ColumnKind::default(),
                 },
                 EditColumn {
                     name: "nome".into(),
                     type_name: "nvarchar(40)".into(),
                     key: false,
                     read_only: false,
+                    kind: ColumnKind::default(),
                 },
             ],
         };

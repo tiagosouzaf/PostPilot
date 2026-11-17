@@ -6753,3 +6753,96 @@ msgstr "O restore altera o banco de dados. Quer executar agora?"
 
 msgid "Delete the selected execution from the history? This cannot be undone."
 msgstr "Apagar do histórico a execução selecionada? Isso não pode ser desfeito."
+
+msgid "January"
+msgstr "Janeiro"
+
+msgid "February"
+msgstr "Fevereiro"
+
+msgid "March"
+msgstr "Março"
+
+msgid "April"
+msgstr "Abril"
+
+msgid "May"
+msgstr "Maio"
+
+msgid "June"
+msgstr "Junho"
+
+msgid "July"
+msgstr "Julho"
+
+msgid "August"
+msgstr "Agosto"
+
+msgid "September"
+msgstr "Setembro"
+
+msgid "October"
+msgstr "Outubro"
+
+msgid "November"
+msgstr "Novembro"
+
+msgid "December"
+msgstr "Dezembro"
+
+msgid "Su"
+msgstr "Dom"
+
+msgid "Mo"
+msgstr "Seg"
+
+msgid "Tu"
+msgstr "Ter"
+
+msgid "We"
+msgstr "Qua"
+
+msgid "Th"
+msgstr "Qui"
+
+msgid "Fr"
+msgstr "Sex"
+
+msgid "Sa"
+msgstr "Sáb"
+
+msgid "Now"
+msgstr "Agora"
+
+msgid "Today"
+msgstr "Hoje"
+
+msgid "Previous year"
+msgstr "Ano anterior"
+
+msgid "Previous month"
+msgstr "Mês anterior"
+
+msgid "Next year"
+msgstr "Próximo ano"
+
+msgid "Next month"
+msgstr "Próximo mês"
+
+msgid "Hour"
+msgstr "Hora"
+
+msgid "Minute"
+msgstr "Minuto"
+
+msgid "Second"
+msgstr "Segundo"
+
+msgid "Fraction of a second"
+msgstr "Fração de segundo"
+
+msgid "Time zone"
+msgstr "Fuso"
+
+msgid "Offset from UTC, like +00 or -03:00. Empty uses the time zone of the session."
+msgstr "Diferença para o UTC, como +00 ou -03:00. Vazio usa o fuso da sessão."

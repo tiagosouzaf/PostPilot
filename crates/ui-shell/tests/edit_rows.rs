@@ -298,3 +298,118 @@ fn json_cells_are_edited_in_the_json_editor() {
     );
     value(&admin, &format!("DROP TABLE {t}"));
 }
+
+/// Na janela, uma coluna de data abre o calendário e uma booleana a lista
+/// de valores; o que se escolhe fica na célula, marcado para gravar.
+#[test]
+fn dates_and_booleans_have_their_own_editors() {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    let Some(service) = service() else { return };
+    let ctx = egui::Context::default();
+    let admin = service.open("postgres");
+    let t = format!("edit_rows_typed_{}", std::process::id());
+    let e = open(
+        &service,
+        &admin,
+        &t,
+        &format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, criado timestamptz NOT NULL, \
+                 ativo boolean, nome text); \
+             SET TIME ZONE 'UTC'; \
+             INSERT INTO {t} VALUES (1, '2026-11-12 10:46:35.187386+00', true, 'Ana');"
+        ),
+        &ctx,
+    );
+    let table = e.table().unwrap();
+    assert!(table.columns[1].kind.is_temporal());
+    assert!(!table.columns[1].kind.nullable);
+    assert!(table.columns[2].kind.is_choice() && table.columns[2].kind.nullable);
+    assert!(!table.columns[3].kind.is_temporal() && !table.columns[3].kind.is_choice());
+    let stamp = e.value(0, 1).unwrap().to_string();
+
+    let mut h = Harness::builder()
+        .with_size([900.0, 600.0])
+        .build_ui_state(|ui, e: &mut EditRows| e.show(ui, 1), e);
+    h.run();
+    let double_click = |h: &mut Harness<'static, EditRows>, label: &str| {
+        let pos = h.get_by_label(label).rect().center();
+        h.ctx
+            .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+        h.hover_at(pos);
+        for _ in 0..4 {
+            h.step();
+        }
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        h.run();
+        h.run();
+        assert!(h.state().is_editing(), "{label}");
+    };
+
+    // O booleano: a lista tem true, false e NULL; um clique escolhe. (As
+    // células da linha em branco também se chamam NULL.)
+    let nulls = |h: &Harness<'static, EditRows>| h.query_all_by_label("NULL").count();
+    let blank = nulls(&h);
+    double_click(&mut h, "t");
+    assert_eq!(nulls(&h), blank + 1);
+    h.get_by_label("false").click();
+    h.run();
+    h.run();
+    assert!(!h.state().is_editing());
+    assert_eq!(h.state().value(0, 2), Some("f"));
+    assert_eq!(h.state().row_state(0), RowState::Modified);
+
+    // A data: outro dia pelo calendário, sem perder a hora nem o fuso.
+    double_click(&mut h, &stamp);
+    assert_eq!(nulls(&h), blank, "NOT NULL");
+    let day = stamp.replace("-12 ", "-30 ");
+    h.get_by_label("2026-11-30").click();
+    h.run();
+    h.get_by_label("OK").click();
+    h.run();
+    h.run();
+    assert!(!h.state().is_editing());
+    assert_eq!(h.state().value(0, 1), Some(day.as_str()));
+    if let Some(dir) = std::env::var_os("PGSTUDIO_SHOTS") {
+        // Para olhar a janela: reabre o calendário e guarda a imagem.
+        double_click(&mut h, &day);
+        #[cfg(feature = "screenshots")]
+        h.render()
+            .expect("render")
+            .save(std::path::Path::new(&dir).join("editar-linhas.png"))
+            .expect("save png");
+        let _ = dir;
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+
+    // Sair da linha grava (depois do "Yes").
+    let ctx = h.ctx.clone();
+    h.state_mut().commit(&ctx);
+    h.state_mut().answer_save(true, &ctx);
+    settle(h.state_mut(), &ctx);
+    assert_eq!(
+        h.state().row_state(0),
+        RowState::Clean,
+        "{:?}",
+        h.state().row_error(0)
+    );
+    assert_eq!(
+        value(
+            &admin,
+            &format!("SELECT ativo::text || ' ' || (criado AT TIME ZONE 'UTC')::text FROM {t}")
+        ),
+        Some("false 2026-11-30 10:46:35.187386".into())
+    );
+    value(&admin, &format!("DROP TABLE {t}"));
+}

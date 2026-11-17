@@ -545,3 +545,131 @@ fn a_result_fetched_in_pages_is_editable_once_all_rows_came() {
     );
     value(&session, "DROP TABLE grid_paged");
 }
+
+/// O catálogo diz o editor de cada coluna (calendário, lista de valores),
+/// e o que o editor escreve o servidor aceita sem perder a precisão.
+#[test]
+fn typed_columns_get_their_editor_and_keep_their_precision() {
+    use pgstudio_result_grid::typed::Stamp;
+    use pgstudio_result_grid::{CellKind, ColumnKind};
+
+    let Some(service) = service() else {
+        return;
+    };
+    let session = service.open("postgres");
+    let ctx = egui::Context::default();
+    value(
+        &session,
+        "SET TIME ZONE 'UTC'; \
+         DROP TABLE IF EXISTS grid_typed; DROP DOMAIN IF EXISTS grid_dia; \
+         DROP TYPE IF EXISTS grid_humor; \
+         CREATE TYPE grid_humor AS ENUM ('triste', 'tudo bem', 'feliz'); \
+         CREATE DOMAIN grid_dia AS date; \
+         CREATE TABLE grid_typed (id int PRIMARY KEY, criado timestamptz NOT NULL, \
+             visto timestamp(3), dia date, hora time, ativo boolean, certo boolean NOT NULL, \
+             humor grid_humor, entrega grid_dia, nome text, dias date[]); \
+         INSERT INTO grid_typed VALUES (1, '2026-11-12 10:46:35.187386+00', \
+             '2026-11-12 10:46:35.187', '2026-11-12', '10:46:35.5', true, false, 'feliz', \
+             '2026-12-01', 'Ana', NULL)",
+    );
+    let mut exec = execute(
+        &session,
+        "SELECT id, criado, visto, dia, hora, ativo, certo, humor, entrega, nome, dias, \
+                now() FROM grid_typed;",
+        &ctx,
+    );
+    assert_eq!(status(&exec), Status::Editable);
+    let kinds = exec.results[0].grid.kinds.clone();
+    let pg = |name: &str, nullable| ColumnKind::from_type(false, name, nullable, &[]);
+    assert_eq!(kinds[0], ColumnKind::default());
+    assert_eq!(kinds[1], pg("timestamp with time zone", false));
+    assert_eq!(kinds[2], pg("timestamp(3) without time zone", true));
+    assert_eq!(kinds[2].digits, 3);
+    assert_eq!(kinds[3], pg("date", true));
+    assert_eq!(kinds[4], pg("time without time zone", true));
+    assert_eq!(kinds[5], pg("boolean", true));
+    assert_eq!(kinds[6], pg("boolean", false));
+    let labels = ["triste", "tudo bem", "feliz"].map(String::from);
+    assert_eq!(
+        kinds[7],
+        ColumnKind::from_type(false, "grid_humor", true, &labels)
+    );
+    // Um domínio é editado como o tipo de base; texto, array e expressão
+    // ficam com a caixa de texto.
+    assert_eq!(kinds[8], pg("date", true));
+    for (i, kind) in kinds.iter().enumerate().skip(9) {
+        assert_eq!(kind.kind, CellKind::Text, "column {i}");
+    }
+
+    // Outro dia e outra hora pelo calendário: os microssegundos e o fuso
+    // do valor continuam, e a confirmação mostra o antes e o depois.
+    let set = &mut exec.results[0];
+    let store = set.shared_store();
+    let old = store.lock().unwrap().cell(0, 1).unwrap().to_string();
+    assert_eq!(old, "2026-11-12 10:46:35.187386+00");
+    let mut stamp = Stamp::parse(&kinds[1].kind, &old).unwrap();
+    stamp.day = 30;
+    stamp.hour = 7;
+    let new = stamp.format(&kinds[1].kind);
+    {
+        let mut s = store.lock().unwrap();
+        let editor = set.editor.as_mut().unwrap();
+        editor.request_update(&mut s, Cell { row: 0, col: 1 }, Some(new.clone()));
+        let (column, before, after, _) = editor.confirm_update_preview().unwrap();
+        assert_eq!(
+            (column, before, after),
+            ("criado", Some(old.as_str()), Some(new.as_str()))
+        );
+        editor.answer_update(true, &mut s);
+    }
+    settle(&mut exec);
+    assert_eq!(
+        store.lock().unwrap().cell(0, 1),
+        Some("2026-11-30 07:46:35.187386+00")
+    );
+
+    // Os valores das listas: false no booleano, outro rótulo no enum, e
+    // NULL onde a coluna aceita.
+    let CellKind::Choice(humor) = &kinds[7].kind else {
+        panic!("enum");
+    };
+    let CellKind::Choice(boolean) = &kinds[5].kind else {
+        panic!("boolean");
+    };
+    for (col, value) in [
+        (5, Some(boolean[1].value.clone())),
+        (7, Some(humor[1].value.clone())),
+        (3, None),
+        (4, Some("23:59:59.123456".to_string())),
+        (8, Some("2027-01-31".to_string())),
+    ] {
+        let set = &mut exec.results[0];
+        {
+            let mut s = store.lock().unwrap();
+            let editor = set.editor.as_mut().unwrap();
+            editor.request_update(&mut s, Cell { row: 0, col }, value);
+            assert!(editor.is_confirming_update(), "column {col}");
+            editor.answer_update(true, &mut s);
+        }
+        settle(&mut exec);
+    }
+    assert_eq!(
+        value(
+            &session,
+            "SELECT concat_ws('|', ativo, humor, dia IS NULL, hora, entrega, criado) \
+               FROM grid_typed"
+        )
+        .as_deref(),
+        Some("f|tudo bem|t|23:59:59.123456|2027-01-31|2026-11-30 07:46:35.187386+00")
+    );
+    {
+        let mut s = store.lock().unwrap();
+        assert_eq!(s.cell(0, 5), Some("f"));
+        assert_eq!(s.cell(0, 7), Some("tudo bem"));
+        assert_eq!(s.cell(0, 3), None);
+    }
+    value(
+        &session,
+        "DROP TABLE grid_typed; DROP DOMAIN grid_dia; DROP TYPE grid_humor",
+    );
+}

@@ -13,6 +13,7 @@ eframe.workspace = true
 egui-phosphor.workspace = true
 flate2.workspace = true
 crc32fast.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true

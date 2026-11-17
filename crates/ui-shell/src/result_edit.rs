@@ -19,8 +19,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use eframe::egui::{self, Align, Layout, RichText};
 use pgstudio_core::connection::Engine;
 use pgstudio_core::query::{ColumnSource, DocumentEdits, QuerySession};
-use pgstudio_result_grid::ResultStore;
 use pgstudio_result_grid::grid::{Cell, GridOutput, GridState};
+use pgstudio_result_grid::{ColumnKind, ResultStore};
 
 use crate::edit_rows::run;
 
@@ -37,6 +37,8 @@ pub struct TargetColumn {
     pub attnum: i16,
     /// O banco calcula (gerada ou identidade `ALWAYS`).
     pub read_only: bool,
+    /// Como a coluna é editada (calendário, lista de valores, texto).
+    pub kind: ColumnKind,
 }
 
 /// A tabela que o resultado edita.
@@ -61,6 +63,14 @@ impl Target {
         self.columns
             .iter()
             .map(|c| c.as_ref().is_some_and(|c| !c.read_only))
+            .collect()
+    }
+
+    /// O editor de cada coluna do resultado.
+    pub fn kinds(&self) -> Vec<ColumnKind> {
+        self.columns
+            .iter()
+            .map(|c| c.as_ref().map(|c| c.kind.clone()).unwrap_or_default())
             .collect()
     }
 
@@ -221,7 +231,11 @@ pub fn table_sql_for(engine: Engine, oid: u32) -> String {
                     QUOTENAME(s.name) + '.' + QUOTENAME(o.name), \
                     s.name + '.' + o.name, \
                     CASE o.type WHEN 'U' THEN 'r' ELSE LOWER(RTRIM(o.type)) END, \
-                    CASE WHEN pk.index_id IS NULL THEN 'f' ELSE 't' END \
+                    CASE WHEN pk.index_id IS NULL THEN 'f' ELSE 't' END, \
+                    CASE WHEN ty.name IN ('datetime2', 'time', 'datetimeoffset') \
+                         THEN ty.name + '(' + CAST(c.scale AS varchar(10)) + ')' \
+                         ELSE ty.name END, \
+                    CASE WHEN c.is_nullable = 1 THEN 't' ELSE 'f' END \
                FROM sys.objects o \
                JOIN sys.schemas s ON s.schema_id = o.schema_id \
                JOIN sys.columns c ON c.object_id = o.object_id \
@@ -237,7 +251,9 @@ pub fn table_sql_for(engine: Engine, oid: u32) -> String {
     }
 }
 
-/// Colunas, chave e nome da tabela `oid`, com o tipo de relação.
+/// Colunas, chave e nome da tabela `oid`, com o tipo de relação. No fim,
+/// para escolher o editor de cada coluna: o tipo (o de base, num
+/// domínio), se aceita NULL e os valores do enum (separados por `chr(31)`).
 pub fn table_sql(oid: u32) -> String {
     format!(
         "SELECT a.attnum, a.attname, \
@@ -246,10 +262,19 @@ pub fn table_sql(oid: u32) -> String {
                 format('%I.%I', n.nspname, c.relname), \
                 n.nspname || '.' || c.relname, \
                 c.relkind, \
-                i.indexrelid IS NOT NULL \
+                i.indexrelid IS NOT NULL, \
+                format_type(b.type, b.typmod), \
+                NOT a.attnotnull, \
+                (SELECT string_agg(e.enumlabel, chr(31) ORDER BY e.enumsortorder) \
+                   FROM pg_enum e WHERE e.enumtypid = b.type) \
            FROM pg_class c \
            JOIN pg_namespace n ON n.oid = c.relnamespace \
            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
+           JOIN pg_type t ON t.oid = a.atttypid \
+           CROSS JOIN LATERAL (SELECT CASE WHEN t.typtype = 'd' THEN t.typbasetype \
+                                           ELSE a.atttypid END AS type, \
+                                      CASE WHEN t.typtype = 'd' THEN t.typtypmod \
+                                           ELSE a.atttypmod END AS typmod) b \
            LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary \
           WHERE c.oid = {oid} \
           ORDER BY a.attnum"
@@ -296,6 +321,7 @@ pub fn build_target_for(
         name: String,
         key: bool,
         read_only: bool,
+        kind: ColumnKind,
     }
     let attrs: Vec<Attr> = catalog
         .iter()
@@ -304,6 +330,7 @@ pub fn build_target_for(
             name: text(r, 1),
             key: text(r, 2) == "t",
             read_only: text(r, 3) == "t",
+            kind: column_kind(engine, &text(r, 8), &text(r, 9), &text(r, 10)),
         })
         .collect();
     let columns: Vec<Option<TargetColumn>> = sources
@@ -315,6 +342,7 @@ pub fn build_target_for(
                 name: a.name.clone(),
                 attnum: a.attnum,
                 read_only: a.read_only,
+                kind: a.kind.clone(),
             })
         })
         .collect();
@@ -351,6 +379,23 @@ pub fn build_target_for(
         columns,
         key,
     })
+}
+
+/// O editor de uma coluna pelo que o catálogo diz dela: o tipo, se
+/// aceita NULL (`t`/`f`; sem resposta, aceita) e os valores do enum,
+/// separados por `chr(31)`.
+pub fn column_kind(engine: Engine, type_name: &str, nullable: &str, labels: &str) -> ColumnKind {
+    let labels: Vec<String> = labels
+        .split('\u{1f}')
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    ColumnKind::from_type(
+        engine == Engine::SqlServer,
+        type_name,
+        nullable != "f",
+        &labels,
+    )
 }
 
 /// Linhas esperando o "Yes" para excluir.
@@ -726,6 +771,7 @@ impl ResultEditor {
             Status::Editable => {
                 if let Some(t) = &self.target {
                     grid.editable = t.editable();
+                    grid.kinds = t.kinds();
                     grid.read_only_reason = Some(
                         "This column is computed by the database (or is an expression) and \
                          cannot be edited."
@@ -735,6 +781,7 @@ impl ResultEditor {
             }
             Status::ReadOnly(reason) => {
                 grid.editable.clear();
+                grid.kinds.clear();
                 grid.read_only_reason = Some(reason.clone());
             }
             Status::Checking => {

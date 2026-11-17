@@ -4260,6 +4260,7 @@ dependencies = [
 name = "pgstudio-result-grid"
 version = "0.2.58"
 dependencies = [
+ "chrono",
  "crc32fast",
  "eframe",
  "egui-phosphor",

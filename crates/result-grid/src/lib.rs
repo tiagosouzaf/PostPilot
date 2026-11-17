@@ -13,6 +13,8 @@
 //!   formato de cópia).
 //! - [`view`]: ordenar e filtrar as linhas já recebidas, sem rodar a
 //!   consulta de novo.
+//! - [`typed`]: editores por tipo de coluna (calendário para datas e
+//!   horas, lista para booleanos e enums).
 //! - [`json`]: reconhece e lê o JSON das células (para o JSON Viewer).
 
 pub mod copy;
@@ -22,6 +24,7 @@ pub mod json;
 pub mod prefs;
 pub mod store;
 pub mod text;
+pub mod typed;
 pub mod view;
 pub mod xlsx;
 
@@ -29,4 +32,5 @@ pub use copy::CopyFormat;
 pub use grid::{Cell, GridOutput, GridState, Mode, Selection};
 pub use prefs::GridPrefs;
 pub use store::ResultStore;
+pub use typed::{CellKind, ColumnKind};
 pub use view::{Sort, ViewProgress, ViewSpec};
