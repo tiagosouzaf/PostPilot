@@ -264,7 +264,10 @@ execução; o mouse em cima mostra a mensagem.
 Parar o mouse no `*` de um `SELECT` mostra as colunas que ele representa, com
 os tipos, tabela por tabela (as do `FROM` e dos `JOIN` daquele `SELECT`);
 `alias.*` mostra só as daquela tabela. A lista se divide em blocos lado a lado
-para caber na janela.
+para caber na janela (e rola, se nem assim couber) e fica aberta enquanto o
+mouse está nela: um clique escolhe uma coluna (no nome da tabela, todas as
+dela), e os botões de baixo trocam o `*` pelas colunas escolhidas ou copiam os
+nomes. Sem escolha, valem todas.
 
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira

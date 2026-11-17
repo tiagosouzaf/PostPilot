@@ -6523,11 +6523,20 @@ msgstr "1 coluna"
 msgid "{n} columns"
 msgstr "{n} colunas"
 
-msgid "… and 1 more column"
-msgstr "… e mais 1 coluna"
+msgid "Replace the * with all"
+msgstr "Trocar o * por todas"
 
-msgid "… and {n} more columns"
-msgstr "… e mais {n} colunas"
+msgid "Replace the * with {n}"
+msgstr "Trocar o * por {n}"
+
+msgid "Copy all"
+msgstr "Copiar todas"
+
+msgid "Copy {n}"
+msgstr "Copiar {n}"
+
+msgid "Click to choose columns"
+msgstr "Clique para escolher colunas"
 
 msgid "The catalog of this database is not loaded yet."
 msgstr "O catálogo deste banco ainda não foi lido."
