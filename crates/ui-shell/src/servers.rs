@@ -628,6 +628,66 @@ impl ShellApp {
             .map(str::to_string)
     }
 
+    /// Como o servidor de uma janela de consulta aparece na faixa de status
+    /// dela e na barra de status quando está registrado: as pastas em que
+    /// ele está, o nome do registro e o login, como
+    /// "MainDoc / TiibControl@MainDoc (tiibcontrol)". Uma pasta com o nome
+    /// do ambiente não entra: a etiqueta do ambiente já está ao lado.
+    /// `None`: o servidor não está registrado.
+    pub fn registered_title(&self, settings: &ConnectionSettings) -> Option<String> {
+        let key = server_key(settings);
+        let (folders, name) = self
+            .workspace_panel
+            .all_servers()
+            .into_iter()
+            .find_map(|(_, p)| p.servers().place_for_key(&key))
+            .or_else(|| self.registered.servers().place_for_key(&key))?;
+        let environment = self
+            .server_tag(&key)
+            .and_then(|t| t.environment)
+            .map(|e| e.to_lowercase());
+        let mut title = String::new();
+        for folder in folders {
+            if Some(folder.to_lowercase()) != environment {
+                title.push_str(&folder);
+                title.push_str(" / ");
+            }
+        }
+        title.push_str(&name);
+        Some(format!("{title} ({})", settings.login_label()))
+    }
+
+    /// Para a faixa de status das janelas de consulta de servidores
+    /// registrados: o título com a pasta ([`Self::registered_title`]) e o
+    /// endereço do servidor, que vai para a dica.
+    pub fn document_titles(&self) -> std::collections::HashMap<u32, (String, String)> {
+        let connections: Vec<_> = self
+            .connection
+            .iter()
+            .chain(
+                self.servers
+                    .parked
+                    .iter()
+                    .filter_map(|p| p.connection.as_ref()),
+            )
+            .collect();
+        self.doc_servers
+            .iter()
+            .filter_map(|(doc, key)| {
+                let c = connections
+                    .iter()
+                    .find(|c| &server_key(&c.settings) == key)?;
+                let title = self.registered_title(&c.settings)?;
+                let host = format!(
+                    "{} ({})",
+                    c.settings.server_name(),
+                    c.settings.login_label()
+                );
+                Some((*doc, (title, host)))
+            })
+            .collect()
+    }
+
     /// Como um servidor conectado aparece no Object Explorer quando está
     /// registrado: o nome do registro e o ambiente dele.
     pub fn server_label(

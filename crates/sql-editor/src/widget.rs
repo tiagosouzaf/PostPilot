@@ -159,7 +159,7 @@ pub struct Buffer {
     /// O `*` com o ponteiro em cima (byte) e desde quando.
     star_hover: Option<(usize, f64)>,
     /// A lista das colunas do `*` desenhada neste frame, e onde.
-    star_tip: Option<(Star, Rect)>,
+    star_tip: Option<StarOpen>,
     /// Sugestões da IA para o comando do cursor.
     pub(crate) ai: HintState,
     /// Sobe a cada mudança do texto: quem observa o editor (a IA) compara
@@ -230,6 +230,47 @@ fn one_line(
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
     painter.layout_job(job)
 }
+
+/// Como [`one_line`], com as letras em `marks` (índices em caracteres)
+/// destacadas: são as que casaram com o que foi digitado.
+fn marked_line(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    mark: Color32,
+    marks: &[usize],
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    if marks.is_empty() {
+        return one_line(painter, text, font, color, max_width);
+    }
+    let plain = egui::TextFormat::simple(font.clone(), color);
+    let strong = egui::TextFormat {
+        underline: egui::Stroke::new(1.0, mark),
+        ..egui::TextFormat::simple(font, mark)
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let mut marks = marks.iter().copied().peekable();
+    // Um trecho por sequência de letras do mesmo jeito.
+    let mut run = String::new();
+    let mut run_marked = false;
+    for (i, c) in text.chars().enumerate() {
+        let marked = marks.next_if_eq(&i).is_some();
+        if marked != run_marked && !run.is_empty() {
+            let format = if run_marked { &strong } else { &plain };
+            job.append(&run, 0.0, format.clone());
+            run.clear();
+        }
+        run_marked = marked;
+        run.push(c);
+    }
+    if !run.is_empty() {
+        job.append(&run, 0.0, if run_marked { strong } else { plain });
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    painter.layout_job(job)
+}
 /// Letra e margem da explicação embaixo da lista.
 const DOC_FONT: f32 = 12.0;
 const DOC_MARGIN: f32 = 6.0;
@@ -238,7 +279,7 @@ impl Buffer {
     /// As colunas do `*` sob o ponteiro, se a lista está na tela, e o
     /// retângulo dela.
     pub(crate) fn star_tip(&self) -> Option<(&Star, Rect)> {
-        self.star_tip.as_ref().map(|(s, r)| (s, *r))
+        self.star_tip.as_ref().map(|o| (&o.star, o.rect))
     }
 
     /// Devolve `true` se o texto mudou por fora do editor.
@@ -1278,7 +1319,7 @@ pub(crate) fn show(
     }
     let focused = ui.memory(|m| m.has_focus(id));
 
-    let over_popup = (buf.popup.is_some() || buf.ai.open.is_some())
+    let over_popup = (buf.popup.is_some() || buf.ai.open.is_some() || buf.star_tip.is_some())
         && buf
             .popup_rect
             .is_some_and(|r| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.contains(p))));
@@ -1362,7 +1403,6 @@ pub(crate) fn show(
 
     paint(ui, &ed, &f, gutter, focused);
     squiggles(ui, &response, &ed, &f);
-    star_tip(ui, id, &response, &mut ed, &f);
     ed.buf.popup_rect = None;
     if (focused || over_popup) && popup(ui, id, &mut ed, &f) {
         ui.memory_mut(|m| m.request_focus(id));
@@ -1372,6 +1412,14 @@ pub(crate) fn show(
     if ((focused || over_popup) && hint_popup(ui, id, &mut ed, &f)) || chip {
         ui.memory_mut(|m| m.request_focus(id));
         ctx.request_repaint();
+    }
+    // Um clique na lista das colunas do `*` também não tira o foco.
+    if star_tip(ui, id, &response, &mut ed, &f) {
+        ui.memory_mut(|m| m.request_focus(id));
+        ctx.request_repaint();
+    }
+    if ed.buf.popup_rect.is_none() {
+        ed.buf.popup_rect = ed.buf.star_tip.as_ref().map(|o| o.rect);
     }
 
     let (line, col) = ed.index().line_col(ed.view.cursor);
@@ -2338,6 +2386,7 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     let items = &p.completion.items;
+                    let typed = p.completion.prefix.trim_start_matches(['"', '[']);
                     for (i, item) in items.iter().enumerate().skip(p.top).take(rows) {
                         let (rect, resp) =
                             ui.allocate_exact_size(vec2(width, row_h), Sense::click());
@@ -2398,8 +2447,24 @@ fn popup(ui: &Ui, id: Id, ed: &mut Editing<'_>, f: &Frame) -> bool {
                             .size()
                             .x;
                         let (label_max, detail_max) = split_row(avail, label_w, detail_w);
-                        let label =
-                            one_line(painter, &item.label, font.clone(), text_color, label_max);
+                        // As letras que casaram com o que foi digitado.
+                        let marks = crate::fuzzy::find(&item.label, typed)
+                            .map(|m| m.chars)
+                            .unwrap_or_default();
+                        let mark_color = if selected {
+                            Color32::WHITE
+                        } else {
+                            v.hyperlink_color
+                        };
+                        let label = marked_line(
+                            painter,
+                            &item.label,
+                            font.clone(),
+                            text_color,
+                            mark_color,
+                            &marks,
+                            label_max,
+                        );
                         let mut cut = label.elided;
                         painter.galley(
                             pos2(rect.left() + ROW_LEFT, mid.y - label.size().y / 2.0),
@@ -2819,24 +2884,46 @@ fn squiggles(ui: &Ui, response: &egui::Response, ed: &Editing<'_>, f: &Frame) {
     }
 }
 
-/// Quanto o ponteiro fica parado no `*` até a lista aparecer (segundos).
+/// Quanto o ponteiro fica parado no `*` até a lista aparecer, e quanto a
+/// lista espera o ponteiro voltar depois que ele sai dela (segundos).
 const STAR_DELAY: f64 = 0.3;
+const STAR_LINGER: f64 = 0.4;
 /// Margem da lista das colunas, espaço entre o nome e o tipo e entre os
 /// blocos.
 const STAR_PAD: f32 = 8.0;
 const STAR_GAP: f32 = 14.0;
 const STAR_BLOCK_GAP: f32 = 22.0;
-/// Até onde um nome e um tipo vão antes das reticências.
-const STAR_NAME_MAX: f32 = 360.0;
-const STAR_TYPE_MAX: f32 = 180.0;
+/// Até onde um tipo vai antes das reticências, e a largura que a lista
+/// tem pelo menos (para os botões de baixo).
+const STAR_TYPE_MAX: f32 = 220.0;
+/// Até onde um nome vai quando os blocos não cabem lado a lado.
+const STAR_NAME_CAPS: [f32; 3] = [340.0, 270.0, 210.0];
+const STAR_MIN_WIDTH: f32 = 380.0;
+
+/// A lista das colunas de um `*`, aberta: fica enquanto o ponteiro está
+/// no asterisco ou nela, para dar tempo de escolher colunas.
+#[derive(Clone, Debug)]
+pub(crate) struct StarOpen {
+    star: Star,
+    /// Onde está o `*` (byte) e o texto de quando abriu.
+    at: usize,
+    revision: u64,
+    /// As colunas escolhidas: (tabela, coluna).
+    chosen: std::collections::BTreeSet<(usize, usize)>,
+    /// Onde a lista foi desenhada.
+    rect: Rect,
+    /// A última vez que o ponteiro esteve no asterisco ou na lista.
+    seen: f64,
+}
 
 /// Uma linha da lista das colunas do `*`.
 #[derive(Clone)]
 enum StarLine {
-    /// Nome da tabela, alias e quantas colunas.
-    Table(String, Option<String>, Option<usize>),
-    Column(String, String),
-    /// Por que não há colunas, ou quantas ficaram de fora.
+    /// Nome da tabela, alias e quantas colunas; o número da tabela.
+    Table(usize, String, Option<String>, Option<usize>),
+    /// Tabela e coluna, nome e tipo.
+    Column((usize, usize), String, String),
+    /// Por que não há colunas.
     Note(String),
     Blank,
 }
@@ -2861,29 +2948,32 @@ fn elided(ui: &Ui, text: &str, font: FontId, color: Color32, max: f32) -> Arc<Ga
     ui.painter().layout_job(job)
 }
 
-type StarRow = (Option<Arc<Galley>>, Option<Arc<Galley>>, bool);
+/// Esquerda e direita de uma linha, já medidas.
+type StarRow = (Option<Arc<Galley>>, Option<Arc<Galley>>);
 
-/// Um bloco (uma "coluna de jornal") da lista, já medido.
-struct StarBlock {
-    /// Esquerda e direita de cada linha, e se é o nome de uma tabela.
+/// As linhas da lista medidas: todos os blocos têm a mesma largura.
+struct StarRows {
     rows: Vec<StarRow>,
-    /// Onde começam os tipos.
+    /// Onde começam os nomes (depois da marca de escolhida) e os tipos.
+    name_x: f32,
     type_x: f32,
     width: f32,
 }
 
-fn star_block(ui: &Ui, lines: &[StarLine], f: &Frame, max_w: f32) -> StarBlock {
+fn star_rows(ui: &Ui, lines: &[StarLine], f: &Frame, max_w: f32, name_cap: f32) -> StarRows {
     let v = ui.visuals();
     let small = FontId::proportional(11.0);
-    let name_max = STAR_NAME_MAX.min(max_w * 0.62);
-    let type_max = STAR_TYPE_MAX.min((max_w - name_max - STAR_GAP).max(1.0));
+    let name_x = f.char_w * 2.0;
+    // O nome só ganha reticências se a janela for estreita demais.
+    let type_max = STAR_TYPE_MAX.min(max_w * 0.35);
+    let name_max = (max_w - name_x - STAR_GAP - type_max).clamp(1.0, name_cap);
     let mut rows = Vec::with_capacity(lines.len());
     let mut name_w = 0.0f32;
     let mut type_w = 0.0f32;
     let mut wide = 0.0f32;
     for line in lines {
         let row = match line {
-            StarLine::Table(name, alias, count) => {
+            StarLine::Table(_, name, alias, count) => {
                 let right = count.map(|n| {
                     elided(
                         ui,
@@ -2912,14 +3002,14 @@ fn star_block(ui: &Ui, lines: &[StarLine], f: &Frame, max_w: f32) -> StarBlock {
                 };
                 let left = ui.painter().layout_job(job);
                 wide = wide.max(left.size().x + right_w);
-                (Some(left), right, true)
+                (Some(left), right)
             }
-            StarLine::Column(name, ty) => {
+            StarLine::Column(_, name, ty) => {
                 let left = elided(ui, name, f.font.clone(), f.colors.text, name_max);
                 let right = elided(ui, ty, small.clone(), v.weak_text_color(), type_max);
                 name_w = name_w.max(left.size().x);
                 type_w = type_w.max(right.size().x);
-                (Some(left), Some(right), false)
+                (Some(left), Some(right))
             }
             StarLine::Note(text) => {
                 let left = elided(
@@ -2930,31 +3020,64 @@ fn star_block(ui: &Ui, lines: &[StarLine], f: &Frame, max_w: f32) -> StarBlock {
                     max_w,
                 );
                 wide = wide.max(left.size().x);
-                (Some(left), None, false)
+                (Some(left), None)
             }
-            StarLine::Blank => (None, None, false),
+            StarLine::Blank => (None, None),
         };
         rows.push(row);
     }
     let columns = if type_w > 0.0 || name_w > 0.0 {
-        name_w + STAR_GAP + type_w
+        name_x + name_w + STAR_GAP + type_w
     } else {
         0.0
     };
-    StarBlock {
+    StarRows {
         rows,
-        type_x: name_w + STAR_GAP,
+        name_x,
+        type_x: name_x + name_w + STAR_GAP,
         width: wide.max(columns).min(max_w),
     }
 }
 
-/// O `*` de um `SELECT` sob o ponteiro, e o retângulo dele na tela.
+/// Divide as linhas em blocos de `rows` linhas; o nome de uma tabela não
+/// fica sozinho no fim de um bloco, e o espaço entre duas tabelas não
+/// abre um bloco. `None` é uma linha vazia.
+fn star_flow(lines: &[StarLine], rows: usize) -> Vec<Vec<Option<usize>>> {
+    let mut blocks: Vec<Vec<Option<usize>>> = vec![Vec::new()];
+    for (i, line) in lines.iter().enumerate() {
+        if blocks.last().is_some_and(|b| b.len() >= rows) {
+            blocks.push(Vec::new());
+        }
+        let last = blocks.last_mut().expect("um bloco");
+        if matches!(line, StarLine::Blank) && last.is_empty() {
+            continue;
+        }
+        if matches!(line, StarLine::Table(..)) && rows > 2 && last.len() + 1 == rows {
+            last.push(None);
+            blocks.push(Vec::new());
+        }
+        blocks.last_mut().expect("um bloco").push(Some(i));
+    }
+    blocks
+}
+
+/// O retângulo na tela do caractere que começa no byte `at`.
+fn char_rect(ui: &Ui, ed: &Editing<'_>, f: &Frame, at: usize) -> Rect {
+    let c = ed.text[..at].chars().count();
+    let (line, col) = ed.index().line_col(c);
+    let galley = line_galley(ui, ed.text, ed.buf, line, f);
+    let left = f.text_rect.left() + col_x(&galley, col) - ed.view.scroll.x;
+    let top = f.text_rect.top() + line as f32 * f.line_h - ed.view.scroll.y;
+    Rect::from_min_size(pos2(left, top), vec2(f.char_w, f.line_h))
+}
+
+/// O `*` de um `SELECT` sob o ponteiro, e onde ele está no texto.
 fn hovered_star(
     ui: &Ui,
     response: &egui::Response,
     ed: &Editing<'_>,
     f: &Frame,
-) -> Option<(Star, Rect)> {
+) -> Option<(Star, usize)> {
     if !matches!(ed.buf.dialect, Dialect::Postgres | Dialect::TSql)
         || ed.buf.popup.is_some()
         || ed.buf.ai.open.is_some()
@@ -2985,49 +3108,119 @@ fn hovered_star(
         return None;
     }
     let star = star_at(ed.text, &ed.buf.tokens, byte, ed.catalog)?;
-    let left = f.text_rect.left() + col_x(&galley, col) - ed.view.scroll.x;
-    let top = f.text_rect.top() + line as f32 * f.line_h - ed.view.scroll.y;
-    let rect = Rect::from_min_size(pos2(left, top), vec2(f.char_w, f.line_h));
-    Some((star, rect))
+    Some((star, byte))
+}
+
+/// O que um clique na lista das colunas pediu.
+enum StarAction {
+    Toggle((usize, usize)),
+    /// Escolhe (ou solta) todas as colunas de uma tabela.
+    Table(usize),
+    Clear,
+    Replace,
+    Copy,
 }
 
 /// Com o ponteiro parado no `*` de um `SELECT`, mostra as colunas que ele
-/// representa, com os tipos, tabela por tabela. A lista se divide em
-/// blocos lado a lado para caber na altura da janela; se nem assim
-/// couber, diz quantas colunas ficaram de fora.
-fn star_tip(ui: &Ui, id: Id, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) {
-    ed.buf.star_tip = None;
-    let Some((star, anchor)) = hovered_star(ui, response, ed, f) else {
-        ed.buf.star_hover = None;
-        return;
-    };
+/// representa, com os tipos, tabela por tabela. A lista fica aberta
+/// enquanto o ponteiro está nela: um clique escolhe uma coluna, e os
+/// botões de baixo trocam o `*` pelas escolhidas ou copiam os nomes. Ela
+/// se divide em blocos lado a lado para caber na janela e, se nem assim
+/// couber, rola. Devolve `true` se houve um clique nela.
+fn star_tip(ui: &Ui, id: Id, response: &egui::Response, ed: &mut Editing<'_>, f: &Frame) -> bool {
     let now = ui.input(|i| i.time);
-    let since = match ed.buf.star_hover {
-        Some((at, since)) if at == star.range.start => since,
-        _ => {
-            ed.buf.star_hover = Some((star.range.start, now));
-            now
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut open = ed.buf.star_tip.take();
+
+    // A lista aberta fica enquanto o texto é o mesmo e o ponteiro está no
+    // asterisco, nela ou no caminho entre os dois.
+    if let Some(o) = &mut open {
+        let alive = o.revision == ed.buf.revision
+            && ed.buf.popup.is_none()
+            && ed.buf.ai.open.is_none()
+            && !ui.input(|i| i.key_pressed(Key::Escape));
+        let star = alive
+            .then(|| star_at(ed.text, &ed.buf.tokens, o.at, ed.catalog))
+            .flatten();
+        match star {
+            Some(star) => {
+                // A lista começa logo embaixo (ou em cima) do asterisco.
+                let anchor = char_rect(ui, ed, f, o.at).expand(4.0);
+                let inside =
+                    pointer.is_some_and(|p| o.rect.expand(4.0).contains(p) || anchor.contains(p));
+                let over = pointer.is_some_and(|p| o.rect.contains(p));
+                if inside {
+                    o.seen = now;
+                }
+                let pressed_outside = !over && ui.input(|i| i.pointer.any_pressed());
+                if pressed_outside || now - o.seen > STAR_LINGER {
+                    open = None;
+                } else {
+                    if o.star.tables != star.tables {
+                        o.chosen.clear();
+                    }
+                    o.star = star;
+                    if !inside {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_secs_f64(STAR_LINGER));
+                    }
+                }
+            }
+            None => open = None,
         }
-    };
-    let wait = STAR_DELAY - (now - since);
-    if wait > 0.0 {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs_f64(wait));
-        return;
     }
 
+    // Outro asterisco (ou o primeiro) com o ponteiro parado em cima.
+    match hovered_star(ui, response, ed, f) {
+        Some((star, at)) if open.as_ref().is_none_or(|o| o.at != at) => {
+            let since = match ed.buf.star_hover {
+                Some((byte, since)) if byte == at => since,
+                _ => {
+                    ed.buf.star_hover = Some((at, now));
+                    now
+                }
+            };
+            let wait = STAR_DELAY - (now - since);
+            if wait > 0.0 {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            } else {
+                open = Some(StarOpen {
+                    star,
+                    at,
+                    revision: ed.buf.revision,
+                    chosen: Default::default(),
+                    rect: Rect::NOTHING,
+                    seen: now,
+                });
+            }
+        }
+        Some(_) => {}
+        None => ed.buf.star_hover = None,
+    }
+    let Some(mut o) = open else {
+        return false;
+    };
+    let anchor = char_rect(ui, ed, f, o.at);
+
     let mut lines = Vec::new();
-    for t in &star.tables {
-        let count = t.columns.as_ref().map(Vec::len);
+    for (t, table) in o.star.tables.iter().enumerate() {
+        let count = table.columns.as_ref().map(Vec::len);
         if !lines.is_empty() {
             lines.push(StarLine::Blank);
         }
-        lines.push(StarLine::Table(t.name.clone(), t.alias.clone(), count));
-        match &t.columns {
+        lines.push(StarLine::Table(
+            t,
+            table.name.clone(),
+            table.alias.clone(),
+            count,
+        ));
+        match &table.columns {
             Some(columns) => lines.extend(
                 columns
                     .iter()
-                    .map(|c| StarLine::Column(c.name.clone(), c.ty.clone())),
+                    .enumerate()
+                    .map(|(c, col)| StarLine::Column((t, c), col.name.clone(), col.ty.clone())),
             ),
             None if ed.catalog.is_none() => lines.push(StarLine::Note(
                 tr("The catalog of this database is not loaded yet.").to_string(),
@@ -3037,69 +3230,71 @@ fn star_tip(ui: &Ui, id: Id, response: &egui::Response, ed: &mut Editing<'_>, f:
             )),
         }
     }
+    let total_columns = o.star.column_count();
 
-    // O espaço: embaixo da linha ou, se for maior, em cima.
+    // O espaço: embaixo da linha ou, se for maior, em cima; os botões de
+    // baixo ocupam uma linha (três, numa janela estreita).
     let screen = ui.ctx().content_rect().shrink(6.0);
     let row_h = f.line_h + 2.0;
     let frame = 2.0 * STAR_PAD + 2.0;
+    let max_w = (screen.width() - frame).max(40.0);
+    let button_h = ui.spacing().interact_size.y + ui.spacing().item_spacing.y;
+    let footer_h = if total_columns == 0 {
+        0.0
+    } else {
+        7.0 + button_h * if max_w >= STAR_MIN_WIDTH { 1.0 } else { 3.0 }
+    };
     let below = screen.bottom() - anchor.bottom() - 2.0;
     let above = anchor.top() - screen.top() - 2.0;
-    let max_rows = (((below.max(above) - frame) / row_h).floor() as usize).max(2);
-    let max_w = (screen.width() - frame).max(40.0);
+    let room = below.max(above) - frame - footer_h;
+    let max_rows = ((room / row_h).floor().max(0.0) as usize).max(2);
 
-    // Blocos do mesmo tamanho; o nome de uma tabela não fica sozinho no
-    // fim de um bloco.
-    let blocks_n = lines.len().div_ceil(max_rows);
-    let rows = lines.len().div_ceil(blocks_n).max(2);
-    let mut blocks: Vec<Vec<StarLine>> = vec![Vec::new()];
-    for line in lines {
-        if blocks.last().is_some_and(|b| b.len() >= rows) {
-            blocks.push(Vec::new());
-        }
-        let last = blocks.last_mut().expect("um bloco");
-        // O espaço entre duas tabelas não abre um bloco.
-        if matches!(line, StarLine::Blank) && last.is_empty() {
-            continue;
-        }
-        if matches!(line, StarLine::Table(..)) && last.len() + 1 == rows && rows <= max_rows {
-            last.push(StarLine::Blank);
-            blocks.push(Vec::new());
-        }
-        blocks.last_mut().expect("um bloco").push(line);
-    }
-    let mut laid: Vec<StarBlock> = blocks.iter().map(|b| star_block(ui, b, f, max_w)).collect();
-    // Os blocos que não cabem na largura saem, e a última linha conta
-    // quantas colunas ficaram de fora.
-    let total = |laid: &[StarBlock]| {
-        laid.iter().map(|b| b.width).sum::<f32>()
-            + STAR_BLOCK_GAP * laid.len().saturating_sub(1) as f32
+    // Quantos blocos cabem lado a lado, e quantas linhas cada um tem; o
+    // que passar da altura, rola.
+    let fits = |laid: &StarRows| {
+        (((max_w + STAR_BLOCK_GAP) / (laid.width + STAR_BLOCK_GAP)).floor() as usize).max(1)
     };
-    let is_column = |l: &StarLine| matches!(l, StarLine::Column(..));
-    let mut hidden = 0;
-    while laid.len() > 1 && total(&laid) > max_w {
-        laid.pop();
-        let gone = blocks.pop().expect("um bloco");
-        hidden += gone.iter().filter(|l| is_column(l)).count();
-    }
-    if hidden > 0 {
-        let last = blocks.last_mut().expect("um bloco");
-        if let Some(gone) = last.pop() {
-            hidden += usize::from(is_column(&gone));
+    let needed = lines.len().div_ceil(max_rows);
+    // Um nome comprido demais não tira o lugar de um bloco: ganha
+    // reticências (e aparece inteiro com o ponteiro em cima).
+    let mut laid = star_rows(ui, &lines, f, max_w, f32::INFINITY);
+    for cap in STAR_NAME_CAPS {
+        if fits(&laid) >= needed {
+            break;
         }
-        last.push(StarLine::Note(if hidden == 1 {
-            tr("… and 1 more column").to_string()
-        } else {
-            trf!("… and {n} more columns", n = hidden)
-        }));
-        let block = star_block(ui, last, f, max_w);
-        *laid.last_mut().expect("um bloco") = block;
+        let tighter = star_rows(ui, &lines, f, max_w, cap);
+        if fits(&tighter) > fits(&laid) {
+            laid = tighter;
+        }
     }
-
-    let size = vec2(
-        total(&laid),
-        laid.iter().map(|b| b.rows.len()).max().unwrap_or(0) as f32 * row_h,
+    let fit = fits(&laid);
+    let wanted = needed.clamp(1, fit);
+    let mut rows = lines.len().div_ceil(wanted).max(1);
+    let mut blocks = star_flow(&lines, rows);
+    while blocks.len() > fit && rows < lines.len() {
+        rows += 1;
+        blocks = star_flow(&lines, rows);
+    }
+    let height = blocks.iter().map(Vec::len).max().unwrap_or(0);
+    let list = vec2(
+        laid.width * blocks.len() as f32 + STAR_BLOCK_GAP * (blocks.len() - 1) as f32,
+        height as f32 * row_h,
     );
-    let outer = size + Vec2::splat(frame);
+    let view_h = list.y.min(max_rows as f32 * row_h);
+    let scrolls = list.y > view_h + 0.5;
+    let bar = if scrolls {
+        ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_inner_margin
+    } else {
+        0.0
+    };
+    let inner_w = (list.x + bar)
+        .max(if total_columns == 0 {
+            0.0
+        } else {
+            STAR_MIN_WIDTH
+        })
+        .min(max_w);
+    let outer = vec2(inner_w, view_h + footer_h) + Vec2::splat(frame);
     let y = if outer.y <= below || below >= above {
         anchor.bottom() + 2.0
     } else {
@@ -3109,43 +3304,253 @@ fn star_tip(ui: &Ui, id: Id, response: &egui::Response, ed: &mut Editing<'_>, f:
         .left()
         .min(screen.right() - outer.x)
         .max(screen.left());
+
+    let v = ui.visuals().clone();
+    let colors = f.colors;
+    let chosen = &o.chosen;
+    let mut action = None;
     let area = egui::Area::new(id.with("star_tip"))
-        .order(egui::Order::Tooltip)
-        .interactable(false)
+        .order(egui::Order::Foreground)
         .fade_in(false)
-        .constrain(false)
+        .constrain_to(screen)
         .fixed_pos(pos2(x, y.max(screen.top())))
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
                 .inner_margin(STAR_PAD)
                 .show(ui, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                    let painter = ui.painter();
-                    let color = ui.visuals().text_color();
-                    let mut left = rect.left();
-                    for block in &laid {
-                        for (i, (a, b, header)) in block.rows.iter().enumerate() {
-                            let top = rect.top() + i as f32 * row_h;
-                            let mid = |g: &Arc<Galley>| top + (row_h - g.size().y) / 2.0;
-                            if let Some(g) = a {
-                                painter.galley(pos2(left, mid(g)), g.clone(), color);
+                    ui.set_width(inner_w);
+                    egui::ScrollArea::vertical()
+                        .id_salt("star_columns")
+                        .max_height(view_h)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let (rect, _) = ui.allocate_exact_size(
+                                vec2(list.x.min(ui.available_width()), list.y),
+                                Sense::hover(),
+                            );
+                            let mut left = rect.left();
+                            for block in &blocks {
+                                for (i, line) in block.iter().enumerate() {
+                                    let Some(n) = *line else {
+                                        continue;
+                                    };
+                                    let row = Rect::from_min_size(
+                                        pos2(left, rect.top() + i as f32 * row_h),
+                                        vec2(laid.width, row_h),
+                                    );
+                                    if !ui.is_rect_visible(row) {
+                                        continue;
+                                    }
+                                    let (a, b) = &laid.rows[n];
+                                    let mid =
+                                        |g: &Arc<Galley>| row.top() + (row_h - g.size().y) / 2.0;
+                                    let color = v.text_color();
+                                    match &lines[n] {
+                                        StarLine::Column(key, name, _) => {
+                                            let picked = chosen.contains(key);
+                                            let resp = ui.interact(
+                                                row,
+                                                ui.id().with(("star_column", key)),
+                                                Sense::click(),
+                                            );
+                                            resp.widget_info(|| {
+                                                egui::WidgetInfo::selected(
+                                                    egui::WidgetType::Checkbox,
+                                                    true,
+                                                    picked,
+                                                    name,
+                                                )
+                                            });
+                                            let painter = ui.painter();
+                                            if picked {
+                                                painter.rect_filled(
+                                                    row,
+                                                    2.0,
+                                                    v.selection.bg_fill.gamma_multiply(0.45),
+                                                );
+                                                painter.text(
+                                                    pos2(row.left() + 3.0, row.center().y),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    egui_phosphor::regular::CHECK,
+                                                    FontId::proportional(12.0),
+                                                    colors.keyword,
+                                                );
+                                            } else if resp.hovered() {
+                                                painter.rect_filled(
+                                                    row,
+                                                    2.0,
+                                                    v.widgets.hovered.weak_bg_fill,
+                                                );
+                                            }
+                                            if let Some(g) = a {
+                                                painter.galley(
+                                                    pos2(left + laid.name_x, mid(g)),
+                                                    g.clone(),
+                                                    color,
+                                                );
+                                            }
+                                            if let Some(g) = b {
+                                                painter.galley(
+                                                    pos2(left + laid.type_x, mid(g)),
+                                                    g.clone(),
+                                                    color,
+                                                );
+                                            }
+                                            if resp.hovered() {
+                                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                                            }
+                                            if resp.clicked() {
+                                                action = Some(StarAction::Toggle(*key));
+                                            }
+                                            if a.as_ref().is_some_and(|g| g.elided) {
+                                                resp.on_hover_text(name);
+                                            }
+                                        }
+                                        StarLine::Table(t, name, _, count) => {
+                                            // Um clique no nome da tabela
+                                            // escolhe todas as colunas dela.
+                                            let resp = count.filter(|n| *n > 0).map(|_| {
+                                                ui.interact(
+                                                    row,
+                                                    ui.id().with(("star_table", t)),
+                                                    Sense::click(),
+                                                )
+                                            });
+                                            let painter = ui.painter();
+                                            if let Some(resp) = &resp {
+                                                resp.widget_info(|| {
+                                                    egui::WidgetInfo::labeled(
+                                                        egui::WidgetType::Button,
+                                                        true,
+                                                        name,
+                                                    )
+                                                });
+                                                if resp.hovered() {
+                                                    painter.rect_filled(
+                                                        row,
+                                                        2.0,
+                                                        v.widgets.hovered.weak_bg_fill,
+                                                    );
+                                                    ui.ctx()
+                                                        .set_cursor_icon(CursorIcon::PointingHand);
+                                                }
+                                                if resp.clicked() {
+                                                    action = Some(StarAction::Table(*t));
+                                                }
+                                            }
+                                            if let Some(g) = a {
+                                                painter.galley(
+                                                    pos2(left, mid(g)),
+                                                    g.clone(),
+                                                    color,
+                                                );
+                                            }
+                                            if let Some(g) = b {
+                                                painter.galley(
+                                                    pos2(left + laid.width - g.size().x, mid(g)),
+                                                    g.clone(),
+                                                    color,
+                                                );
+                                            }
+                                        }
+                                        StarLine::Note(_) | StarLine::Blank => {
+                                            if let Some(g) = a {
+                                                ui.painter().galley(
+                                                    pos2(left, mid(g)),
+                                                    g.clone(),
+                                                    color,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                left += laid.width + STAR_BLOCK_GAP;
                             }
-                            if let Some(g) = b {
-                                // O tipo fica ao lado do nome; a contagem
-                                // da tabela, na ponta do bloco.
-                                let x = if *header {
-                                    left + block.width - g.size().x
-                                } else {
-                                    left + block.type_x
-                                };
-                                painter.galley(pos2(x, mid(g)), g.clone(), color);
-                            }
-                        }
-                        left += block.width + STAR_BLOCK_GAP;
+                        });
+                    if total_columns == 0 {
+                        return;
                     }
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
+                        let n = chosen.len();
+                        let (replace, copy) = if n == 0 {
+                            (
+                                tr("Replace the * with all").to_string(),
+                                tr("Copy all").to_string(),
+                            )
+                        } else {
+                            (
+                                trf!("Replace the * with {n}", n = n),
+                                trf!("Copy {n}", n = n),
+                            )
+                        };
+                        if ui.button(replace).clicked() {
+                            action = Some(StarAction::Replace);
+                        }
+                        if ui.button(copy).clicked() {
+                            action = Some(StarAction::Copy);
+                        }
+                        if n > 0 {
+                            if ui.button(tr("Clear")).clicked() {
+                                action = Some(StarAction::Clear);
+                            }
+                        } else {
+                            ui.weak(tr("Click to choose columns"));
+                        }
+                    });
                 });
         });
-    ed.buf.star_tip = Some((star, area.response.rect));
+    o.rect = area.response.rect;
+    let clicked = action.is_some();
+    let picked = |o: &StarOpen| {
+        if o.chosen.is_empty() {
+            o.star.all()
+        } else {
+            o.chosen.iter().copied().collect()
+        }
+    };
+    let quote = |name: &str| {
+        ed.catalog.map_or_else(
+            || pgstudio_core::catalog::quote_ident(name),
+            |c| c.quote(name),
+        )
+    };
+    match action {
+        Some(StarAction::Toggle(key)) => {
+            if !o.chosen.remove(&key) {
+                o.chosen.insert(key);
+            }
+        }
+        Some(StarAction::Table(t)) => {
+            let all: Vec<_> = o.star.all().into_iter().filter(|k| k.0 == t).collect();
+            if all.iter().all(|k| o.chosen.contains(k)) {
+                o.chosen.retain(|k| k.0 != t);
+            } else {
+                o.chosen.extend(all);
+            }
+        }
+        Some(StarAction::Clear) => o.chosen.clear(),
+        Some(StarAction::Copy) => {
+            ui.ctx()
+                .copy_text(o.star.names(&picked(&o), quote).join(", "));
+        }
+        Some(StarAction::Replace) => {
+            let text = o.star.names(&picked(&o), quote).join(", ");
+            let chars = |byte: usize| ed.text[..byte].chars().count();
+            let range = chars(o.star.replace.start)..chars(o.star.replace.end);
+            ed.buf.history.seal();
+            ed.replace(range, &text, EditKind::Other);
+            ed.buf.history.seal();
+            ed.moved = true;
+            ed.buf.star_hover = None;
+            return true;
+        }
+        None => {}
+    }
+    ed.buf.star_tip = Some(o);
+    clicked
 }
 
 #[cfg(test)]

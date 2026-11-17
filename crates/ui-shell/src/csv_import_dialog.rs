@@ -260,15 +260,15 @@ impl ImportDialog {
         None
     }
 
-    /// O botão "Import": confere, pede confirmação no ambiente que pede e
-    /// começa a carga.
+    /// O botão "Import": confere, pede confirmação (em qualquer ambiente)
+    /// e começa a carga.
     pub fn import(&mut self, ctx: &egui::Context) {
         if let Some(why) = self.invalid() {
             self.error = Some(why);
             return;
         }
         self.error = None;
-        if self.environment.is_some() && self.phase != Phase::Confirming {
+        if self.phase != Phase::Confirming {
             self.phase = Phase::Confirming;
             return;
         }
@@ -359,11 +359,15 @@ impl ImportDialog {
                             .map(Target::display)
                             .unwrap_or_default(),
                     );
-                    ui.label(trf!(
-                        "This server is in {environment}, and the import adds rows to {table}.",
-                        environment = environment,
-                        table = table
-                    ));
+                    ui.label(if self.environment.is_some() {
+                        trf!(
+                            "This server is in {environment}, and the import adds rows to {table}.",
+                            environment = environment,
+                            table = table
+                        )
+                    } else {
+                        trf!("The import adds rows to {table}.", table = table)
+                    });
                     ui.label(tr("Do you want to import the file?"));
                 }
                 Phase::Done(text) => {

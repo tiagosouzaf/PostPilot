@@ -418,10 +418,7 @@ pub const SUBCOMMANDS: &[(&str, &[&str])] = &[
 const MAX_KEYS: usize = 200;
 
 fn starts_with(name: &str, prefix: &str) -> bool {
-    name.len() >= prefix.len()
-        && name
-            .get(..prefix.len())
-            .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
+    crate::fuzzy::matches(name, prefix)
 }
 
 /// Sugestões para o cursor em `at` (bytes) num texto de comandos do
@@ -497,7 +494,7 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
                     .filter(|r| {
                         starts_with(&r.name, prefix) && !before[1..].contains(&r.name.as_str())
                     });
-                for key in names.take(MAX_KEYS) {
+                for key in names {
                     items.push(Suggestion {
                         label: key.name.clone(),
                         insert: redis_argument(&key.name),
@@ -513,6 +510,9 @@ pub fn complete(text: &str, tokens: &[Token], at: usize, catalog: Option<&Catalo
             }
         }
     }
+    // Os que começam igual primeiro, os aproximados depois.
+    crate::fuzzy::sort(&mut items, prefix);
+    items.truncate(MAX_KEYS.max(COMMANDS.len()));
     Completion {
         replace: start..at,
         prefix: prefix.to_string(),

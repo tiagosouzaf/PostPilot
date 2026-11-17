@@ -157,7 +157,10 @@ Registered Servers:
 - **Na janela de consulta:** uma janela aberta numa conexão com ambiente
   ganha uma faixa da cor dele no topo, a faixa de status tingida e a etiqueta
   do ambiente. A status bar também mostra a etiqueta. Sem ambiente, vale a cor
-  da pasta.
+  da pasta. A faixa de status e a status bar mostram a pasta e o nome da
+  conexão salva, como `MainDoc / TiibControl@MainDoc (tiibcontrol)`, com o
+  endereço do servidor na dica; uma pasta com o mesmo nome do ambiente não é
+  repetida, porque a etiqueta já está ao lado.
 
 - **Confirmação em produção:** num ambiente com **Confirm changes**
   (Confirmar alterações) marcado em Environments..., o F5 pergunta antes de

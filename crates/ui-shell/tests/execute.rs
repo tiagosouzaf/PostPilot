@@ -869,6 +869,18 @@ fn edit_top_on_a_table_edits_the_rows_by_their_key() {
     harness.run();
     harness.key_press(Key::Enter);
     let id = wait_edit(&mut harness);
+    // Nada vai ao banco antes do "Yes": a confirmação mostra o comando.
+    assert_eq!(
+        harness.state().edit_rows(id).unwrap().confirm_save_sql(),
+        Some("UPDATE public.table_00003 SET name = 'novo' WHERE id = '1' RETURNING id, name")
+    );
+    assert!(
+        !log.lock().unwrap().iter().any(|l| l.starts_with("UPDATE")),
+        "saved before the confirmation"
+    );
+    harness.get_by_label("Yes").click();
+    harness.run();
+    let id = wait_edit(&mut harness);
     let update = log.lock().unwrap().last().cloned().unwrap();
     assert_eq!(
         update,
@@ -1029,6 +1041,16 @@ fn table_permissions_are_scripted_before_they_are_applied() {
     // O Script não aplica nada; o OK aplica numa transação.
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("BEGIN")));
     harness.get_by_label("OK").click();
+    // O "OK" mostra os comandos e espera o "Yes".
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .security_dialog()
+            .is_some_and(|d| d.is_confirming())
+    );
+    harness.get_by_label("Apply these changes to the server?");
+    harness.get_by_label("Yes").click();
     let start = Instant::now();
     while harness.state().security_dialog().is_some() {
         harness.step();

@@ -244,7 +244,19 @@ Cache) lê de novo. A lista abre sozinha ao digitar: depois de `FROM` e `JOIN`
 vêm tabelas e views, depois de `alias.` as colunas daquela tabela, depois de
 `schema.` o que há no schema, e no resto as colunas das tabelas do comando,
 palavras-chave e funções. Ctrl+Espaço completa a palavra (direto, se só houver
-uma opção), Ctrl+J lista, Tab ou Enter escolhe e Esc fecha. Strings, nomes
+uma opção), Ctrl+J lista, Tab ou Enter escolhe e Esc fecha.
+
+A lista acha o nome mesmo sem a palavra certa. Depois dos nomes que começam
+com o que foi digitado vêm os que têm a palavra no meio (`cria` ou `datahora`
+acham `data_hora_criacao`) e os que têm os começos das palavras (`dhc`). Se
+nada combinou assim, entram os palpites: abreviações que pulam letras
+(`dt_cria`, `qtd`) e erros de digitação, com letra trocada, faltando, sobrando
+ou invertida (`statsu` acha `status`, `clinte` acha `cliente`). Maiúsculas,
+acentos e underscores não contam, as letras que casaram ficam destacadas, e a
+sugestão escolhida troca a palavra digitada inteira. Vale para nomes do banco,
+palavras-chave e os comandos do Redis, MongoDB e Elasticsearch.
+
+Strings, nomes
 entre aspas, `$$` e comentários sem fim e parênteses sem par ficam sublinhados
 em vermelho, assim como o trecho do erro que o servidor apontou na última
 execução; o mouse em cima mostra a mensagem.
@@ -252,7 +264,10 @@ execução; o mouse em cima mostra a mensagem.
 Parar o mouse no `*` de um `SELECT` mostra as colunas que ele representa, com
 os tipos, tabela por tabela (as do `FROM` e dos `JOIN` daquele `SELECT`);
 `alias.*` mostra só as daquela tabela. A lista se divide em blocos lado a lado
-para caber na janela.
+para caber na janela (e rola, se nem assim couber) e fica aberta enquanto o
+mouse está nela: um clique escolhe uma coluna (no nome da tabela, todas as
+dela), e os botões de baixo trocam o `*` pelas colunas escolhidas ou copiam os
+nomes. Sem escolha, valem todas.
 
 F5 ou Ctrl+E executa a seleção, ou o documento inteiro se nada estiver
 selecionado, numa conexão própria da janela de consulta (aberta na primeira

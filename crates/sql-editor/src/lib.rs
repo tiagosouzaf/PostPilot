@@ -23,6 +23,7 @@ pub mod docs;
 pub mod edit;
 pub mod elasticsearch;
 pub mod format;
+pub mod fuzzy;
 pub mod highlight;
 pub mod hints;
 pub mod lexer;

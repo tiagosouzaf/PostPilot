@@ -1466,6 +1466,7 @@ impl ShellApp {
                                 e.select(row, col, ctx);
                                 e.set_cell(row, col, Some(format!("edit {edits}")));
                                 e.select((row + 1) % rows, col, ctx);
+                                e.answer_save(true, ctx);
                                 if e.is_saving() {
                                     run.refresh_start = Some(std::time::Instant::now());
                                 }
@@ -3583,11 +3584,19 @@ impl ShellApp {
         let server = self.connection_label();
         let default_db = self.default_database();
         let mut doc_servers = self.document_servers();
+        // Servidor registrado: a faixa mostra a pasta e o nome do registro,
+        // com o endereço na dica.
+        let mut doc_hosts = std::collections::HashMap::new();
+        for (id, (title, host)) in self.document_titles() {
+            doc_servers.insert(id, title);
+            doc_hosts.insert(id, host);
+        }
         let mut doc_tags = self.document_tags();
         // Uma janela de vários servidores mostra quantos são e, se algum
         // pede confirmação, o ambiente dele.
         for (id, label, tag) in self.multi_labels() {
             doc_servers.insert(id, label);
+            doc_hosts.remove(&id);
             match tag {
                 Some(tag) => doc_tags.insert(id, tag),
                 None => doc_tags.remove(&id),
@@ -3597,6 +3606,7 @@ impl ShellApp {
         // ambiente).
         for (id, label) in self.federated_labels() {
             doc_servers.insert(id, label);
+            doc_hosts.remove(&id);
             doc_tags.remove(&id);
         }
         let active_key = self
@@ -3633,6 +3643,7 @@ impl ShellApp {
                     editor_colors: theme::editor_colors(self.theme),
                     server,
                     doc_servers,
+                    doc_hosts,
                     doc_tags,
                     catalogs: &self.catalogs,
                     federated_catalog: self.federated.catalog(),
@@ -4391,6 +4402,18 @@ impl ShellApp {
         self.activity.as_mut()
     }
 
+    /// O servidor conectado e o ambiente dele, para as confirmações.
+    fn connection_place(&self) -> result_edit::Place {
+        let tag = self
+            .connection
+            .as_ref()
+            .and_then(|c| self.server_tag(&servers::server_key(&c.settings)));
+        result_edit::Place {
+            server: self.connection_label(),
+            environment: tag.map(|t| (t.environment.unwrap_or_default(), t.color)),
+        }
+    }
+
     /// Abre uma janela Edit Top N Rows da tabela `oid` em `session`.
     pub fn open_edit_rows(
         &mut self,
@@ -4401,8 +4424,9 @@ impl ShellApp {
         let id = self.next_edit_rows;
         self.next_edit_rows += 1;
         let limit = pgstudio_object_explorer::EDIT_TOP_ROWS;
-        self.edit_rows
-            .insert(id, edit_rows::EditRows::new(session, oid, limit, ctx));
+        let mut edit = edit_rows::EditRows::new(session, oid, limit, ctx);
+        edit.set_place(self.connection_place());
+        self.edit_rows.insert(id, edit);
         self.workspace.open(Panel::EditRows(id));
         id
     }
@@ -4836,10 +4860,7 @@ impl ShellApp {
         let connection = self
             .connection
             .as_ref()
-            .and_then(|c| {
-                let name = self.registered_name(&servers::server_key(&c.settings))?;
-                Some(format!("{name} ({})", c.settings.login_label()))
-            })
+            .and_then(|c| self.registered_title(&c.settings))
             .unwrap_or_else(|| host.clone());
         let cursor = self
             .active_doc
