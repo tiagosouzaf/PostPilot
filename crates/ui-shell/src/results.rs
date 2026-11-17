@@ -329,6 +329,9 @@ fn grids(
                     let editor = &mut set.editor;
                     let store = set.store.clone();
                     let state = &mut set.grid;
+                    // Resultados de consulta vêm em páginas, com a faixa das
+                    // páginas e do formato de cópia embaixo.
+                    state.paged = true;
                     let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(editor) = editor.as_mut() {
                         editor.step(&mut store, state);

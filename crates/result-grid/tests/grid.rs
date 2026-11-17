@@ -761,3 +761,207 @@ fn sorting_and_filtering_400k_rows_keeps_frames_short() {
         "{filter_worst:?}"
     );
 }
+
+fn numbered(rows: u64) -> ResultStore {
+    let mut s = ResultStore::new(vec!["n".into(), "nome".into()]);
+    for i in 0..rows {
+        s.push(&[Some(i.to_string()), Some(format!("linha {i}"))]);
+    }
+    s
+}
+
+/// Uma grade de resultado de consulta: com páginas e a faixa embaixo.
+fn paged_harness(rows: u64) -> Harness<'static, App> {
+    let mut h = harness(numbered(rows));
+    h.state_mut().state.paged = true;
+    h.run();
+    h
+}
+
+fn corner(h: &Harness<'static, App>) -> eframe::egui::Pos2 {
+    let l = h.state().state.layout.unwrap();
+    eframe::egui::pos2(l.header.left() + 4.0, l.header.center().y)
+}
+
+/// Por padrão o resultado vem em páginas de 500 linhas; a faixa embaixo da
+/// grade troca de página, e a seleção, a cópia e o teclado valem para a
+/// página à mostra.
+#[test]
+fn results_come_in_pages_and_the_footer_turns_them() {
+    use egui_phosphor::regular as icons;
+    let mut h = paged_harness(1200);
+    assert_eq!(h.state().state.shown, 0..500);
+    h.get_by_label("1–500 of 1200");
+
+    // O canto seleciona a página toda; o Ctrl+C copia só ela.
+    let p = corner(&h);
+    click(&mut h, p, Modifiers::NONE);
+    let sel = h.state().state.selection.unwrap();
+    assert_eq!(sel.rows(1200), 0..500);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.run();
+    let copied = h.state().copied.clone().unwrap();
+    assert_eq!(copied.lines().count(), 500);
+    assert_eq!(copied.lines().last(), Some("499\tlinha 499"));
+
+    // Próxima página: outras linhas, numeradas pelo resultado, sem seleção.
+    h.get_by_label(icons::CARET_RIGHT).click();
+    h.run();
+    assert_eq!(h.state().state.shown, 500..1000);
+    assert_eq!(h.state().state.top, 500.0);
+    assert_eq!(h.state().state.selection, None);
+    h.get_by_label("501–1000 of 1200");
+    assert!(
+        h.state()
+            .state
+            .cell_center(Cell { row: 500, col: 0 })
+            .is_some()
+    );
+
+    // O cabeçalho seleciona a coluna da página.
+    let p = h.state().state.header_center(1).unwrap();
+    click(&mut h, p, Modifiers::SHIFT);
+    h.run();
+    let sel = h.state().state.selection.unwrap();
+    assert_eq!(sel.mode, Mode::Columns);
+    assert_eq!(sel.rows(1200), 500..1000);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.run();
+    let copied = h.state().copied.clone().unwrap();
+    assert_eq!(copied.lines().next(), Some("linha 500"));
+    assert_eq!(copied.lines().count(), 500);
+
+    // O teclado fica dentro da página; Alt+PageDown vai para a seguinte.
+    let p = h
+        .state()
+        .state
+        .cell_center(Cell { row: 500, col: 0 })
+        .unwrap();
+    click(&mut h, p, Modifiers::NONE);
+    h.key_press(Key::ArrowUp);
+    h.run();
+    assert_eq!(h.state().state.selection.unwrap().cursor.row, 500);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::End);
+    h.run();
+    assert_eq!(h.state().state.selection.unwrap().cursor.row, 999);
+    h.key_press_modifiers(Modifiers::ALT, Key::PageDown);
+    h.run();
+    assert_eq!(h.state().state.shown, 1000..1200);
+    h.get_by_label("1001–1200 of 1200");
+    // Voltar uma página pelo teclado para no começo dela, não no fim.
+    h.key_press_modifiers(Modifiers::ALT, Key::PageUp);
+    h.run();
+    assert_eq!(h.state().state.shown, 500..1000);
+    assert_eq!(h.state().state.top, 500.0);
+    h.get_by_label(icons::CARET_DOUBLE_LEFT).click();
+    h.run();
+    assert_eq!(h.state().state.shown, 0..500);
+
+    // Ordenar ou filtrar vale para o resultado todo e volta à página 1.
+    h.get_by_label(icons::CARET_DOUBLE_RIGHT).click();
+    h.run();
+    assert_eq!(h.state().state.page, 2);
+    // Um clique no cabeçalho ordena e mostra o começo da primeira página.
+    let p = h.state().state.header_center(0).unwrap();
+    click(&mut h, p, Modifiers::NONE);
+    h.run();
+    assert_eq!((h.state().state.page, h.state().state.top), (0, 0.0));
+    h.get_by_label(icons::CARET_DOUBLE_RIGHT).click();
+    h.run();
+    h.state_mut().state.set_filter("linha 11".into());
+    h.run();
+    // As 120 linhas com "11" no número.
+    assert_eq!(h.state().state.shown, 0..120);
+    h.get_by_label("1–120 of 120");
+}
+
+/// O tamanho da página e "todas as linhas" valem para todas as grades, e
+/// a primeira linha que estava na tela continua à mostra.
+#[test]
+fn the_page_size_is_shared_and_all_rows_turns_paging_off() {
+    use pgstudio_result_grid::{GridPrefs, prefs};
+    let mut h = paged_harness(1200);
+    h.state_mut()
+        .state
+        .go_to_page(&GridPrefs::default(), 1200, 1);
+    h.run();
+    assert_eq!(h.state().state.shown, 500..1000);
+    prefs::set(
+        &h.ctx,
+        GridPrefs {
+            page_size: 100,
+            ..GridPrefs::default()
+        },
+    );
+    h.run();
+    // A página 2 de 500 não existe mais como era: fica a página pedida.
+    assert_eq!(h.state().state.shown, 100..200);
+    prefs::set(
+        &h.ctx,
+        GridPrefs {
+            paginate: false,
+            ..GridPrefs::default()
+        },
+    );
+    h.run();
+    assert_eq!(h.state().state.shown, 0..1200);
+    h.get_by_label("1200 rows");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run();
+
+    // Uma grade sem páginas (as outras telas) não muda com a escolha.
+    let mut plain = harness(numbered(1200));
+    plain.run();
+    assert_eq!(plain.state().state.shown, 0..1200);
+    assert!(plain.query_by_label("1–500 of 1200").is_none());
+}
+
+/// O Ctrl+C copia no formato escolhido embaixo da grade.
+#[test]
+fn ctrl_c_copies_in_the_chosen_format() {
+    use pgstudio_result_grid::{CopyFormat, GridPrefs, prefs};
+    let mut h = paged_harness(3);
+    let p = corner(&h);
+    click(&mut h, p, Modifiers::NONE);
+    let copy = |h: &mut Harness<'static, App>, format, headers| {
+        prefs::set(
+            &h.ctx,
+            GridPrefs {
+                copy_format: format,
+                copy_headers: headers,
+                ..GridPrefs::default()
+            },
+        );
+        h.run();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+        h.run();
+        h.state().copied.clone().unwrap()
+    };
+    assert_eq!(
+        copy(&mut h, CopyFormat::Csv, true),
+        "n,nome\n0,linha 0\n1,linha 1\n2,linha 2\n"
+    );
+    assert_eq!(
+        copy(&mut h, CopyFormat::CsvSemicolon, false),
+        "0;linha 0\n1;linha 1\n2;linha 2\n"
+    );
+    assert_eq!(
+        copy(&mut h, CopyFormat::Json, false),
+        "[\n  {\"n\": 0, \"nome\": \"linha 0\"},\n  {\"n\": 1, \"nome\": \"linha 1\"},\n  \
+         {\"n\": 2, \"nome\": \"linha 2\"}\n]\n"
+    );
+    assert_eq!(
+        copy(&mut h, CopyFormat::Markdown, false),
+        "| n | nome |\n| --- | --- |\n| 0 | linha 0 |\n| 1 | linha 1 |\n| 2 | linha 2 |\n"
+    );
+    // A faixa diz o que foi copiado.
+    h.get_by_label("3 rows copied as Markdown");
+
+    // Uma coluna como lista para o IN.
+    let p = h.state().state.header_center(1).unwrap();
+    click(&mut h, p, Modifiers::SHIFT);
+    assert_eq!(
+        copy(&mut h, CopyFormat::InList, false),
+        "'linha 0', 'linha 1', 'linha 2'\n"
+    );
+}
