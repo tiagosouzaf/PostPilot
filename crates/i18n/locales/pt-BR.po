@@ -1935,6 +1935,114 @@ msgstr "Copiar Comando"
 msgid "Copy as INSERT"
 msgstr "Copiar como INSERT"
 
+msgid "1 row copied as {format}"
+msgstr "1 linha copiada como {format}"
+
+msgid "{rows} rows copied as {format}"
+msgstr "{rows} linhas copiadas como {format}"
+
+msgid "All rows"
+msgstr "Todas as linhas"
+
+msgid "Click to select everything shown, then Ctrl+C copies it in the format chosen below the grid."
+msgstr "Clique para selecionar tudo o que está à mostra; depois o Ctrl+C copia no formato escolhido embaixo da grade."
+
+msgid "Copies in the format chosen below the grid: {format}"
+msgstr "Copia no formato escolhido embaixo da grade: {format}"
+
+msgid "Copy As"
+msgstr "Copiar Como"
+
+msgid "Copy as:"
+msgstr "Copiar como:"
+
+msgid "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Sorting and filtering apply to the whole result. Without pages, the grid scrolls through every row."
+msgstr "Cada resultado abre na primeira página; a faixa embaixo da grade troca de página e muda o tamanho dela. Ordenar e filtrar valem para o resultado inteiro. Sem páginas, a grade rola por todas as linhas."
+
+msgid "First page"
+msgstr "Primeira página"
+
+msgid "Last page"
+msgstr "Última página"
+
+msgid "Next page (Alt+PageDown)"
+msgstr "Próxima página (Alt+PageDown)"
+
+msgid "Previous page (Alt+PageUp)"
+msgstr "Página anterior (Alt+PageUp)"
+
+msgid "Page {page} of {pages}"
+msgstr "Página {page} de {pages}"
+
+msgid "Format of what Ctrl+C copies from the grid. Click the top-left corner to select everything shown, or a column header to select the column."
+msgstr "Formato do que o Ctrl+C copia da grade. Clique no canto superior esquerdo para selecionar tudo o que está à mostra, ou no cabeçalho de uma coluna para selecionar a coluna."
+
+msgid "How many rows each page shows. \"All rows\" turns paging off. The choice is kept for every result and for the next time PostPilot opens."
+msgstr "Quantas linhas cada página mostra. \"Todas as linhas\" desliga a paginação. A escolha vale para todos os resultados e continua na próxima vez que o PostPilot abrir."
+
+msgid "Include column headers"
+msgstr "Incluir os nomes das colunas"
+
+msgid "Rows per page:"
+msgstr "Linhas por página:"
+
+msgid "Show results in pages"
+msgstr "Mostrar os resultados em páginas"
+
+msgid "This format always carries the column names, or has no place for them."
+msgstr "Este formato sempre leva os nomes das colunas, ou não tem lugar para eles."
+
+msgid "{from}–{to} of {total}"
+msgstr "{from}–{to} de {total}"
+
+msgid "Tab-separated (TSV)"
+msgstr "Separado por tabulação (TSV)"
+
+msgid "CSV (comma)"
+msgstr "CSV (vírgula)"
+
+msgid "CSV (semicolon)"
+msgstr "CSV (ponto e vírgula)"
+
+msgid "JSON"
+msgstr "JSON"
+
+msgid "SQL INSERT"
+msgstr "SQL INSERT"
+
+msgid "List for IN (...)"
+msgstr "Lista para IN (...)"
+
+msgid "Markdown table"
+msgstr "Tabela Markdown"
+
+msgid "HTML table"
+msgstr "Tabela HTML"
+
+msgid "TSV"
+msgstr "TSV"
+
+msgid "CSV"
+msgstr "CSV"
+
+msgid "CSV ;"
+msgstr "CSV ;"
+
+msgid "INSERT"
+msgstr "INSERT"
+
+msgid "IN (...)"
+msgstr "IN (...)"
+
+msgid "Markdown"
+msgstr "Markdown"
+
+msgid "HTML"
+msgstr "HTML"
+
+msgid "Query Results"
+msgstr "Resultados da Consulta"
+
 msgid "Copy with Headers"
 msgstr "Copiar com Cabeçalhos"
 

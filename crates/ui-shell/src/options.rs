@@ -27,6 +27,8 @@ pub enum Page {
     International,
     /// AI > Providers.
     AiProviders,
+    /// Query Results > Results to Grid (páginas e formato de cópia).
+    ResultsGrid,
 }
 
 impl Page {
@@ -35,6 +37,7 @@ impl Page {
         ("Environment", Page::General),
         ("Environment", Page::International),
         ("AI", Page::AiProviders),
+        ("Query Results", Page::ResultsGrid),
     ];
 
     /// Nome da página na árvore (em inglês; passa por `tr` ao exibir).
@@ -43,6 +46,7 @@ impl Page {
             Page::General => "General",
             Page::International => "International Settings",
             Page::AiProviders => "AI Providers",
+            Page::ResultsGrid => "Results to Grid",
         }
     }
 }
@@ -744,7 +748,65 @@ impl OptionsDialog {
             Page::General => self.general(ui),
             Page::International => self.international(ui),
             Page::AiProviders => self.ai.show(ui),
+            Page::ResultsGrid => self.results_grid(ui),
         }
+    }
+
+    /// Páginas e formato de cópia da grade de resultados: o padrão que a
+    /// faixa embaixo de cada grade também muda.
+    fn results_grid(&mut self, ui: &mut egui::Ui) {
+        use pgstudio_result_grid::CopyFormat;
+        use pgstudio_result_grid::prefs::PAGE_SIZES;
+        let weak = |ui: &mut egui::Ui, text: &str| {
+            ui.add(egui::Label::new(egui::RichText::new(text).weak()).wrap());
+        };
+        let r = &mut self.draft.results;
+        ui.checkbox(&mut r.paginate, tr("Show results in pages"));
+        ui.add_enabled_ui(r.paginate, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(tr("Rows per page:"));
+                egui::ComboBox::from_id_salt("options_page_size")
+                    .selected_text(r.page_size.to_string())
+                    .show_ui(ui, |ui| {
+                        let mut sizes = PAGE_SIZES.to_vec();
+                        if !sizes.contains(&r.page_size) {
+                            sizes.push(r.page_size);
+                            sizes.sort_unstable();
+                        }
+                        for n in sizes {
+                            ui.selectable_value(&mut r.page_size, n, n.to_string());
+                        }
+                    });
+            });
+        });
+        weak(
+            ui,
+            tr(
+                "Each result opens on its first page; the bar below the grid moves between pages and changes the page size. Sorting and filtering apply to the whole result. Without pages, the grid scrolls through every row.",
+            ),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(tr("Copy as:"));
+            egui::ComboBox::from_id_salt("options_copy_format")
+                .selected_text(tr(r.copy_format.label()))
+                .height(400.0)
+                .show_ui(ui, |ui| {
+                    for f in CopyFormat::ALL {
+                        ui.selectable_value(&mut r.copy_format, f, tr(f.label()));
+                    }
+                });
+        });
+        ui.add_enabled(
+            r.copy_format.headers_optional(),
+            egui::Checkbox::new(&mut r.copy_headers, tr("Include column headers")),
+        );
+        weak(
+            ui,
+            tr(
+                "Format of what Ctrl+C copies from the grid. Click the top-left corner to select everything shown, or a column header to select the column.",
+            ),
+        );
     }
 
     fn general(&mut self, ui: &mut egui::Ui) {

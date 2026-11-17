@@ -96,7 +96,7 @@ impl<W: Write> Writer<W> {
         }
         match format {
             Format::Csv => {
-                let names: Vec<String> = columns.iter().map(|c| csv_field(Some(c))).collect();
+                let names: Vec<String> = columns.iter().map(|c| csv_field(Some(c), ',')).collect();
                 writeln!(out, "{}", names.join(","))?;
             }
             Format::Tsv => {
@@ -128,7 +128,7 @@ impl<W: Write> Writer<W> {
         let out = self.out.as_mut().expect("formato de texto");
         match self.format {
             Format::Csv => {
-                let fields: Vec<String> = (0..n).map(|i| csv_field(cell(i))).collect();
+                let fields: Vec<String> = (0..n).map(|i| csv_field(cell(i), ',')).collect();
                 writeln!(out, "{}", fields.join(","))?;
             }
             Format::Tsv => {
@@ -235,14 +235,14 @@ pub fn insert_text(
     String::from_utf8(w.finish().expect("Vec não falha")).expect("só texto")
 }
 
-/// Campo de CSV: aspas quando há vírgula, aspas, quebra de linha ou espaço
+/// Campo de CSV: aspas quando há o separador (`delimiter`), aspas, quebra de linha ou espaço
 /// nas pontas, e sempre para o texto vazio (campo vazio é NULL).
-fn csv_field(value: Option<&str>) -> String {
+pub(crate) fn csv_field(value: Option<&str>, delimiter: char) -> String {
     match value {
         None => String::new(),
         Some(v)
             if v.is_empty()
-                || v.contains([',', '"', '\n', '\r'])
+                || v.contains([delimiter, '"', '\n', '\r'])
                 || v.starts_with(' ')
                 || v.ends_with(' ') =>
         {
@@ -273,7 +273,7 @@ fn tsv_field(value: Option<&str>) -> String {
 }
 
 /// Texto como string de JSON.
-fn json_string(value: &str) -> String {
+pub(crate) fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for c in value.chars() {
@@ -302,7 +302,7 @@ fn quote_ident(name: &str) -> String {
 
 /// Valor como literal de SQL (NULL ou texto entre aspas; `E'...'` com
 /// barra invertida).
-fn literal(value: Option<&str>) -> String {
+pub(crate) fn literal(value: Option<&str>) -> String {
     match value {
         None => "NULL".to_string(),
         Some(v) if v.contains('\\') => {

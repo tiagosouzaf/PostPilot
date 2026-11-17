@@ -280,6 +280,23 @@ coluna. NULL aparece em amarelo claro. Ctrl+T ("Results to Text") e Ctrl+D
 resultados; no modo texto, as larguras das colunas saem das primeiras mil
 linhas, até 256 caracteres, como no SSMS.
 
+O resultado de uma consulta aparece em páginas, como no DataGrip: 500 linhas
+por vez, com uma faixa embaixo da grade para ir e voltar (Alt+PageDown e
+Alt+PageUp também), ver quais linhas estão à mostra e trocar as linhas por
+página (50 a 10.000, ou "Todas as linhas" para desligar a paginação). O número
+da linha continua o do resultado inteiro, e ordenar e filtrar valem para o
+resultado todo, não só para a página. O canto, o Ctrl+A e o cabeçalho
+selecionam o que está na página à mostra.
+
+Na mesma faixa, "Copiar como" escolhe o formato do que o Ctrl+C manda para a
+área de transferência: separado por tab (o padrão, que cola direto numa
+planilha), CSV com vírgula ou com ponto e vírgula (o do Excel em português),
+JSON, SQL INSERT, lista para `IN (...)`, tabela Markdown ou tabela HTML, com ou
+sem os nomes das colunas. O menu de contexto tem "Copy As" para copiar uma vez
+em outro formato. As duas escolhas (páginas e formato) valem para todas as
+grades, ficam em Tools > Options > Query Results > Results to Grid e voltam
+iguais ao reabrir o app.
+
 Para exportar, o menu de contexto da grade tem "Save Results As...",
 "Export to Excel..." e "Copy as INSERT". Ctrl+Shift+F ("Results to File") faz as próximas execuções
 perguntarem um arquivo e escreverem as linhas nele direto do servidor, sem

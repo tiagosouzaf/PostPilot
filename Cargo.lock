@@ -4261,6 +4261,7 @@ version = "0.2.50"
 dependencies = [
  "crc32fast",
  "eframe",
+ "egui-phosphor",
  "egui_kittest",
  "flate2",
  "pgstudio-i18n",

@@ -97,6 +97,9 @@ pub struct ShellApp {
     /// Preferências em uso e o arquivo delas (sem arquivo nos testes).
     preferences: preferences::Preferences,
     preferences_store: Option<preferences::PreferencesStore>,
+    /// As escolhas das grades (páginas e formato de cópia) como foram
+    /// passadas ao egui: o que mudar lá embaixo de uma grade é gravado.
+    grid_prefs: Option<pgstudio_result_grid::GridPrefs>,
     /// Tema claro/escuro do sistema (para "Same as system").
     system_theme: system_theme::SystemTheme,
     /// Renderizador em uso, para o "About" (por exemplo "wgpu, Vulkan, …").
@@ -372,6 +375,7 @@ impl Default for ShellApp {
             preferences: preferences::Preferences::default(),
             system_theme: Default::default(),
             preferences_store: None,
+            grid_prefs: None,
             renderer: None,
             updater: update::Updater::default(),
             keymap: Keymap::ssms(),
@@ -917,6 +921,26 @@ impl ShellApp {
                     provider = self.ai.active_label()
                 ));
             }
+        }
+    }
+
+    /// Leva as escolhas das grades de resultado (páginas e formato de
+    /// cópia) das preferências para as grades e, quando o usuário muda uma
+    /// na faixa embaixo de uma grade, grava: ela volta igual ao reabrir.
+    fn grid_prefs_step(&mut self, ctx: &egui::Context) {
+        use pgstudio_result_grid::prefs;
+        let wanted = self.preferences.results.grid();
+        if self.grid_prefs != Some(wanted) {
+            prefs::set(ctx, wanted);
+            self.grid_prefs = Some(wanted);
+            return;
+        }
+        let chosen = prefs::get(ctx);
+        if chosen != wanted {
+            let mut prefs = self.preferences.clone();
+            prefs.results = chosen.into();
+            self.grid_prefs = Some(prefs.results.grid());
+            self.save_preferences(prefs);
         }
     }
 
@@ -3422,6 +3446,7 @@ impl ShellApp {
         let ctx = ui.ctx().clone();
         self.frame_ctx = Some(ctx.clone());
         self.phase("steps");
+        self.grid_prefs_step(&ctx);
         self.zoom_step(&ctx);
         self.file_dialog_step(&ctx);
         if self.pending_dialog.is_some() {

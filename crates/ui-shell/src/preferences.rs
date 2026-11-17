@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use pgstudio_core::Theme;
 use pgstudio_i18n::Language;
+use pgstudio_result_grid::{CopyFormat, GridPrefs};
 use serde::{Deserialize, Serialize};
 
 /// Idioma escolhido nas opções.
@@ -161,6 +162,70 @@ impl From<UiScale> for u32 {
     }
 }
 
+/// A grade de resultados: páginas e formato de cópia (Query Results >
+/// Results to Grid, e a faixa embaixo de cada grade).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResultsPrefs {
+    /// Mostrar o resultado em páginas.
+    pub paginate: bool,
+    /// Linhas por página.
+    pub page_size: u32,
+    /// Formato do que o Ctrl+C copia da grade (veja [`CopyFormat::code`]).
+    #[serde(with = "copy_format_code")]
+    pub copy_format: CopyFormat,
+    /// Nomes das colunas na primeira linha do que é copiado (TSV e CSV).
+    pub copy_headers: bool,
+}
+
+impl ResultsPrefs {
+    /// Maior página aceita (um arquivo editado à mão não passa disso).
+    pub const MAX_PAGE_SIZE: u32 = 1_000_000;
+
+    /// Como a grade usa.
+    pub fn grid(&self) -> GridPrefs {
+        GridPrefs {
+            paginate: self.paginate,
+            page_size: self.page_size.clamp(1, Self::MAX_PAGE_SIZE),
+            copy_format: self.copy_format,
+            copy_headers: self.copy_headers,
+        }
+    }
+}
+
+impl From<GridPrefs> for ResultsPrefs {
+    fn from(g: GridPrefs) -> Self {
+        ResultsPrefs {
+            paginate: g.paginate,
+            page_size: g.page_size.clamp(1, Self::MAX_PAGE_SIZE),
+            copy_format: g.copy_format,
+            copy_headers: g.copy_headers,
+        }
+    }
+}
+
+impl Default for ResultsPrefs {
+    fn default() -> Self {
+        GridPrefs::default().into()
+    }
+}
+
+/// O formato de cópia como texto (`"csv"`, `"json"`...); um valor
+/// desconhecido (de uma versão futura) vira o padrão.
+mod copy_format_code {
+    use pgstudio_result_grid::CopyFormat;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(f: &CopyFormat, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(f.code())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<CopyFormat, D::Error> {
+        let code = String::deserialize(d)?;
+        Ok(CopyFormat::from_code(&code).unwrap_or_default())
+    }
+}
+
 /// As preferências.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -174,6 +239,8 @@ pub struct Preferences {
     /// Conectar em segundo plano, ao abrir, os servidores guardados que têm
     /// a senha lembrada.
     pub auto_connect: bool,
+    /// Páginas e formato de cópia da grade de resultados.
+    pub results: ResultsPrefs,
 }
 
 impl Default for Preferences {
@@ -183,6 +250,7 @@ impl Default for Preferences {
             theme: ThemeSetting::default(),
             ui_scale: UiScale::default(),
             auto_connect: true,
+            results: ResultsPrefs::default(),
         }
     }
 }
@@ -263,11 +331,17 @@ mod tests {
             theme: ThemeSetting::Fixed(Theme::Light),
             ui_scale: UiScale::from_percent(130),
             auto_connect: false,
+            results: ResultsPrefs {
+                paginate: false,
+                page_size: 1000,
+                copy_format: CopyFormat::CsvSemicolon,
+                copy_headers: true,
+            },
         })
         .unwrap();
         assert_eq!(
             json,
-            r#"{"language":"pt-BR","theme":"light","ui_scale":130,"auto_connect":false}"#
+            r#"{"language":"pt-BR","theme":"light","ui_scale":130,"auto_connect":false,"results":{"paginate":false,"page_size":1000,"copy_format":"csv-semicolon","copy_headers":true}}"#
         );
         let p: Preferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Dark);
@@ -279,7 +353,7 @@ mod tests {
         assert_eq!(p.theme(Some(Theme::Light)), Theme::Light);
         assert_eq!(
             serde_json::to_string(&Preferences::default()).unwrap(),
-            r#"{"language":"system","theme":"system","ui_scale":100,"auto_connect":true}"#
+            r#"{"language":"system","theme":"system","ui_scale":100,"auto_connect":true,"results":{"paginate":true,"page_size":500,"copy_format":"tsv","copy_headers":false}}"#
         );
     }
 
@@ -303,6 +377,21 @@ mod tests {
     }
 
     #[test]
+    fn results_prefs_tolerate_odd_values() {
+        let read = |json: &str| serde_json::from_str::<Preferences>(json).unwrap().results;
+        assert_eq!(read("{}"), ResultsPrefs::default());
+        assert!(read("{}").paginate);
+        assert_eq!(read("{}").page_size, 500);
+        let r = read(r#"{"results":{"page_size":0,"copy_format":"xml"}}"#);
+        assert_eq!(r.grid().page_size, 1);
+        assert_eq!(r.copy_format, CopyFormat::Tsv);
+        assert!(r.paginate);
+        let r = read(r#"{"results":{"paginate":false,"copy_format":"markdown"}}"#);
+        assert_eq!(r.grid().page_rows(), None);
+        assert_eq!(r.copy_format, CopyFormat::Markdown);
+    }
+
+    #[test]
     fn tolerates_old_and_unknown_values() {
         let p: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(p, Preferences::default());
@@ -322,6 +411,11 @@ mod tests {
             theme: ThemeSetting::Fixed(Theme::Light),
             ui_scale: UiScale::from_percent(140),
             auto_connect: false,
+            results: ResultsPrefs {
+                page_size: 100,
+                copy_format: CopyFormat::Json,
+                ..ResultsPrefs::default()
+            },
         };
         store.save(&prefs).unwrap();
         assert_eq!(PreferencesStore::open(&file).1, prefs);
