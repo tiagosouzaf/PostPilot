@@ -219,18 +219,26 @@ pub fn classify(sql: &str) -> Safety {
 /// Como [`classify`], no dialeto do motor: no SQL Server, T-SQL, com os
 /// separadores `GO` tirados antes.
 pub fn classify_for(engine: pgstudio_core::connection::Engine, sql: &str) -> Safety {
-    classify_located(engine, sql).0
+    match engine {
+        // Fora da janela de consulta (o Claude, por exemplo) o lote roda
+        // numa sessão que o PostPilot prepara: comandos que mexem nela
+        // (`USE`, `SET NOCOUNT`) continuam pedindo confirmação.
+        pgstudio_core::connection::Engine::SqlServer => classify_tsql(sql, Mode::Tsql).0,
+        _ => classify_located(engine, sql).0,
+    }
 }
 
-/// Como [`classify_for`], com o lugar do lote que motivou a resposta
-/// (quando ela não é "só lê" e o motor é SQL).
+/// Como [`classify_for`], para o lote que o usuário roda na janela de
+/// consulta, com o lugar do lote que motivou a resposta (quando ela não é
+/// "só lê" e o motor é SQL). No SQL Server, a janela também aceita sem
+/// perguntar o que só mexe na própria sessão (`USE`, `SET NOCOUNT ON`).
 pub fn classify_located(
     engine: pgstudio_core::connection::Engine,
     sql: &str,
 ) -> (Safety, Option<Place>) {
     match engine {
         pgstudio_core::connection::Engine::PostgreSql => classify_with(&PostgreSqlDialect {}, sql),
-        pgstudio_core::connection::Engine::SqlServer => classify_tsql(sql),
+        pgstudio_core::connection::Engine::SqlServer => classify_tsql(sql, Mode::TsqlWindow),
         other => (classify_other(other, sql), None),
     }
 }
@@ -267,11 +275,11 @@ fn classify_other(engine: pgstudio_core::connection::Engine, sql: &str) -> Safet
             }
         }
         pgstudio_core::connection::Engine::PostgreSql => classify(sql),
-        pgstudio_core::connection::Engine::SqlServer => classify_tsql(sql).0,
+        pgstudio_core::connection::Engine::SqlServer => classify_tsql(sql, Mode::Tsql).0,
     }
 }
 
-fn classify_tsql(sql: &str) -> (Safety, Option<Place>) {
+fn classify_tsql(sql: &str, mode: Mode) -> (Safety, Option<Place>) {
     let without_go: String = sql
         .split_inclusive('\n')
         .map(|line| if is_go_line(line) { "\n" } else { line })
@@ -301,6 +309,7 @@ fn classify_tsql(sql: &str) -> (Safety, Option<Place>) {
             .with_options(options)
             .try_with_sql(&without_go)
             .and_then(|mut p| p.parse_statements()),
+        mode,
     );
     placed(&dialect, &without_go, classified)
 }
@@ -322,7 +331,12 @@ fn placed(
         .ok()
         .and_then(|tokens| {
             tokens.into_iter().find_map(|t| match &t.token {
-                Token::Word(w) if w.quote_style.is_none() && w.value.eq_ignore_ascii_case(word) => {
+                Token::Word(w)
+                    if w.quote_style.is_none()
+                        && (w.value.eq_ignore_ascii_case(word)
+                            // O motivo sai por extenso; o usuário escreve EXEC.
+                            || (word == "EXECUTE" && w.value.eq_ignore_ascii_case("EXEC"))) =>
+                {
                     Some(t.span.start.line)
                 }
                 _ => None,
@@ -344,7 +358,7 @@ fn is_go_line(line: &str) -> bool {
 }
 
 fn classify_with(dialect: &dyn sqlparser::dialect::Dialect, sql: &str) -> (Safety, Option<Place>) {
-    let classified = classify_parsed(Parser::parse_sql(dialect, sql));
+    let classified = classify_parsed(Parser::parse_sql(dialect, sql), Mode::Plain);
     // O parser não entendeu, mas as palavras do lote são só de leitura:
     // roda sem perguntar, e o erro de sintaxe vem do servidor.
     if matches!(classified.0, Safety::Unknown { .. })
@@ -358,6 +372,7 @@ fn classify_with(dialect: &dyn sqlparser::dialect::Dialect, sql: &str) -> (Safet
 
 fn classify_parsed(
     parsed: Result<Vec<Statement>, sqlparser::parser::ParserError>,
+    mode: Mode,
 ) -> (Safety, Option<Place>) {
     let statements = match parsed {
         Ok(s) => s,
@@ -382,7 +397,7 @@ fn classify_parsed(
     }
     let place = |line: u64| (line > 0).then_some(Place { line, near: None });
     for statement in &statements {
-        if let Some(reason) = writes(statement) {
+        if let Some(reason) = writes(statement, mode) {
             return (
                 Safety::Writes { reason },
                 place(statement.span().start.line),
@@ -417,48 +432,192 @@ fn classify_parsed(
     (Safety::ReadOnly, None)
 }
 
-/// O que um comando de topo altera, ou `None` se só lê.
-fn writes(statement: &Statement) -> Option<String> {
+/// Em que regras o lote é lido.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// PostgreSQL: só consultas, `EXPLAIN` e `SHOW` leem.
+    Plain,
+    /// T-SQL: também não altera nada o que só existe durante o lote
+    /// (variáveis, `PRINT`, `IF`, `WHILE`) e as procedures de sistema que
+    /// só consultam.
+    Tsql,
+    /// T-SQL na janela de consulta do usuário: além disso, o que só muda a
+    /// sessão dele (`USE`, `SET NOCOUNT ON`).
+    TsqlWindow,
+}
+
+/// Opções de sessão do SQL Server que não alteram dados nem fazem um
+/// comando seguinte alterar mais do que alteraria. Ficam de fora, e pedem
+/// confirmação, `IDENTITY_INSERT`, `ROWCOUNT`, `IMPLICIT_TRANSACTIONS`,
+/// `NOEXEC`, `PARSEONLY`, `FMTONLY` e `CONTEXT_INFO`.
+const TSQL_SESSION_OPTIONS: &[&str] = &[
+    "nocount",
+    "dateformat",
+    "datefirst",
+    "language",
+    "ansi_nulls",
+    "ansi_warnings",
+    "ansi_padding",
+    "ansi_null_dflt_on",
+    "ansi_null_dflt_off",
+    "ansi_defaults",
+    "arithabort",
+    "arithignore",
+    "quoted_identifier",
+    "concat_null_yields_null",
+    "numeric_roundabort",
+    "lock_timeout",
+    "deadlock_priority",
+    "textsize",
+    "xact_abort",
+    "showplan_all",
+    "showplan_text",
+    "showplan_xml",
+];
+
+/// Procedures de sistema do SQL Server que só consultam o catálogo ou a
+/// atividade. A `sp_spaceused` fica de fora: com `@updateusage` ela
+/// corrige contadores.
+const TSQL_READ_PROCEDURES: &[&str] = &[
+    "sp_help",
+    "sp_helptext",
+    "sp_helpindex",
+    "sp_helpconstraint",
+    "sp_helptrigger",
+    "sp_helpdb",
+    "sp_helpfile",
+    "sp_helpfilegroup",
+    "sp_helpuser",
+    "sp_helprole",
+    "sp_helprolemember",
+    "sp_helpsrvrole",
+    "sp_helpsrvrolemember",
+    "sp_helplogins",
+    "sp_helpserver",
+    "sp_helpsort",
+    "sp_helplanguage",
+    "sp_columns",
+    "sp_tables",
+    "sp_pkeys",
+    "sp_fkeys",
+    "sp_statistics",
+    "sp_stored_procedures",
+    "sp_sproc_columns",
+    "sp_databases",
+    "sp_datatype_info",
+    "sp_server_info",
+    "sp_depends",
+    "sp_who",
+    "sp_who2",
+    "sp_lock",
+];
+
+/// O que um comando de topo altera, ou `None` se só lê. Olha também os
+/// comandos dentro dele (`WITH x AS (DELETE ...)`, o corpo de um `IF`).
+fn writes(statement: &Statement, mode: Mode) -> Option<String> {
+    if let Statement::Explain {
+        analyze, statement, ..
+    } = statement
+    {
+        // EXPLAIN sem ANALYZE não roda o comando.
+        return match analyze {
+            false => None,
+            true => writes(statement, mode).map(|k| format!("EXPLAIN ANALYZE {k}")),
+        };
+    }
+    match visit_statements(statement, |s| match own_write(s, mode) {
+        Some(reason) => ControlFlow::Break(reason),
+        None => ControlFlow::Continue(()),
+    }) {
+        ControlFlow::Break(reason) => Some(reason),
+        ControlFlow::Continue(()) => None,
+    }
+}
+
+/// O que este comando, sem contar os que estão dentro dele, altera.
+fn own_write(statement: &Statement, mode: Mode) -> Option<String> {
+    use sqlparser::ast::{Set, SetSessionParamKind, TransactionModifier};
+    let tsql = mode != Mode::Plain;
+    let window = mode == Mode::TsqlWindow;
     match statement {
         Statement::Query(query) => {
-            // Comandos dentro do SELECT: WITH x AS (DELETE ...), por exemplo.
-            let nested = visit_statements(query, |s| match s {
-                Statement::Query(_) => ControlFlow::Continue(()),
-                other => ControlFlow::Break(keyword(other)),
-            });
-            if let ControlFlow::Break(k) = nested {
-                return Some(k);
-            }
             if !query.locks.is_empty() {
                 return Some("SELECT ... FOR UPDATE".into());
             }
-            let into = visit_statements(query, |s| match s {
-                Statement::Query(q) => match q.body.as_select() {
-                    Some(sel) if sel.into.is_some() => ControlFlow::Break(()),
-                    _ => ControlFlow::Continue(()),
-                },
-                _ => ControlFlow::Continue(()),
-            });
-            if into.is_break() || select_into(query) {
+            if select_into(query) {
                 return Some("SELECT INTO".into());
             }
             None
-        }
-        Statement::Explain {
-            analyze, statement, ..
-        } => {
-            let inner = writes(statement);
-            match (analyze, inner) {
-                // EXPLAIN sem ANALYZE não roda o comando.
-                (false, _) => None,
-                (true, inner) => inner.map(|k| format!("EXPLAIN ANALYZE {k}")),
-            }
         }
         Statement::ShowVariable { .. }
         | Statement::ShowVariables { .. }
         | Statement::ShowTables { .. }
         | Statement::ShowColumns { .. } => None,
+        // Variáveis, cursores e controle de fluxo só existem durante o
+        // lote; o que vai dentro de um IF ou WHILE é visto à parte.
+        Statement::Declare { .. }
+        | Statement::Print(_)
+        | Statement::If(_)
+        | Statement::While(_)
+        | Statement::Return(_)
+        | Statement::RaisError { .. }
+        | Statement::Throw(_)
+            if tsql =>
+        {
+            None
+        }
+        // BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH.
+        Statement::StartTransaction {
+            modifier: Some(TransactionModifier::Try | TransactionModifier::Catch),
+            ..
+        }
+        | Statement::Commit {
+            modifier: Some(TransactionModifier::Try | TransactionModifier::Catch),
+            ..
+        } if tsql => None,
+        // SET @variavel = ...
+        Statement::Set(Set::SingleAssignment { variable, .. })
+            if tsql
+                && variable.0.len() == 1
+                && variable.0[0]
+                    .as_ident()
+                    .is_some_and(|i| i.quote_style.is_none() && i.value.starts_with('@')) =>
+        {
+            None
+        }
+        Statement::Set(Set::SetSessionParam(SetSessionParamKind::Statistics(_))) if window => None,
+        Statement::Set(Set::SetSessionParam(SetSessionParamKind::Generic(param)))
+            if window
+                && param.names.len() == 1
+                && TSQL_SESSION_OPTIONS.contains(&param.names[0].to_ascii_lowercase().as_str()) =>
+        {
+            None
+        }
+        // No T-SQL só existe SET TRANSACTION ISOLATION LEVEL.
+        Statement::Set(Set::SetTransaction { .. }) if window => None,
+        Statement::Use(_) if window => None,
+        Statement::Execute {
+            name: Some(name),
+            immediate: false,
+            ..
+        } if tsql && is_read_procedure(name) => None,
         other => Some(keyword(other)),
+    }
+}
+
+/// `sp_help` ou `sys.sp_help`: as procedures de
+/// sistema de [`TSQL_READ_PROCEDURES`]. Com outro schema ou banco na
+/// frente o nome pode ser de uma procedure do usuário.
+fn is_read_procedure(name: &sqlparser::ast::ObjectName) -> bool {
+    let parts: Option<Vec<String>> = name
+        .0
+        .iter()
+        .map(|p| p.as_ident().map(|i| i.value.to_ascii_lowercase()))
+        .collect();
+    match parts.as_deref() {
+        Some([proc]) => TSQL_READ_PROCEDURES.contains(&proc.as_str()),
+        Some([schema, proc]) => schema == "sys" && TSQL_READ_PROCEDURES.contains(&proc.as_str()),
+        _ => false,
     }
 }
 
@@ -610,7 +769,7 @@ mod tests {
         ro("with x as (select 1 as a) select * from x");
         ro("select 1\nGO\nselect 2");
         rw("select * into dbo.copia from dbo.clientes");
-        rw("exec sp_who2");
+        rw("exec dbo.minha_proc");
         rw("update dbo.clientes set nome = N'x'");
         rw("select * from openquery(outro, 'delete from t')");
         rw("drop table dbo.clientes");
@@ -618,6 +777,123 @@ mod tests {
         assert!(batch.starts_with("SET XACT_ABORT ON;"));
         assert!(batch.ends_with("ROLLBACK TRANSACTION;"));
         assert_eq!(batch.lines().next().unwrap().matches("select 1").count(), 1);
+    }
+
+    /// O lote que o Tiago rodava a toda hora em Produção.
+    const DECLARE_AND_SELECTS: &str = "DECLARE @lote int = 46521, @seq int = 11;\n\
+        \n\
+        SELECT l.DataHora, l.CaminhoDaPasta, m.Id AS PreservacaoMatrizId\n\
+        FROM LIBERACAO_COPIA_COMPRIMIDA l\n\
+        JOIN PRESERVACAO_MATRIZ m ON m.Id = l.Id\n\
+        WHERE l.BatchId = @lote AND l.TransactionSequence = @seq;\n\
+        \n\
+        SELECT Desfecho, COUNT(*) AS Pastas,\n\
+               CAST(SUM(TamanhoEmBytes) / 1073741824.0 AS decimal(10,1)) AS GB\n\
+        FROM LIBERACAO_COPIA_COMPRIMIDA\n\
+        GROUP BY Desfecho;";
+
+    #[test]
+    fn tsql_that_only_lives_in_the_batch_does_not_ask() {
+        use pgstudio_core::connection::Engine::SqlServer;
+        // Vale na janela de consulta e para o Claude.
+        for classify in [
+            (|sql| classify_for(SqlServer, sql)) as fn(&str) -> Safety,
+            |sql| classify_located(SqlServer, sql).0,
+        ] {
+            let ro = |sql: &str| assert_eq!(classify(sql), Safety::ReadOnly, "{sql}");
+            let rw = |sql: &str, reason: &str| {
+                assert_eq!(
+                    classify(sql),
+                    Safety::Writes {
+                        reason: reason.into()
+                    },
+                    "{sql}"
+                )
+            };
+            ro(DECLARE_AND_SELECTS);
+            ro("declare @t table (id int)\nselect * from @t");
+            ro("declare c cursor for select 1");
+            ro("declare @x int\nset @x = 1\nselect @x = count(*) from t\nprint @x");
+            ro("if exists (select 1 from t) select 2 else select 3");
+            ro("if 1 = 1 begin select 1 end");
+            ro("begin try select 1 end try begin catch select 2; throw 50000, 'x', 1 end catch");
+            ro("exec sp_who2");
+            ro("EXEC sys.sp_helptext 'dbo.p'");
+            ro("execute sp_help @objname = 'dbo.t'");
+            ro("select 1\nraiserror('x', 16, 1)\nreturn");
+
+            // O que altera continua perguntando, mesmo no meio do resto.
+            rw("declare @x int = 1\ndelete from t where id = @x", "DELETE");
+            rw("declare @x int = 1; update t set a = @x", "UPDATE");
+            rw("if 1 = 1 begin delete from t end", "DELETE");
+            rw(
+                "if exists (select 1 from t) select 1 else drop table t",
+                "DROP TABLE",
+            );
+            rw(
+                "begin try truncate table t end try begin catch select 1 end catch",
+                "TRUNCATE TABLE",
+            );
+            rw(
+                "declare @t table (id int)\ninsert into @t select 1",
+                "INSERT",
+            );
+            rw(
+                "declare @x int\nselect * into dbo.copia from t",
+                "SELECT INTO",
+            );
+            rw("create table #tmp (id int)", "CREATE TABLE");
+            rw("begin tran", "BEGIN");
+            rw("commit", "COMMIT");
+            rw("exec dbo.sp_help", "EXECUTE");
+            rw("exec outro.dbo.sp_who", "EXECUTE");
+            ro("exec [sp_who]");
+            rw("exec sp_executesql N'delete from t'", "EXECUTE");
+            rw("exec sp_spaceused @updateusage = 'TRUE'", "EXECUTE");
+            rw("exec ('delete from t')", "EXECUTE");
+            rw("set identity_insert dbo.t on", "SET");
+            rw("set rowcount 10", "SET");
+            rw("set implicit_transactions on", "SET");
+            rw("set noexec on", "SET");
+            rw("declare @x int = (select nextval('s'))", "calls nextval()");
+        }
+    }
+
+    #[test]
+    fn the_query_window_also_accepts_what_only_changes_its_session() {
+        use pgstudio_core::connection::Engine::SqlServer;
+        for sql in [
+            "use CONTROLE_JUCESP\nselect 1",
+            "set nocount on\nselect 1",
+            "SET NOCOUNT ON; SET STATISTICS IO ON; select 1",
+            "set transaction isolation level read uncommitted\nselect 1",
+            "set dateformat dmy\nset language 'Portuguese'\nselect 1",
+            "set lock_timeout 5000",
+            "set showplan_xml on",
+        ] {
+            assert_eq!(
+                classify_located(SqlServer, sql).0,
+                Safety::ReadOnly,
+                "{sql}"
+            );
+            // O Claude roda numa sessão preparada pelo PostPilot.
+            assert!(!classify_for(SqlServer, sql).is_read_only(), "{sql}");
+        }
+        assert!(
+            !classify_located(SqlServer, "use outro\ndelete from t")
+                .0
+                .is_read_only()
+        );
+        let (_, place) = classify_located(SqlServer, "declare @x int = 1\n\nexec dbo.p @x");
+        assert_eq!(place.map(|p| p.line), Some(3));
+    }
+
+    #[test]
+    fn postgres_keeps_asking_for_the_same_statements() {
+        rw("set search_path = x");
+        rw("declare c cursor for select 1");
+        rw("begin");
+        assert!(!classify("use outro").is_read_only());
     }
 
     #[test]
