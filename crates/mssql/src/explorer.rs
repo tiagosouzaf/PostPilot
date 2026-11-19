@@ -1148,6 +1148,44 @@ impl MetadataProvider for MssqlExplorer {
                       WHERE o.object_id = {obj}"
                 ))
             }
+            ["db", db, "ix", obj, index] => {
+                let d = bracket(&dec(db));
+                // As colunas na ordem da chave (FOR XML: STRING_AGG só
+                // existe do 2017 em diante).
+                let columns = |included: u8, order: &str| {
+                    format!(
+                        "STUFF((SELECT ', ' + c.name + CASE WHEN ic.is_descending_key = 1 \
+                                        THEN ' DESC' ELSE '' END \
+                                  FROM {d}.sys.index_columns ic \
+                                  JOIN {d}.sys.columns c ON c.object_id = ic.object_id \
+                                   AND c.column_id = ic.column_id \
+                                 WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id \
+                                   AND ic.is_included_column = {included} \
+                                 ORDER BY ic.{order} \
+                                   FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 2, '')"
+                    )
+                };
+                self.properties_of(&format!(
+                    "SELECT o.name AS [Table], {keys} AS [Columns], {included} AS [Include], \
+                            i.filter_definition AS [Condition], \
+                            LOWER(REPLACE(i.type_desc, '_', ' ')) AS [Kind], \
+                            CASE i.is_primary_key WHEN 1 THEN 'yes' ELSE 'no' END AS [Primary key], \
+                            CASE i.is_unique WHEN 1 THEN 'yes' ELSE 'no' END AS [Unique], \
+                            (SELECT CASE WHEN SUM(a.used_pages) >= 1280 \
+                                         THEN CAST(SUM(a.used_pages) / 128 AS varchar(20)) + ' MB' \
+                                         ELSE CAST(SUM(a.used_pages) * 8 AS varchar(20)) + ' kB' END \
+                               FROM {d}.sys.partitions p \
+                               JOIN {d}.sys.allocation_units a ON a.container_id = p.partition_id \
+                              WHERE p.object_id = i.object_id AND p.index_id = i.index_id) AS [Size] \
+                       FROM {d}.sys.indexes i \
+                       JOIN {d}.sys.objects o ON o.object_id = i.object_id \
+                      WHERE i.object_id = {obj} AND i.index_id = {index}",
+                    keys = columns(0, "key_ordinal"),
+                    included = columns(1, "index_column_id"),
+                    obj = number(obj)?,
+                    index = number(index)?
+                ))
+            }
             ["db", db, "col", obj, col] => {
                 let d = bracket(&dec(db));
                 self.properties_of(&format!(

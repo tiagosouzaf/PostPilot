@@ -6885,3 +6885,12 @@ msgstr "Tenta conectar com estes campos, sem salvar nem abrir a conexão"
 
 msgid "Testing {server}…"
 msgstr "Testando {server}…"
+
+msgid "Include"
+msgstr "Incluídas"
+
+msgid "Condition"
+msgstr "Condição"
+
+msgid "Scans"
+msgstr "Leituras"
