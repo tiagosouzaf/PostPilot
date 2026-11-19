@@ -387,6 +387,8 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
              cliente_id int NOT NULL REFERENCES dbo.cliente(id), \
              total decimal(10,2) CHECK (total >= 0) DEFAULT 0, dobro AS (total * 2));\n\
          CREATE INDEX ix_pedido_cliente ON dbo.pedido (cliente_id);\n\
+         CREATE UNIQUE INDEX ux_pedido_total ON dbo.pedido (total DESC, id) \
+             INCLUDE (cliente_id) WHERE total > 0;\n\
          GO\n\
          CREATE VIEW dbo.v_pedido AS SELECT id, total FROM dbo.pedido\n\
          GO\n\
@@ -518,10 +520,14 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
         (["cliente_id".to_string()].as_slice(), "dbo", "cliente")
     );
     assert_eq!(fk.ref_columns, ["id"]);
-    assert_eq!(ped.indexes.len(), 1);
-    assert_eq!(ped.indexes[0].name, "ix_pedido_cliente");
-    assert_eq!(ped.indexes[0].columns, ["cliente_id"]);
-    assert_eq!(ped.indexes[0].method, "nonclustered");
+    assert_eq!(ped.indexes.len(), 2);
+    let ix = ped
+        .indexes
+        .iter()
+        .find(|i| i.name == "ix_pedido_cliente")
+        .expect("ix_pedido_cliente");
+    assert_eq!(ix.columns, ["cliente_id"]);
+    assert_eq!(ix.method, "nonclustered");
 
     // O catálogo do IntelliSense.
     let cat = meta.catalog("pp_explorer").expect("catalog");
@@ -589,6 +595,34 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
     assert_eq!(
         meta.script(&ix.id, ScriptAction::Drop).unwrap(),
         "DROP INDEX [ix_pedido_cliente] ON [dbo].[pedido]\nGO\n"
+    );
+    // As propriedades do índice (a dica do Object Explorer mostra estas
+    // linhas).
+    let value = |props: &[pgstudio_core::metadata::Property], name: &str| {
+        props
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value.clone())
+    };
+    let p = meta.properties(&ix.id).unwrap();
+    assert_eq!(value(&p, "Columns").as_deref(), Some("cliente_id"), "{p:?}");
+    assert_eq!(value(&p, "Kind").as_deref(), Some("nonclustered"));
+    assert_eq!(value(&p, "Unique").as_deref(), Some("no"));
+    assert_eq!(value(&p, "Include"), None);
+    assert_eq!(value(&p, "Condition"), None);
+    let ux = child(meta, &idx.id, "ux_pedido_total (Unique, Non-Clustered)");
+    let p = meta.properties(&ux.id).unwrap();
+    assert_eq!(
+        value(&p, "Columns").as_deref(),
+        Some("total DESC, id"),
+        "{p:?}"
+    );
+    assert_eq!(value(&p, "Include").as_deref(), Some("cliente_id"));
+    assert_eq!(value(&p, "Condition").as_deref(), Some("([total]>(0))"));
+    assert_eq!(value(&p, "Unique").as_deref(), Some("yes"));
+    assert!(
+        value(&p, "Size").is_some_and(|s| s.ends_with(" kB")),
+        "{p:?}"
     );
 
     // Select Top 1000 Rows.

@@ -368,6 +368,8 @@ impl ObjectExplorer {
             {
                 self.forget(&kids);
             }
+            // As propriedades (e a dica do índice) são lidas de novo.
+            self.properties.remove(id);
             if self.selected.as_ref() == Some(id) {
                 self.selected = None;
             }
@@ -553,6 +555,7 @@ impl ObjectExplorer {
         let mut toggle: Option<NodeId> = None;
         let mut select: Option<NodeId> = None;
         let mut refresh: Option<NodeId> = None;
+        let mut tip_wanted: Option<NodeId> = None;
         let rows = self.visible_rows();
         let selected = self.selected.clone();
         let server_label = self.server_label.clone();
@@ -637,6 +640,19 @@ impl ObjectExplorer {
                         let label = match registered {
                             Some(_) => label.on_hover_text(node.name.as_str()),
                             None => label,
+                        };
+                        // Índice: o nome inteiro e os detalhes dele na dica,
+                        // lidos só quando ela abre.
+                        let label = if node.kind == NodeKind::Index {
+                            let props = self.properties.get(&node.id);
+                            label.on_hover_ui(|ui| {
+                                if props.is_none() {
+                                    tip_wanted = Some(node.id.clone());
+                                }
+                                index_tip(ui, name, props);
+                            })
+                        } else {
+                            label
                         };
                         if label.clicked() {
                             select = Some(node.id.clone());
@@ -915,6 +931,9 @@ impl ObjectExplorer {
             });
         }
         drop(rows);
+        if let Some(id) = tip_wanted {
+            let _ = self.properties(&id);
+        }
         if let Some(id) = select {
             // Já pede as propriedades, para a janela Properties não esperar
             // um frame a mais.
@@ -1060,6 +1079,91 @@ impl Row<'_> {
     pub fn depth(&self) -> usize {
         match *self {
             Row::Node { depth, .. } | Row::Loading { depth } | Row::Failed { depth, .. } => depth,
+        }
+    }
+}
+
+/// Largura máxima da dica de um índice; menor quando a janela é estreita.
+pub const INDEX_TIP_WIDTH: f32 = 360.0;
+/// Até quantos caracteres de um valor (uma condição longa) cabem na dica.
+const INDEX_TIP_VALUE: usize = 160;
+
+/// As linhas da dica de um índice, tiradas das propriedades dele: fica de
+/// fora o que a árvore já diz (a tabela), o comando inteiro e o que não
+/// vale para ele ("não" em chave primária, exclusivo...).
+pub fn index_tip_rows(props: &[Property]) -> Vec<(&str, String)> {
+    props
+        .iter()
+        .filter(|p| !matches!(p.name.as_str(), "Table" | "Definition"))
+        .filter(|p| !p.value.is_empty() && p.value != "no" && p.value != "false")
+        .map(|p| {
+            let value = match p.value.as_str() {
+                "yes" | "true" => tr("yes").to_string(),
+                v if v.chars().count() > INDEX_TIP_VALUE => {
+                    let cut: String = v.chars().take(INDEX_TIP_VALUE).collect();
+                    format!("{cut}…")
+                }
+                v => v.to_string(),
+            };
+            (tr(&p.name), value)
+        })
+        .collect()
+}
+
+/// A dica de um índice: o nome inteiro e, em poucas linhas, as colunas, o
+/// método, o tamanho... Cabe na janela, quebrando os valores longos.
+fn index_tip(ui: &mut egui::Ui, name: &str, props: Option<&Properties>) {
+    let room = ui.ctx().content_rect().width() - 32.0;
+    let width = INDEX_TIP_WIDTH.min(room).max(120.0);
+    ui.set_max_width(width);
+    ui.add(egui::Label::new(egui::RichText::new(name).strong()).wrap());
+    match props {
+        None | Some(Properties::Loading) => {
+            ui.weak(tr("Loading..."));
+            // A leitura não acorda a interface: olha de novo daqui a pouco.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(30));
+        }
+        Some(Properties::Failed(e)) => {
+            ui.add(
+                egui::Label::new(egui::RichText::new(e).color(ui.visuals().error_fg_color)).wrap(),
+            );
+        }
+        Some(Properties::Loaded(props)) => {
+            let rows = index_tip_rows(props);
+            if rows.is_empty() {
+                return;
+            }
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let names = rows
+                .iter()
+                .map(|(n, _)| {
+                    ui.fonts_mut(|f| {
+                        f.layout_no_wrap(n.to_string(), font.clone(), egui::Color32::WHITE)
+                            .size()
+                            .x
+                    })
+                })
+                .fold(0.0, f32::max)
+                .min(width * 0.4);
+            let gap = 10.0;
+            ui.spacing_mut().item_spacing = egui::vec2(gap, 3.0);
+            for (name, value) in &rows {
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(names, 0.0),
+                        egui::Layout::left_to_right(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(names);
+                            ui.add(egui::Label::new(egui::RichText::new(*name).weak()).truncate());
+                        },
+                    );
+                    ui.vertical(|ui| {
+                        ui.set_max_width(width - names - gap);
+                        ui.add(egui::Label::new(value).wrap());
+                    });
+                });
+            }
         }
     }
 }

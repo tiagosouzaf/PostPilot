@@ -64,10 +64,17 @@ mod sql {
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE s.seqrelid = $1";
 
     pub const INDEX: &str = "SELECT t.relname::text AS \"Table\", \
+        (SELECT string_agg(pg_catalog.pg_get_indexdef(i.indexrelid, k, true) \
+                || CASE WHEN i.indoption[k - 1] & 1 = 1 THEN ' DESC' ELSE '' END, ', ' ORDER BY k) \
+            FROM generate_series(1, i.indnkeyatts) k) AS \"Columns\", \
+        (SELECT string_agg(pg_catalog.pg_get_indexdef(i.indexrelid, k, true), ', ' ORDER BY k) \
+            FROM generate_series(i.indnkeyatts + 1, i.indnatts) k) AS \"Include\", \
+        pg_catalog.pg_get_expr(i.indpred, i.indrelid, true) AS \"Condition\", \
         am.amname::text AS \"Method\", \
         CASE WHEN i.indisprimary THEN 'yes' ELSE 'no' END AS \"Primary key\", \
         CASE WHEN i.indisunique THEN 'yes' ELSE 'no' END AS \"Unique\", \
         pg_catalog.pg_size_pretty(pg_catalog.pg_relation_size(c.oid)) AS \"Size\", \
+        pg_catalog.pg_stat_get_numscans(c.oid)::text AS \"Scans\", \
         pg_catalog.pg_get_indexdef(c.oid) AS \"Definition\" \
         FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid \
         JOIN pg_catalog.pg_class t ON t.oid = i.indrelid \

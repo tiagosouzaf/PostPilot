@@ -614,6 +614,24 @@ fn properties_describe_each_kind_of_object() {
     assert_eq!(property(&p, "Kind"), "table");
     assert!(!p.iter().any(|p| p.name == "Populated"), "{p:?}");
 
+    // Índice: as colunas na ordem, o método e o tamanho (a dica do Object
+    // Explorer mostra estas linhas).
+    let p = props(&child(
+        meta,
+        &child(meta, &orders, "Indexes"),
+        "orders_customer_idx",
+    ));
+    assert_eq!(property(&p, "Columns"), "customer_id");
+    assert_eq!(property(&p, "Method"), "btree");
+    assert_eq!(property(&p, "Unique"), "no");
+    assert_eq!(property(&p, "Scans"), "0");
+    assert!(p.iter().any(|p| p.name == "Size"), "{p:?}");
+    assert!(
+        !p.iter()
+            .any(|p| p.name == "Include" || p.name == "Condition"),
+        "{p:?}"
+    );
+
     let triggers = child(meta, &orders, "Triggers");
     let p = props(&child(meta, &triggers, "orders_touch"));
     assert_eq!(property(&p, "Table"), "orders");
@@ -717,6 +735,10 @@ fn select_top_lists_the_columns() {
         "SELECT id,\n       \"Name\",\n       price,\n       taxed,\n       tags\n  FROM \"sales/2024\".\"user\"\n LIMIT 1000;\n"
     );
     let index = child(meta, &child(meta, &user, "Indexes"), "user_lower_name");
+    // Índice de expressão e parcial: a expressão e a condição.
+    let p = meta.properties(&index.id).unwrap();
+    assert_eq!(property(&p, "Columns"), "lower(\"Name\")");
+    assert_eq!(property(&p, "Condition"), "price > 0::numeric");
     assert!(meta.script(&index.id, ScriptAction::SelectTop(10)).is_err());
     assert_eq!(
         meta.script(&index.id, ScriptAction::Drop).unwrap(),

@@ -391,7 +391,23 @@ impl MetadataProvider for FakeProvider {
     /// pasta Columns. Como a árvore, aceita qualquer banco.
     fn properties(&self, node: &NodeId) -> Result<Vec<Property>, MetadataError> {
         thread::sleep(self.delay);
-        Ok(if node.0.starts_with("srv/Databases/") {
+        Ok(if node.0.ends_with("/Indexes/email") {
+            vec![
+                Property::new("Table", "table"),
+                Property::new("Columns", "lower(email), created_at DESC"),
+                Property::new("Include", "name"),
+                Property::new("Condition", "active"),
+                Property::new("Method", "btree"),
+                Property::new("Primary key", "no"),
+                Property::new("Unique", "yes"),
+                Property::new("Size", "16 kB"),
+                Property::new("Scans", "42"),
+                Property::new(
+                    "Definition",
+                    "CREATE UNIQUE INDEX email_idx ON t (lower(email), created_at DESC)",
+                ),
+            ]
+        } else if node.0.starts_with("srv/Databases/") {
             vec![Property::new("Owner", FAKE_OWNER)]
         } else {
             Vec::new()
