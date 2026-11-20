@@ -831,6 +831,8 @@ impl ObjectExplorer {
                             {
                                 let text = if indices {
                                     tr("Filter Indices...")
+                                } else if relational {
+                                    tr("Filter...")
                                 } else {
                                     tr("Filter Keys...")
                                 };
@@ -1158,7 +1160,14 @@ impl ObjectExplorer {
         let mut open = true;
         let mut cancel = false;
         let indices = self.provider.as_ref().is_some_and(|p| p.search_indices());
-        let (title, help, hint) = if indices {
+        let relational = self.provider.as_ref().is_some_and(|p| p.relational());
+        let (title, help, hint) = if relational {
+            (
+                tr("Filter"),
+                tr("Show only the objects whose name contains this text."),
+                "",
+            )
+        } else if indices {
             (
                 tr("Filter Indices"),
                 tr("Show only the indices that contain this text. A pattern also works: logs-*"),
@@ -1342,6 +1351,12 @@ pub fn kind_icon(kind: NodeKind, expanded: bool) -> &'static str {
         NodeKind::Sequence => icon::LIST_NUMBERS,
         NodeKind::Constraint => icon::KEY,
         NodeKind::Role => icon::USER,
+        NodeKind::Synonym => icon::LINK,
+        NodeKind::Parameter => icon::AT,
+        NodeKind::Statistic => icon::CHART_BAR,
+        NodeKind::LinkedServer => icon::PLUGS_CONNECTED,
+        NodeKind::Job => icon::CLOCK,
+        NodeKind::Item => icon::CUBE,
         NodeKind::KeyGroup if expanded => icon::FOLDER_OPEN,
         NodeKind::KeyGroup => icon::FOLDER,
         NodeKind::Key => icon::KEY,

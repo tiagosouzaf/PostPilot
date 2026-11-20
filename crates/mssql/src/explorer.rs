@@ -1,7 +1,8 @@
 //! Object Explorer do SQL Server, com a árvore do SSMS: servidor, bancos
 //! (os do sistema numa pasta à parte) e, em cada banco, Tables, Views e
 //! Programmability; em cada tabela, Columns, Keys, Constraints, Triggers e
-//! Indexes.
+//! Indexes. O resto da árvore (Synonyms, Service Broker, Storage, Server
+//! Objects, SQL Server Agent...) está em `tree.rs`.
 //!
 //! Uma conexão serve todos os bancos: as consultas usam nomes de três
 //! partes (`[banco].sys.objects`). A árvore e as leituras pesadas (o
@@ -72,8 +73,15 @@ thread_local! {
     /// thread ([`MssqlExplorer::children_in_parts`]). As leituras são
     /// síncronas, então a thread que pediu é a que lê.
     static PARTS: std::cell::RefCell<Option<PartSink>> = const { std::cell::RefCell::new(None) };
+    /// Se a nota do filtro da pasta já seguiu com a primeira parte.
+    static NOTE_SENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Se a leitura em andamento nesta thread é das pesadas.
     static HEAVY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Se a leitura em partes desta thread já mandou a nota do filtro.
+pub(crate) fn note_sent() -> bool {
+    NOTE_SENT.get()
 }
 
 /// Roda `read` com as leituras desta thread marcadas como pesadas.
@@ -113,6 +121,8 @@ pub struct MssqlExplorer {
     label: String,
     /// Nós por parte de uma lista ([`PAGE`]; os testes usam menos).
     page: usize,
+    /// Filtro de nome das pastas de lista ("Filter..."), pelo id da pasta.
+    pub(crate) filters: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl MssqlExplorer {
@@ -131,6 +141,7 @@ impl MssqlExplorer {
             password,
             label,
             page: PAGE,
+            filters: Default::default(),
         }
     }
 
@@ -271,7 +282,7 @@ impl MssqlExplorer {
     }
 
     /// Nós `(id, nome)` de uma consulta de duas colunas, com o id prefixado.
-    fn listed(
+    pub(crate) fn listed(
         &self,
         sql: &str,
         prefix: &str,
@@ -302,16 +313,10 @@ impl MssqlExplorer {
 
     fn database_children(&self, id: &str, db: &str) -> Result<Vec<ObjectNode>, MetadataError> {
         let _ = db;
-        Ok([
-            ("diagrams", Folder::Diagrams),
-            ("tables", Folder::Tables),
-            ("views", Folder::Views),
-            ("prog", Folder::Programmability),
-            ("security", Folder::Security),
-        ]
-        .into_iter()
-        .map(|(tag, f)| folder(format!("{id}/f/{tag}"), f))
-        .collect())
+        Ok(crate::tree::DATABASE_FOLDERS
+            .into_iter()
+            .map(|(tag, f)| folder(format!("{id}/f/{tag}"), f))
+            .collect())
     }
 
     fn database_folder(
@@ -322,13 +327,10 @@ impl MssqlExplorer {
     ) -> Result<Vec<ObjectNode>, MetadataError> {
         let d = bracket(db);
         let base = format!("db/{}/", enc(db));
-        match tag {
+        let like = self.name_filter(id, "s.name + '.' + o.name");
+        let listed = match tag {
             // Os diagramas ficam em arquivos `.pgsdiagram`, não no banco.
             "diagrams" => Ok(Vec::new()),
-            "security" => Ok(vec![
-                folder(format!("{base}f/users"), Folder::Users),
-                folder(format!("{base}f/dbroles"), Folder::DatabaseRoles),
-            ]),
             "users" => self.principals(
                 &format!(
                     "SELECT name FROM {d}.sys.database_principals \
@@ -347,7 +349,7 @@ impl MssqlExplorer {
                 &format!(
                     "SELECT o.object_id, s.name + '.' + o.name FROM {d}.sys.tables o \
                      JOIN {d}.sys.schemas s ON s.schema_id = o.schema_id \
-                     WHERE o.is_ms_shipped = 0 ORDER BY s.name, o.name"
+                     WHERE o.is_ms_shipped = 0{like} ORDER BY s.name, o.name"
                 ),
                 &format!("{base}t/"),
                 NodeKind::Table,
@@ -357,68 +359,25 @@ impl MssqlExplorer {
                 &format!(
                     "SELECT o.object_id, s.name + '.' + o.name FROM {d}.sys.views o \
                      JOIN {d}.sys.schemas s ON s.schema_id = o.schema_id \
-                     WHERE o.is_ms_shipped = 0 ORDER BY s.name, o.name"
+                     WHERE o.is_ms_shipped = 0{like} ORDER BY s.name, o.name"
                 ),
                 &format!("{base}v/"),
                 NodeKind::View,
                 true,
             ),
-            "prog" => Ok([
-                ("procs", Folder::Procedures),
-                ("funcs", Folder::Functions),
-                ("types", Folder::Types),
-                ("seqs", Folder::Sequences),
-            ]
-            .into_iter()
-            .map(|(tag, f)| folder(format!("{base}f/{tag}"), f))
-            .collect()),
-            "procs" => self.objects(db, "o.type IN ('P', 'PC')", NodeKind::Procedure),
-            "funcs" => self.objects(
-                db,
-                "o.type IN ('FN', 'IF', 'TF', 'FS', 'FT')",
-                NodeKind::Function,
-            ),
-            "seqs" => self.objects(db, "o.type = 'SO'", NodeKind::Sequence),
-            "types" => self.listed(
-                &format!(
-                    "SELECT t.user_type_id, s.name + '.' + t.name FROM {d}.sys.types t \
-                     JOIN {d}.sys.schemas s ON s.schema_id = t.schema_id \
-                     WHERE t.is_user_defined = 1 ORDER BY s.name, t.name"
-                ),
-                &format!("{base}type/"),
-                NodeKind::Type,
-                false,
-            ),
-            _ => {
-                let _ = id;
-                Ok(Vec::new())
-            }
-        }
-    }
-
-    /// Objetos do banco (fora as tabelas e views) que passam em `filter`.
-    fn objects(
-        &self,
-        db: &str,
-        filter: &str,
-        kind: NodeKind,
-    ) -> Result<Vec<ObjectNode>, MetadataError> {
-        let d = bracket(db);
-        self.listed(
-            &format!(
-                "SELECT o.object_id, s.name + '.' + o.name FROM {d}.sys.objects o \
-                 JOIN {d}.sys.schemas s ON s.schema_id = o.schema_id \
-                 WHERE o.is_ms_shipped = 0 AND {filter} ORDER BY s.name, o.name"
-            ),
-            &format!("db/{}/o/", enc(db)),
-            kind,
-            false,
-        )
+            _ => Ok(Vec::new()),
+        };
+        listed.map(|nodes| self.with_filter_note(id, nodes))
     }
 
     fn relation_children(&self, id: &str, view: bool) -> Vec<ObjectNode> {
         let folders: &[(&str, Folder)] = if view {
-            &[("cols", Folder::Columns), ("idx", Folder::Indexes)]
+            &[
+                ("cols", Folder::Columns),
+                ("trig", Folder::Triggers),
+                ("idx", Folder::Indexes),
+                ("stats", Folder::Statistics),
+            ]
         } else {
             &[
                 ("cols", Folder::Columns),
@@ -426,6 +385,7 @@ impl MssqlExplorer {
                 ("cons", Folder::Constraints),
                 ("trig", Folder::Triggers),
                 ("idx", Folder::Indexes),
+                ("stats", Folder::Statistics),
             ]
         };
         folders
@@ -537,7 +497,11 @@ impl MssqlExplorer {
     }
 
     /// `[schema].[nome]` e o tipo (`sys.objects.type`) de um objeto.
-    fn object_name(&self, db: &str, obj: i64) -> Result<(String, String, String), MetadataError> {
+    pub(crate) fn object_name(
+        &self,
+        db: &str,
+        obj: i64,
+    ) -> Result<(String, String, String), MetadataError> {
         let d = bracket(db);
         let r = self
             .rows(&format!(
@@ -901,7 +865,7 @@ impl MssqlExplorer {
         })
     }
 
-    fn properties_of(&self, sql: &str) -> Result<Vec<Property>, MetadataError> {
+    pub(crate) fn properties_of(&self, sql: &str) -> Result<Vec<Property>, MetadataError> {
         let (names, rows) = self.table(sql)?;
         let row = rows.into_iter().next().ok_or_else(gone)?;
         Ok(names
@@ -912,7 +876,7 @@ impl MssqlExplorer {
     }
 }
 
-fn node(
+pub(crate) fn node(
     id: impl Into<String>,
     name: impl Into<String>,
     kind: NodeKind,
@@ -926,15 +890,15 @@ fn node(
     }
 }
 
-fn folder(id: String, f: Folder) -> ObjectNode {
+pub(crate) fn folder(id: String, f: Folder) -> ObjectNode {
     node(id, f.label(), NodeKind::Folder(f), true)
 }
 
-fn gone() -> MetadataError {
+pub(crate) fn gone() -> MetadataError {
     MetadataError(tr("The object no longer exists. Refresh the Object Explorer.").to_string())
 }
 
-fn not_yet() -> MetadataError {
+pub(crate) fn not_yet() -> MetadataError {
     MetadataError(tr("This script is not available for SQL Server yet.").to_string())
 }
 
@@ -944,11 +908,11 @@ pub fn bracket(name: &str) -> String {
 }
 
 /// Nome do banco num id de nó.
-fn enc(db: &str) -> String {
+pub(crate) fn enc(db: &str) -> String {
     db.replace('%', "%25").replace('/', "%2F")
 }
 
-fn dec(text: &str) -> String {
+pub(crate) fn dec(text: &str) -> String {
     text.replace("%2F", "/").replace("%25", "%")
 }
 
@@ -1021,7 +985,7 @@ pub(crate) fn plain_type(name: &str, length: i64, precision: i64, scale: i64) ->
 
 /// Tipo de uma coluna no `CREATE TABLE`, como o SSMS escreve:
 /// `[nvarchar](60)`, `[decimal](10, 2)`, `[dbo].[Cpf]` (tipo do usuário).
-fn sql_type(
+pub(crate) fn sql_type(
     name: &str,
     user_defined: bool,
     schema: &str,
@@ -1081,12 +1045,15 @@ impl MetadataProvider for MssqlExplorer {
                 return Ok(vec![
                     folder(DATABASES.into(), Folder::Databases),
                     folder(SECURITY.into(), Folder::Security),
+                    folder(crate::tree::SERVER_OBJECTS.into(), Folder::ServerObjects),
+                    folder(crate::tree::AGENT.into(), Folder::Agent),
                 ]);
             }
             SECURITY => {
                 return Ok(vec![
                     folder(LOGINS.into(), Folder::Logins),
                     folder(SERVER_ROLES.into(), Folder::ServerRoles),
+                    folder(crate::tree::CREDENTIALS.into(), Folder::Credentials),
                 ]);
             }
             LOGINS => {
@@ -1106,6 +1073,9 @@ impl MetadataProvider for MssqlExplorer {
             }
             DATABASES | SYSTEM => return self.databases(id == SYSTEM),
             _ => {}
+        }
+        if let Some(more) = self.more_children(id) {
+            return more;
         }
         let parts: Vec<&str> = id.split('/').collect();
         match parts.as_slice() {
@@ -1132,8 +1102,22 @@ impl MetadataProvider for MssqlExplorer {
                 PARTS.with(|p| *p.borrow_mut() = self.0.take());
             }
         }
-        let _reset = Reset(PARTS.with(|p| p.borrow_mut().replace(part.clone())));
-        self.children(parent)
+        // A nota de uma pasta filtrada abre a lista: vai com a primeira
+        // parte, e não com a última.
+        let note = std::sync::Mutex::new(self.filter_note(&parent.0));
+        let inner = part.clone();
+        let part: PartSink = std::sync::Arc::new(move |mut nodes| {
+            if let Some(note) = note.lock().ok().and_then(|mut n| n.take()) {
+                nodes.insert(0, note);
+                NOTE_SENT.set(true);
+            }
+            inner(nodes)
+        });
+        NOTE_SENT.set(false);
+        let _reset = Reset(PARTS.with(|p| p.borrow_mut().replace(part)));
+        let result = self.children(parent);
+        NOTE_SENT.set(false);
+        result
     }
 
     /// A tabela (para o Table Designer e o Edit Top 200 Rows) ou a pasta
@@ -1227,7 +1211,18 @@ impl MetadataProvider for MssqlExplorer {
         }
     }
 
+    fn filter(&self, node: &NodeId) -> Option<String> {
+        self.filter_text(&node.0)
+    }
+
+    fn set_filter(&self, node: &NodeId, filter: &str) {
+        self.store_filter(&node.0, filter);
+    }
+
     fn script(&self, node: &NodeId, action: ScriptAction) -> Result<String, MetadataError> {
+        if let Some(more) = self.more_script(&node.0, action) {
+            return more;
+        }
         let parts: Vec<&str> = node.0.split('/').collect();
         let number = |s: &str| s.parse::<i64>().map_err(|_| gone());
         match (parts.as_slice(), action) {
@@ -1268,6 +1263,9 @@ impl MetadataProvider for MssqlExplorer {
     }
 
     fn properties(&self, node: &NodeId) -> Result<Vec<Property>, MetadataError> {
+        if let Some(more) = self.more_properties(node) {
+            return more;
+        }
         let parts: Vec<&str> = node.0.split('/').collect();
         let number = |s: &str| s.parse::<i64>().map_err(|_| gone());
         match parts.as_slice() {
@@ -1280,11 +1278,14 @@ impl MetadataProvider for MssqlExplorer {
                    FROM sys.databases d WHERE d.name = N'{}'",
                 dec(db).replace('\'', "''")
             )),
-            ["db", db, "t" | "v" | "o", obj] => {
+            ["db", db, "t" | "v" | "o" | "p", obj] => {
                 let d = bracket(&dec(db));
                 let obj = number(obj)?;
                 self.properties_of(&format!(
                     "SELECT s.name AS [Schema], \
+                            LOWER(REPLACE(o.type_desc, '_', ' ')) AS [Kind], \
+                            (SELECT y.base_object_name FROM {d}.sys.synonyms y \
+                              WHERE y.object_id = o.object_id) AS [Base object], \
                             CAST((SELECT SUM(p.rows) FROM {d}.sys.partitions p \
                                    WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
                                  AS varchar(20)) AS [Rows (estimate)], \
