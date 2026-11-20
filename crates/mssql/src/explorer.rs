@@ -4,8 +4,14 @@
 //! Indexes. O resto da árvore (Synonyms, Service Broker, Storage, Server
 //! Objects, SQL Server Agent...) está em `tree.rs`.
 //!
-//! Uma sessão só serve todos os bancos: as consultas usam nomes de três
-//! partes (`[banco].sys.objects`). Os ids dos nós carregam o nome do banco
+//! Uma conexão serve todos os bancos: as consultas usam nomes de três
+//! partes (`[banco].sys.objects`). A árvore e as leituras pesadas (o
+//! catálogo do IntelliSense, o modelo das tabelas) usam conexões separadas
+//! ([`crate::pool`]), para a árvore não esperar atrás delas. As listas
+//! chegam em partes ([`MetadataProvider::children_in_parts`]): páginas de
+//! [`PAGE`] nós, e os bancos conforme o acesso a cada um é confirmado.
+//!
+//! Os ids dos nós carregam o nome do banco
 //! (com `/` e `%` escapados) e os ids numéricos do catálogo:
 //!
 //! | Nó | Id |
@@ -24,20 +30,71 @@
 use pgstudio_core::catalog::{Catalog, Column, Relation, RelationKind, Schema};
 use pgstudio_core::connection::Engine;
 use pgstudio_core::metadata::{
-    DesignTarget, Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode,
+    DesignTarget, Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, PartSink,
     PrincipalKind, Property, ScriptAction, Securable,
 };
 use pgstudio_i18n::tr;
 use pgstudio_pg_client::DbRuntime;
 
+use crate::pool::{Lease, Pool};
 use crate::{Broken, Session};
 
 /// Nomes das colunas e linhas de uma consulta.
 type Named = (Vec<String>, Vec<Vec<Option<String>>>);
 
-/// Lista dos bancos que o login pode abrir.
+/// Lista dos bancos que o login pode abrir. `HAS_DBACCESS` abre cada
+/// banco fechado (AUTO_CLOSE) para responder, o que leva dezenas de
+/// segundos num servidor com centenas deles; quem é sysadmin entra em
+/// todos, e o `CASE` garante que a checagem nem roda para ele.
 pub const DATABASES_SQL: &str = "SELECT name FROM sys.databases \
-    WHERE HAS_DBACCESS(name) = 1 AND state = 0 ORDER BY name";
+    WHERE state = 0 \
+      AND CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 ELSE HAS_DBACCESS(name) END = 1 \
+    ORDER BY name";
+
+/// Os bancos no ar, sem checar o acesso (não abre nenhum), e se o login é
+/// sysadmin.
+const ONLINE_DATABASES_SQL: &str = "SELECT name, IS_SRVROLEMEMBER('sysadmin') \
+    FROM sys.databases WHERE state = 0 ORDER BY name";
+
+/// Quantos nós de uma lista vêm em cada parte.
+pub const PAGE: usize = 500;
+
+/// De quantos bancos o acesso é checado por vez: poucos no começo, para os
+/// primeiros aparecerem logo.
+const ACCESS_CHUNKS: [usize; 2] = [8, 24];
+
+/// Conexões que a árvore abre no máximo: a segunda só quando a primeira
+/// está ocupada (dois nós expandindo juntos, ou a árvore de uma sessão
+/// anterior reabrindo).
+const TREE_CONNECTIONS: usize = 2;
+
+thread_local! {
+    /// Quem recebe as partes da leitura de filhos em andamento nesta
+    /// thread ([`MssqlExplorer::children_in_parts`]). As leituras são
+    /// síncronas, então a thread que pediu é a que lê.
+    static PARTS: std::cell::RefCell<Option<PartSink>> = const { std::cell::RefCell::new(None) };
+    /// Se a nota do filtro da pasta já seguiu com a primeira parte.
+    static NOTE_SENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Se a leitura em andamento nesta thread é das pesadas.
+    static HEAVY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Se a leitura em partes desta thread já mandou a nota do filtro.
+pub(crate) fn note_sent() -> bool {
+    NOTE_SENT.get()
+}
+
+/// Roda `read` com as leituras desta thread marcadas como pesadas.
+pub(crate) fn heavy<T>(read: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            HEAVY.set(self.0);
+        }
+    }
+    let _reset = Reset(HEAVY.replace(true));
+    read()
+}
 
 /// Os bancos do sistema, que o SSMS põe em "System Databases".
 const SYSTEM_DATABASES: [&str; 4] = ["master", "model", "msdb", "tempdb"];
@@ -56,10 +113,14 @@ const LOGIN_TYPES: &str = "'S', 'U', 'G', 'E', 'X'";
 /// Lê os metadados com a sessão aberta pelo Connect to Server.
 pub struct MssqlExplorer {
     pub(crate) runtime: DbRuntime,
-    /// Só por [`MssqlExplorer::healthy`], que reabre a conexão que caiu.
-    session: tokio::sync::Mutex<Session>,
+    /// As conexões da árvore, a primeira aberta pelo Connect to Server.
+    tree: Pool,
+    /// A conexão das leituras pesadas, aberta na primeira delas.
+    heavy: Pool,
     password: String,
     label: String,
+    /// Nós por parte de uma lista ([`PAGE`]; os testes usam menos).
+    page: usize,
     /// Filtro de nome das pastas de lista ("Filter..."), pelo id da pasta.
     pub(crate) filters: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
@@ -75,11 +136,19 @@ impl MssqlExplorer {
         );
         MssqlExplorer {
             runtime,
-            session: tokio::sync::Mutex::new(session),
+            heavy: Pool::new(s.clone(), session.command_timeout(), 1),
+            tree: Pool::with(session, TREE_CONNECTIONS),
             password,
             label,
+            page: PAGE,
             filters: Default::default(),
         }
+    }
+
+    /// Outro tamanho para as partes das listas (os testes usam um pequeno).
+    pub fn with_page(mut self, page: usize) -> Self {
+        self.page = page.max(1);
+        self
     }
 
     /// Nome do servidor como o SSMS mostra: `host (SQL Server 16.0.4135.4 - sa)`.
@@ -87,23 +156,20 @@ impl MssqlExplorer {
         &self.label
     }
 
-    /// A sessão, trocada por uma nova se a anterior não serve mais (um
-    /// tempo esgotado deixa a conexão fora de sincronia; o servidor pode
-    /// ter derrubado uma conexão parada).
-    pub(crate) async fn healthy(&self) -> Result<tokio::sync::MutexGuard<'_, Session>, String> {
-        let mut session = self.session.lock().await;
-        if session.is_broken() {
-            session.reopen(&self.password).await?;
-        }
-        Ok(session)
+    /// Uma conexão da árvore que serve. A que quebrou (um tempo esgotado
+    /// deixa a conexão fora de sincronia; o servidor pode ter derrubado
+    /// uma conexão parada) não volta para o conjunto: abre outra.
+    pub(crate) async fn healthy(&self) -> Result<Lease<'_>, String> {
+        self.tree.get(&self.password).await
     }
 
     /// Uma leitura. Se a conexão caiu, abre outra e lê de novo, uma vez
     /// (só leituras passam por aqui: repetir não altera nada). Depois de
     /// um tempo esgotado não repete na hora, para não esperar em dobro: a
     /// próxima leitura já vai numa conexão nova.
-    async fn read(&self, sql: &str) -> Result<Named, String> {
-        let mut session = self.healthy().await?;
+    async fn read(&self, sql: &str, heavy: bool) -> Result<Named, String> {
+        let pool = if heavy { &self.heavy } else { &self.tree };
+        let mut session = pool.get(&self.password).await?;
         match session.table(sql).await {
             Err(_) if session.broken() == Some(Broken::Lost) => {
                 session.reopen(&self.password).await?;
@@ -118,7 +184,101 @@ impl MssqlExplorer {
     }
 
     fn table(&self, sql: &str) -> Result<Named, MetadataError> {
-        self.runtime.block_on(self.read(sql)).map_err(MetadataError)
+        let heavy = HEAVY.get();
+        self.runtime
+            .block_on(self.read(sql, heavy))
+            .map_err(MetadataError)
+    }
+
+    /// Os nós de uma lista, cada linha passada por `make`. Quando a
+    /// árvore lê em partes, a lista vem em páginas de [`Self::page`]
+    /// linhas: cada página cheia já segue para a árvore, e a última volta
+    /// como resultado. Para paginar, `sql` termina num `ORDER BY` que não
+    /// deixa empates (senão uma linha poderia repetir ou faltar entre
+    /// páginas).
+    fn paged(
+        &self,
+        sql: &str,
+        make: &dyn Fn(Vec<Option<String>>) -> Option<ObjectNode>,
+    ) -> Result<Vec<ObjectNode>, MetadataError> {
+        let part = PARTS
+            .with(|p| p.borrow().clone())
+            .filter(|_| sql.contains("ORDER BY"));
+        let Some(part) = part else {
+            return Ok(self.rows(sql)?.into_iter().filter_map(make).collect());
+        };
+        let mut offset = 0;
+        loop {
+            let rows = self.rows(&format!(
+                "{sql} OFFSET {offset} ROWS FETCH NEXT {} ROWS ONLY",
+                self.page
+            ))?;
+            let last = rows.len() < self.page;
+            let nodes = rows.into_iter().filter_map(make).collect();
+            if last {
+                return Ok(nodes);
+            }
+            // Ninguém mais espera a lista: para de ler.
+            if !part(nodes) {
+                return Ok(Vec::new());
+            }
+            offset += self.page;
+        }
+    }
+
+    /// Os bancos de usuário (ou os do sistema) que o login pode abrir. Em
+    /// partes: os nomes vêm de uma leitura que não abre banco nenhum, e o
+    /// acesso é checado aos poucos, com cada grupo confirmado seguindo
+    /// para a árvore. Quem é sysadmin não precisa da checagem.
+    fn databases(&self, system: bool) -> Result<Vec<ObjectNode>, MetadataError> {
+        let mine = |name: &String| SYSTEM_DATABASES.contains(&name.as_str()) == system;
+        let nodes = |names: Vec<String>| -> Vec<ObjectNode> {
+            names
+                .into_iter()
+                .map(|name| node(format!("db/{}", enc(&name)), name, NodeKind::Database, true))
+                .collect()
+        };
+        let first = |row: Vec<Option<String>>| row.into_iter().next().flatten();
+        let mut out = match system {
+            true => Vec::new(),
+            false => vec![folder(SYSTEM.into(), Folder::SystemDatabases)],
+        };
+        let Some(part) = PARTS.with(|p| p.borrow().clone()) else {
+            let names = self.rows(DATABASES_SQL)?.into_iter().filter_map(first);
+            out.extend(nodes(names.filter(mine).collect()));
+            return Ok(out);
+        };
+        let online = self.rows(ONLINE_DATABASES_SQL)?;
+        let sysadmin = online
+            .first()
+            .is_some_and(|r| r.get(1).cloned().flatten().as_deref() == Some("1"));
+        let names: Vec<String> = online.into_iter().filter_map(first).filter(mine).collect();
+        if sysadmin {
+            out.extend(nodes(names));
+            return Ok(out);
+        }
+        let mut rest = names.as_slice();
+        let mut sizes = ACCESS_CHUNKS.into_iter();
+        let mut size = ACCESS_CHUNKS[0];
+        while !rest.is_empty() {
+            size = sizes.next().unwrap_or(size);
+            let (chunk, after) = rest.split_at(size.min(rest.len()));
+            rest = after;
+            let list: Vec<String> = chunk
+                .iter()
+                .map(|n| format!("N'{}'", n.replace('\'', "''")))
+                .collect();
+            let open = self.rows(&format!(
+                "SELECT name FROM sys.databases \
+                  WHERE name IN ({}) AND state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name",
+                list.join(", ")
+            ))?;
+            out.extend(nodes(open.into_iter().filter_map(first).collect()));
+            if !rest.is_empty() && !out.is_empty() && !part(std::mem::take(&mut out)) {
+                return Ok(Vec::new());
+            }
+        }
+        Ok(out)
     }
 
     /// Nós `(id, nome)` de uma consulta de duas colunas, com o id prefixado.
@@ -129,34 +289,26 @@ impl MssqlExplorer {
         kind: NodeKind,
         children: bool,
     ) -> Result<Vec<ObjectNode>, MetadataError> {
-        Ok(self
-            .rows(sql)?
-            .into_iter()
-            .filter_map(|r| {
-                let mut r = r.into_iter();
-                let id = r.next().flatten()?;
-                let name = r.next().flatten()?;
-                Some(node(format!("{prefix}{id}"), name, kind, children))
-            })
-            .collect())
+        self.paged(sql, &|r| {
+            let mut r = r.into_iter();
+            let id = r.next().flatten()?;
+            let name = r.next().flatten()?;
+            Some(node(format!("{prefix}{id}"), name, kind, children))
+        })
     }
 
     /// Logins, usuários e roles de uma consulta de uma coluna (o nome, que
     /// também é o id).
     fn principals(&self, sql: &str, prefix: &str) -> Result<Vec<ObjectNode>, MetadataError> {
-        Ok(self
-            .rows(sql)?
-            .into_iter()
-            .filter_map(|r| r.into_iter().next().flatten())
-            .map(|name| {
-                node(
-                    format!("{prefix}{}", enc(&name)),
-                    name,
-                    NodeKind::Role,
-                    false,
-                )
-            })
-            .collect())
+        self.paged(sql, &|r| {
+            let name = r.into_iter().next().flatten()?;
+            Some(node(
+                format!("{prefix}{}", enc(&name)),
+                name,
+                NodeKind::Role,
+                false,
+            ))
+        })
     }
 
     fn database_children(&self, id: &str, db: &str) -> Result<Vec<ObjectNode>, MetadataError> {
@@ -919,20 +1071,7 @@ impl MetadataProvider for MssqlExplorer {
                     "srvrole/",
                 );
             }
-            DATABASES | SYSTEM => {
-                let system = id == SYSTEM;
-                let mut nodes: Vec<ObjectNode> = self
-                    .rows(DATABASES_SQL)?
-                    .into_iter()
-                    .filter_map(|r| r.into_iter().next().flatten())
-                    .filter(|name| SYSTEM_DATABASES.contains(&name.as_str()) == system)
-                    .map(|name| node(format!("db/{}", enc(&name)), name, NodeKind::Database, true))
-                    .collect();
-                if !system {
-                    nodes.insert(0, folder(SYSTEM.into(), Folder::SystemDatabases));
-                }
-                return Ok(nodes);
-            }
+            DATABASES | SYSTEM => return self.databases(id == SYSTEM),
             _ => {}
         }
         if let Some(more) = self.more_children(id) {
@@ -950,6 +1089,35 @@ impl MetadataProvider for MssqlExplorer {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    fn children_in_parts(
+        &self,
+        parent: &NodeId,
+        part: &PartSink,
+    ) -> Result<Vec<ObjectNode>, MetadataError> {
+        struct Reset(Option<PartSink>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                PARTS.with(|p| *p.borrow_mut() = self.0.take());
+            }
+        }
+        // A nota de uma pasta filtrada abre a lista: vai com a primeira
+        // parte, e não com a última.
+        let note = std::sync::Mutex::new(self.filter_note(&parent.0));
+        let inner = part.clone();
+        let part: PartSink = std::sync::Arc::new(move |mut nodes| {
+            if let Some(note) = note.lock().ok().and_then(|mut n| n.take()) {
+                nodes.insert(0, note);
+                NOTE_SENT.set(true);
+            }
+            inner(nodes)
+        });
+        NOTE_SENT.set(false);
+        let _reset = Reset(PARTS.with(|p| p.borrow_mut().replace(part)));
+        let result = self.children(parent);
+        NOTE_SENT.set(false);
+        result
     }
 
     /// A tabela (para o Table Designer e o Edit Top 200 Rows) ou a pasta
@@ -975,15 +1143,15 @@ impl MetadataProvider for MssqlExplorer {
     }
 
     fn type_names(&self, database: &str) -> Result<Vec<String>, MetadataError> {
-        self.read_type_names(database)
+        heavy(|| self.read_type_names(database))
     }
 
     fn catalog(&self, database: &str) -> Result<Catalog, MetadataError> {
-        self.read_catalog(database)
+        heavy(|| self.read_catalog(database))
     }
 
     fn load_model(&self, database: &str) -> Result<pgstudio_core::schema::Model, MetadataError> {
-        self.read_model(database)
+        heavy(|| self.read_model(database))
     }
 
     fn securable(&self, node: &NodeId) -> Option<Securable> {

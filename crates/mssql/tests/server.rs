@@ -926,6 +926,202 @@ fn a_query_slower_than_thirty_seconds_finishes() {
     );
 }
 
+/// Lê os filhos em partes: as partes que seguiram para a árvore e a última.
+fn in_parts(
+    metadata: &dyn pgstudio_core::metadata::MetadataProvider,
+    id: &NodeId,
+    keep_going: bool,
+) -> (Vec<Vec<String>>, Vec<String>) {
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>> = Default::default();
+    let part: pgstudio_core::metadata::PartSink = {
+        let seen = seen.clone();
+        std::sync::Arc::new(move |nodes| {
+            seen.lock()
+                .unwrap()
+                .push(nodes.into_iter().map(|n| n.name).collect());
+            keep_going
+        })
+    };
+    let last = metadata.children_in_parts(id, &part).unwrap();
+    let parts = seen.lock().unwrap().clone();
+    (parts, last.into_iter().map(|n| n.name).collect())
+}
+
+#[test]
+fn long_lists_arrive_in_pages() {
+    let Some((s, pw)) = settings() else { return };
+    let c = connector().with_page(3).connect(&s, &pw).expect("connect");
+    let admin = c.queries.open("master");
+    run(
+        &*admin,
+        "IF DB_ID('pp_pages') IS NULL CREATE DATABASE pp_pages",
+    );
+    let setup = c.queries.open("pp_pages");
+    for i in 1..=8 {
+        run(
+            &*setup,
+            &format!("IF OBJECT_ID('dbo.t{i}') IS NULL CREATE TABLE dbo.t{i} (id int)"),
+        );
+    }
+    let roots = c.metadata.roots().unwrap();
+    let databases = child(&*c.metadata, &roots[0].id, "Databases");
+    let db = child(&*c.metadata, &databases.id, "pp_pages");
+    let tables = child(&*c.metadata, &db.id, "Tables");
+    let whole: Vec<String> = c
+        .metadata
+        .children(&tables.id)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.name)
+        .collect();
+    assert_eq!(whole.len(), 8);
+
+    // Páginas de 3: duas seguem para a árvore, o resto volta no fim.
+    let (parts, last) = in_parts(&*c.metadata, &tables.id, true);
+    assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), [3, 3]);
+    assert_eq!(last.len(), 2);
+    let joined: Vec<String> = parts.into_iter().flatten().chain(last).collect();
+    assert_eq!(joined, whole);
+
+    // Quando ninguém mais espera, a leitura para na primeira página.
+    let (parts, last) = in_parts(&*c.metadata, &tables.id, false);
+    assert_eq!(parts.len(), 1);
+    assert!(last.is_empty());
+
+    // Com filtro de nome, a nota abre a lista: vai com a primeira parte.
+    c.metadata.set_filter(&tables.id, "t");
+    let (parts, last) = in_parts(&*c.metadata, &tables.id, true);
+    assert!(parts[0][0].contains("t"), "{parts:?}");
+    assert_eq!(parts[0].len(), 4, "{parts:?}");
+    assert_eq!(parts[1].len() + last.len(), 5);
+    let whole_filtered = c.metadata.children(&tables.id).unwrap();
+    assert_eq!(whole_filtered.len(), 9);
+    assert_eq!(whole_filtered[0].name, parts[0][0]);
+    c.metadata.set_filter(&tables.id, "");
+
+    // Uma lista que cabe numa página vem inteira no fim.
+    let (parts, last) = in_parts(&*c.metadata, &db.id, true);
+    assert!(parts.is_empty());
+    assert!(last.contains(&"Tables".to_string()));
+}
+
+#[test]
+fn databases_arrive_as_the_access_to_each_is_confirmed() {
+    let Some((s, pw)) = settings() else { return };
+    let c = connector().connect(&s, &pw).expect("connect");
+    let admin = c.queries.open("master");
+    run(
+        &*admin,
+        "IF SUSER_ID('pp_reader') IS NULL \
+         CREATE LOGIN pp_reader WITH PASSWORD = 'PostPilot!2026', CHECK_POLICY = OFF",
+    );
+    for i in 1..=12 {
+        let db = format!("pp_access_{i:02}");
+        run(
+            &*admin,
+            &format!("IF DB_ID('{db}') IS NULL CREATE DATABASE {db}"),
+        );
+        if [1, 9, 12].contains(&i) {
+            run(
+                &*c.queries.open(&db),
+                "IF USER_ID('pp_reader') IS NULL CREATE USER pp_reader FOR LOGIN pp_reader",
+            );
+        }
+    }
+    let roots = c.metadata.roots().unwrap();
+    let databases = child(&*c.metadata, &roots[0].id, "Databases");
+
+    // Quem é sysadmin entra em todos: uma leitura só, sem checar o acesso.
+    let (parts, last) = in_parts(&*c.metadata, &databases.id, true);
+    assert!(parts.is_empty(), "{parts:?}");
+    assert_eq!(last[0], "System Databases");
+    assert!(last.contains(&"pp_access_05".to_string()));
+
+    // Um login comum: os bancos chegam em grupos, só os que ele abre.
+    let mut reader = s.clone();
+    reader.user = "pp_reader".into();
+    let r = connector()
+        .connect(&reader, "PostPilot!2026")
+        .expect("connect as pp_reader");
+    let roots = r.metadata.roots().unwrap();
+    let databases = child(&*r.metadata, &roots[0].id, "Databases");
+    let (parts, last) = in_parts(&*r.metadata, &databases.id, true);
+    assert!(!parts.is_empty());
+    assert_eq!(parts[0][0], "System Databases");
+    let joined: Vec<String> = parts.into_iter().flatten().chain(last).collect();
+    let mine: Vec<&String> = joined
+        .iter()
+        .filter(|n| n.starts_with("pp_access_"))
+        .collect();
+    assert_eq!(mine, ["pp_access_01", "pp_access_09", "pp_access_12"]);
+    // A leitura de uma vez só (sem partes) dá a mesma lista.
+    let whole: Vec<String> = r
+        .metadata
+        .children(&databases.id)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.name)
+        .collect();
+    assert_eq!(joined, whole);
+    // E os do sistema ficam na pasta deles.
+    let system = child(&*r.metadata, &databases.id, "System Databases");
+    let (_, last) = in_parts(&*r.metadata, &system.id, true);
+    assert!(last.contains(&"master".to_string()), "{last:?}");
+    assert!(!last.iter().any(|n| n.starts_with("pp_access_")));
+}
+
+#[test]
+fn the_tree_does_not_wait_for_a_heavy_read() {
+    let Some((s, pw)) = settings() else { return };
+    let c = connector()
+        .with_metadata_timeout(Duration::from_secs(20))
+        .connect(&s, &pw)
+        .expect("connect");
+    let admin = c.queries.open("master");
+    run(
+        &*admin,
+        "IF DB_ID('pp_busy') IS NULL CREATE DATABASE pp_busy",
+    );
+    let roots = c.metadata.roots().unwrap();
+    let databases = child(&*c.metadata, &roots[0].id, "Databases");
+
+    // Uma tabela criada numa transação aberta prende o catálogo do banco:
+    // a leitura para o IntelliSense fica esperando.
+    let blocker = c.queries.open("pp_busy");
+    run(
+        &*blocker,
+        "BEGIN TRANSACTION; CREATE TABLE dbo.presa (id int)",
+    );
+    let metadata = c.metadata.clone();
+    let catalog = std::thread::spawn(move || metadata.catalog("pp_busy"));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!catalog.is_finished());
+
+    // Antes, a árvore esperava na fila da mesma conexão.
+    let started = Instant::now();
+    let (_, names) = in_parts(&*c.metadata, &databases.id, true);
+    assert!(names.contains(&"pp_busy".to_string()));
+    // Duas leituras da árvore ao mesmo tempo também não se esperam.
+    let slow = {
+        let metadata = c.metadata.clone();
+        let db = child(&*c.metadata, &databases.id, "pp_busy");
+        let tables = child(&*c.metadata, &db.id, "Tables");
+        std::thread::spawn(move || metadata.children(&tables.id))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.metadata.children(&databases.id).is_ok());
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(!catalog.is_finished());
+
+    run(&*blocker, "ROLLBACK TRANSACTION");
+    assert!(catalog.join().unwrap().is_ok());
+    assert!(slow.join().unwrap().is_ok());
+}
+
 /// Os nomes dos filhos de `parent`.
 fn names(meta: &dyn pgstudio_core::metadata::MetadataProvider, parent: &NodeId) -> Vec<String> {
     meta.children(parent)

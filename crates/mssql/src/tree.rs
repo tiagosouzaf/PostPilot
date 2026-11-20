@@ -354,18 +354,24 @@ impl MssqlExplorer {
         folder_id: &str,
         mut nodes: Vec<ObjectNode>,
     ) -> Vec<ObjectNode> {
-        if let Some(text) = self.filter_text(folder_id).filter(|t| !t.is_empty()) {
-            nodes.insert(
-                0,
-                node(
-                    format!("{folder_id}/note"),
-                    trf!("Filter: {filter}", filter = text),
-                    NodeKind::Note,
-                    false,
-                ),
-            );
+        // Numa lista em partes a nota já saiu na frente da primeira.
+        if !crate::explorer::note_sent()
+            && let Some(note) = self.filter_note(folder_id)
+        {
+            nodes.insert(0, note);
         }
         nodes
+    }
+
+    /// A nota "Filter: ..." de uma pasta filtrada.
+    pub(crate) fn filter_note(&self, folder_id: &str) -> Option<ObjectNode> {
+        let text = self.filter_text(folder_id).filter(|t| !t.is_empty())?;
+        Some(node(
+            format!("{folder_id}/note"),
+            trf!("Filter: {filter}", filter = text),
+            NodeKind::Note,
+            false,
+        ))
     }
 
     /// Filhos dos nós deste módulo; None quando o id é de outro lugar.

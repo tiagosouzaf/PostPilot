@@ -12,6 +12,7 @@
 
 mod explorer;
 mod model;
+mod pool;
 mod query;
 pub mod script;
 mod tree;
@@ -146,6 +147,11 @@ impl Session {
     /// Versão do servidor, como `16.0.4135.4`.
     pub fn server_version(&self) -> &str {
         &self.server_version
+    }
+
+    /// O limite de espera por pedaço de resposta desta conexão.
+    pub fn command_timeout(&self) -> Option<Duration> {
+        self.command_timeout
     }
 
     pub fn client(&mut self) -> &mut TdsClient {
@@ -391,6 +397,7 @@ pub fn connect_error(e: &tiberius::error::Error, settings: &ConnectionSettings) 
 pub struct MssqlConnector {
     runtime: DbRuntime,
     metadata_timeout: Duration,
+    page: usize,
 }
 
 impl MssqlConnector {
@@ -398,7 +405,15 @@ impl MssqlConnector {
         MssqlConnector {
             runtime,
             metadata_timeout: METADATA_TIMEOUT,
+            page: explorer::PAGE,
         }
+    }
+
+    /// Outro tamanho para as partes em que as listas da árvore chegam (os
+    /// testes usam um pequeno).
+    pub fn with_page(mut self, page: usize) -> Self {
+        self.page = page;
+        self
     }
 
     /// Outro limite de espera para a árvore e os metadados (os testes
@@ -423,7 +438,8 @@ impl Connector for MssqlConnector {
             Some(self.metadata_timeout),
         ))?;
         let server_version = session.server_version().to_string();
-        let explorer = MssqlExplorer::new(session, password.to_string(), self.runtime.clone());
+        let explorer = MssqlExplorer::new(session, password.to_string(), self.runtime.clone())
+            .with_page(self.page);
         Ok(Connected {
             settings: settings.clone(),
             server_version,
