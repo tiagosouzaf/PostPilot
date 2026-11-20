@@ -103,6 +103,8 @@ Server escolhido.
   que não abre banco nenhum, o acesso é checado em grupos pequenos e cada grupo
   confirmado entra na árvore. Quem é `sysadmin` entra em todos, e para ele a
   checagem nem roda.
+- O seletor de banco da janela de consulta lê a lista do mesmo jeito: os
+  bancos confirmados aparecem enquanto o resto é checado.
 - A árvore usa conexões separadas das leituras pesadas (o catálogo do
   IntelliSense, o modelo das tabelas): até duas para a árvore, abertas só
   quando a primeira está ocupada, e uma para as pesadas.

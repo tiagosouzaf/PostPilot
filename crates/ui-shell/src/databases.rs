@@ -24,8 +24,13 @@ pub const IN_TRANSACTION_SQL: &str = "SELECT now() <> statement_timestamp()";
 /// Resultado que chega da thread do banco.
 type Slot<T> = Arc<Mutex<Option<T>>>;
 
+/// Os bancos já confirmados de uma lista que chega em partes.
+type Progress = Arc<Mutex<Option<Vec<String>>>>;
+
 enum Entry {
-    Loading(Slot<Result<Vec<String>, String>>),
+    /// A leitura em andamento, o que ela já confirmou e a última cópia
+    /// disso para mostrar.
+    Loading(Slot<Result<Vec<String>, String>>, Progress, Vec<String>),
     Ready(Vec<String>),
     Failed(String),
 }
@@ -46,32 +51,44 @@ impl DatabaseLists {
         database: &str,
         ctx: &egui::Context,
     ) {
-        if matches!(self.lists.get(key), Some(Entry::Loading(_))) {
+        if matches!(self.lists.get(key), Some(Entry::Loading(..))) {
             return;
         }
         let slot: Slot<Result<Vec<String>, String>> = Arc::default();
+        let progress = Progress::default();
         let session = service.open(database);
-        let sql = service.engine().list_databases_sql();
-        run_rows(&session, sql, slot.clone(), ctx, |rows| {
-            rows.into_iter()
-                .filter_map(|r| r.into_iter().next().flatten())
-                .collect()
-        });
+        if service.engine() == pgstudio_core::connection::Engine::SqlServer {
+            // Em partes: a checagem de acesso de todos os bancos de uma
+            // vez pode levar dezenas de segundos.
+            mssql_in_parts(session, slot.clone(), progress.clone(), ctx.clone());
+        } else {
+            let sql = service.engine().list_databases_sql();
+            run_rows(&session, sql, slot.clone(), ctx, |rows| {
+                rows.into_iter()
+                    .filter_map(|r| r.into_iter().next().flatten())
+                    .collect()
+            });
+        }
         if let Some(Entry::Ready(old)) = self.lists.remove(key) {
             // Mantém a lista antiga visível enquanto a nova não chega.
             self.lists
                 .insert(format!("{key}\u{0}old"), Entry::Ready(old));
         }
-        self.lists.insert(key.to_string(), Entry::Loading(slot));
+        self.lists
+            .insert(key.to_string(), Entry::Loading(slot, progress, Vec::new()));
     }
 
     /// Recebe as listas que chegaram.
     pub fn poll(&mut self) {
         let mut done = Vec::new();
-        for (key, entry) in &self.lists {
-            if let Entry::Loading(slot) = entry
-                && let Some(result) = slot.lock().ok().and_then(|mut s| s.take())
-            {
+        for (key, entry) in &mut self.lists {
+            let Entry::Loading(slot, progress, so_far) = entry else {
+                continue;
+            };
+            if let Some(names) = progress.lock().ok().and_then(|mut p| p.take()) {
+                *so_far = names;
+            }
+            if let Some(result) = slot.lock().ok().and_then(|mut s| s.take()) {
                 done.push((key.clone(), result));
             }
         }
@@ -90,9 +107,11 @@ impl DatabaseLists {
     pub fn get(&self, key: &str) -> &[String] {
         match self.lists.get(key) {
             Some(Entry::Ready(list)) => list,
-            Some(Entry::Loading(_)) => match self.lists.get(&format!("{key}\u{0}old")) {
+            // Relendo: a lista anterior, inteira. Na primeira leitura, os
+            // bancos que já foram confirmados.
+            Some(Entry::Loading(_, _, so_far)) => match self.lists.get(&format!("{key}\u{0}old")) {
                 Some(Entry::Ready(list)) => list,
-                _ => &[],
+                _ => so_far,
             },
             _ => &[],
         }
@@ -100,12 +119,12 @@ impl DatabaseLists {
 
     /// Se a lista do servidor está sendo lida.
     pub fn is_loading(&self, key: &str) -> bool {
-        matches!(self.lists.get(key), Some(Entry::Loading(_)))
+        matches!(self.lists.get(key), Some(Entry::Loading(..)))
     }
 
     /// Se alguma lista está sendo lida.
     pub fn is_loading_any(&self) -> bool {
-        self.lists.values().any(|e| matches!(e, Entry::Loading(_)))
+        self.lists.values().any(|e| matches!(e, Entry::Loading(..)))
     }
 
     /// Erro da última leitura da lista do servidor.
@@ -211,6 +230,95 @@ fn run_rows<T: Send + 'static>(
             _ => {}
         }),
     );
+}
+
+/// Os bancos no ar de um SQL Server, sem checar o acesso (não abre nenhum),
+/// e se o login é sysadmin.
+const MSSQL_ONLINE_SQL: &str = "SELECT name, IS_SRVROLEMEMBER('sysadmin') \
+    FROM sys.databases WHERE state = 0 ORDER BY name";
+
+/// De quantos bancos o acesso é checado por vez: poucos no começo, para os
+/// primeiros aparecerem logo.
+const MSSQL_ACCESS_CHUNKS: [usize; 2] = [8, 24];
+
+/// Roda `sql` e espera as linhas, ou o primeiro erro.
+fn rows_now(
+    session: &Arc<dyn QuerySession>,
+    sql: String,
+) -> Result<Vec<Vec<Option<String>>>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.execute(sql, Box::new(move |event| drop(tx.send(event))));
+    let mut rows = Vec::new();
+    let mut error = None;
+    loop {
+        match rx.recv() {
+            Ok(QueryEvent::Row(r)) => rows.push(r),
+            Ok(QueryEvent::Error(e)) => {
+                error.get_or_insert(e.message);
+            }
+            Ok(QueryEvent::Finished { .. }) => return error.map_or(Ok(rows), Err),
+            Ok(_) => {}
+            Err(_) => return Err(tr("The connection was lost.").to_string()),
+        }
+    }
+}
+
+/// A lista de bancos de um SQL Server, em partes. `HAS_DBACCESS` abre cada
+/// banco fechado (AUTO_CLOSE) para responder, e checar todos de uma vez
+/// leva dezenas de segundos num servidor com centenas deles. Os nomes vêm
+/// de uma leitura que não abre banco nenhum; o acesso é checado em grupos,
+/// e cada grupo confirmado já aparece (`progress`). Quem é sysadmin entra
+/// em todos e não passa pela checagem.
+fn mssql_in_parts(
+    session: Arc<dyn QuerySession>,
+    slot: Slot<Result<Vec<String>, String>>,
+    progress: Progress,
+    ctx: egui::Context,
+) {
+    let first = |r: Vec<Option<String>>| r.into_iter().next().flatten();
+    std::thread::spawn(move || {
+        let read = || -> Result<Vec<String>, String> {
+            let online = rows_now(&session, MSSQL_ONLINE_SQL.to_string())?;
+            let sysadmin = online
+                .first()
+                .is_some_and(|r| r.get(1).cloned().flatten().as_deref() == Some("1"));
+            let names: Vec<String> = online.into_iter().filter_map(first).collect();
+            if sysadmin {
+                return Ok(names);
+            }
+            let mut open = Vec::new();
+            let mut rest = names.as_slice();
+            let mut sizes = MSSQL_ACCESS_CHUNKS.into_iter();
+            let mut size = MSSQL_ACCESS_CHUNKS[0];
+            while !rest.is_empty() {
+                size = sizes.next().unwrap_or(size);
+                let (chunk, after) = rest.split_at(size.min(rest.len()));
+                rest = after;
+                let list: Vec<String> = chunk
+                    .iter()
+                    .map(|n| format!("N'{}'", n.replace('\'', "''")))
+                    .collect();
+                let sql = format!(
+                    "SELECT name FROM sys.databases \
+                      WHERE name IN ({}) AND state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name",
+                    list.join(", ")
+                );
+                open.extend(rows_now(&session, sql)?.into_iter().filter_map(first));
+                if !rest.is_empty() {
+                    if let Ok(mut p) = progress.lock() {
+                        *p = Some(open.clone());
+                    }
+                    ctx.request_repaint();
+                }
+            }
+            Ok(open)
+        };
+        let result = read();
+        if let Ok(mut s) = slot.lock() {
+            *s = Some(result);
+        }
+        ctx.request_repaint();
+    });
 }
 
 /// O que o seletor da toolbar mostra para a janela ativa.
