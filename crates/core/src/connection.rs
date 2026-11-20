@@ -241,9 +241,15 @@ impl Engine {
                 "SELECT datname FROM pg_catalog.pg_database \
                  WHERE datallowconn AND NOT datistemplate ORDER BY datname"
             }
+            // `HAS_DBACCESS` abre cada banco fechado (AUTO_CLOSE) para
+            // responder: quem é sysadmin entra em todos, e o `CASE`
+            // garante que a checagem nem roda para ele.
             Engine::SqlServer => {
                 "SELECT name FROM sys.databases \
-                 WHERE HAS_DBACCESS(name) = 1 AND state = 0 ORDER BY name"
+                 WHERE state = 0 \
+                   AND CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 \
+                            ELSE HAS_DBACCESS(name) END = 1 \
+                 ORDER BY name"
             }
             // Comando do cliente: a sessão do Redis responde sem ir ao
             // servidor com isto (`db0`... pelo `CONFIG GET databases`).

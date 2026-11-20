@@ -2,6 +2,8 @@
 //!
 //! Os filhos de um nó só são pedidos ao [`MetadataProvider`] quando o nó é
 //! expandido, numa thread separada, para a interface nunca esperar o banco.
+//! Uma lista grande ou lenta chega em partes: o que já veio aparece, com
+//! "Carregando..." no fim enquanto o resto não chega.
 //! Só as linhas visíveis são desenhadas, então milhares de nós não pesam.
 
 pub mod fake;
@@ -9,12 +11,14 @@ pub mod fake;
 use pgstudio_i18n::{tr, tr_noop, trf};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use eframe::egui;
 use egui_phosphor::regular as icon;
 use pgstudio_core::metadata::{
-    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, Property, ScriptAction,
+    Folder, MetadataError, MetadataProvider, NodeId, NodeKind, ObjectNode, PartSink, Property,
+    ScriptAction,
 };
 
 /// Estado de carga dos filhos de um nó (ou das raízes).
@@ -30,11 +34,51 @@ struct Entry {
     node: ObjectNode,
     expanded: bool,
     children: Load,
+    /// O que vem depois dos filhos já carregados.
+    tail: Tail,
+    /// A leitura dos filhos em andamento.
+    ticket: Option<Ticket>,
 }
+
+impl Entry {
+    fn new(node: ObjectNode) -> Self {
+        Entry {
+            node,
+            expanded: false,
+            children: Load::NotLoaded,
+            tail: Tail::None,
+            ticket: None,
+        }
+    }
+}
+
+/// O fim de uma lista de filhos que chega em partes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Tail {
+    /// A lista está inteira.
+    None,
+    /// O resto ainda está sendo lido.
+    Loading,
+    /// A leitura parou no meio com este erro: fica o que já veio.
+    Failed(String),
+}
+
+/// Identifica uma leitura; ligado quando ninguém mais espera por ela (o nó
+/// foi atualizado ou saiu da árvore), para a thread parar de ler.
+type Ticket = Arc<AtomicBool>;
 
 /// Quem pediu a carga: as raízes ou um nó.
 type Target = Option<NodeId>;
-type Reply = (Target, Result<Vec<ObjectNode>, MetadataError>);
+
+/// O que a thread de uma leitura manda.
+enum Part {
+    /// Uma parte dos filhos; vem mais.
+    More(Vec<ObjectNode>),
+    /// A última parte, ou o erro que parou a leitura.
+    Done(Result<Vec<ObjectNode>, MetadataError>),
+}
+
+type Reply = (Target, Ticket, Part);
 type PropertiesReply = (NodeId, Result<Vec<Property>, MetadataError>);
 
 /// Propriedades de um nó para a janela Properties, lidas quando ele é
@@ -125,6 +169,8 @@ pub struct ObjectExplorer {
     move_targets: Vec<String>,
     provider: Option<Arc<dyn MetadataProvider>>,
     roots: Load,
+    /// A leitura das raízes em andamento.
+    roots_ticket: Option<Ticket>,
     entries: HashMap<NodeId, Entry>,
     selected: Option<NodeId>,
     /// Nós a expandir assim que chegarem (a árvore de uma sessão anterior).
@@ -149,6 +195,7 @@ impl Default for ObjectExplorer {
             move_targets: Vec::new(),
             provider: None,
             roots: Load::NotLoaded,
+            roots_ticket: None,
             entries: HashMap::new(),
             selected: None,
             restore: HashSet::new(),
@@ -187,6 +234,16 @@ impl ObjectExplorer {
         self.properties.clear();
         self.provider = None;
         self.roots = Load::NotLoaded;
+        // As leituras em andamento param na próxima parte.
+        for ticket in self
+            .entries
+            .values()
+            .filter_map(|e| e.ticket.as_ref())
+            .chain(&self.roots_ticket)
+        {
+            ticket.store(true, Ordering::Relaxed);
+        }
+        self.roots_ticket = None;
         self.entries.clear();
         self.selected = None;
         self.restore.clear();
@@ -310,7 +367,19 @@ impl ObjectExplorer {
 
     /// Se alguma carga da árvore ainda não voltou.
     pub fn is_loading(&self) -> bool {
-        self.roots == Load::Loading || self.entries.values().any(|e| e.children == Load::Loading)
+        self.roots == Load::Loading
+            || self
+                .entries
+                .values()
+                .any(|e| e.children == Load::Loading || e.tail == Tail::Loading)
+    }
+
+    /// Se os filhos de um nó já aparecem mas o resto da lista ainda está
+    /// chegando.
+    pub fn loading_more(&self, id: &NodeId) -> bool {
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.tail == Tail::Loading)
     }
 
     /// Se alguma leitura de propriedades ainda não voltou. A thread que lê
@@ -328,7 +397,10 @@ impl ObjectExplorer {
             return;
         }
         entry.expanded = true;
-        if matches!(entry.children, Load::NotLoaded | Load::Failed(_)) {
+        // Uma lista que parou no meio é lida de novo desde o começo.
+        if matches!(entry.children, Load::NotLoaded | Load::Failed(_))
+            || matches!(entry.tail, Tail::Failed(_))
+        {
             self.request(Some(id.clone()));
         }
     }
@@ -361,12 +433,13 @@ impl ObjectExplorer {
 
     fn forget(&mut self, ids: &[NodeId]) {
         for id in ids {
-            if let Some(Entry {
-                children: Load::Loaded(kids),
-                ..
-            }) = self.entries.remove(id)
-            {
-                self.forget(&kids);
+            if let Some(entry) = self.entries.remove(id) {
+                if let Some(ticket) = &entry.ticket {
+                    ticket.store(true, Ordering::Relaxed);
+                }
+                if let Load::Loaded(kids) = entry.children {
+                    self.forget(&kids);
+                }
             }
             // As propriedades (e a dica do índice) são lidas de novo.
             self.properties.remove(id);
@@ -380,27 +453,72 @@ impl ObjectExplorer {
         let Some(provider) = self.provider.clone() else {
             return;
         };
-        match &target {
-            None => self.roots = Load::Loading,
-            Some(id) => {
-                if let Some(e) = self.entries.get_mut(id) {
-                    e.children = Load::Loading;
-                }
+        let ticket: Ticket = Arc::default();
+        let previous = match &target {
+            None => {
+                self.roots = Load::Loading;
+                self.roots_ticket.replace(ticket.clone())
             }
+            Some(id) => {
+                let Some(e) = self.entries.get_mut(id) else {
+                    return;
+                };
+                let old = std::mem::replace(&mut e.children, Load::Loading);
+                e.tail = Tail::None;
+                let previous = e.ticket.replace(ticket.clone());
+                // O que tinha chegado de uma leitura que parou no meio.
+                if let Load::Loaded(old) = old {
+                    self.forget(&old);
+                }
+                previous
+            }
+        };
+        // A leitura anterior deste nó, se ainda anda, não interessa mais.
+        if let Some(previous) = previous {
+            previous.store(true, Ordering::Relaxed);
         }
         let tx = self.tx.clone();
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
             let result = match &target {
                 None => provider.roots(),
-                Some(id) => provider.children(id),
+                Some(id) => {
+                    let part: PartSink = {
+                        let (tx, ctx) = (tx.clone(), ctx.clone());
+                        let (target, ticket) = (target.clone(), ticket.clone());
+                        Arc::new(move |nodes| {
+                            // O receptor some ao desconectar.
+                            if ticket.load(Ordering::Relaxed)
+                                || tx
+                                    .send((target.clone(), ticket.clone(), Part::More(nodes)))
+                                    .is_err()
+                            {
+                                return false;
+                            }
+                            if let Some(ctx) = &ctx {
+                                ctx.request_repaint();
+                            }
+                            true
+                        })
+                    };
+                    provider.children_in_parts(id, &part)
+                }
             };
             // O receptor some ao desconectar; aí a resposta não interessa.
-            let _ = tx.send((target, result));
+            let _ = tx.send((target, ticket, Part::Done(result)));
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
             }
         });
+    }
+
+    /// Guarda os nós que chegaram e devolve os ids deles.
+    fn adopt(&mut self, nodes: Vec<ObjectNode>) -> Vec<NodeId> {
+        let ids = nodes.iter().map(|n| n.id.clone()).collect();
+        for node in nodes {
+            self.entries.insert(node.id.clone(), Entry::new(node));
+        }
+        ids
     }
 
     /// Aplica as respostas que já chegaram. Devolve quantas foram aplicadas.
@@ -414,30 +532,52 @@ impl ObjectExplorer {
             };
             self.properties.insert(id, props);
         }
-        while let Ok((target, result)) = self.rx.try_recv() {
-            applied += 1;
-            let load = match result {
-                Ok(nodes) => {
-                    let ids = nodes.iter().map(|n| n.id.clone()).collect();
-                    for node in nodes {
-                        self.entries.insert(
-                            node.id.clone(),
-                            Entry {
-                                node,
-                                expanded: false,
-                                children: Load::NotLoaded,
-                            },
-                        );
-                    }
-                    Load::Loaded(ids)
-                }
-                Err(e) => Load::Failed(e.0),
+        while let Ok((target, ticket, part)) = self.rx.try_recv() {
+            // Resposta de uma leitura que já foi trocada por outra.
+            let current = match &target {
+                None => self.roots_ticket.as_ref(),
+                Some(id) => self.entries.get(id).and_then(|e| e.ticket.as_ref()),
             };
+            if !current.is_some_and(|c| Arc::ptr_eq(c, &ticket)) {
+                continue;
+            }
+            applied += 1;
+            let (nodes, tail) = match part {
+                Part::More(nodes) => (nodes, Tail::Loading),
+                Part::Done(Ok(nodes)) => (nodes, Tail::None),
+                Part::Done(Err(e)) => (Vec::new(), Tail::Failed(e.0)),
+            };
+            let ids = self.adopt(nodes);
+            let done = tail != Tail::Loading;
             match target {
-                None => self.roots = load,
+                None => {
+                    // As raízes vêm de uma vez só.
+                    self.roots = match tail {
+                        Tail::Failed(e) => Load::Failed(e),
+                        _ => Load::Loaded(ids),
+                    };
+                    self.roots_ticket = None;
+                }
                 Some(id) => {
-                    if let Some(e) = self.entries.get_mut(&id) {
-                        e.children = load;
+                    let Some(e) = self.entries.get_mut(&id) else {
+                        continue;
+                    };
+                    match (&mut e.children, tail) {
+                        // Nada tinha chegado: o erro fica no lugar da lista.
+                        (Load::Loading, Tail::Failed(error)) => {
+                            e.children = Load::Failed(error);
+                        }
+                        (Load::Loaded(kids), tail) => {
+                            kids.extend(ids);
+                            e.tail = tail;
+                        }
+                        (_, tail) => {
+                            e.children = Load::Loaded(ids);
+                            e.tail = tail;
+                        }
+                    }
+                    if done {
+                        e.ticket = None;
                     }
                 }
             }
@@ -486,7 +626,17 @@ impl ObjectExplorer {
             });
             if entry.expanded {
                 match &entry.children {
-                    Load::Loaded(kids) => self.push_rows(kids, depth + 1, rows),
+                    Load::Loaded(kids) => {
+                        self.push_rows(kids, depth + 1, rows);
+                        match &entry.tail {
+                            Tail::None => {}
+                            Tail::Loading => rows.push(Row::Loading { depth: depth + 1 }),
+                            Tail::Failed(e) => rows.push(Row::Failed {
+                                depth: depth + 1,
+                                error: e,
+                            }),
+                        }
+                    }
                     Load::Loading => rows.push(Row::Loading { depth: depth + 1 }),
                     Load::Failed(e) => rows.push(Row::Failed {
                         depth: depth + 1,
@@ -1223,6 +1373,179 @@ mod tests {
         assert!(oe.wait_idle(WAIT), "{path}");
     }
 
+    /// O que o provedor em partes entrega em seguida.
+    enum Step {
+        More(&'static [&'static str]),
+        End(Result<&'static [&'static str], &'static str>),
+    }
+
+    /// Provedor que entrega os filhos de `srv` em partes, no ritmo que o
+    /// teste manda: cada leitura pega o próximo receptor da fila.
+    struct Stepped {
+        reads: std::sync::Mutex<std::collections::VecDeque<Receiver<Step>>>,
+        /// Quantas leituras pararam porque ninguém mais esperava.
+        dropped: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn leaf(name: &str) -> ObjectNode {
+        ObjectNode {
+            id: id(&format!("srv/{name}")),
+            name: name.into(),
+            kind: NodeKind::Database,
+            has_children: false,
+        }
+    }
+
+    impl MetadataProvider for Stepped {
+        fn roots(&self) -> Result<Vec<ObjectNode>, MetadataError> {
+            Ok(vec![ObjectNode {
+                id: id("srv"),
+                name: "srv".into(),
+                kind: NodeKind::Server,
+                has_children: true,
+            }])
+        }
+
+        fn children(&self, _: &NodeId) -> Result<Vec<ObjectNode>, MetadataError> {
+            unreachable!("the tree reads in parts")
+        }
+
+        fn children_in_parts(
+            &self,
+            _: &NodeId,
+            part: &PartSink,
+        ) -> Result<Vec<ObjectNode>, MetadataError> {
+            let steps = self.reads.lock().unwrap().pop_front().unwrap();
+            let nodes = |names: &[&str]| names.iter().map(|n| leaf(n)).collect();
+            loop {
+                match steps.recv().unwrap() {
+                    Step::More(names) => {
+                        if !part(nodes(names)) {
+                            self.dropped.fetch_add(1, Ordering::Relaxed);
+                            return Ok(Vec::new());
+                        }
+                    }
+                    Step::End(Ok(names)) => return Ok(nodes(names)),
+                    Step::End(Err(e)) => return Err(MetadataError(e.into())),
+                }
+            }
+        }
+    }
+
+    /// Árvore sobre um [`Stepped`] com `reads` leituras, e quem manda os
+    /// passos de cada uma.
+    fn stepped(
+        reads: usize,
+    ) -> (
+        ObjectExplorer,
+        Vec<Sender<Step>>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let (senders, receivers): (Vec<_>, Vec<_>) = (0..reads).map(|_| channel()).unzip();
+        let dropped = Arc::default();
+        let mut oe = ObjectExplorer::default();
+        oe.connect(Arc::new(Stepped {
+            reads: std::sync::Mutex::new(receivers.into()),
+            dropped: Arc::clone(&dropped),
+        }));
+        assert!(oe.wait_idle(WAIT));
+        (oe, senders, dropped)
+    }
+
+    /// Nomes das linhas visíveis; `…` para "Carregando..." e `!` para erro.
+    fn names(oe: &ObjectExplorer) -> Vec<String> {
+        oe.visible_rows()
+            .iter()
+            .map(|r| match r {
+                Row::Node { node, .. } => node.name.clone(),
+                Row::Loading { .. } => "…".into(),
+                Row::Failed { .. } => "!".into(),
+            })
+            .collect()
+    }
+
+    /// Recebe as respostas até `done` valer.
+    fn wait_for(oe: &mut ObjectExplorer, done: impl Fn(&ObjectExplorer) -> bool) {
+        let deadline = std::time::Instant::now() + WAIT;
+        while !done(oe) {
+            assert!(std::time::Instant::now() < deadline, "{:?}", names(oe));
+            std::thread::sleep(Duration::from_millis(1));
+            oe.poll();
+        }
+    }
+
+    #[test]
+    fn a_list_in_parts_shows_what_already_came() {
+        let (mut oe, steps, _) = stepped(1);
+        oe.expand(&id("srv"));
+        assert_eq!(names(&oe), ["srv", "…"]);
+        steps[0].send(Step::More(&["a", "b"])).unwrap();
+        wait_for(&mut oe, |oe| oe.loading_more(&id("srv")));
+        // O começo já aparece (e já pode ser usado), com o resto a caminho.
+        assert_eq!(names(&oe), ["srv", "a", "b", "…"]);
+        assert!(oe.is_loading());
+        oe.select(&id("srv/a"));
+        assert_eq!(oe.selected().map(|n| n.name.as_str()), Some("a"));
+        steps[0].send(Step::More(&["c"])).unwrap();
+        wait_for(&mut oe, |oe| names(oe).len() == 5);
+        assert_eq!(names(&oe), ["srv", "a", "b", "c", "…"]);
+        steps[0].send(Step::End(Ok(&["d"]))).unwrap();
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(names(&oe), ["srv", "a", "b", "c", "d"]);
+        assert!(!oe.loading_more(&id("srv")));
+        // A seleção feita no meio da carga continua.
+        assert_eq!(oe.selected().map(|n| n.name.as_str()), Some("a"));
+    }
+
+    #[test]
+    fn a_list_that_stops_midway_keeps_what_came_and_reads_again() {
+        let (mut oe, steps, _) = stepped(2);
+        oe.expand(&id("srv"));
+        steps[0].send(Step::More(&["a"])).unwrap();
+        steps[0].send(Step::End(Err("boom"))).unwrap();
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(names(&oe), ["srv", "a", "!"]);
+        // Recolher e expandir lê de novo, desde o começo.
+        oe.collapse(&id("srv"));
+        oe.expand(&id("srv"));
+        assert_eq!(names(&oe), ["srv", "…"]);
+        steps[1].send(Step::End(Ok(&["a", "b"]))).unwrap();
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(names(&oe), ["srv", "a", "b"]);
+    }
+
+    #[test]
+    fn refreshing_midway_drops_the_read_in_progress() {
+        let (mut oe, steps, dropped) = stepped(2);
+        oe.expand(&id("srv"));
+        steps[0].send(Step::More(&["old"])).unwrap();
+        wait_for(&mut oe, |oe| oe.loading_more(&id("srv")));
+        oe.refresh(&id("srv"));
+        assert_eq!(names(&oe), ["srv", "…"]);
+        // A leitura antiga para na parte seguinte, e nada dela entra.
+        steps[0].send(Step::More(&["stale"])).unwrap();
+        steps[1].send(Step::More(&["new"])).unwrap();
+        wait_for(&mut oe, |oe| oe.loading_more(&id("srv")));
+        wait_for(&mut oe, |_| dropped.load(Ordering::Relaxed) == 1);
+        steps[1].send(Step::End(Ok(&[]))).unwrap();
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(names(&oe), ["srv", "new"]);
+    }
+
+    #[test]
+    fn a_saved_tree_expands_nodes_from_any_part() {
+        let (mut oe, steps, _) = stepped(1);
+        oe.restore_expanded([id("srv"), id("srv/zz")]);
+        wait_for(&mut oe, |oe| names(oe).len() == 2);
+        steps[0].send(Step::More(&["a"])).unwrap();
+        wait_for(&mut oe, |oe| oe.loading_more(&id("srv")));
+        // O nó salvo ainda não chegou: continua esperando.
+        assert!(oe.expanded().contains(&id("srv/zz")));
+        steps[0].send(Step::End(Ok(&["zz"]))).unwrap();
+        assert!(oe.wait_idle(WAIT));
+        assert_eq!(names(&oe), ["srv", "a", "zz"]);
+    }
+
     #[test]
     fn children_load_only_when_expanded() {
         let mut oe = connected();
@@ -1357,16 +1680,12 @@ mod tests {
         let mut oe = connected();
         oe.entries.insert(
             id("bad"),
-            Entry {
-                node: ObjectNode {
-                    id: id("bad"),
-                    name: "bad".into(),
-                    kind: NodeKind::Schema,
-                    has_children: true,
-                },
-                expanded: false,
-                children: Load::NotLoaded,
-            },
+            Entry::new(ObjectNode {
+                id: id("bad"),
+                name: "bad".into(),
+                kind: NodeKind::Schema,
+                has_children: true,
+            }),
         );
         if let Load::Loaded(ids) = &mut oe.roots {
             ids.push(id("bad"));

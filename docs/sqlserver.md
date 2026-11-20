@@ -91,6 +91,21 @@ PGSTUDIO_CONNECT='sqlserver:127.0.0.1,14330' PGUSER=sa PGPASSWORD='PostPilot!202
 `PGSTUDIO_CONNECT=dialog:sqlserver` abre o Connect to Server já com o SQL
 Server escolhido.
 
+## Como a árvore carrega
+
+- Cada nó só lê os filhos quando é expandido.
+- Listas grandes chegam em partes de 500 nós: o que já veio aparece e já pode
+  ser usado, com "Carregando..." no fim enquanto o resto não chega.
+- A lista de bancos não espera a checagem de acesso de todos. `HAS_DBACCESS`
+  abre cada banco fechado (`AUTO_CLOSE`) para responder: num servidor com 300
+  deles a lista inteira levava mais de 15 s. Agora os nomes vêm de uma leitura
+  que não abre banco nenhum, o acesso é checado em grupos pequenos e cada grupo
+  confirmado entra na árvore. Quem é `sysadmin` entra em todos, e para ele a
+  checagem nem roda.
+- A árvore usa conexões separadas das leituras pesadas (o catálogo do
+  IntelliSense, o modelo das tabelas): até duas para a árvore, abertas só
+  quando a primeira está ocupada, e uma para as pesadas.
+
 ## Tempo de espera e conexão que cai
 
 - As janelas de consulta não têm limite de tempo, como no SSMS: uma consulta

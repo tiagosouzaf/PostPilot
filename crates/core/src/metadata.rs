@@ -218,6 +218,10 @@ impl NodeKind {
     }
 }
 
+/// Recebe uma parte dos filhos de um nó ([`MetadataProvider::children_in_parts`]).
+/// Devolve false quando ninguém mais espera por eles.
+pub type PartSink = std::sync::Arc<dyn Fn(Vec<ObjectNode>) -> bool + Send + Sync>;
+
 /// Fonte dos nós do Object Explorer.
 ///
 /// As chamadas podem demorar (vão ao banco); quem usa chama fora da thread da
@@ -228,6 +232,21 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Filhos de um nó.
     fn children(&self, parent: &NodeId) -> Result<Vec<ObjectNode>, MetadataError>;
+
+    /// Filhos de um nó, em partes: cada parte pronta vai para `part` na
+    /// ordem em que aparece na árvore, e a última volta como resultado.
+    /// Quem lê listas grandes ou lentas (os bancos de um SQL Server com
+    /// centenas deles) entrega assim o começo sem esperar o resto. Quando
+    /// `part` devolve false ninguém mais espera a lista, e a leitura pode
+    /// parar. O padrão lê tudo de uma vez.
+    fn children_in_parts(
+        &self,
+        parent: &NodeId,
+        part: &PartSink,
+    ) -> Result<Vec<ObjectNode>, MetadataError> {
+        let _ = part;
+        self.children(parent)
+    }
 
     /// Se o servidor é um banco relacional. Os outros (Redis...) não
     /// mostram no menu o que só vale para tabelas: Tasks, Design, Script
