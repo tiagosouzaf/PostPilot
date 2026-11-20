@@ -690,7 +690,8 @@ fn explorer_walks_tables_columns_keys_and_programmability() {
     let procs = child(meta, &prog.id, "Procedures");
     child(meta, &procs.id, "dbo.listar");
     let funcs = child(meta, &prog.id, "Functions");
-    let f = child(meta, &funcs.id, "dbo.dobro");
+    let scalar = child(meta, &funcs.id, "Scalar-valued Functions");
+    let f = child(meta, &scalar.id, "dbo.dobro");
     assert_eq!(
         meta.script(&f.id, ScriptAction::Drop).unwrap(),
         "DROP FUNCTION [dbo].[dobro]\nGO\n"
@@ -923,4 +924,392 @@ fn a_query_slower_than_thirty_seconds_finishes() {
         events.contains(&QueryEvent::Row(vec![Some("5".into())])),
         "{events:?}"
     );
+}
+
+/// Os nomes dos filhos de `parent`.
+fn names(meta: &dyn pgstudio_core::metadata::MetadataProvider, parent: &NodeId) -> Vec<String> {
+    meta.children(parent)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.name)
+        .collect()
+}
+
+#[test]
+fn explorer_shows_the_rest_of_the_ssms_tree() {
+    use pgstudio_core::metadata::NodeKind;
+    let Some((s, pw)) = settings() else { return };
+    let Some(q) = session("tempdb") else { return };
+    let setup = run(
+        q.as_ref(),
+        "IF DB_ID('pp_tree') IS NOT NULL BEGIN \
+             ALTER DATABASE pp_tree SET SINGLE_USER WITH ROLLBACK IMMEDIATE; \
+             DROP DATABASE pp_tree; END\n\
+         GO\n\
+         CREATE DATABASE pp_tree\n\
+         GO\n\
+         USE pp_tree\n\
+         GO\n\
+         CREATE SCHEMA vendas\n\
+         GO\n\
+         CREATE TABLE dbo.cliente (id int PRIMARY KEY, nome nvarchar(60) NOT NULL);\n\
+         CREATE TABLE vendas.pedido (id int PRIMARY KEY, total decimal(10,2));\n\
+         CREATE STATISTICS st_nome ON dbo.cliente (nome);\n\
+         CREATE SYNONYM dbo.clientes FOR dbo.cliente;\n\
+         CREATE TYPE dbo.Cpf FROM char(11) NOT NULL;\n\
+         CREATE TYPE dbo.Itens AS TABLE (id int NOT NULL, nome nvarchar(40) NULL);\n\
+         CREATE SEQUENCE dbo.numero AS int START WITH 10 INCREMENT BY 2;\n\
+         CREATE PARTITION FUNCTION pf_ano (int) AS RANGE RIGHT FOR VALUES (2024, 2025);\n\
+         CREATE PARTITION SCHEME ps_ano AS PARTITION pf_ano ALL TO ([PRIMARY]);\n\
+         CREATE APPLICATION ROLE app_vendas WITH PASSWORD = 'PostPilot!2026';\n\
+         CREATE QUEUE dbo.fila;\n\
+         CREATE SERVICE servico ON QUEUE dbo.fila;\n\
+         GO\n\
+         CREATE VIEW dbo.v_cliente AS SELECT id, nome FROM dbo.cliente\n\
+         GO\n\
+         CREATE TRIGGER dbo.t_v_cliente ON dbo.v_cliente INSTEAD OF INSERT AS SET NOCOUNT ON\n\
+         GO\n\
+         CREATE PROCEDURE dbo.buscar @id int, @nome nvarchar(60) OUTPUT AS \
+             SELECT @nome = nome FROM dbo.cliente WHERE id = @id\n\
+         GO\n\
+         CREATE FUNCTION dbo.dobro (@x int) RETURNS int AS BEGIN RETURN @x * 2 END\n\
+         GO\n\
+         CREATE FUNCTION dbo.clientes_de (@id int) RETURNS TABLE AS \
+             RETURN SELECT id, nome FROM dbo.cliente WHERE id = @id\n\
+         GO\n\
+         CREATE RULE dbo.positivo AS @v > 0\n\
+         GO\n\
+         CREATE DEFAULT dbo.zero AS 0\n\
+         GO\n\
+         CREATE TRIGGER tr_ddl ON DATABASE FOR CREATE_TABLE AS SET NOCOUNT ON\n\
+         GO\n\
+         USE master\n\
+         GO\n\
+         IF EXISTS (SELECT 1 FROM sys.servers WHERE name = 'pp_linked') \
+             EXEC sp_dropserver 'pp_linked', 'droplogins';\n\
+         EXEC sp_addlinkedserver @server = N'pp_linked', @srvproduct = N'', \
+             @provider = N'MSOLEDBSQL', @datasrc = N'outro,1433';\n\
+         IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = 'pp_job') \
+             EXEC msdb.dbo.sp_delete_job @job_name = N'pp_job';\n\
+         EXEC msdb.dbo.sp_add_job @job_name = N'pp_job', @description = N'limpa';\n\
+         EXEC msdb.dbo.sp_add_jobstep @job_name = N'pp_job', @step_name = N'passo', \
+             @subsystem = N'TSQL', @database_name = N'pp_tree', @command = N'SELECT ''x''';\n\
+         GO\n\
+         USE tempdb",
+    );
+    assert!(
+        !setup.iter().any(|e| matches!(e, QueryEvent::Error(_))),
+        "{setup:?}"
+    );
+    let c = connector().connect(&s, &pw).expect("connect");
+    let meta = c.metadata.as_ref();
+    let server = meta.roots().unwrap().remove(0);
+    assert_eq!(
+        names(meta, &server.id),
+        [
+            "Databases",
+            "Security",
+            "Server Objects",
+            "SQL Server Agent"
+        ]
+    );
+    let dbs = child(meta, &server.id, "Databases");
+    let db = child(meta, &dbs.id, "pp_tree");
+    // As pastas do banco, na ordem do SSMS.
+    assert_eq!(
+        names(meta, &db.id),
+        [
+            "Database Diagrams",
+            "Tables",
+            "Views",
+            "Synonyms",
+            "Programmability",
+            "Service Broker",
+            "Storage",
+            "Security"
+        ]
+    );
+
+    // Synonym: o script escreve para onde ele aponta.
+    let synonyms = child(meta, &db.id, "Synonyms");
+    let synonym = child(meta, &synonyms.id, "dbo.clientes");
+    assert_eq!(synonym.kind, NodeKind::Synonym);
+    assert_eq!(
+        meta.script(&synonym.id, ScriptAction::Create).unwrap(),
+        "CREATE SYNONYM [dbo].[clientes] FOR [dbo].[cliente]\nGO\n"
+    );
+    assert_eq!(
+        meta.script(&synonym.id, ScriptAction::Drop).unwrap(),
+        "DROP SYNONYM [dbo].[clientes]\nGO\n"
+    );
+    let props = meta.properties(&synonym.id).unwrap();
+    assert!(
+        props
+            .iter()
+            .any(|p| p.name == "Base object" && p.value == "[dbo].[cliente]"),
+        "{props:?}"
+    );
+
+    // Programmability: procedures com parâmetros, funções por tipo.
+    let prog = child(meta, &db.id, "Programmability");
+    assert_eq!(
+        names(meta, &prog.id),
+        [
+            "Procedures",
+            "Functions",
+            "Database Triggers",
+            "Assemblies",
+            "Types",
+            "Rules",
+            "Defaults",
+            "Sequences"
+        ]
+    );
+    let procs = child(meta, &prog.id, "Procedures");
+    let buscar = child(meta, &procs.id, "dbo.buscar");
+    let params = child(meta, &buscar.id, "Parameters");
+    assert_eq!(
+        names(meta, &params.id),
+        ["@id (int, Input)", "@nome (nvarchar(60), Output)"]
+    );
+    let script = meta.script(&buscar.id, ScriptAction::Create).unwrap();
+    assert!(script.contains("CREATE PROCEDURE dbo.buscar"), "{script}");
+    let funcs = child(meta, &prog.id, "Functions");
+    assert_eq!(
+        names(meta, &funcs.id),
+        [
+            "Table-valued Functions",
+            "Scalar-valued Functions",
+            "Aggregate Functions"
+        ]
+    );
+    let table_funcs = child(meta, &funcs.id, "Table-valued Functions");
+    assert_eq!(names(meta, &table_funcs.id), ["dbo.clientes_de"]);
+    let scalar = child(meta, &funcs.id, "Scalar-valued Functions");
+    let dobro = child(meta, &scalar.id, "dbo.dobro");
+    let params = child(meta, &dobro.id, "Parameters");
+    assert_eq!(names(meta, &params.id), ["Returns int", "@x (int, Input)"]);
+    assert!(
+        meta.script(&dobro.id, ScriptAction::Create)
+            .unwrap()
+            .contains("CREATE FUNCTION dbo.dobro")
+    );
+
+    // Gatilho de banco, rule e default: a definição como foi escrita.
+    let triggers = child(meta, &prog.id, "Database Triggers");
+    let ddl = child(meta, &triggers.id, "tr_ddl");
+    assert!(
+        meta.script(&ddl.id, ScriptAction::Create)
+            .unwrap()
+            .contains("CREATE TRIGGER tr_ddl ON DATABASE")
+    );
+    assert_eq!(
+        meta.script(&ddl.id, ScriptAction::Drop).unwrap(),
+        "DROP TRIGGER [tr_ddl] ON DATABASE\nGO\n"
+    );
+    assert!(!meta.properties(&ddl.id).unwrap().is_empty());
+    let rules = child(meta, &prog.id, "Rules");
+    let rule = child(meta, &rules.id, "dbo.positivo");
+    assert!(
+        meta.script(&rule.id, ScriptAction::Create)
+            .unwrap()
+            .contains("CREATE RULE dbo.positivo")
+    );
+    assert_eq!(
+        meta.script(&rule.id, ScriptAction::Drop).unwrap(),
+        "DROP RULE [dbo].[positivo]\nGO\n"
+    );
+    let defaults = child(meta, &prog.id, "Defaults");
+    let zero = child(meta, &defaults.id, "dbo.zero");
+    assert_eq!(
+        meta.script(&zero.id, ScriptAction::Drop).unwrap(),
+        "DROP DEFAULT [dbo].[zero]\nGO\n"
+    );
+
+    // Tipos de dados e de tabela.
+    let types = child(meta, &prog.id, "Types");
+    let data_types = child(meta, &types.id, "User-Defined Data Types");
+    let cpf = child(meta, &data_types.id, "dbo.Cpf");
+    assert_eq!(
+        meta.script(&cpf.id, ScriptAction::Create).unwrap(),
+        "CREATE TYPE [dbo].[Cpf] FROM [char](11) NOT NULL\nGO\n"
+    );
+    let table_types = child(meta, &types.id, "User-Defined Table Types");
+    let itens = child(meta, &table_types.id, "dbo.Itens");
+    assert_eq!(
+        meta.script(&itens.id, ScriptAction::Create).unwrap(),
+        "CREATE TYPE [dbo].[Itens] AS TABLE(\n\t[id] [int] NOT NULL,\n\t[nome] [nvarchar](40) NULL\n)\nGO\n"
+    );
+    assert_eq!(
+        meta.script(&itens.id, ScriptAction::Drop).unwrap(),
+        "DROP TYPE [dbo].[Itens]\nGO\n"
+    );
+    assert!(
+        meta.properties(&cpf.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Base type" && p.value == "char")
+    );
+
+    // Sequence.
+    let seqs = child(meta, &prog.id, "Sequences");
+    let numero = child(meta, &seqs.id, "dbo.numero");
+    let script = meta.script(&numero.id, ScriptAction::Create).unwrap();
+    assert!(
+        script.starts_with(
+            "CREATE SEQUENCE [dbo].[numero]\n AS [int]\n START WITH 10\n INCREMENT BY 2\n"
+        ),
+        "{script}"
+    );
+
+    // A view ganha Triggers e Statistics; a tabela, Statistics.
+    let views = child(meta, &db.id, "Views");
+    let view = child(meta, &views.id, "dbo.v_cliente");
+    assert_eq!(
+        names(meta, &view.id),
+        ["Columns", "Triggers", "Indexes", "Statistics"]
+    );
+    let view_triggers = child(meta, &view.id, "Triggers");
+    assert_eq!(names(meta, &view_triggers.id), ["t_v_cliente"]);
+    let tables = child(meta, &db.id, "Tables");
+    let cliente = child(meta, &tables.id, "dbo.cliente");
+    let stats = child(meta, &cliente.id, "Statistics");
+    let st = child(meta, &stats.id, "st_nome");
+    assert!(
+        meta.properties(&st.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Columns" && p.value == "nome")
+    );
+
+    // Filtro pelo nome nas listas longas: vale na próxima leitura e avisa
+    // no começo da lista.
+    assert_eq!(meta.filter(&tables.id).as_deref(), Some(""));
+    assert_eq!(meta.filter(&db.id), None);
+    meta.set_filter(&tables.id, "PED");
+    let filtered = meta.children(&tables.id).unwrap();
+    assert_eq!(filtered[0].kind, NodeKind::Note);
+    assert_eq!(filtered[1].name, "vendas.pedido");
+    assert_eq!(filtered.len(), 2);
+    meta.set_filter(&tables.id, "100%_[");
+    assert_eq!(meta.children(&tables.id).unwrap().len(), 1);
+    meta.set_filter(&tables.id, "");
+    assert_eq!(names(meta, &tables.id), ["dbo.cliente", "vendas.pedido"]);
+
+    // Service Broker, Storage e Security do banco.
+    let broker = child(meta, &db.id, "Service Broker");
+    let queues = child(meta, &broker.id, "Queues");
+    let fila = child(meta, &queues.id, "fila");
+    assert!(!meta.properties(&fila.id).unwrap().is_empty());
+    let services = child(meta, &broker.id, "Services");
+    let servico = child(meta, &services.id, "servico");
+    assert!(
+        meta.properties(&servico.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Queue" && p.value == "fila")
+    );
+    assert_eq!(
+        names(meta, &child(meta, &broker.id, "Message Types").id),
+        Vec::<String>::new()
+    );
+    let storage = child(meta, &db.id, "Storage");
+    let filegroups = child(meta, &storage.id, "Filegroups");
+    let primary = child(meta, &filegroups.id, "PRIMARY");
+    assert!(
+        meta.properties(&primary.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Default" && p.value == "yes")
+    );
+    let schemes = child(meta, &storage.id, "Partition Schemes");
+    let scheme = child(meta, &schemes.id, "ps_ano");
+    assert!(
+        meta.properties(&scheme.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Function" && p.value == "pf_ano")
+    );
+    let functions = child(meta, &storage.id, "Partition Functions");
+    let function = child(meta, &functions.id, "pf_ano");
+    assert!(
+        meta.properties(&function.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Partitions" && p.value == "3")
+    );
+    let security = child(meta, &db.id, "Security");
+    assert_eq!(
+        names(meta, &security.id),
+        [
+            "Users",
+            "Database Roles",
+            "Application Roles",
+            "Schemas",
+            "Certificates",
+            "Symmetric Keys",
+            "Asymmetric Keys"
+        ]
+    );
+    child(
+        meta,
+        &child(meta, &security.id, "Application Roles").id,
+        "app_vendas",
+    );
+    let schemas = child(meta, &security.id, "Schemas");
+    let vendas = child(meta, &schemas.id, "vendas");
+    assert_eq!(vendas.kind, NodeKind::Schema);
+    assert_eq!(
+        meta.script(&vendas.id, ScriptAction::Create).unwrap(),
+        "CREATE SCHEMA [vendas] AUTHORIZATION [dbo]\nGO\n"
+    );
+    assert_eq!(meta.database_of(&vendas.id).as_deref(), Some("pp_tree"));
+
+    // O servidor: credenciais, Server Objects e os jobs do Agent.
+    let server_security = child(meta, &server.id, "Security");
+    assert_eq!(
+        names(meta, &server_security.id),
+        ["Logins", "Server Roles", "Credentials"]
+    );
+    let objects = child(meta, &server.id, "Server Objects");
+    assert_eq!(
+        names(meta, &objects.id),
+        ["Backup Devices", "Endpoints", "Linked Servers", "Triggers"]
+    );
+    let endpoints = child(meta, &objects.id, "Endpoints");
+    assert!(!names(meta, &endpoints.id).is_empty());
+    let linked = child(meta, &objects.id, "Linked Servers");
+    let other = child(meta, &linked.id, "pp_linked");
+    assert_eq!(other.kind, NodeKind::LinkedServer);
+    assert_eq!(
+        meta.script(&other.id, ScriptAction::Create).unwrap(),
+        "EXEC master.dbo.sp_addlinkedserver @server = N'pp_linked', @srvproduct = N'', \
+         @provider = N'MSOLEDBSQL', @datasrc = N'outro,1433'\nGO\n"
+    );
+    assert!(
+        meta.properties(&other.id)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Data source" && p.value == "outro,1433")
+    );
+    let agent = child(meta, &server.id, "SQL Server Agent");
+    let jobs = child(meta, &agent.id, "Jobs");
+    let job = child(meta, &jobs.id, "pp_job");
+    assert_eq!(job.kind, NodeKind::Job);
+    let script = meta.script(&job.id, ScriptAction::Create).unwrap();
+    assert!(
+        script.contains("sp_add_job @job_name = N'pp_job', @enabled = 1, @description = N'limpa'"),
+        "{script}"
+    );
+    assert!(script.contains("@command = N'SELECT ''x'''"), "{script}");
+    assert_eq!(
+        meta.script(&job.id, ScriptAction::Drop).unwrap(),
+        "EXEC msdb.dbo.sp_delete_job @job_name = N'pp_job'\nGO\n"
+    );
+    let props = meta.properties(&job.id).unwrap();
+    assert!(
+        props.iter().any(|p| p.name == "Steps" && p.value == "1"),
+        "{props:?}"
+    );
+    assert_eq!(meta.database_of(&job.id), None);
 }

@@ -6894,3 +6894,195 @@ msgstr "Condição"
 
 msgid "Scans"
 msgstr "Leituras"
+
+msgid "Synonyms"
+msgstr "Sinônimos"
+
+msgid "Table-valued Functions"
+msgstr "Funções de Tabela"
+
+msgid "Scalar-valued Functions"
+msgstr "Funções Escalares"
+
+msgid "Aggregate Functions"
+msgstr "Funções de Agregação"
+
+msgid "Database Triggers"
+msgstr "Gatilhos de Banco de Dados"
+
+msgid "Assemblies"
+msgstr "Assemblies"
+
+msgid "User-Defined Data Types"
+msgstr "Tipos de Dados do Usuário"
+
+msgid "User-Defined Table Types"
+msgstr "Tipos de Tabela do Usuário"
+
+msgid "Rules"
+msgstr "Regras"
+
+msgid "Defaults"
+msgstr "Padrões"
+
+msgid "Parameters"
+msgstr "Parâmetros"
+
+msgid "Statistics"
+msgstr "Estatísticas"
+
+msgid "Service Broker"
+msgstr "Service Broker"
+
+msgid "Message Types"
+msgstr "Tipos de Mensagem"
+
+msgid "Contracts"
+msgstr "Contratos"
+
+msgid "Queues"
+msgstr "Filas"
+
+msgid "Services"
+msgstr "Serviços"
+
+msgid "Storage"
+msgstr "Armazenamento"
+
+msgid "Filegroups"
+msgstr "Grupos de Arquivos"
+
+msgid "Partition Schemes"
+msgstr "Esquemas de Partição"
+
+msgid "Partition Functions"
+msgstr "Funções de Partição"
+
+msgid "Full Text Catalogs"
+msgstr "Catálogos de Texto Completo"
+
+msgid "Application Roles"
+msgstr "Roles de Aplicativo"
+
+msgid "Certificates"
+msgstr "Certificados"
+
+msgid "Symmetric Keys"
+msgstr "Chaves Simétricas"
+
+msgid "Asymmetric Keys"
+msgstr "Chaves Assimétricas"
+
+msgid "Credentials"
+msgstr "Credenciais"
+
+msgid "Server Objects"
+msgstr "Objetos de Servidor"
+
+msgid "Backup Devices"
+msgstr "Dispositivos de Backup"
+
+msgid "Endpoints"
+msgstr "Pontos de Extremidade"
+
+msgid "Linked Servers"
+msgstr "Servidores Vinculados"
+
+msgid "SQL Server Agent"
+msgstr "SQL Server Agent"
+
+msgid "Jobs"
+msgstr "Trabalhos"
+
+msgid "Synonym"
+msgstr "Sinônimo"
+
+msgid "Parameter"
+msgstr "Parâmetro"
+
+msgid "Statistic"
+msgstr "Estatística"
+
+msgid "Linked Server"
+msgstr "Servidor Vinculado"
+
+msgid "Job"
+msgstr "Trabalho"
+
+msgid "Filter..."
+msgstr "Filtrar..."
+
+msgid "Show only the objects whose name contains this text."
+msgstr "Mostra só os objetos cujo nome contém este texto."
+
+msgid "Returns {type}"
+msgstr "Retorna {type}"
+
+msgid "Input"
+msgstr "Entrada"
+
+msgid "Read-only"
+msgstr "Somente leitura"
+
+msgid "Base object"
+msgstr "Objeto base"
+
+msgid "Files"
+msgstr "Arquivos"
+
+msgid "Partitions"
+msgstr "Partições"
+
+msgid "Range"
+msgstr "Intervalo"
+
+msgid "Subject"
+msgstr "Assunto"
+
+msgid "Valid from"
+msgstr "Válido desde"
+
+msgid "Private key"
+msgstr "Chave privada"
+
+msgid "Algorithm"
+msgstr "Algoritmo"
+
+msgid "Key length"
+msgstr "Tamanho da chave"
+
+msgid "Validation"
+msgstr "Validação"
+
+msgid "Activation procedure"
+msgstr "Procedure de ativação"
+
+msgid "Physical name"
+msgstr "Nome físico"
+
+msgid "Protocol"
+msgstr "Protocolo"
+
+msgid "Product"
+msgstr "Produto"
+
+msgid "Provider"
+msgstr "Provedor"
+
+msgid "Data source"
+msgstr "Fonte de dados"
+
+msgid "Catalog"
+msgstr "Catálogo"
+
+msgid "Steps"
+msgstr "Passos"
+
+msgid "Last run"
+msgstr "Última execução"
+
+msgid "Auto created"
+msgstr "Criada automaticamente"
+
+msgid "Last updated"
+msgstr "Última atualização"
