@@ -14,6 +14,7 @@ mod explorer;
 mod model;
 mod query;
 pub mod script;
+mod tree;
 pub mod value;
 
 use std::sync::Arc;

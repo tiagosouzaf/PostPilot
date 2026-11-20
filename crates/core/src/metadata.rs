@@ -40,6 +40,40 @@ pub enum Folder {
     Users,
     /// Database Roles (SQL Server).
     DatabaseRoles,
+    /// As pastas a seguir são do SQL Server, com os nomes do SSMS.
+    Synonyms,
+    TableFunctions,
+    ScalarFunctions,
+    AggregateFunctions,
+    DatabaseTriggers,
+    Assemblies,
+    DataTypes,
+    TableTypes,
+    Rules,
+    Defaults,
+    Parameters,
+    Statistics,
+    ServiceBroker,
+    MessageTypes,
+    Contracts,
+    Queues,
+    Services,
+    Storage,
+    Filegroups,
+    PartitionSchemes,
+    PartitionFunctions,
+    FullTextCatalogs,
+    ApplicationRoles,
+    Certificates,
+    SymmetricKeys,
+    AsymmetricKeys,
+    Credentials,
+    ServerObjects,
+    BackupDevices,
+    Endpoints,
+    LinkedServers,
+    Agent,
+    Jobs,
 }
 
 impl Folder {
@@ -70,6 +104,39 @@ impl Folder {
             Folder::ServerRoles => "Server Roles",
             Folder::Users => "Users",
             Folder::DatabaseRoles => "Database Roles",
+            Folder::Synonyms => "Synonyms",
+            Folder::TableFunctions => "Table-valued Functions",
+            Folder::ScalarFunctions => "Scalar-valued Functions",
+            Folder::AggregateFunctions => "Aggregate Functions",
+            Folder::DatabaseTriggers => "Database Triggers",
+            Folder::Assemblies => "Assemblies",
+            Folder::DataTypes => "User-Defined Data Types",
+            Folder::TableTypes => "User-Defined Table Types",
+            Folder::Rules => "Rules",
+            Folder::Defaults => "Defaults",
+            Folder::Parameters => "Parameters",
+            Folder::Statistics => "Statistics",
+            Folder::ServiceBroker => "Service Broker",
+            Folder::MessageTypes => "Message Types",
+            Folder::Contracts => "Contracts",
+            Folder::Queues => "Queues",
+            Folder::Services => "Services",
+            Folder::Storage => "Storage",
+            Folder::Filegroups => "Filegroups",
+            Folder::PartitionSchemes => "Partition Schemes",
+            Folder::PartitionFunctions => "Partition Functions",
+            Folder::FullTextCatalogs => "Full Text Catalogs",
+            Folder::ApplicationRoles => "Application Roles",
+            Folder::Certificates => "Certificates",
+            Folder::SymmetricKeys => "Symmetric Keys",
+            Folder::AsymmetricKeys => "Asymmetric Keys",
+            Folder::Credentials => "Credentials",
+            Folder::ServerObjects => "Server Objects",
+            Folder::BackupDevices => "Backup Devices",
+            Folder::Endpoints => "Endpoints",
+            Folder::LinkedServers => "Linked Servers",
+            Folder::Agent => "SQL Server Agent",
+            Folder::Jobs => "Jobs",
         }
     }
 }
@@ -94,6 +161,19 @@ pub enum NodeKind {
     Type,
     Extension,
     Role,
+    /// Sinônimo (SQL Server).
+    Synonym,
+    /// Parâmetro de uma procedure ou função.
+    Parameter,
+    /// Estatística de uma tabela ou view (SQL Server).
+    Statistic,
+    /// Linked server (SQL Server).
+    LinkedServer,
+    /// Job do SQL Server Agent.
+    Job,
+    /// Objeto que só tem nome e propriedades (assembly, certificado,
+    /// filegroup...).
+    Item,
     /// Grupo de chaves com o mesmo prefixo (`user:*` no Redis).
     KeyGroup,
     /// Uma chave de um banco chave-valor (Redis).
@@ -129,6 +209,12 @@ impl NodeKind {
             NodeKind::Type => "Type",
             NodeKind::Extension => "Extension",
             NodeKind::Role => "Role",
+            NodeKind::Synonym => "Synonym",
+            NodeKind::Parameter => "Parameter",
+            NodeKind::Statistic => "Statistic",
+            NodeKind::LinkedServer => "Linked Server",
+            NodeKind::Job => "Job",
+            NodeKind::Item => "Object",
             NodeKind::KeyGroup => "Key Group",
             NodeKind::Key => "Key",
             NodeKind::Note => "Note",
@@ -197,6 +283,9 @@ impl NodeKind {
                 | NodeKind::Trigger
                 | NodeKind::Type
                 | NodeKind::Extension
+                | NodeKind::Synonym
+                | NodeKind::LinkedServer
+                | NodeKind::Job
         )
     }
 
@@ -483,6 +572,39 @@ mod tests {
             ServerRoles,
             Users,
             DatabaseRoles,
+            Synonyms,
+            TableFunctions,
+            ScalarFunctions,
+            AggregateFunctions,
+            DatabaseTriggers,
+            Assemblies,
+            DataTypes,
+            TableTypes,
+            Rules,
+            Defaults,
+            Parameters,
+            Statistics,
+            ServiceBroker,
+            MessageTypes,
+            Contracts,
+            Queues,
+            Services,
+            Storage,
+            Filegroups,
+            PartitionSchemes,
+            PartitionFunctions,
+            FullTextCatalogs,
+            ApplicationRoles,
+            Certificates,
+            SymmetricKeys,
+            AsymmetricKeys,
+            Credentials,
+            ServerObjects,
+            BackupDevices,
+            Endpoints,
+            LinkedServers,
+            Agent,
+            Jobs,
         ];
         let kinds = [
             NodeKind::Server,
@@ -501,6 +623,12 @@ mod tests {
             NodeKind::Type,
             NodeKind::Extension,
             NodeKind::Role,
+            NodeKind::Synonym,
+            NodeKind::Parameter,
+            NodeKind::Statistic,
+            NodeKind::LinkedServer,
+            NodeKind::Job,
+            NodeKind::Item,
             NodeKind::Folder(Tables),
         ];
         let texts = folders
